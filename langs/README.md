@@ -4722,6 +4722,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.swapcase` | - | - | `swapcase` | - | - | - | - | - | - | - |
+| `ext.builtin.method.take_bytes` | - | - | `take_bytes` `bytearray.take_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |
 | `ext.builtin.method.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
@@ -4826,6 +4827,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.sre` | - | - | `__sre_native` | - | - | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
@@ -5848,3 +5850,7 @@ raise `LookupError`. The upstream memory tests retain their failures for
 collector behavior that cannot yet reclaim a cycle containing a memoryview.
 The review regressions and buffer-protocol comparisons live in
 `scratch/io-memory/`, with expected output produced by Python 3.14.
+
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+
+Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.

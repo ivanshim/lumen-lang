@@ -1,4 +1,4 @@
-# Source: CPython Lib/operator.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/operator.py; PSF License.
 """
 Operator Interface
 

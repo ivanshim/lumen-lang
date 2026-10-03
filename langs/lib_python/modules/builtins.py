@@ -526,7 +526,7 @@ class memoryview:
         except TypeError:
             raise TypeError('memoryview: invalid slice key')
         raw = bytes([self._byte(first + i) for i in range(self._itemsize)])
-        return int.from_bytes(raw, 'little', signed=self._format != 'B')
+        return int.from_bytes(raw, 'little', signed=self._format in ('b', 'i'))
 
     def __setitem__(self, key, value):
         self._check()
@@ -551,7 +551,7 @@ class memoryview:
             except TypeError:
                 raise TypeError('memoryview: invalid slice key')
             try:
-                raw = value.to_bytes(self._itemsize, 'little', signed=self._format != 'B')
+                raw = value.to_bytes(self._itemsize, 'little', signed=self._format in ('b', 'i'))
             except OverflowError:
                 raise ValueError("memoryview: invalid value for format '" + self._format + "'")
             for i in range(self._itemsize):
@@ -586,7 +586,7 @@ class memoryview:
         self._check()
         if shape is not None and (not isinstance(shape, (list, tuple)) or len(shape) != 1):
             raise TypeError('memoryview: multi-dimensional casts are not supported')
-        if format not in ('B', 'b', 'i'):
+        if format not in ('B', 'b', 'i', 'I'):
             raise TypeError('memoryview: destination format must be a native single character format')
         if self._offsets:
             start = self._offsets[0]
@@ -595,7 +595,7 @@ class memoryview:
                     raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
-        width = 4 if format == 'i' else 1
+        width = 4 if format in ('i', 'I') else 1
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
         if shape is not None and shape[0] != self.nbytes // width:

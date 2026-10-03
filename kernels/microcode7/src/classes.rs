@@ -855,7 +855,11 @@ impl<'a> Machine<'a> {
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
                 match tag {
-                    9 if kept.is_empty() && values.len() == 2 && matches!(values[0], Value::Blueprint(_)) => Ok(Value::Wrapped(9, Rc::new(values).into())),
+                    9 if kept.is_empty() && values.len() == 2 => {
+                        values = values.iter().map(Value::settled).collect();
+                        if let Value::Blueprint(_) = values[0] { Ok(Value::Wrapped(9, Rc::new(values).into())) }
+                        else { Err(self.class_unready()) }
+                    },
                     45 if !values.is_empty() => {
                         let alias = self.alias_from_thunk(values.remove(0))?;
                         if let (Value::Thing(object), Some(parameters)) = (&alias, values.first()) {
@@ -1480,6 +1484,16 @@ impl<'a> Machine<'a> {
         if told.is_empty(){return self.absent_attribute(value,member);}
         told.into()
     }
+    /// Subscription through a descriptor reads its result. It does not
+    /// turn the descriptor stored on the class into a shared field.
+    pub(super) fn reads_descriptor(&self, subject: &Value, key: &str) -> bool {
+        let Value::Thing(instance) = subject else { return false };
+        self.inherited_entry(&instance.blueprint(), key).is_some_and(|entry| {
+            matches!(&entry, Value::Wrapped(6 | 32, _) | Value::Adorned(_))
+                || self.protocol_entry(&entry, "descriptor.get").is_some()
+        })
+    }
+
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
@@ -1490,7 +1504,7 @@ impl<'a> Machine<'a> {
             // A working of the property blueprint, reached through a
             // property, is tied to it; a kept accessor reads at once.
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(50..=57 | 78..=79,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            Value::Wrapped(36 | 50..=57 | 78..=79,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return Ok(match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>entry}),
             _=>{}
         }
@@ -1989,6 +2003,11 @@ impl<'a> Machine<'a> {
                 let mut passed = false;
                 for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
                     if passed {
+                        if key == self.detail("allocate") {
+                            if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                                return Ok(Self::wrap(14, vec![Value::text(&native)]));
+                            }
+                        }
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
                         }
