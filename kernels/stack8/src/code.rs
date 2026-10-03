@@ -622,6 +622,10 @@ pub enum Builtin {
     /// The numbers a path's file answers with, or the host's reason
     /// number where it answers none.
     FileStat,
+    /// An empty file made where nothing stood by that name.
+    FileMake,
+    /// The source text of the file the run was started with.
+    LoaderSource,
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
     /// A command handed to the host's own shell, answering with all

@@ -2613,6 +2613,12 @@ only. The extension labels so far, all from PHP:
   the file a path names as a row of ten (kind, serials, links, owners,
   size and the three times), or with the host's reason number where the
   path names no file to measure.
+- `ext.builtin.file.make`: a builtin making an empty file where the path
+  named none, answering true when it was made, false when the name was
+  already taken, or the host's reason number.
+- `ext.builtin.loader.source`: a builtin answering with the source text
+  of the file the run was started with, as the main module's loader
+  answers `get_source` with it.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither.
 - `ext.builtin.dir.list`, `.make` and `.remove_tree`: builtins that
@@ -4567,6 +4573,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
+| `ext.builtin.file.make` | - | - | `__make_file` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.stat` | - | - | `__file_stat` | - | - | - | - | - | - | - |
@@ -4603,6 +4610,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.itertools.product_step` | - | - | `__itertools_product_step` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.loader.source` | - | - | `__loader_source` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |

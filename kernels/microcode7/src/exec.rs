@@ -15883,10 +15883,13 @@ impl<'a> Machine<'a> {
             // spells these labels does at all. What cannot be done
             // answers false rather than stopping the run.
             Prim::Slurp => {
-                n(1)?;
+                if v.is_empty() || v.len() > 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                 let w = self.wording();
                 match std::fs::read(v[0].render(w)) {
                     Ok(bytes) => {
+                        // Asked with a second argument, the bytes come
+                        // back as they lie on the disk, never as text.
+                        if v.len() == 2 && !matches!(v[1], Value::Nil) { return Ok(self.octets(bytes, false)); }
                         let opening = bytes.split(|part| *part == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
                         let local = opening.contains("coding: latin1") || opening.contains("coding: latin-1");
@@ -16046,6 +16049,32 @@ impl<'a> Machine<'a> {
                         Value::Vector(crate::tuples::Sequence::plain(row))
                     }
                     Err(failed) => Value::Small(failed.raw_os_error().unwrap_or(5) as i64),
+                }
+            }
+            Prim::PathMake => {
+                n(1)?;
+                let w = self.wording();
+                let named = v[0].render(w);
+                match std::fs::OpenOptions::new().write(true).create_new(true).open(&named) {
+                    Ok(_) => Value::Flag(true),
+                    Err(failed) if failed.kind() == std::io::ErrorKind::AlreadyExists => Value::Flag(false),
+                    Err(failed) => Value::Small(failed.raw_os_error().unwrap_or(5) as i64),
+                }
+            }
+            Prim::LoaderSource => {
+                n(1)?;
+                match std::fs::read(self.entry_file.as_ref()) {
+                    Ok(bytes) => {
+                        let body = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { &bytes[3..] } else { &bytes[..] };
+                        let mut head = String::new();
+                        for (row, piece) in body.split(|byte| *byte == b'\n').take(2).enumerate() {
+                            if row > 0 || piece.len() <= 200 { head.extend(piece.iter().map(|byte| (*byte as char).to_ascii_lowercase())); }
+                        }
+                        if self.rules.has_any_ext_builtin_exceptions_syntax && (head.contains("coding: latin1") || head.contains("coding: latin-1")) {
+                            Value::text(&body.iter().copied().map(char::from).collect::<String>())
+                        } else { Value::text(&String::from_utf8_lossy(body)) }
+                    }
+                    Err(_) => return Err("ImportError: source not available through get_data()".to_string()),
                 }
             }
             Prim::HostRow => {
@@ -20587,6 +20616,17 @@ impl<'a> Machine<'a> {
         let main = self.detail("main").to_string();
         if main.is_empty() { return; }
         let book = self.world_kept();
+        // The main namespace answers for a loader of the file the run
+        // was begun with, as CPython's __main__ answers for a
+        // SourceFileLoader: its get_source reads that file.
+        if self.table.prims.contains_key("__loader_source") {
+            self.made += 1;
+            let loader = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),
+                of: self.common_ancestor(),
+                holds: RefCell::new(vec![("get_source".to_string(), Value::Intrinsic(Prim::LoaderSource, Rc::from("__loader_source")))]),
+                turn: self.made }));
+            let _ = self.booked_put(&book, "__loader__", Some(loader));
+        }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: main.clone(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: std::cell::Cell::new(None), type_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false),

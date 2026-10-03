@@ -49,8 +49,63 @@ def mktemp(suffix='', prefix=template, dir=None):
     raise 'NotImplementedError: tempfile.mktemp would name a file this runtime cannot then create'
 
 
-def NamedTemporaryFile(*args, **keywords):
-    raise 'NotImplementedError: tempfile.NamedTemporaryFile needs a file to be created and opened, which this runtime does not carry'
+class _TemporaryFileWrapper:
+    def __init__(self, file, name, delete):
+        self._file = file
+        self.name = name
+        self._delete = delete
+
+    def write(self, data):
+        return self._file.write(data)
+
+    def close(self):
+        if not self._file.closed:
+            self._file.close()
+            if self._delete:
+                try:
+                    os.unlink(self.name)
+                except OSError:
+                    pass
+
+    def __getattr__(self, name):
+        return getattr(self._file, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.close()
+
+
+_name_counter = 0
+
+
+def NamedTemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None, suffix=None, prefix=None, dir=None, delete=True, delete_on_close=True, *, errors=None):
+    global _name_counter
+    if dir is None:
+        dir = gettempdir()
+    if prefix is None:
+        prefix = template
+    if suffix is None:
+        suffix = ''
+    import time
+    for _ in range(100):
+        _name_counter += 1
+        seed = int(time.time() * 1000000)
+        name = dir + '/' + '%s%06x%04x%s' % (prefix, seed % 16777216, _name_counter % 65536, suffix)
+        made = __make_file(name)
+        if made is True:
+            break
+        if made is not False:
+            if made == 2:
+                raise FileNotFoundError(2, 'No such file or directory', dir)
+            raise OSError(made, None, name)
+    else:
+        raise FileExistsError(17, 'File exists', name)
+    file = open(name, mode, encoding=encoding, errors=errors)
+    if delete:
+        return _TemporaryFileWrapper(file, name, delete_on_close)
+    return file
 
 
 def TemporaryFile(*args, **keywords):

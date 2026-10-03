@@ -16212,10 +16212,13 @@ impl<'a> Engine<'a> {
             // these labels can, and what cannot be done gives false
             // back rather than stopping, as such a language expects.
             Builtin::FileRead => {
-                arity(1)?;
+                if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects 1 or 2 arguments, got {}", name, args.len())); }
                 let sp = self.wording();
                 match std::fs::read(args[0].display(&sp)) {
                     Ok(bytes) => {
+                        // A second argument asks for the bytes as they
+                        // are on the disk, nothing read into text.
+                        if args.len() == 2 && !matches!(args[1], Value::Null) { return Ok(self.byte_make(bytes, false)); }
                         let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
                         if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {
@@ -16384,6 +16387,35 @@ impl<'a> Engine<'a> {
                         ])
                     }
                     Err(error) => Value::Small(error.raw_os_error().unwrap_or(5) as i64),
+                }
+            }
+            // An empty file made where nothing stood: true when it was
+            // made, false when the name was already taken, the host's
+            // reason number for anything else that went wrong.
+            Builtin::FileMake => {
+                arity(1)?;
+                let sp = self.wording();
+                let path = std::path::PathBuf::from(args[0].display(&sp));
+                match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                    Ok(_) => Value::Flag(true),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Value::Flag(false),
+                    Err(error) => Value::Small(error.raw_os_error().unwrap_or(5) as i64),
+                }
+            }
+            // The source of the file the run was started with, as the
+            // main module's loader answers `get_source` with it.
+            Builtin::LoaderSource => {
+                arity(1)?;
+                match std::fs::read(self.root_source.as_ref()) {
+                    Ok(bytes) => {
+                        let body = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { &bytes[3..] } else { &bytes[..] };
+                        let header = body.split(|byte| *byte == b'\n').take(2).flatten()
+                            .copied().map(char::from).collect::<String>().to_ascii_lowercase();
+                        if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {
+                            Value::text(&body.iter().copied().map(char::from).collect::<String>())
+                        } else { Value::text(&String::from_utf8_lossy(body)) }
+                    }
+                    Err(_) => return Err("ImportError: source not available through get_data()".into()),
                 }
             }
             // The working directory (or nothing), the word for the
@@ -20679,6 +20711,18 @@ impl Engine<'_> {
         let main = self.class_word("main").to_string();
         if main.is_empty() { return; }
         let book = self.outer_book_made();
+        // The main module's namespace answers for a loader of the file
+        // the run was started with, as CPython's __main__ answers for a
+        // SourceFileLoader: its get_source reads that file.
+        if self.lang.builtins.contains_key("__loader_source") {
+            self.made += 1;
+            let loader = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),
+                class: self.root_class(),
+                fields: RefCell::new(vec![("get_source".to_string(), Value::Native(Builtin::LoaderSource, Rc::from("get_source")))]),
+                mark: self.made,
+            }));
+            let _ = self.book_put(&book, "__loader__", Some(loader));
+        }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false) }),

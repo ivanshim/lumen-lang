@@ -53,6 +53,12 @@
   "ext.builtin.file.stat": [
     "__file_stat"
   ],
+  "ext.builtin.file.make": [
+    "__make_file"
+  ],
+  "ext.builtin.loader.source": [
+    "__loader_source"
+  ],
   "ext.builtin.weak.make": [
     "__weak_make"
   ],

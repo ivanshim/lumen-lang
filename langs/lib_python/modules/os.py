@@ -115,7 +115,10 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
         raise 'NotImplementedError: os.stat without following symbolic links is not supported'
     if '\x00' in path:
         raise ValueError('embedded null byte')
-    at = 0
+    if path.isascii():
+        at = len(path)
+    else:
+        at = 0
     while at < len(path):
         code = ord(path[at])
         if 0xD800 <= code <= 0xDFFF:

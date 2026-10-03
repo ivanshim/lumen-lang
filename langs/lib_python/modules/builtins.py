@@ -212,10 +212,10 @@ class _HostFile:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read(name)
-                self._buffer = brought if brought is not False else ''
+                brought = _host_file_read(name, True) if self._binary else _host_file_read(name)
+                self._buffer = brought if brought is not False else (b'' if self._binary else '')
             else:
-                self._buffer = ''
+                self._buffer = b'' if self._binary else ''
             self._pos = len(self._buffer)
         else:
             kind = _host_file_kind(name)
@@ -223,7 +223,7 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name)
+            brought = _host_file_read(name, True) if self._binary else _host_file_read(name)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
@@ -239,7 +239,9 @@ class _HostFile:
         return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
 
     def _carried(self, text):
-        return text.encode('utf-8') if self._binary else text
+        if self._binary:
+            return text if isinstance(text, (bytes, bytearray)) else text.encode('utf-8')
+        return text
 
     def read(self, size=-1):
         self._open()
@@ -252,7 +254,7 @@ class _HostFile:
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
-            self._lines = self._buffer[self._pos:].splitlines(keepends=True)
+            self._lines = self._buffer[self._pos:].splitlines(True)
             self._lines_at = 0
             self._lines_pos = self._pos
 
@@ -261,7 +263,7 @@ class _HostFile:
         if size is not None and size >= 0:
             start = self._pos
             limit = min(len(self._buffer), start + size)
-            found = self._buffer.find('\n', start, limit)
+            found = self._buffer.find(b'\n' if self._binary else '\n', start, limit)
             stop = limit if found < 0 else found + 1
             self._pos = stop
             self._lines = None

@@ -228,6 +228,10 @@ pub enum Prim {
     /// The measurements of the file a path names, as a row of ten, or
     /// the host's reason number where it names none.
     PathStat,
+    /// An empty file brought into being where the path named none.
+    PathMake,
+    /// The source text of the file the run was begun with.
+    LoaderSource,
     /// The host's facts as a row: directory, system, machine, surroundings.
     HostRow,
     /// Everything the host's own shell wrote out, having been handed a
