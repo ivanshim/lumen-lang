@@ -40,7 +40,11 @@ def cache_from_source(path, debug_override=None, *, optimization=None):
     filename = almost_filename + BYTECODE_SUFFIXES[0]
     prefix = getattr(sys, 'pycache_prefix', None)
     if prefix is not None:
-        head = _os.path.abspath(head)
+        # The reference's own absolute-path step: an absolute head is
+        # kept as it was written, a relative one is joined to the
+        # working directory, and no part of it is tidied either way.
+        if head[:1] != '/':
+            head = _os.path.join(_os.getcwd(), head)
         if head[1:2] == ':' and head[0:1] not in '/':
             head = head[2:]
         return _os.path.join(prefix, head.lstrip('/'), filename)

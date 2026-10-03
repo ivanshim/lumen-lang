@@ -75,6 +75,8 @@ impl Machine<'_> {
         }
         let held = Self::underlying(&settled).unwrap_or_else(|| given.clone());
         let holder = Self::native_cell(&held).ok_or_else(|| String::from("TypeError: heap requires a list holder"))?;
+        drop(settled);
+        drop(held);
         let list = HeapList(holder);
         let length = list.size();
         if action == "heapify" {

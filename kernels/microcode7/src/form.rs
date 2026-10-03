@@ -784,6 +784,10 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub annotation_is_text: bool,
+    pub annotation_protocol: bool,
+    /// The live class namespace slot and, when used by methods, its class cell.
+    pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub referenced: Vec<String>,
@@ -824,7 +828,7 @@ pub struct Routine {
     /// The names a declaration wrote between brackets for its type
     /// parameters, in the order written. Empty where it wrote none,
     /// from which the row of type parameters is made when asked for.
-    pub type_params: Vec<(String, Option<Value>)>,
+    pub type_params: Vec<String>,
     /// The dictionary of outermost names a routine framed by hand was
     /// given, where one was: nothing for a routine the program wrote.
     pub globe: Option<Value>,

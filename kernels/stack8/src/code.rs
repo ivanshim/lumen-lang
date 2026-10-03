@@ -886,6 +886,10 @@ impl Builtin {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub postponed_annotation: bool,
+    pub checks_annotation_format: bool,
+    /// The live class namespace slot and, when used by methods, its class cell.
+    pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     pub code_names: Vec<String>,
@@ -925,11 +929,10 @@ pub struct Routine {
     /// nowhere else.
     pub within: Option<Rc<str>>,
     /// The names a declaration wrote between brackets for its type
-    /// parameters, in the order they were written, each with the
-    /// routine answering the bound it was given after a colon, where
-    /// it was given one. Empty where it wrote none, from which the
-    /// row of type parameters is made the first time it is asked for.
-    pub type_params: Vec<(String, Option<Rc<Routine>>)>,
+    /// parameters, in the order they were written. Empty where it
+    /// wrote none, from which the row of type parameters is made
+    /// the first time it is asked for.
+    pub type_params: Vec<String>,
     /// The dictionary of outermost names a routine built by hand was
     /// handed, where one was. Nothing for every routine the program
     /// wrote out under a name, whose names stand where it was read.
