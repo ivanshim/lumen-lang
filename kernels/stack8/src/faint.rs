@@ -400,6 +400,7 @@ struct Node {
 /// hold, and nothing reaching it from anything that has one, is
 /// unreachable by the program.
 pub struct Graph {
+    order: Vec<usize>,
     nodes: HashMap<usize, Node>,
     bookkeeping: HashMap<usize, usize>,
 }
@@ -637,11 +638,13 @@ impl Graph {
 
     fn build(roots: Vec<Value>, bookkeeping: HashMap<usize, usize>) -> Graph {
         let mut nodes: HashMap<usize, Node> = HashMap::new();
+        let mut order = Vec::new();
         let mut open: Vec<usize> = Vec::new();
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
             if !nodes.contains_key(&place) {
                 nodes.insert(place, Node { held: root, reaches: Vec::new(), inward: 0, marked: false });
+                order.push(place);
                 open.push(place);
             }
         }
@@ -662,6 +665,7 @@ impl Graph {
                         Some(node) => node.inward += 1,
                         None => {
                             nodes.insert(at, Node { held: part, reaches: Vec::new(), inward: 1, marked: false });
+                            order.push(at);
                             open.push(at);
                         }
                     }
@@ -670,7 +674,7 @@ impl Graph {
             }
             nodes.get_mut(&place).unwrap().reaches = reached;
         }
-        Graph { nodes, bookkeeping }
+        Graph { nodes, bookkeeping, order }
     }
 
     /// Whether this value is now unreachable once the engine's own
@@ -703,7 +707,10 @@ impl Graph {
                 }
             }
         }
-        self.nodes.values().filter(|n| !n.marked).map(|n| n.held.clone()).collect()
+        self.order.iter().filter_map(|place| {
+            let node = &self.nodes[place];
+            (!node.marked).then(|| node.held.clone())
+        }).collect()
     }
 
     /// Recheck ownership after finalization, retaining only the original

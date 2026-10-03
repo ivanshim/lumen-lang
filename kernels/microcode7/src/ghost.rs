@@ -586,6 +586,7 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
+    sequence: Vec<usize>,
     strands: HashMap<usize, Strand>,
     bookkeeping: HashMap<usize, usize>,
 }
@@ -637,10 +638,12 @@ impl Web {
     fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize>) -> Web {
         let mut strands: HashMap<usize, Strand> = HashMap::new();
         let mut frontier: Vec<usize> = Vec::new();
+        let mut sequence = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
             if let Some(place) = root.place() {
                 if !strands.contains_key(&place) {
                     strands.insert(place, Strand { knot: root, onward: Vec::new(), inward: 0, reached: false });
+                    sequence.push(place);
                     frontier.push(place);
                 }
             }
@@ -656,13 +659,14 @@ impl Web {
                     strand.inward += 1;
                 } else {
                     strands.insert(at, Strand { knot, onward: Vec::new(), inward: 1, reached: false });
+                    sequence.push(at);
                     frontier.push(at);
                 }
                 onward.push(at);
             }
             if let Some(strand) = strands.get_mut(&place) { strand.onward = onward; }
         }
-        Web { strands, bookkeeping }
+        Web { strands, bookkeeping, sequence }
     }
 
     /// Whether a value belongs only to an unreachable round, after
@@ -702,7 +706,8 @@ impl Web {
             }
         }
         let mut lost = Vec::new();
-        for strand in self.strands.values() {
+        for position in &self.sequence {
+            let strand = self.strands.get(position).expect("known ownership position");
             if strand.reached { continue; }
             lost.push(match &strand.knot {
                 Knot::Held(v) => Knot::Held(v.clone()),
