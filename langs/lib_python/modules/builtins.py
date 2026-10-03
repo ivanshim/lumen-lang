@@ -23,6 +23,8 @@ _host_file_write = __file_write
 # simply absent, so hasattr says no for them, and they are listed at the
 # very end.
 
+__build_class__ = __build_class__
+
 ArithmeticError = ArithmeticError
 AssertionError = AssertionError
 AttributeError = AttributeError
@@ -634,7 +636,7 @@ class memoryview:
 # looking for a missing name learns it is missing rather than broken.
 # There is no object behind any of these here: aiter, anext, ascii,
 # copyright, credits, exit, help, license,
-# quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
+# quit, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError and TabError.
 

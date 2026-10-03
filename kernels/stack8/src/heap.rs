@@ -67,6 +67,8 @@ impl Engine<'_> {
         }
         let storage = Self::worth_of(&supplied).unwrap_or_else(|| heap.clone());
         let cell = Self::holding_cell(&storage).ok_or_else(|| "TypeError: heap storage has no mutable cell".to_string())?;
+        // Validation's temporary value must not share the row during writes.
+        drop((supplied, storage));
         let extent = Self::heap_row_len(&cell);
         match verb {
             "heapify" => {

@@ -261,6 +261,10 @@ def fsum(values):
     neg_inf = False
     saw_nan = False
     for x in values:
+        ready = __math('fsum_finite', x, partials)
+        if ready is not None:
+            partials, x = ready
+            continue
         if type(x) != type(1.0):
             _check_real(x)
             x = float(x)
@@ -273,18 +277,20 @@ def fsum(values):
         if x == -inf:
             neg_inf = True
             continue
-        kept = []
-        for y in partials:
-            # These operands are already binary reals. Compare their
-            # magnitudes without re-entering the conversion protocol.
-            if (-x if x < 0 else x) < (-y if y < 0 else y):
-                x, y = y, x
-            high = x + y
-            low = y - (high - x)
-            if low != 0:
-                kept.append(low)
-            x = high
-        kept.append(x)
+        step = __math('fsum_partial', x, partials)
+        if step is None:
+            kept = []
+            for y in partials:
+                if (-x if x < 0 else x) < (-y if y < 0 else y):
+                    x, y = y, x
+                high = x + y
+                low = y - (high - x)
+                if low != 0:
+                    kept.append(low)
+                x = high
+            kept.append(x)
+        else:
+            kept, x = step
         partials = kept
     # Two infinities of opposite sign have no sum to agree on, and that
     # objection stands even when a NaN walked in among them; CPython says
@@ -440,6 +446,14 @@ def dist(p, q, /):
     p, q = _point_items(p), _point_items(q)
     if len(p) != len(q):
         raise 'ValueError: both points must have the same number of dimensions'
+    ready = __math('dist_float', p, q)
+    if ready is not None:
+        kind, differences = ready
+        if kind == 1:
+            return inf
+        if kind == 2:
+            return nan
+        return _hypot_values(differences)
     differences = []
     for i in range(len(p)):
         if type(p[i]) != type(1.0):
@@ -814,6 +828,9 @@ def modf(x):
     return (fraction, __math('fdiv', whole, 1.0))
 
 def frexp(x):
+    ready = __math('frexp_plain', x)
+    if ready is not None:
+        return ready
     _check_real(x)
     if _is_integral(x):
         n = int(x)
@@ -822,16 +839,12 @@ def frexp(x):
         mantissa, exponent = _int_frexp(-n if n < 0 else n)
         return (-mantissa if n < 0 else mantissa, exponent)
     x = float(x)
-    if x == 0 or not isfinite(x):
-        return (__math('fdiv', x, 1.0), 0)
-    # A binary float's denominator is a power of two. Its exact ratio
-    # gives the exponent without scaling once per power, which matters
-    # when summation repeatedly decomposes values with large exponents.
-    numerator, denominator = x.as_integer_ratio()
-    exponent = abs(numerator).bit_length() - denominator.bit_length() + 1
-    return (__math('ldexp', x, -exponent), exponent)
+    return __math('frexp', x)
 
 def ldexp(x, i):
+    ready = __math('ldexp_plain', x, i)
+    if ready is not None:
+        return ready
     if type(i) != type(1) and type(i) != type(True):
         raise 'TypeError: ldexp exponent must be an integer'
     result = __math('ldexp', x, i)

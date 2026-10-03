@@ -1,7 +1,7 @@
 # lumen-verify: run a batch of scratch programs and apply CI's scratch rule to each.
 # The interpreter is started through the bundled loader and C library (sys/), so it runs
 # with the same glibc and libm as the build box.
-import os, shutil, subprocess, tempfile, time
+import json, os, shutil, subprocess, tempfile, time
 
 ROOT = os.environ.get("LAMBDA_TASK_ROOT", ".")
 RUN = [f"{ROOT}/sys/ld-linux-aarch64.so.1", "--library-path", f"{ROOT}/sys", f"{ROOT}/lumen-lang"]
@@ -13,6 +13,7 @@ if not os.path.exists(BUILT_AT):
     os.symlink(ROOT, BUILT_AT)
 # The same basic environment a program sees on the build box (Lambda sets almost none of it).
 ENV = {"HOME": "/tmp", "USER": "rocky", "LANG": "en_US.UTF-8", "PATH": "/usr/local/bin:/usr/bin:/bin", "SHELL": "/bin/bash"}
+VERSIONS = json.load(open(f"{ROOT}/langs/python/versions.json"))["versions"]
 ENV["LUMEN_ROOT"] = ROOT          # binaries with fix/relocatable-library read the library from here
 
 
@@ -65,7 +66,8 @@ def count(prog, kernel, cap, only=None):
     started = time.time()
     try:
         env = dict(ENV, LUMEN_UNITTEST_ONLY=only) if only else ENV   # one part of a long file
-        r = subprocess.run(RUN + ["--kernel", kernel, f"{BUILT_AT}/{prog}"], cwd=here, capture_output=True,
+        version = next(v for v in VERSIONS.values() if prog.startswith(v['tests'] + '/'))
+        r = subprocess.run(RUN + ["--kernel", kernel, "--python", version['release'], f"{BUILT_AT}/{prog}"], cwd=here, capture_output=True,
                            timeout=cap, stdin=subprocess.DEVNULL, env=env)
         res = {"rc": r.returncode, "out": r.stdout.decode("utf-8", "replace")[-2000000:],
                "err": clip(r.stderr.decode("utf-8", "replace")), "timeout": False}
