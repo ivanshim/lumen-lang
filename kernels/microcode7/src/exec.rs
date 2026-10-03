@@ -13606,7 +13606,9 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
+            let container_read = operation == Prim::Length || matches!(operation, Prim::At | Prim::Fetch)
+                && settled.first().is_some_and(|value| matches!(value.settled(), Value::Dict(_) | Value::Vector(_) | Value::Tuple(_)));
+            if changed && (container_read || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.

@@ -8022,7 +8022,9 @@ impl<'a> Engine<'a> {
                 None => settled.push(value.clone()),
             }
         }
-        if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
+        // Measuring a container does not invoke the values inside it.
+        let opaque_contents = op == Builtin::Length;
+        if changed && (opaque_contents || !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_)))) {
             // A thing over a real that is not a number hashes as itself,
             // the way CPython's own hash of a NaN does, and not as the
             // worth that stood in for it here.
