@@ -1511,3 +1511,25 @@ class _LocaleContextDecorator:
 
 def run_with_locale(catstr, *locales):
     return _LocaleContextDecorator(catstr, locales)
+
+
+def no_rerun(reason):
+    """Skip rerunning for a particular test.
+
+    WARNING: Use this decorator with care; skipping rerunning makes it
+    impossible to find reference leaks. Provide a clear reason for skipping the
+    test using the 'reason' parameter.
+    """
+    import functools
+    def deco(func):
+        assert not isinstance(func, type), func
+        _has_run = False
+        @functools.wraps(func)
+        def wrapper(self):
+            nonlocal _has_run
+            if _has_run:
+                self.skipTest(reason)
+            func(self)
+            _has_run = True
+        return wrapper
+    return deco

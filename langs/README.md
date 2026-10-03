@@ -4731,6 +4731,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.oct` | - | - | `oct` | - | - | - | - | - | - | - |
@@ -5854,3 +5855,5 @@ The review regressions and buffer-protocol comparisons live in
 `ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
 
 Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
+
+`ext.builtin.namespace_type` provides the native namespace class used by `sys.implementation` and discovered by the pure Python `types` fallback.
