@@ -21089,6 +21089,13 @@ impl Engine<'_> {
                 }
             },
             "latin1" | "latin" | "iso88591" => bytes.iter().copied().map(char::from).collect(),
+            // ISO-8859-15: Latin-1 with eight places moved to the
+            // currency sign, the S/Z carons, OE/oe and Y-diaeresis.
+            "latin9" | "iso885915" => bytes.iter().map(|b| match *b {
+                0xA4 => '\u{20AC}', 0xA6 => '\u{0160}', 0xA8 => '\u{0161}', 0xB4 => '\u{017D}',
+                0xB8 => '\u{017E}', 0xBC => '\u{0152}', 0xBD => '\u{0153}', 0xBE => '\u{0178}',
+                other => char::from(other),
+            }).collect(),
             "cp1251" | "iso88597" => {
                 let mapping = if encoding == "cp1251" { "ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя" } else { "
  ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�" };

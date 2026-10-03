@@ -20979,6 +20979,15 @@ impl<'a> Machine<'a> {
             }
         }
         if ["latin", "latin1", "iso88591"].contains(&cookie.as_str()) { return Ok(Rc::from(raw.iter().map(|b| *b as char).collect::<String>())); }
+        if ["latin9", "iso885915"].contains(&cookie.as_str()) {
+            // ISO-8859-15: Latin-1 with eight places moved.
+            let shifted = raw.iter().map(|b| match *b {
+                0xA4 => '\u{20AC}', 0xA6 => '\u{0160}', 0xA8 => '\u{0161}', 0xB4 => '\u{017D}',
+                0xB8 => '\u{017E}', 0xBC => '\u{0152}', 0xBD => '\u{0153}', 0xBE => '\u{0178}',
+                other => char::from(other),
+            }).collect::<String>();
+            return Ok(Rc::from(shifted));
+        }
         let alphabet = match cookie.as_str() {
             "cp1251" => Some("ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя"),
             "iso88597" => Some(" ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
