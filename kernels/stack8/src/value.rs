@@ -200,6 +200,8 @@ pub struct Generator {
     pub pc: usize,
     pub started: bool,
     pub closed: bool,
+    /// Automatic finalisation runs once, even if the body yields or resurrects.
+    pub finalized: bool,
     pub waiting: bool,
     pub handed: Option<Value>,
     pub returned: Value,
@@ -228,7 +230,7 @@ pub struct Generator {
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
-            closed: false, waiting: false, handed: None, returned: Value::Null,
+            closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
     }

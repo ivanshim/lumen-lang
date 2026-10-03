@@ -1593,6 +1593,7 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
+        self.settle_departed();
         if let Some(named) = self.lang.destructor.clone().as_deref() {
             // The words an object says as it goes: the destructor the
             // language names outright. An object made while another is
@@ -1628,6 +1629,22 @@ impl<'a> Engine<'a> {
             self.speak_ignoring(words, vec![Value::Object(thing)], "deallocator");
         }
         crate::faint::release_all_anchors();
+        if self.lang.finaliser.is_some() {
+            // Close the synchronous bodies still held by globals or cycles
+            // while their engine and defining namespaces are available.
+            // Use a snapshot: finalisation must not chase new allocations.
+            let walks: Vec<_> = self.generator_frames.values().filter_map(Weak::upgrade).collect();
+            for walk in walks {
+                let synchronous = walk.try_borrow().is_ok_and(|state|
+                    state.program.as_ref().is_some_and(|body| body.code_flags & (128 | 512) == 0));
+                if synchronous && crate::faint::asleep(&walk) {
+                    if let Err(fault) = self.close_departed_generator(&walk) {
+                        self.ignore_fault(fault, &Value::Generator(walk.clone()), "generator");
+                    }
+                }
+            }
+        }
+        self.settle_departed();
     }
 
     /// What is still being kept when the run ends is let go, outermost
@@ -1723,6 +1740,11 @@ impl<'a> Engine<'a> {
     /// that made it while its pending finalizer runs, even when its
     /// defining exec namespace has otherwise become unreachable.
     fn close_departed_generator(&mut self, walk: &Rc<RefCell<Generator>>) -> Flow<Value> {
+        {
+            let mut state = walk.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+            if state.finalized { return Ok(Value::Null); }
+            state.finalized = true;
+        }
         let book = if self.lang.trace_fields.is_empty() { None } else {
             walk.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| {
                 self.constructor_book(body).or_else(|| match body.globe.as_ref() {

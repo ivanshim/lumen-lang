@@ -240,32 +240,38 @@ pub fn departing(dying: &mut Instance) {
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let asleep = dying.started && !dying.closed && dying.program.is_some();
+    let asleep = dying.started && !dying.closed && !dying.finalized && dying.program.is_some();
     if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
-        let again = Generator {
-            name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(),
-            program: dying.program.clone(),
-            frame: std::mem::take(&mut dying.frame),
-            stack: std::mem::take(&mut dying.stack),
-            pc: dying.pc,
-            started: true,
-            closed: false,
-            waiting: dying.waiting,
-            handed: dying.handed.take(),
-            returned: std::mem::replace(&mut dying.returned, Value::Null),
-            delegate: dying.delegate.take(),
-            sent: std::mem::replace(&mut dying.sent, Value::Null),
-            items: std::mem::take(&mut dying.items),
-            current: dying.current.take(),
-            watched: dying.watched.take(),
-            resume: std::mem::take(&mut dying.resume),
-            resuming: dying.resuming,
-            held: std::mem::take(&mut dying.held),
-            hurled: dying.hurled.take(),
-            walked: dying.walked.take(),
-        };
-        dying.closed = true;
-        let _ = UNFINISHED.try_with(|q| q.borrow_mut().push(Rc::new(RefCell::new(again))));
+        // Build only while the queue is alive. A rejected try_with must
+        // not drop a captured suspended body and recursively rebuild it.
+        let _ = UNFINISHED.try_with(|q| {
+            let again = Generator {
+                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(),
+                program: dying.program.clone(),
+                frame: std::mem::take(&mut dying.frame),
+                stack: std::mem::take(&mut dying.stack),
+                pc: dying.pc,
+                started: true,
+                closed: false,
+                finalized: false,
+                waiting: dying.waiting,
+                handed: dying.handed.take(),
+                returned: std::mem::replace(&mut dying.returned, Value::Null),
+                delegate: dying.delegate.take(),
+                sent: std::mem::replace(&mut dying.sent, Value::Null),
+                items: std::mem::take(&mut dying.items),
+                current: dying.current.take(),
+                watched: dying.watched.take(),
+                resume: std::mem::take(&mut dying.resume),
+                resuming: dying.resuming,
+                held: std::mem::take(&mut dying.held),
+                hurled: dying.hurled.take(),
+                walked: dying.walked.take(),
+            };
+            dying.closed = true;
+            dying.finalized = true;
+            q.borrow_mut().push(Rc::new(RefCell::new(again)));
+        });
         wake();
     }
     note_death();
@@ -762,5 +768,5 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| g.started && !g.closed && g.program.is_some())
+    walk.try_borrow().map_or(false, |g| g.started && !g.closed && !g.finalized && g.program.is_some())
 }
