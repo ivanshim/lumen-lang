@@ -4368,7 +4368,13 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare
+                && (!table.keywords.contains(&self.look().lexeme)
+                    // A soft keyword is a name again where an annotation
+                    // follows it.
+                    || table.spells("ext.stmt.type_alias", &self.look().lexeme)
+                    || table.spells("ext.stmt.match", &self.look().lexeme)
+                    || table.spells("ext.stmt.match.case", &self.look().lexeme))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -8817,7 +8823,13 @@ impl<'a> Builder<'a> {
                             prim_call(Prim::Bid, given)
                         } else { self.class_not_ready() }
                     }
-                    _ => self.class_not_ready(),
+                    _ => {
+                        // Any other spelling of the parent call --
+                        // two-part super among them -- is an ordinary
+                        // call of the parent word the program has bound.
+                        let target = self.read(&t.lexeme);
+                        invoke(target, extra)
+                    }
                 }
             }
             Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
@@ -9923,8 +9935,12 @@ impl<'a> Builder<'a> {
                         _ => (),
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        // The rule names a comma in the part before the
+                        // first for alone; commas the clauses themselves
+                        // carry are allowed.
+                        if comma_before_for { return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?")); }
+                        break;
                     }
                 }
                 if part.shape == Shape::Sign {

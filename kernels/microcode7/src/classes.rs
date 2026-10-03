@@ -1589,6 +1589,14 @@ impl<'a> Machine<'a> {
                     }
                     passed |= Rc::ptr_eq(base, defining);
                 }
+                // The defaults every blueprint answers from the root
+                // answer here too, bound to what the super object was
+                // given, as the ordinary thing read binds them.
+                if let Some(root) = self.from_the_root(key, true) {
+                    if key == self.detail("allocate") { return Ok(root); }
+                    let bound_to = if key == self.detail("subclass") { Value::Blueprint(actual.clone()) } else { instance.clone() };
+                    return Ok(Self::wrap(3, vec![root, bound_to]));
+                }
                 return Err(self.absent_attribute(&value, key));
             }
         }
@@ -2462,9 +2470,17 @@ impl<'a> Machine<'a> {
             let word = self.octet_kind_word(*changeable).to_owned();
             if self.table.spells("ext.stmt.class.builtin", &word) { return Ok(self.native_kind(&word)); }
         }
-        if let Value::Intrinsic(operation, word) = settled {
-            if operation == Prim::SortOf { return Ok(self.builder_blueprint()); }
-            if operation != Prim::Truthful && self.table.spells("ext.stmt.class.builtin", &word) { return Ok(self.native_kind(&word)); }
+        if let Value::Intrinsic(operation, word) = &settled {
+            if *operation == Prim::SortOf { return Ok(self.builder_blueprint()); }
+            if *operation != Prim::Truthful && self.table.spells("ext.stmt.class.builtin", word) { return Ok(self.native_kind(word)); }
+        }
+        if let Value::Thing(thing) = &settled {
+            if thing.blueprint().name == "GenericAlias" {
+                // A parameterized generic stands in the bases for the
+                // class it was made from, the way PEP 560 spells it.
+                let origin = thing.holds.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
+                return match origin { Some(value) => self.parent_from_type(&value), None => Err("TypeError: bases must be types".to_owned().into()) };
+            }
         }
         Err("TypeError: bases must be types".to_owned().into())
     }

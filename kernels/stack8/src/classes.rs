@@ -1147,6 +1147,14 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                // The defaults every class answers from the root answer
+                // here too, bound to what the super object was given, as
+                // the ordinary object read binds them.
+                if let Some(root)=self.root_member(name,Some(&dynamic)) {
+                    if name==self.class_word("allocate") { return Ok(root); }
+                    let receiver=if name==self.class_word("subclass") {Value::Class(dynamic.clone())} else {receiver.clone()};
+                    return Ok(Self::adapter(3,vec![root,receiver]));
+                }
                 return Err(self.missing_member(&subject, name));
             }
         }
@@ -2332,6 +2340,12 @@ impl<'a> Engine<'a> {
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),
             Value::Native(_, name) if Lang::spells(&self.lang.builtin_bases, &name) => Ok(self.kind_class(&name)),
+            Value::Object(object) if object.class_now().name == "GenericAlias" => {
+                // A parameterized generic stands in the bases for the
+                // class it was made from, the way PEP 560 spells it.
+                let origin = object.fields.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
+                match origin { Some(value) => self.type_base(&value), None => Err("TypeError: bases must be types".to_string().into()) }
+            }
             _ => Err("TypeError: bases must be types".to_string().into()),
         }
     }

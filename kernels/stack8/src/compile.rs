@@ -5646,7 +5646,13 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+        } else if self.look().shape == Shape::Instr
+            && (!lang.keywords.contains(&self.look().lexeme)
+                // A soft keyword is a name again where an annotation
+                // follows it.
+                || Lang::spells(&lang.type_alias_words, &self.look().lexeme)
+                || Lang::spells(&lang.match_words, &self.look().lexeme)
+                || Lang::spells(&lang.match_cases, &self.look().lexeme))
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
@@ -9169,7 +9175,6 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
-                for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
                 if extra == 0 && parent.is_some() && self.method_self.is_some() && member.is_none() && !self.gathered.is_empty() {
@@ -9193,7 +9198,11 @@ impl<'a> Compiler<'a> {
                         self.class_cannot_run();
                     }
                 } else {
-                    self.class_cannot_run();
+                    // Any other spelling of the parent call -- two-part
+                    // super among them -- is an ordinary call of the
+                    // parent word the program has bound.
+                    self.read(&tok.lexeme);
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
                 }
             }
             Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
@@ -10530,8 +10539,12 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    // The rule names a comma in the part before the
+                    // first for alone; later commas unpack or separate
+                    // what the clauses hold, and are allowed.
+                    if separated { return Err("SyntaxError: did you forget parentheses around the comprehension target?".into()); }
+                    break;
                 }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }

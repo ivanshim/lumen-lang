@@ -9773,7 +9773,7 @@ impl<'a> Machine<'a> {
         if handed > ordinary.len() && gather.is_none() {
             return Err(self.overfull_complaint(program, manners, &fitted, handed).into());
         }
-        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
+        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())).keep(false); }
         // Every unfilled place is told at once: first those taken in
         // order, and the ones taken by name only when none of those is.
         let unfilled = |wanted: &dyn Fn(char) -> bool| -> Vec<String> {
