@@ -6581,7 +6581,7 @@ impl<'a> Machine<'a> {
                     if self.names_in_calls && self.table.prims.contains_key(name.as_ref()) {
                         let (mut positions, keywords) = self.open_arguments(values)?;
                         if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
-                            return Ok(answer);
+                            return Ok(self.collection_cell(answer));
                         }
                         values = positions;
                     }
@@ -7705,7 +7705,9 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if let Some(at) = self.member_place(&fields, name) {
+                    let keep = self.names_in_calls && self.namespace_holding(&Value::Thing(thing.clone())).is_none();
                     return Some(match &fields[at].1 {
+                        Value::Shared(cell) if keep => Value::Shared(cell.clone()),
                         Value::Shared(cell) => cell.borrow().clone(),
                         held => held.clone(),
                     });
@@ -15553,6 +15555,8 @@ impl<'a> Machine<'a> {
                             // A property kept in a shared cell reads as
                             // what the cell holds; the sharing lies
                             // between the names, not in the value.
+                            Some(Value::Shared(cell)) if self.names_in_calls
+                                && self.namespace_holding(&Value::Thing(thing.clone())).is_none() => Value::Shared(cell.clone()),
                             Some(Value::Shared(cell)) => cell.borrow().clone(),
                             Some(x) => x,
                             // A namespace asked for its annotations
