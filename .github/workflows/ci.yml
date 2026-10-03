@@ -58,7 +58,7 @@ jobs:
           cargo build --release
       - name: Run reference suites
         run: |
-          python3 scripts/reference_tests.py 2>&1 | tee reference.log
+          python3 scripts/reference_tests.py --all-python --binary target/release/lumen-lang --no-build 2>&1 | tee reference.log
           test "${PIPESTATUS[0]}" -eq 0
       - name: Check kernel disagreements
         run: |
@@ -76,10 +76,10 @@ jobs:
         run: |
           {
             echo '```markdown'
-            grep -E '^\| all \||^\| `python` \|' tests/REPORT.md
+            grep -E '^\| all \||^\| `python-.*` \|' tests/REPORT.md
             echo ''
-            sed -n '/^## Python:/,/^### Reserved words/{
-              /^## Python:/d
+            sed -n '/^## Python/,/^### Reserved words/{
+              /^## Python/d
               /^### Reserved words/d
               p
             }' tests/REPORT.md
