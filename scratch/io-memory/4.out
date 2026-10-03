@@ -1,0 +1,6 @@
+8 None
+(1, 2)
+SyntaxError 'tuple' is an illegal expression for augmented assignment
+SyntaxError 'tuple' is an illegal expression for augmented assignment
+owner
+bytearray(b'CD')
