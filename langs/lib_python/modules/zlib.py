@@ -47,12 +47,16 @@ def _buffer(data):
     return view.tobytes()
 
 def _indexed(value):
-    try:
-        return _index(value)
-    except TypeError as exc:
-        if str(exc) == 'value cannot be interpreted as an integer':
-            raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
-        raise
+    if not isinstance(value, int) and not hasattr(type(value), '__index__'):
+        raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
+    return _index(value)
+
+def _dictionary_buffer_check(value):
+    # PyObject_CheckBuffer checks the protocol, without acquiring a view.
+    # In particular, released and strided memoryviews still support it.
+    from array import array
+    if not isinstance(value, (bytes, bytearray, memoryview, array)) and not hasattr(type(value), '__buffer__'):
+        raise TypeError('zdict argument must support the buffer protocol')
 
 def _integer(value):
     n = _indexed(value)
@@ -147,13 +151,21 @@ class Compress:
 class Decompress:
     def __init__(self, wbits=MAX_WBITS, zdict=_UNSET):
         window = _integer(wbits)
-        dictionary = b'' if zdict is _UNSET else _buffer(zdict)
-        if len(dictionary) > 4294967295:
-            raise OverflowError('zdict length does not fit in an unsigned int')
-        reply = _invoke(2, int(zdict is not _UNSET), data=dictionary, a=window)
+        if zdict is not _UNSET:
+            _dictionary_buffer_check(zdict)
+        reply = _invoke(2, a=window)
         if reply[0] == -2:
             raise ValueError('Invalid initialization option')
         _raise(reply, 'while creating decompression object')
+        if zdict is not _UNSET and window < 0:
+            try:
+                dictionary = _buffer(zdict)
+                if len(dictionary) > 4294967295:
+                    raise OverflowError('zdict length does not fit in an unsigned int')
+                _raise(_invoke(9, reply[5], dictionary), 'while setting zdict')
+            except:
+                _invoke(6, reply[5])
+                raise
         self._dictionary = zdict
         self._handle = reply[5]
         self._eof = False
