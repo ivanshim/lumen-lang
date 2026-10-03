@@ -891,6 +891,7 @@ pub struct Routine {
     pub code_constants: Vec<Value>,
     pub source_tokens: Rc<str>,
     pub source_end: usize,
+    pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
@@ -1015,11 +1016,21 @@ impl Routine {
             Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
             other => other,
         }).collect();
+        let embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
+            .map(|value| matches!(value, Value::Small(number) if (0..=255).contains(number))).collect());
+        for left in 0..self.code_constants.len() {
+            if self.code_constants[left + 1..].iter().any(|right|
+                std::mem::discriminant(right) == std::mem::discriminant(&self.code_constants[left])
+                    && right.equals(&self.code_constants[left])) {
+                return Err("NotImplementedError: replacing ambiguous duplicate constants is unavailable".into());
+            }
+        }
         let swap = |value: &Value| -> Result<Value, String> {
             let Some(at) = self.code_constants.iter().position(|old|
                 std::mem::discriminant(old) == std::mem::discriminant(value) && old.equals(value)) else {
                 return Ok(value.clone());
             };
+            if embedded[at] { return Ok(value.clone()); }
             match (value, &replacements[at]) {
                 (Value::Routine(existing), Value::Routine(wanted)) => {
                     if existing.source_tokens != wanted.source_tokens || existing.source_end != wanted.source_end || existing.declared_on != wanted.declared_on || existing.formals != wanted.formals || existing.code_names != wanted.code_names {
@@ -1040,7 +1051,14 @@ impl Routine {
         let mut instructions = self.instrs.as_ref().clone();
         for instruction in &mut instructions {
             match instruction {
-                Instr::Const(value) | Instr::Bump { by: value, .. } => *value = swap(value)?,
+                Instr::Const(value) => *value = swap(value)?,
+                Instr::Bump { by, .. } => {
+                    let updated = swap(by)?;
+                    if !matches!(updated, Value::Small(_)) {
+                        return Err("NotImplementedError: changing the type of a fused increment is unavailable".into());
+                    }
+                    *by = updated;
+                }
                 Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
                     for operand in [a, b] {
                         if let Operand::Const(value) = operand { *value = swap(value)?; }
@@ -1051,6 +1069,7 @@ impl Routine {
         }
         result.instrs = Rc::new(instructions);
         result.code_constants = replacements;
+        result.embedded_integers = Some(embedded);
         result.doc = result.code_constants.first().and_then(|value| match value {
             Value::Text(text) => Some(text.to_string()), _ => None,
         });

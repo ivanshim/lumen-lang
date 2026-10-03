@@ -791,6 +791,7 @@ pub struct Routine {
     pub literals: Vec<Value>,
     pub lexical_origin: Rc<str>,
     pub body_boundary: usize,
+    pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
     pub flags: i64,
@@ -932,11 +933,12 @@ impl Form {
 }
 
 impl Form {
-    pub fn change_literals(&mut self, old: &[Value], new: &[Value]) -> Result<(), String> {
-        fn alter(value: &mut Value, old: &[Value], new: &[Value]) -> Result<(), String> {
-            let chosen = old.iter().zip(new).find(|(prior, _)|
+    pub fn change_literals(&mut self, old: &[Value], new: &[Value], inline: &[bool]) -> Result<(), String> {
+        fn alter(value: &mut Value, old: &[Value], new: &[Value], inline: &[bool]) -> Result<(), String> {
+            let chosen = old.iter().zip(new).enumerate().find(|(_, (prior, _))|
                 std::mem::discriminant(*prior) == std::mem::discriminant(value) && prior.equals(value));
-            if let Some((_, wanted)) = chosen {
+            if let Some((index, (_, wanted))) = chosen {
+                if inline[index] { return Ok(()); }
                 *value = match (&*value, wanted) {
                     (Value::Routine(current), Value::Routine(template)) => {
                         if current.lexical_origin != template.lexical_origin || current.body_boundary != template.body_boundary || current.declared_on != template.declared_on || current.formals != template.formals || current.referenced != template.referenced {
@@ -953,13 +955,13 @@ impl Form {
                     _ => wanted.clone(),
                 };
             } else if let Value::Routine(body) = value {
-                if body.frameless { Rc::make_mut(body).body.change_literals(old, new)?; }
+                if body.frameless { Rc::make_mut(body).body.change_literals(old, new, inline)?; }
             }
             Ok(())
         }
         let mut descend: Vec<&mut Form> = Vec::new();
         match self {
-            Self::Const(value) => alter(value, old, new)?,
+            Self::Const(value) => alter(value, old, new, inline)?,
             Self::Write(_, inner) | Self::Tie(_, inner) | Self::ShareItem(_, inner)
             | Self::ShareField(inner, _) | Self::ShareOwn(inner, _) | Self::ShareCalled(inner)
             | Self::ForgetCalled(inner) | Self::ReadyCalled(inner) | Self::Muted(inner)
@@ -971,10 +973,10 @@ impl Form {
                 descend.extend(arguments);
             }
             Self::Dyad { a, b, .. } => for input in [a, b] {
-                match input { Input::Form(inner) => descend.push(inner), Input::Const(value) => alter(value, old, new)?, _ => {} }
+                match input { Input::Form(inner) => descend.push(inner), Input::Const(value) => alter(value, old, new, inline)?, _ => {} }
             },
             Self::Bump { by, .. } => {
-                let mut value = Value::Small(*by); alter(&mut value, old, new)?;
+                let mut value = Value::Small(*by); alter(&mut value, old, new, inline)?;
                 match value { Value::Small(amount) => *by = amount,
                     _ => return Err("NotImplementedError: changing the type of a fused increment is unavailable".into()) }
             }
@@ -995,7 +997,7 @@ impl Form {
             Self::ForgetWithin(a, b) | Self::TieCalled(a, b) | Self::CallWrite(a, b) => descend.extend([a.as_mut(), b.as_mut()]),
             _ => {}
         }
-        for child in descend { child.change_literals(old, new)?; }
+        for child in descend { child.change_literals(old, new, inline)?; }
         Ok(())
     }
 }
@@ -1012,8 +1014,17 @@ impl Routine {
                 plain => plain,
             });
         }
+        let inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter().map(|value|
+            if let Value::Small(n) = value { *n >= 0 && *n < 256 } else { false }).collect());
+        for (index, entry) in self.literals.iter().enumerate() {
+            if self.literals.iter().skip(index + 1).any(|other|
+                std::mem::discriminant(entry) == std::mem::discriminant(other) && entry.equals(other)) {
+                return Err(String::from("NotImplementedError: replacing ambiguous duplicate constants is unavailable"));
+            }
+        }
         let mut adjusted = self.clone();
-        adjusted.body.change_literals(&self.literals, &literals)?;
+        adjusted.body.change_literals(&self.literals, &literals, &inline)?;
+        adjusted.immediate_slots = Some(inline);
         adjusted.doc = literals.first().and_then(|value| match value {
             Value::Text(word) => Some(word.to_string()), _ => None,
         });
