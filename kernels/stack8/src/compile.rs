@@ -1914,7 +1914,7 @@ impl<'a> Compiler<'a> {
 
     fn python_type_scope_problem(&self) -> Option<String> {
         if self.lang.syntax_members.is_empty() { return None; }
-        let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
         let first = spelling(self.pos);
         let mut name_at = self.pos + 1;
         if first == "async" {
@@ -1987,7 +1987,7 @@ impl<'a> Compiler<'a> {
             for item in at + 1..self.tokens.len() {
                 let token = &self.tokens[item];
                 if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let kind = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                let kind = match token.spelling() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
                 if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
@@ -2296,7 +2296,7 @@ impl<'a> Compiler<'a> {
                     found.push((format!("invalid {kind} literal"), token.row, following.column));
                 }
             }
-            if token.shape == Shape::Instr && lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Same)) {
+            if token.shape == Shape::Instr && lang.dyadic.get(token.spelling()).map_or(false, |op| matches!(op.action, Action::Same)) {
                 let negated = at + 1 < end && self.tokens[at + 1].shape == Shape::Instr && Lang::spells(&lang.identity_not, &self.tokens[at + 1].spelling());
                 let mut right = at + 1 + usize::from(negated);
                 // A sign before a number is folded into it by the reference.
@@ -2407,7 +2407,7 @@ impl<'a> Compiler<'a> {
                 if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
             }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
-                let from = self.look_ahead(1).lexeme == "from";
+                let from = self.look_ahead(1).spelling() == "from";
                 let complaint = if self.in_class_body() { Some("inside classes") }
                     else if !self.piece().outermost { Some("inside functions") }
                     else if self.syntax_try_nesting > 0 { Some("inside try/except blocks") }
@@ -2422,7 +2422,7 @@ impl<'a> Compiler<'a> {
                     self.registry.stopped_end = end.1;
                     return Err(format!("SyntaxError: lazy {} not allowed {place}", if from { "from ... import" } else { "import" }));
                 }
-                if from && statement.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                if from && statement.windows(2).any(|pair| pair[0].spelling() == "import" && pair[1].spelling() == "*") {
                     self.registry.stopped_end_row = end.0;
                     self.registry.stopped_end = end.1;
                     return Err("SyntaxError: lazy from ... import * is not allowed".into());
@@ -2673,7 +2673,7 @@ impl<'a> Compiler<'a> {
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
-            if Lang::spells(&lang.modifier_words, &w) && self.look_ahead(1).shape == Shape::Instr && names_class(&self.look_ahead(1).lexeme) {
+            if Lang::spells(&lang.modifier_words, &w) && self.look_ahead(1).shape == Shape::Instr && names_class(self.look_ahead(1).spelling()) {
                 self.take();
                 return self.class_decl();
             }
@@ -2878,7 +2878,7 @@ impl<'a> Compiler<'a> {
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
-        if !lang.syntax_members.is_empty() && self.look().lexeme == "ad" && self.look_ahead(1).shape == Shape::Instr {
+        if !lang.syntax_members.is_empty() && self.look().spelling() == "ad" && self.look_ahead(1).shape == Shape::Instr {
             return Err("SyntaxError: invalid syntax. Did you mean 'and'?".into());
         }
         if !lang.syntax_members.is_empty() && !self.on_any(&lang.block_intros) {
@@ -2918,7 +2918,7 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
                 if !seen { count += 1; seen = true; }
-                starred |= self.lang.dyadic.get(&t.lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
+                starred |= self.lang.dyadic.get(t.spelling()).map_or(false, |op| matches!(op.action, Action::Mul));
             }
             if opening { depth += 1; }
             if closing { depth -= 1; }
@@ -3188,7 +3188,7 @@ impl<'a> Compiler<'a> {
     /// operators, are the reader's answer here.
     fn may_adorn(&self) -> bool {
         let lang = self.lang;
-        let word = &self.look().lexeme;
+        let word = self.look().spelling();
         if !lang.keywords.contains(word) { return true; }
         [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words]
             .into_iter().any(|spellings| Lang::spells(spellings, word))
@@ -3286,7 +3286,7 @@ impl<'a> Compiler<'a> {
             while at < end && self.tokens[at].shape != Shape::LineEnd && self.tokens[at].lexeme != ";" { at += 1; }
             let statement = &self.tokens[start..at];
             if !(docstring && statement.iter().all(|word| word.shape == Shape::Quote))
-                && !(statement.len() >= 3 && statement[0].lexeme == "from" && statement[1].spelling() == "__future__" && statement[2].lexeme == "import") { return false; }
+                && !(statement.len() >= 3 && statement[0].spelling() == "from" && statement[1].spelling() == "__future__" && statement[2].spelling() == "import") { return false; }
             docstring = false;
         }
         true
@@ -4148,7 +4148,7 @@ impl<'a> Compiler<'a> {
 
     fn case_pattern(&mut self) -> Res<crate::code::Pattern> {
         let mut star = None;
-        let first = if self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+        let first = if self.lang.dyadic.get(self.look().spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
             star = Some(0);
             self.pattern_capture()?
@@ -4259,7 +4259,7 @@ impl<'a> Compiler<'a> {
         use crate::code::Pattern;
         let lang = self.lang;
         let token = self.look().clone();
-        if token.shape == Shape::Numeral || lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Sub)) {
+        if token.shape == Shape::Numeral || lang.dyadic.get(token.spelling()).map_or(false, |op| matches!(op.action, Action::Sub)) {
             self.take();
             let value = if token.shape == Shape::Numeral { parse_number(&token.lexeme, lang)? } else {
                 if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
@@ -4734,7 +4734,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.take();
-        if !lang.syntax_members.is_empty() && self.look_ahead(1).lexeme == "im" {
+        if !lang.syntax_members.is_empty() && self.look_ahead(1).spelling() == "im" {
             return Err("SyntaxError: invalid syntax. Did you mean 'in'?".into());
         }
         if !lang.syntax_members.is_empty() {
@@ -5719,7 +5719,7 @@ impl<'a> Compiler<'a> {
         for at in self.pos..self.tokens.len() {
             let word = &self.tokens[at];
             if matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close) { break; }
-            starred |= word.shape == Shape::Sign && lang.dyadic.get(&word.lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
+            starred |= word.shape == Shape::Sign && lang.dyadic.get(word.spelling()).map_or(false, |op| matches!(op.action, Action::Mul));
         }
         self.stmt()?;
         if starred { self.gathering().unready = true; }
@@ -6242,7 +6242,7 @@ impl<'a> Compiler<'a> {
             let mut own = false;
             let mut reach = Reach::Open;
             while self.look().shape == Shape::Instr {
-                let w = self.look().lexeme.clone();
+                let w = self.look().spelling().to_string();
                 if Lang::spells(&lang.shared_words, &w) {
                     own = true;
                 } else if Lang::spells(&lang.hidden_words, &w) {
@@ -7181,7 +7181,7 @@ impl<'a> Compiler<'a> {
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1),
-                    _ if depth == 0 && (Lang::spells(&lang.assign_words, &token.spelling()) || lang.compound.contains_key(&token.lexeme)) => return Some(at),
+                    _ if depth == 0 && (Lang::spells(&lang.assign_words, &token.spelling()) || lang.compound.contains_key(token.spelling())) => return Some(at),
                     _ => {}
                 }
             }
@@ -7515,7 +7515,7 @@ impl<'a> Compiler<'a> {
             if self.look().lexeme == "[" || self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "(" {
                 let opening = if self.look().lexeme == "[" { self.pos } else { self.pos + 1 };
                 if let Some(close) = self.bracket_close(opening, self.tokens.len()) {
-                    if self.tokens.get(close + 1).is_some_and(|next| self.lang.compound.contains_key(&next.lexeme)) {
+                    if self.tokens.get(close + 1).is_some_and(|next| self.lang.compound.contains_key(next.spelling())) {
                         let kind = if opening == self.pos { "list" } else { "function call" };
                         return Err(format!("SyntaxError: '{kind}' is an illegal expression for augmented assignment"));
                     }
@@ -8409,7 +8409,7 @@ impl<'a> Compiler<'a> {
             if word.shape != Shape::Sign { continue; }
             match word.lexeme.as_str() {
                 "(" => {
-                    let call = at > 0 && self.tokens[at - 1].lexeme != "assert" && (self.tokens[at - 1].shape == Shape::Instr || [")", "]"].contains(&self.tokens[at - 1].lexeme.as_str()));
+                    let call = at > 0 && self.tokens[at - 1].spelling() != "assert" && (self.tokens[at - 1].shape == Shape::Instr || [")", "]"].contains(&self.tokens[at - 1].lexeme.as_str()));
                     groups.push(call);
                     lambda_formals.push(false);
                 }
@@ -8500,7 +8500,9 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Sign | Shape::Instr) {
                 break;
             }
-            let text = t.lexeme.clone();
+            // The infix and conditional words are matched by the spelling
+            // the text wrote, not the folded name an identifier binds as.
+            let text = t.spelling().to_string();
             if !lang.syntax_members.is_empty() && matches!(text.as_str(), "&" | "|")
                 && self.look_ahead(1).lexeme == text && self.look_ahead(1).row == t.row
                 && self.look_ahead(1).column == t.column + 1 {
@@ -8528,7 +8530,7 @@ impl<'a> Compiler<'a> {
                     } else { "SyntaxError: expected 'else' after 'if' expression".into() });
                 }
                 self.take();
-                if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
+                if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().spelling()) {
                     return Err("SyntaxError: expected expression after 'else', but statement is given".into());
                 }
                 self.expr(0)?;
@@ -8670,9 +8672,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn comparison(&self) -> Option<(Action, u32, usize)> {
-        let word = &self.look().lexeme;
+        let word = self.look().spelling();
         if Lang::spells(&self.lang.membership_not, word) {
-            let next = &self.look_ahead(1).lexeme;
+            let next = self.look_ahead(1).spelling();
             if Lang::spells(&self.lang.membership_words, next) {
                 return self.lang.dyadic.get(next).map(|op| (Action::Lacks, op.level, 2));
             }
@@ -8866,7 +8868,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
-        if self.yield_operand && lang.dyadic.get(&tok.lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+        if self.yield_operand && lang.dyadic.get(tok.spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
             let start = self.mark();
             self.prefix()?;
@@ -9060,7 +9062,7 @@ impl<'a> Compiler<'a> {
             }
         }
         if matches!(tok.shape, Shape::Sign | Shape::Instr) {
-            if let Some(infix) = lang.monadic.get(&tok.lexeme).cloned() {
+            if let Some(infix) = lang.monadic.get(tok.spelling()).cloned() {
                 self.take();
                 self.expr(infix.level)?;
                 self.act(infix.action, 1);
@@ -9082,7 +9084,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.hush_words, &tok.spelling()) {
                 // Whatever the piece under the mark has to say about
                 // itself is kept quiet; its value stands as it would.
-                let tier = lang.precedence.get(&tok.lexeme).copied().unwrap_or(0);
+                let tier = lang.precedence.get(tok.spelling()).copied().unwrap_or(0);
                 self.take();
                 self.put(Instr::Mute(true));
                 self.expr(tier)?;
@@ -9542,7 +9544,7 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
-                let word = self.look().lexeme.as_str();
+                let word = self.look().spelling();
                 let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
                     else if ["None", "True", "False"].contains(&word) { Some(word) }
                     else if word == "__debug__" { Some("__debug__") }
@@ -9577,7 +9579,7 @@ impl<'a> Compiler<'a> {
             }
             if targets && !self.lang.syntax_members.is_empty() {
                 if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) { return Err("SyntaxError: cannot delete function call".into()); }
-                let next = self.look().lexeme.as_str();
+                let next = self.look().spelling();
                 let kind = if next == "if" { Some("conditional expression") }
                     else if next == ":=" { Some("named expression") }
                     else if self.lang.dyadic.contains_key(next) { Some("expression") } else { None };
@@ -10485,9 +10487,9 @@ impl<'a> Compiler<'a> {
         for (at, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = &tok.lexeme;
-            if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { lambda_parameters += 1; }
+            if depth == 0 && Lang::spells(&self.lang.lambda_words, tok.spelling()) { lambda_parameters += 1; }
             if depth == 0 && tok.is_lexeme(Shape::Sign, ":") { lambda_parameters = lambda_parameters.saturating_sub(1); }
-            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) {
+            if depth == 0 && Lang::spells(&self.lang.comprehension_for, tok.spelling()) {
                 return Some(if at > self.pos && Lang::spells(&self.lang.comprehension_async, &self.tokens[at - 1].spelling()) { at - 1 } else { at });
             }
             let opens = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
@@ -10526,7 +10528,7 @@ impl<'a> Compiler<'a> {
             let mut separated = false;
             let mut parameters = 0usize;
             for token in self.tokens.iter().skip(self.pos) {
-                let word = token.lexeme.as_str();
+                let word = token.spelling();
                 if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
@@ -10568,7 +10570,7 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 self.act(Action::Tie, 2);
             }
-            if !self.lang.syntax_members.is_empty() && self.look().lexeme == "fur" && self.look_ahead(1).shape == Shape::Instr {
+            if !self.lang.syntax_members.is_empty() && self.look().spelling() == "fur" && self.look_ahead(1).shape == Shape::Instr {
                 return Err("SyntaxError: invalid syntax. Did you mean 'for'?".into());
             }
             if !self.lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Instr | Shape::Numeral | Shape::Quote | Shape::Bytes) {
@@ -11101,6 +11103,8 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &pair.between {
                 if self.at_symbol(sep) {
                     self.take();
+                } else if !self.at_symbol(&pair.close) && !self.lang.syntax_members.is_empty() {
+                    return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
                 }
             }
         }
@@ -11395,7 +11399,7 @@ impl<'a> Compiler<'a> {
 
     fn postfix_word(&mut self, tok: &Token) -> Res<()> {
         let lang = self.lang;
-        let word = tok.lexeme.as_str();
+        let word = tok.spelling();
         if Lang::spells(&lang.true_words, word) {
             self.constant(Value::Flag(true));
             return Ok(());
