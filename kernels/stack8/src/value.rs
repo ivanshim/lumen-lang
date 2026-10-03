@@ -200,6 +200,8 @@ pub struct Generator {
     pub pc: usize,
     pub started: bool,
     pub closed: bool,
+    /// Automatic finalisation runs once, even if the body yields or resurrects.
+    pub finalized: bool,
     pub waiting: bool,
     pub handed: Option<Value>,
     pub returned: Value,
@@ -228,7 +230,7 @@ pub struct Generator {
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
-            closed: false, waiting: false, handed: None, returned: Value::Null,
+            closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
     }
@@ -1559,7 +1561,8 @@ impl Value {
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
             Value::Adapter(_) => "<member wrapper>".to_string(),
-            Value::Object(o) => format!("<object {}>", o.class_now().name),
+            Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
+                .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
@@ -1741,6 +1744,8 @@ pub struct Class {
     /// members and cannot stand as a base. Kept out of the members so
     /// that no program write can reach it.
     pub sealed: std::cell::Cell<bool>,
+    /// Instance slot storage established when the class was constructed.
+    pub declares_slots: bool,
 }
 
 impl Class {
@@ -1952,7 +1957,10 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (part, -1074i64),
         _ => (part | (1u64 << 52), power - 1075),
     };
-    let mut p = BigInt::from(whole);
+    // Cancel powers of two in the native mantissa before allocating.
+    let zeros = whole.trailing_zeros();
+    let twos = twos + i64::from(zeros);
+    let mut p = BigInt::from(whole >> zeros);
     if below {
         p = -p;
     }
@@ -2306,6 +2314,12 @@ fn nearest_real(p: &BigInt, q: &BigInt) -> f64 {
     let minus = p.is_negative() != q.is_negative();
     let sign = u64::from(minus) << 63;
     if q.is_zero() || p.is_zero() { return as_binary(p, q); }
+    // Integers round directly. A dyadic with at most 53 significant bits
+    // and no bit below the smallest subnormal is already representable.
+    if q.is_one() || (p.bits() <= 53 && q.bits() <= 1075
+        && q.trailing_zeros() == Some(q.bits() - 1)) {
+        return as_binary(p, q);
+    }
     let n = p.abs();
     let d = q.abs();
     let mut order = n.bits() as i64 - d.bits() as i64;
