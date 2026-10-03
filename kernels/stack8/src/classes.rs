@@ -1536,14 +1536,18 @@ impl<'a> Engine<'a> {
             9 => self.default_directory(&subject),
             10 => self.root_state(&subject),
             11 | 12 => {
+                let protocol = if place == 11 { 0 } else {
+                    if args.len() != 2 { return Err("TypeError: __reduce_ex__() takes exactly one argument".into()); }
+                    let indexed = match args[1].contents() {
+                        number @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => number,
+                        _ => self.special_index(&args[1]).map_err(Fault::Note)?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", args[1].core_kind()))?,
+                    };
+                    indexed.as_big().map_err(Fault::Note)?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?
+                };
                 if place == 12 {
-                    if let Some(answer) = self.special_call(&subject, 79, Vec::new()).map_err(Fault::Note)? {
-                        return Ok(answer);
-                    }
+                    if let Some(answer) = self.special_call(&subject, 79, Vec::new()).map_err(Fault::Note)? { return Ok(answer); }
                 }
-                self.check_native_reduction(&subject).map_err(Fault::Note)?;
-                let class = match &subject { Value::Object(o) => Value::Class(o.class_now().clone()), other => self.class_type(vec![other.clone()])? };
-                Value::tuple(vec![class, Value::tuple(Vec::new()), self.root_state(&subject)])
+                return self.object_reduction(&subject, protocol);
             }
             13 => Value::Small(match &subject { Value::Object(o) if o.class_now().name != self.class_word("root") => 24, _ => 16 }),
             _ => return Err(self.class_refusal()),
@@ -1551,6 +1555,60 @@ impl<'a> Engine<'a> {
     }
     /// What a thing holds of its own, as a dictionary, or nothing where
     /// it holds nothing.
+    fn object_reduction(&mut self, subject: &Value, protocol: i32) -> Flow<Value> {
+        self.check_native_reduction(subject).map_err(Fault::Note)?;
+        let registry = self.import_module("copyreg")?;
+        if protocol < 2 {
+            let worker = self.class_get(registry, "_reduce_ex", false)?;
+            return self.class_apply(worker.contents(), vec![subject.clone(), Value::Small(i64::from(protocol))]);
+        }
+        let class = self.class_type(vec![subject.clone()])?;
+        let mut arguments = Value::tuple(Vec::new());
+        let mut keywords = Value::Map(Rc::new(Vec::new().into()));
+        let mut has_extended = false;
+        match self.class_get(subject.clone(), "__getnewargs_ex__", false) {
+            Ok(method) => {
+                let result = self.class_apply(method, Vec::new())?;
+                let Value::Tuple(parts) = result.contents() else { return Err(format!("TypeError: __getnewargs_ex__ should return a tuple, not '{}'", result.core_kind()).into()) };
+                if parts.len() != 2 { return Err(format!("ValueError: __getnewargs_ex__ should return a tuple of length 2, not {}", parts.len()).into()); }
+                arguments = parts[0].contents(); keywords = parts[1].contents(); has_extended = true;
+                if !matches!(arguments, Value::Tuple(_)) { return Err(format!("TypeError: first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '{}'", arguments.core_kind()).into()); }
+                if !matches!(keywords, Value::Map(_)) { return Err(format!("TypeError: second item of the tuple returned by __getnewargs_ex__ must be a dict, not '{}'", keywords.core_kind()).into()); }
+            }
+            Err(error) if self.attribute_fault(&error) => (),
+            Err(error) => return Err(error),
+        }
+        if !has_extended {
+            match self.class_get(subject.clone(), "__getnewargs__", false) {
+                Ok(method) => {
+                    arguments = self.class_apply(method, Vec::new())?.contents();
+                    if !matches!(arguments, Value::Tuple(_)) { return Err(format!("TypeError: __getnewargs__ should return a tuple, not '{}'", arguments.core_kind()).into()); }
+                }
+                Err(error) if self.attribute_fault(&error) => (),
+                Err(error) => return Err(error),
+            }
+        }
+        let (constructor, newargs) = if matches!(&keywords, Value::Map(items) if !items.is_empty()) {
+            (self.class_get(registry, "__newobj_ex__", false)?, Value::tuple(vec![class, arguments, keywords]))
+        } else {
+            let Value::Tuple(items) = arguments else { unreachable!() };
+            let mut combined = vec![class]; combined.extend(items.iter().cloned());
+            (self.class_get(registry, "__newobj__", false)?, Value::tuple(combined))
+        };
+        let state = match self.class_get(subject.clone(), "__getstate__", false) {
+            Ok(method) => self.class_apply(method, Vec::new())?,
+            Err(error) if self.attribute_fault(&error) => self.root_state(subject),
+            Err(error) => return Err(error),
+        };
+        let base = Self::worth_of(subject).unwrap_or_else(|| subject.contents());
+        let listitems = if matches!(base.contents(), Value::Array(_)) { self.core_iterator(subject).map_err(Fault::Note)? } else { Value::Null };
+        let dictitems = if matches!(base.contents(), Value::Map(_)) {
+            let items = self.class_get(subject.clone(), "items", false)?;
+            let pairs = self.class_apply(items, Vec::new())?;
+            self.core_iterator(&pairs).map_err(Fault::Note)?
+        } else { Value::Null };
+        Ok(Value::tuple(vec![constructor.contents(), newargs, state, listitems, dictitems]))
+    }
     fn root_state(&self, subject: &Value) -> Value {
         let Value::Object(o) = subject else { return Value::Null };
         let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
@@ -1777,6 +1835,15 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Native(op, word) = &subject {
+            if !Self::kind_builtin(op) && !self.class_word("name").is_empty() {
+                if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(Value::text(word)); }
+                if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                if self.lang.class_special.get(79).is_some_and(|label| label == name) {
+                    return Ok(Self::adapter(0, vec![Value::text(word)]));
+                }
+            }
+        }
         if let Value::Native(Builtin::SortOf, word) = &subject {
             if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(Value::text(word)); }
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
@@ -3230,7 +3297,7 @@ impl<'a> Engine<'a> {
         let tracked = Self::own_kind(c).is_none()
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
-        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + 512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if Self::own_kind(c).is_some() || c.base.is_none() && c.name == self.class_word("root") { 0 } else { 512 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }

@@ -1247,6 +1247,8 @@ impl Value {
             }
             (Value::Bytes(a, ..), Value::Bytes(b, ..)) => *a.borrow() == *b.borrow(),
             (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
+            (Value::ByteKind(changeable, _), Value::Native(crate::code::Builtin::Bytes(kind), _))
+            | (Value::Native(crate::code::Builtin::Bytes(kind), _), Value::ByteKind(changeable, _)) => *kind == u8::from(*changeable),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();

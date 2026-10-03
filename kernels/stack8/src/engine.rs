@@ -522,7 +522,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(2)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -547,7 +547,11 @@ impl<'a> Engine<'a> {
                 constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
-        classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
+        let mut result: HashMap<String, Value> = classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect();
+        if let Some(os_error) = result.get("OSError").cloned() {
+            for alias in ["EnvironmentError", "IOError"] { if names.iter().any(|name| name == alias) { result.insert(alias.into(), os_error.clone()); } }
+        }
+        result
     }
 
     /// Letters this run has a fair chance of never having spelled
@@ -6313,6 +6317,9 @@ impl<'a> Engine<'a> {
         }
         if let Value::Slice(bounds) = &held {
             if let Some(at) = self.slice_bound_named(name) { return Ok(Some(bounds[at].clone())); }
+            if let Some(at) = self.lang.class_special.iter().position(|word| word == name).filter(|at| matches!(at, 79 | 81)) {
+                return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), if at == 79 { "slice_reduce" } else { "slice_reduce_ex" }.into())))));
+            }
         }
         // A row of bytes answers to the methods its kind holds, whose
         // words are the ones text goes by, since each of them is a
@@ -9046,7 +9053,7 @@ impl<'a> Engine<'a> {
                     let module = self.drop_top()?;
                     Some(self.class_get(module, name, false)?)
                 },
-                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(..)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
@@ -14921,6 +14928,10 @@ impl<'a> Engine<'a> {
         if let Value::Slice(bounds) = &contents {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             match (operation, args.len()) {
+                ("slice_reduce", 0) | ("slice_reduce_ex", 1) => {
+                    let maker = self.lang.builtins.iter().find(|(_, op)| **op == Builtin::MakeSlice).map(|(word, _)| Value::Native(Builtin::MakeSlice, Rc::from(word.as_str()))).ok_or_else(|| self.special_fault())?;
+                    return Ok(Value::tuple(vec![maker, Value::tuple(bounds.to_vec())]));
+                }
                 ("indices", 1) => {
                     let clipped = self.slice_clipped(bounds, &args[0])?;
                     return Ok(Value::tuple(clipped.into_iter().map(Value::of_big).collect()));
@@ -19089,7 +19100,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::StructNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -19784,7 +19795,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::StructNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -20066,7 +20077,7 @@ impl Engine<'_> {
         }))
     }
 
-    fn core_iterator(&mut self, source: &Value) -> Res<Value> {
+    pub(super) fn core_iterator(&mut self, source: &Value) -> Res<Value> {
         if self.is_async_generator(source) { return Err(self.core_fault("core.uniterable", &source.core_kind())); }
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
         if let Value::Counted(row) = source { return Ok(Self::core_cursor(CursorSource::Counted(row.clone(), BigInt::from(0)))); }
@@ -20568,7 +20579,7 @@ impl Engine<'_> {
             if matches!(b, Builtin::SetAttr | Builtin::DelAttr) && matches!(args.first(), Some(Value::Generator(_))) {
                 return self.class_work(if b == Builtin::SetAttr { 4 } else { 5 }, args).map_err(|fault| fault.told(&self.wording()));
             }
-            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || self.stands_for_kind(v) || matches!(v, Value::Bytes(..)) && matches!(b, Builtin::GetAttr | Builtin::HasAttr)) {
+            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || self.stands_for_kind(v) || matches!(v, Value::Bytes(..) | Value::Native(..)) && matches!(b, Builtin::GetAttr | Builtin::HasAttr)) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
                 if let Some(work) = work {
                     return match self.class_work(work, args) {
@@ -20704,6 +20715,39 @@ impl Engine<'_> {
                 } else {
                     self.check_native_reduction(&args[0])?;
                     self.native_reduce(&args[0])
+                }
+            }
+            Builtin::StructNative => {
+                arity(3, 3)?;
+                if self.lang.struct_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                let Value::Text(format) = args[0].contents() else { return Err("TypeError: format must be text".into()) };
+                let (size, signed): (usize, bool) = match format.chars().last() {
+                    Some('b') => (1, true), Some('B') => (1, false), Some('h') => (2, true), Some('H') => (2, false),
+                    Some('i' | 'l') => (4, true), Some('I' | 'L') => (4, false), Some('q') => (8, true), Some('Q') => (8, false),
+                    _ => return Err("ValueError: bad char in struct format".into()),
+                };
+                let little = format.starts_with('<');
+                if self.truth(&args[2]) {
+                    let indexed = match args[1].contents() { number @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => number, _ => self.special_index(&args[1])?.ok_or_else(|| "ValueError: required argument is not an integer".to_string())? };
+                    let value = indexed.as_big()?;
+                    let bits = size * 8;
+                    let lower = if signed { -(BigInt::from(1) << (bits - 1)) } else { BigInt::from(0) };
+                    let upper = (BigInt::from(1) << (bits - usize::from(signed))) - 1;
+                    if value < lower || value > upper { return Err(format!("ValueError: '{}' format requires {} <= number <= {}", format.chars().last().unwrap(), lower, upper)); }
+                    let mut bytes = value.to_signed_bytes_le();
+                    bytes.resize(size, if value < BigInt::from(0) { 255 } else { 0 });
+                    bytes.truncate(size);
+                    if !little { bytes.reverse(); }
+                    self.byte_make(bytes, false)
+                } else {
+                    let Value::Bytes(bytes, _, _) = args[1].contents() else { return Err("TypeError: a bytes-like object is required".into()) };
+                    let bytes = bytes.borrow();
+                    if bytes.len() != size { return Err(format!("ValueError: unpack requires a buffer of {size} bytes")); }
+                    let number = match (little, signed) {
+                        (true, true) => BigInt::from_signed_bytes_le(&bytes), (false, true) => BigInt::from_signed_bytes_be(&bytes),
+                        (true, false) => BigInt::from_bytes_le(num_bigint::Sign::Plus, &bytes), (false, false) => BigInt::from_bytes_be(num_bigint::Sign::Plus, &bytes),
+                    };
+                    Value::tuple(vec![Value::of_big(number)])
                 }
             }
             Builtin::HeapNative => {
@@ -21270,7 +21314,7 @@ impl Engine<'_> {
         Ok(path)
     }
 
-    fn import_module(&mut self, path: &str) -> Flow<Value> {
+    pub(super) fn import_module(&mut self, path: &str) -> Flow<Value> {
         if path == "_typing" && self.lang.type_parameters { return Ok(self.typing_module()); }
 
         if path.starts_with('.') { let resolved = self.import_path(path)?; return self.import_module(&resolved); }
@@ -22193,10 +22237,11 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
-        if kind == Builtin::OuterNames && self.reading_in.is_none() {
+        if (kind == Builtin::OuterNames || program.body_of_all) && self.reading_in.is_none() {
             let home = self.routine_home(program);
             if home != self.class_word("main") {
                 if let Some(module) = self.modules.get(&home).cloned() {
+                    if kind == Builtin::ClassTool(8) { return self.class_work(8, vec![module]); }
                     let namespace = self.class_word("namespace").to_string();
                     return self.class_get(module, &namespace, false);
                 }
@@ -22208,7 +22253,7 @@ impl Engine<'_> {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
                 value => Rc::new(RefCell::new(value)),
             }
-        } else if kind == Builtin::OuterNames || program.body_of_all {
+        } else if kind == Builtin::OuterNames || program.body_of_all && self.routine_home(program) == self.class_word("main") {
             self.book_here(kind == Builtin::OuterNames)
         } else {
             let mut pairs = Vec::new();
@@ -22987,6 +23032,10 @@ impl Engine<'_> {
                 Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await),
                 None => self.run_text_booked(source, file, mode, near, None, top_await),
             };
+        }
+        if let Some(Value::Object(module)) = self.module_slots.get(&self.source).and_then(|(_, name)| self.modules.get(name)).cloned() {
+            let globals = Rc::new(RefCell::new(Value::Fields(module)));
+            return self.run_text_booked(source, file, mode, globals, None, top_await);
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {

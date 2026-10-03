@@ -27,10 +27,11 @@ class Enum:
         members = []
         member_map = {}
         next_value = 1
+        member_new = vars(cls).get('__new__')
         for name in list(vars(cls)):
-            if name[:1] == '_' or callable(getattr(cls, name)):
-                continue
             value = getattr(cls, name)
+            if name[:1] == '_' or callable(value) or any(hasattr(value, method) for method in ('__get__', '__set__', '__delete__')):
+                continue
             if isinstance(value, auto):
                 value = name.lower() if issubclass(cls, str) else next_value
             if type(value) == int and value >= next_value:
@@ -41,7 +42,12 @@ class Enum:
                     member = held
                     break
             if member is None:
-                if issubclass(cls, int):
+                if member_new is not None:
+                    args = value if isinstance(value, tuple) else (value,)
+                    member = member_new(cls, *args)
+                    member.name = name
+                    member.value = getattr(member, '_value_', value)
+                elif issubclass(cls, int):
                     member = int.__new__(cls, value)
                     member.name = name
                     member.value = value

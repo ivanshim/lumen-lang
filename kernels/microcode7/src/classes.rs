@@ -2052,15 +2052,19 @@ impl<'a> Machine<'a> {
             Some(9)=>self.ordinary_directory(&first),
             Some(10)=>Self::held_as_state(&first),
             Some(11|12)=>{
+                let version = if which == Some(11) { 0 } else {
+                    if values.len() != 2 { return Err(String::from("TypeError: __reduce_ex__() takes exactly one argument").into()); }
+                    let argument = values[1].settled();
+                    let whole = match argument {
+                        Value::Small(_) | Value::Huge(_) | Value::Flag(_) => argument,
+                        _ => self.ask_special(&argument, 43, &[])?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", argument.kind_word()))?,
+                    };
+                    whole.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?
+                };
                 if which == Some(12) {
-                    match self.ask_special(&first, 79, &[])? {
-                        None => {},
-                        Some(reduction) => return Ok(reduction),
-                    }
+                    if let Some(reduction) = self.ask_special(&first, 79, &[])? { return Ok(reduction); }
                 }
-                self.reduction_permitted(&first)?;
-                let kind=self.class_from_type(vec![first.clone()])?;
-                Value::tuple(vec![kind,Value::tuple(Vec::new()),Self::held_as_state(&first)])
+                return self.reduction_for_object(&first, version);
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
             _=>return Err(self.class_unready()),
@@ -2068,6 +2072,63 @@ impl<'a> Machine<'a> {
     }
     /// What a thing holds of its own as a dictionary, or nothing where
     /// it holds nothing.
+    fn reduction_for_object(&mut self, value: &Value, version: i32) -> Res {
+        self.reduction_permitted(value)?;
+        let copyreg = self.load_namespace("copyreg")?;
+        if version <= 1 {
+            let operation = self.read_class_member(copyreg, "_reduce_ex", false)?;
+            return self.apply_class_member(operation.settled(), vec![value.clone(), Value::Small(version as i64)]);
+        }
+        let mut positional = Vec::new();
+        let mut named = Value::Dict(Rc::new(Vec::new().into()));
+        let mut extension = false;
+        let extra = self.read_class_member(value.clone(), "__getnewargs_ex__", false);
+        match extra {
+            Err(ref failed) if self.missing_member_escape(failed) => (),
+            Err(failed) => return Err(failed),
+            Ok(callable) => {
+                let pair = self.apply_class_member(callable, vec![])?.settled();
+                let Value::Tuple(parts) = pair else { return Err(format!("TypeError: __getnewargs_ex__ should return a tuple, not '{}'", pair.kind_word()).into()); };
+                if parts.len() != 2 { return Err(format!("ValueError: __getnewargs_ex__ should return a tuple of length 2, not {}", parts.len()).into()); }
+                let Value::Tuple(args) = parts[0].settled() else { return Err(format!("TypeError: first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '{}'", parts[0].kind_word()).into()); };
+                named = parts[1].settled();
+                if !matches!(named, Value::Dict(_)) { return Err(format!("TypeError: second item of the tuple returned by __getnewargs_ex__ must be a dict, not '{}'", named.kind_word()).into()); }
+                positional.extend(args.iter().cloned()); extension = true;
+            }
+        }
+        if !extension {
+            match self.read_class_member(value.clone(), "__getnewargs__", false) {
+                Err(ref absent) if self.missing_member_escape(absent) => (),
+                Err(absent) => return Err(absent),
+                Ok(callable) => {
+                    let obtained = self.apply_class_member(callable, vec![])?.settled();
+                    if let Value::Tuple(args) = obtained { positional.extend(args.iter().cloned()); }
+                    else { return Err(format!("TypeError: __getnewargs__ should return a tuple, not '{}'", obtained.kind_word()).into()); }
+                }
+            }
+        }
+        let kind = self.class_from_type(vec![value.clone()])?;
+        let (helper, args) = match &named {
+            Value::Dict(entries) if !entries.is_empty() => ("__newobj_ex__", vec![kind, Value::tuple(positional), named]),
+            _ => { positional.insert(0, kind); ("__newobj__", positional) }
+        };
+        let maker = self.read_class_member(copyreg, helper, false)?;
+        let state = match self.read_class_member(value.clone(), "__getstate__", false) {
+            Ok(getter) => self.apply_class_member(getter, vec![])?,
+            Err(ref missing) if self.missing_member_escape(missing) => Self::held_as_state(value),
+            Err(missing) => return Err(missing),
+        };
+        let underlying = Self::underlying(value).unwrap_or_else(|| value.settled());
+        let row = if matches!(underlying.settled(), Value::Vector(_)) {
+            self.core_primitive(Prim::Iterator, "iter", vec![value.clone()], vec![])?
+        } else { Value::Nil };
+        let mapping = if matches!(underlying.settled(), Value::Dict(_)) {
+            let member = self.read_class_member(value.clone(), "items", false)?;
+            let pairs = self.apply_class_member(member, vec![])?;
+            self.core_primitive(Prim::Iterator, "iter", vec![pairs], vec![])?
+        } else { Value::Nil };
+        Ok(Value::tuple(vec![maker.settled(), Value::tuple(args), state, row, mapping]))
+    }
     fn held_as_state(value:&Value)->Value {
         let Value::Thing(t)=value else{return Value::Nil};
         let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
@@ -2328,6 +2389,16 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        match &value {
+            Value::Intrinsic(working, spelling) if !working.names_a_kind() && !self.detail("name").is_empty() => {
+                if [self.detail("qualified"), self.detail("name")].contains(&key) { return Ok(Value::text(spelling)); }
+                if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
+                if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                    return Ok(Self::wrap(0, vec![Value::text(spelling)]));
+                }
+            }
+            _ => ()
+        }
         if let Value::Intrinsic(Prim::SortOf, title) = &value {
             if key == self.detail("name") || key == self.detail("qualified") { return Ok(Value::text(title)); }
             if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
@@ -2446,7 +2517,7 @@ impl<'a> Machine<'a> {
                 // so only the standing bits answer here.
                 if key==self.detail("flags") {
                     let kind=self.native_kind(word);
-                    let mut bits=512|1024;
+                    let mut bits=1024;
                     if self.allowed_slot(&kind,self.detail("namespace")) {
                         bits|=16;
                         if Self::native_beneath(&kind).is_none() { bits|=4; }
@@ -2526,7 +2597,8 @@ impl<'a> Machine<'a> {
             if key == self.detail("flags") {
                 // The seal takes the base-standing bit off and puts the
                 // unchangeable one on.
-                let mut bits = if Self::sealed(b) { 512 | 256 } else { 512 | 1024 };
+                let mut bits = if Self::sealed(b) { 256 } else { 1024 };
+                if Self::native_word(b).is_none() && !(b.under.is_none() && b.name == self.detail("root")) { bits |= 512; }
                 if b.constants.iter().any(|(label, _)| label == "\0native-name") { bits |= 256; }
                 // Things of a class's own making answer to the cycle
                 // collector; what stands on an atomic worth does not.

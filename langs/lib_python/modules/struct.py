@@ -3,10 +3,13 @@ class error(Exception):
     pass
 
 def pack(format, *values):
-    if format == '<q' or format == '>q' or format == '!q':
+    if format in ('<b', '>b', '!b', '<B', '>B', '!B', '<h', '>h', '!h', '<H', '>H', '!H', '<i', '>i', '!i', '<I', '>I', '!I', '<l', '>l', '!l', '<L', '>L', '!L', '<q', '>q', '!q', '<Q', '>Q', '!Q'):
         if len(values) != 1:
             raise error('pack expected 1 items for packing (got ' + str(len(values)) + ')')
-        return int(values[0]).to_bytes(8, 'little' if format == '<q' else 'big', signed=True)
+        try:
+            return __struct_native__(format, values[0], True)
+        except ValueError as exc:
+            raise error(str(exc)) from None
     if format == '<d' or format == '>d' or format == '!d':
         if len(values) != 1:
             raise error('pack expected 1 items for packing (got ' + str(len(values)) + ')')
@@ -32,10 +35,11 @@ def pack(format, *values):
     raise 'NotImplementedError: struct.pack needs byte values'
 
 def unpack(format, buffer):
-    if format == '<q' or format == '>q' or format == '!q':
-        if len(buffer) != 8:
-            raise error('unpack requires a buffer of 8 bytes')
-        return (int.from_bytes(buffer, 'little' if format == '<q' else 'big', signed=True),)
+    if format in ('<b', '>b', '!b', '<B', '>B', '!B', '<h', '>h', '!h', '<H', '>H', '!H', '<i', '>i', '!i', '<I', '>I', '!I', '<l', '>l', '!l', '<L', '>L', '!L', '<q', '>q', '!q', '<Q', '>Q', '!Q'):
+        try:
+            return __struct_native__(format, buffer, False)
+        except ValueError as exc:
+            raise error(str(exc)) from None
     if format == '<d' or format == '>d' or format == '!d':
         if len(buffer) != 8:
             raise error('unpack requires a buffer of 8 bytes')

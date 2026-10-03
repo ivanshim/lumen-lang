@@ -4587,7 +4587,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `FloatingPointError` `EnvironmentError` `IOError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4873,6 +4873,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
+| `ext.builtin.struct_native` | - | - | `__struct_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
@@ -5921,3 +5922,5 @@ class itself and is not inherited by Python subclasses.
 `ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
+
+`ext.builtin.struct_native` supplies fixed-width integer byte packing and unpacking to the Python struct module. It uses the integer range and byte order rules from CPython v3.14.8 Modules/_struct.c.

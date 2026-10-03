@@ -812,6 +812,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.struct_native": ["__struct_native__"],
   "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
@@ -890,7 +891,10 @@
     "BlockingIOError",
     "PermissionError",
     "FileExistsError",
-    "NotADirectoryError"
+    "NotADirectoryError",
+    "FloatingPointError",
+    "EnvironmentError",
+    "IOError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

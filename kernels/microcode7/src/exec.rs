@@ -819,7 +819,7 @@ impl<'a> Machine<'a> {
         let mut chain: Vec<Rc<Blueprint>> = Vec::new();
         for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {
             let parent = match number {
-                0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
+                0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 | 57 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 => Some(20), 42 => Some(19),
                 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
@@ -850,7 +850,13 @@ impl<'a> Machine<'a> {
             };
             chain.push(Rc::new(kind));
         }
-        chain.into_iter().map(|b| (b.name.clone(), Value::Blueprint(b))).collect()
+        let mut furnished: HashMap<String, Value> = chain.into_iter().map(|b| (b.name.clone(), Value::Blueprint(b))).collect();
+        for alternate in ["IOError", "EnvironmentError"] {
+            if table.strings("ext.builtin.exceptions").iter().any(|word| word == alternate) {
+                if let Some(original) = furnished.get("OSError").cloned() { furnished.insert(alternate.to_owned(), original); }
+            }
+        }
+        furnished
     }
 
     fn is_fault_kind(&self, kind: &Blueprint) -> bool {
@@ -6956,7 +6962,7 @@ impl<'a> Machine<'a> {
                                     || self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word| word == &values[1].bare())) => {
                                 return self.read_class_member(values[0].clone(), &values[1].bare(), false);
                             },
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -8040,7 +8046,10 @@ impl<'a> Machine<'a> {
             return Some(self.kind_named_after(&value.settled()));
         }
         if let Value::Span(bounds) = value {
-            return self.span_bound_named(name).map(|i| bounds[i].clone());
+            if let Some(which) = self.span_bound_named(name) { return Some(bounds[which].clone()); }
+            let slot = self.table.strings("ext.stmt.class.special").iter().position(|entry| entry == name)?;
+            if slot != 79 && slot != 81 { return None; }
+            return Some(Value::Member(Rc::new(value.clone()), String::from(if slot == 81 { "span_reduce_ex" } else { "span_reduce" })));
         }
         // A stepped walk holds three numbers and no places; each of the
         // three answers to its own word.
@@ -8782,6 +8791,10 @@ impl<'a> Machine<'a> {
         if let Value::Span(bounds) = receiver.settled() {
             if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             return match (name, arguments.len()) {
+                ("span_reduce", 0) | ("span_reduce_ex", 1) => {
+                    let constructor = self.table.prims.iter().find(|(_, op)| **op == Prim::SpanOf).map(|(word, _)| Value::Intrinsic(Prim::SpanOf, Rc::from(word.as_str()))).ok_or_else(|| self.bad_answer())?;
+                    Ok(Value::tuple(vec![constructor, Value::tuple(bounds.to_vec())]))
+                }
                 ("indices", 1) => {
                     let clipped = self.span_clipped(&bounds, &arguments[0]);
                     if let Some(away) = self.got_away.take() { return Err(away); }
@@ -18883,7 +18896,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::StructNative | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -21407,7 +21420,7 @@ impl Machine<'_> {
         Ok(prefix)
     }
 
-    fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+    pub(super) fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") { return Ok(self.type_support_namespace()); }
 
         // A name a program's own code took out of `sys.modules` is read
@@ -22268,10 +22281,11 @@ impl<'a> Machine<'a> {
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
-        if op == Prim::WorldBook && self.reading_now.is_none() {
+        if (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) && self.reading_now.is_none() {
             let origin = self.frames_named.last().map(|routine| self.routine_home(routine));
             if let Some(origin) = origin.filter(|name| name != self.detail("main")) {
                 if let Some(namespace) = self.imported.get(&origin).cloned() {
+                    if op == Prim::ClassWork(8) { return self.work_on_class(8, vec![namespace]).map_err(|escaped| self.suspension_fault(escaped)); }
                     let key = self.detail("namespace").to_owned();
                     return self.read_class_member(namespace, &key, false).map_err(|error| self.suspension_fault(error));
                 }
@@ -22283,7 +22297,7 @@ impl<'a> Machine<'a> {
                 Value::Shared(cell) | Value::Mutable(cell, _) => cell,
                 value => Rc::new(RefCell::new(value)),
             }
-        } else if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
+        } else if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) && self.frames_named.last().is_none_or(|routine| self.routine_home(routine) == self.detail("main")) {
             self.book_about(op == Prim::WorldBook)
         } else {
             let mut entries = Vec::new();
@@ -23102,6 +23116,10 @@ impl<'a> Machine<'a> {
                 None => self.perform_booked(source, file, mode, near, None, top_await),
             };
         }
+        let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| self.imported.get(module)).cloned();
+        if let Some(Value::Thing(namespace)) = owner {
+            return self.perform_booked(source, file, mode, Rc::new(RefCell::new(Value::Attributes(namespace))), None, top_await);
+        }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -23295,7 +23313,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | StructNative | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -24103,7 +24121,7 @@ impl Machine<'_> {
         }
     }
 
-    fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+    pub(super) fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         // A value's identity is the cell it is kept in, so that one
         // primitive alone is handed the cell as it stands.
         // A list or a dictionary's window is walked as it stands, so what
@@ -24145,7 +24163,7 @@ impl Machine<'_> {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
                 return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
             }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || self.stands_for_a_kind(v) || matches!(v, Value::Octets { .. }) && matches!(op, Prim::GetMember | Prim::HasAttribute)) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || self.stands_for_a_kind(v) || matches!(v, Value::Octets { .. } | Value::Intrinsic(..)) && matches!(op, Prim::GetMember | Prim::HasAttribute)) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job {
                     let outcome = self.work_on_class(job, input);
@@ -24301,6 +24319,35 @@ impl Machine<'_> {
                     if !key.starts_with('\0') { entries.push((Value::text(key), item.clone())); }
                 }
                 Ok(Value::Dict(Rc::new(entries.into())))
+            }
+            StructNative => {
+                require(3, 3)?;
+                let pattern = input[0].settled().bare();
+                let letter = pattern.chars().last().ok_or("ValueError: bad char in struct format")?;
+                let width: usize = match letter { 'b' | 'B' => 1, 'h' | 'H' => 2, 'i' | 'I' | 'l' | 'L' => 4, 'q' | 'Q' => 8, _ => return Err("ValueError: bad char in struct format".into()) };
+                let negative = letter.is_ascii_lowercase();
+                let reversed = !pattern.starts_with('<');
+                if self.stands_true(&input[2]) {
+                    let indexed = match input[1].settled() { number @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => number, _ => self.ask_special(&input[1], 43, &[])?.ok_or("ValueError: required argument is not an integer")? };
+                    let whole = indexed.as_big()?;
+                    let ceiling = (BigInt::from(1) << (8 * width - usize::from(negative))) - BigInt::from(1);
+                    let floor = if negative { -(BigInt::from(1) << (8 * width - 1)) } else { BigInt::zero() };
+                    if whole < floor || whole > ceiling { return Err(format!("ValueError: '{letter}' format requires {floor} <= number <= {ceiling}")); }
+                    let padding = if whole < BigInt::zero() { 0xff } else { 0 };
+                    let mut encoded = whole.to_signed_bytes_le();
+                    encoded.resize(width, padding);
+                    encoded.truncate(width);
+                    if reversed { encoded.reverse(); }
+                    Ok(self.octets(encoded, false))
+                } else {
+                    let raw = self.octet_argument(&input[1])?.ok_or("TypeError: a bytes-like object is required")?;
+                    if raw.len() != width { return Err(format!("ValueError: unpack requires a buffer of {width} bytes")); }
+                    let decoded = if negative {
+                        if reversed { BigInt::from_signed_bytes_be(&raw) } else { BigInt::from_signed_bytes_le(&raw) }
+                    } else if reversed { BigInt::from_bytes_be(num_bigint::Sign::Plus, &raw) }
+                    else { BigInt::from_bytes_le(num_bigint::Sign::Plus, &raw) };
+                    Ok(Value::tuple(vec![Value::from_big(decoded)]))
+                }
             }
             HeapNative => {
                 require(2, 3)?;

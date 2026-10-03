@@ -1079,6 +1079,8 @@ impl Value {
             (Value::Arguments(one) | Value::Tuple(one), Value::Arguments(two) | Value::Tuple(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
             (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
             (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
+            (Value::Intrinsic(crate::form::Prim::Octets(code), _), Value::OctetKind { changeable, .. })
+            | (Value::OctetKind { changeable, .. }, Value::Intrinsic(crate::form::Prim::Octets(code), _)) => (*code == 1) == *changeable && *code < 2,
             (Value::Channel(left), Value::Channel(right)) => left == right,
             // A method read off a value twice is one method, so long as
             // the word is the same word and the value the same value —

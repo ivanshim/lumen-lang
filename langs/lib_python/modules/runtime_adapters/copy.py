@@ -2,7 +2,6 @@
 # Retains the documented native-object bridges previously mixed into the source.
 # The upstream module is initialized first, then these bindings supply runtime protocols.
 
-import pickle as _pickle
 import types
 import weakref
 _MethodType = types.MethodType
@@ -40,15 +39,15 @@ def copy(x):
     if reductor is not None:
         rv = reductor(x)
     else:
-        reductor = _reduction_hook(x, "__reduce_ex__")
+        reductor = getattr(x, "__reduce_ex__", None)
         if reductor is not None:
             rv = reductor(4)
         else:
-            reductor = _reduction_hook(x, "__reduce__")
+            reductor = getattr(x, "__reduce__", None)
             if reductor:
                 rv = reductor()
             else:
-                rv = _reduce_native(x)
+                raise Error("un(shallow)copyable object of type %s" % cls)
 
     if isinstance(rv, str):
         return x
@@ -100,15 +99,15 @@ def deepcopy(x, memo=None, _nil=[]):
                 if reductor:
                     rv = reductor(x)
                 else:
-                    reductor = _reduction_hook(x, "__reduce_ex__")
+                    reductor = getattr(x, "__reduce_ex__", None)
                     if reductor is not None:
                         rv = reductor(4)
                     else:
-                        reductor = _reduction_hook(x, "__reduce__")
+                        reductor = getattr(x, "__reduce__", None)
                         if reductor:
                             rv = reductor()
                         else:
-                            rv = _reduce_native(x)
+                            raise Error("un(deep)copyable object of type %s" % cls)
                 if isinstance(rv, str):
                     y = x
                 else:
@@ -153,26 +152,6 @@ def replace(obj, /, **changes):
     if func is None:
         raise TypeError(f"replace() does not support {cls.__name__} objects")
     return func(obj, **changes)
-
-def _reduce_native(value):
-    if type(value) is slice:
-        return (slice, (value.start, value.stop, value.step))
-    if type(value) in (set, frozenset):
-        return (type(value), (list(value),))
-    if getattr(value, "__reduce_ex__", None) is None and getattr(value, "__reduce__", None) is None:
-        raise Error("un(shallow)copyable object of type %s" % type(value))
-    reduction = _pickle._reduce(value, 4)
-    if len(reduction) > 2 and not hasattr(value, "__dict__"):
-        state = reduction[2]
-        if isinstance(state, tuple) and len(state) == 2:
-            reduction = (*reduction[:2], (None, state[1]), *reduction[3:])
-        elif isinstance(state, dict) and not state:
-            reduction = (*reduction[:2], None, *reduction[3:])
-    return reduction
-
-def _reduction_hook(value, name):
-    getattr(value, name, None)
-    return _pickle._reduction_hook(value, name)
 
 d[list] = _deepcopy_list
 
