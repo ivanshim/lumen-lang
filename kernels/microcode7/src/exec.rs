@@ -19950,19 +19950,30 @@ impl Machine<'_> {
             }
         }
         let from_disk = self.sys_path_source(path);
-        let text = match &from_disk {
-            Some((location, text)) => match self.library_module_file(path) {
-                Some(embedded) if self.table.single("ext.system.module.path").is_some() && embedded == *location => self.library_sources.get(path).cloned().unwrap_or_else(|| text.clone()),
-                _ => text.clone(),
+        let (text, own_file) = match &from_disk {
+            Some((location, bytes)) => {
+                let known = self.library_module_file(path);
+                let embedded = self.table.single("ext.system.module.path").is_some() && self.library_sources.contains_key(path) && known.as_ref() == Some(location);
+                let text = if embedded {
+                    match self.library_sources.get(path) {
+                        Some(source) => Rc::from(source.as_str()),
+                        None => Rc::from(String::from_utf8_lossy(bytes).as_ref()),
+                    }
+                } else {
+                    match self.decode_program(bytes, location) {
+                        Ok(text) => text,
+                        Err(words) => return Err(words),
+                    }
+                };
+                (text, Some(location.clone()))
             },
-            None => self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
-                let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
-                format!("{before}{path}{after}")
-            })?,
-        };
-        let own_file = match &from_disk {
-            Some((file, _)) => Some(file.clone()),
-            None => self.library_module_file(path),
+            None => {
+                let source = self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
+                    let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+                    format!("{before}{path}{after}")
+                })?;
+                (Rc::from(source.as_str()), self.library_module_file(path))
+            },
         };
         if self.table.single("ext.system.module.path").is_none() {
             if let Some((owner, _)) = split { self.load_namespace(owner)?; }
@@ -20106,7 +20117,7 @@ impl Machine<'_> {
 
     /// A dotted name uses its owner's current search directories. Ordinary
     /// names use sys.path; regular packages precede files in each directory.
-    fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
+    fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
         let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
             (head, self.table.single("ext.system.module.path")?, tail)
         } else { ("sys", "path", path) };
@@ -20147,11 +20158,11 @@ impl Machine<'_> {
                 if self.table.single("ext.system.module.path").is_some() {
                     if let Some(resolved) = library_location(&location, Some(&virtual_dirs)) {
                         if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(*name)) {
-                            return Some((resolved.to_string_lossy().into_owned(), text.clone()));
+                            return Some((resolved.to_string_lossy().into_owned(), text.as_bytes().to_vec()));
                         }
                     }
                 }
-                if let Ok(text) = std::fs::read_to_string(&location) {
+                if let Ok(text) = std::fs::read(&location) {
                     return Some((made_absolute(&location.to_string_lossy()), text));
                 }
             }

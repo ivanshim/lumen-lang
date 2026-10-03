@@ -19972,20 +19972,23 @@ impl Engine<'_> {
             }
         }
         let from_disk = self.sys_path_source(path);
-        let source = match &from_disk {
-            Some((file, source)) => {
-                if self.lang.module_path.is_some() && self.library_module_file(path).as_ref() == Some(file) {
-                    self.module_sources.get(path).cloned().unwrap_or_else(|| source.clone())
-                } else { source.clone() }
+        let (source, own_file) = match &from_disk {
+            Some((file, bytes)) => {
+                let embedded = self.lang.module_path.is_some() && self.module_sources.contains_key(path) && self.library_module_file(path).as_ref() == Some(file);
+                let source = if embedded {
+                    self.module_sources.get(path).cloned().unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+                } else {
+                    match self.source_bytes(bytes, file) {
+                        Ok(text) => text.to_string(),
+                        Err(fault) => return Err(self.carried.take().unwrap_or_else(|| fault.into())),
+                    }
+                };
+                (source, Some(file.clone()))
             },
             None => match self.module_sources.get(path).filter(|_| parent.is_none() || registering_alias || self.lang.module_path.is_none()).cloned() {
-                Some(source) => source,
+                Some(source) => (source, self.library_module_file(path)),
                 None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
             },
-        };
-        let own_file = match &from_disk {
-            Some((file, _)) => Some(file.clone()),
-            None => self.library_module_file(path),
         };
         if self.lang.module_path.is_none() {
             if let Some((above, _)) = parent { self.import_module(above)?; }
@@ -20115,7 +20118,7 @@ impl Engine<'_> {
 
     /// Search sys.path for a root module, or the parent package path for
     /// a child. Initializer directories and file names are made absolute.
-    fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
+    fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
         let (owner, word, leaf) = match path.rsplit_once('.') {
             Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
             None => ("sys", "path", path),
@@ -20156,11 +20159,11 @@ impl Engine<'_> {
                 if self.lang.module_path.is_some() {
                     if let Some(location) = module_location(std::path::Path::new(&file), Some(&directories)) {
                         if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(*name)) {
-                            return Some((location.to_string_lossy().into_owned(), source.clone()));
+                            return Some((location.to_string_lossy().into_owned(), source.as_bytes().to_vec()));
                         }
                     }
                 }
-                if let Ok(source) = std::fs::read_to_string(&file) {
+                if let Ok(source) = std::fs::read(&file) {
                     return Some((made_absolute(&file), source));
                 }
             }
