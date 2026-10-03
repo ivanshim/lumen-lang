@@ -4829,7 +4829,8 @@ impl<'a> Engine<'a> {
                 }
             }
             match &instrs[pc] {
-                Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!program.enclosing.is_empty() || program.annotation.is_some()) => {
+                Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!program.enclosing.is_empty() || program.annotation.is_some()
+                    || program.type_params.iter().any(|(_, bound)| bound.as_ref().map_or(false, |b| !b.enclosing.is_empty()))) => {
                     let mut closed = (**program).clone();
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
@@ -4842,6 +4843,19 @@ impl<'a> Engine<'a> {
                             annotation.enclosed.push((*at, Value::Binding(shared)));
                         }
                         closed.annotation = Some(Rc::new(annotation));
+                    }
+                    // The bounds the declaration's brackets carry are
+                    // captured the same way, each with the very frame
+                    // its declaration stood in, so what they read there
+                    // stands ready long after that frame is gone.
+                    for (slot, (_, bound)) in program.type_params.iter().enumerate() {
+                        let Some(b) = bound else { continue };
+                        let mut taken = (**b).clone();
+                        for (at, cell) in &b.enclosing {
+                            let shared = self.share_cell(cell, frame)?;
+                            taken.enclosed.push((*at, Value::Binding(shared)));
+                        }
+                        closed.type_params[slot].1 = Some(Rc::new(taken));
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }
@@ -19973,9 +19987,14 @@ impl Engine<'_> {
                     // A name the kind keeps no member under is still a
                     // name the value may answer to as a plain read
                     // does, so the two roads never disagree about what
-                    // a value has.
+                    // a value has. A complaint other than the name
+                    // simply not being there travels on, as it does
+                    // through the plain read itself.
                     if found.is_none() && matches!(b, Builtin::GetAttr | Builtin::HasAttr) {
-                        found = self.class_get(args[0].clone(), &word, false).ok();
+                        match self.member_for_pattern(&args[0], &word) {
+                            Ok(held) => found = held,
+                            Err(fault) => return Err(fault.told(&self.wording())),
+                        }
                     }
                     if b == Builtin::HasAttr { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found { return Ok(member); }

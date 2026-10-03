@@ -1467,7 +1467,7 @@ impl<'a> Machine<'a> {
     /// holder per name the declaration wrote, made by the hinting
     /// module's own maker, in the order the names were written. No
     /// names written, an empty row.
-    fn routine_type_row(&mut self, code: &Routine) -> Res {
+    fn routine_type_row(&mut self, code: &Routine, room: &Rc<Env>) -> Res {
         let mut items = Vec::new();
         if !code.type_params.is_empty() {
             let maker = self.hint_maker()?;
@@ -1476,9 +1476,15 @@ impl<'a> Machine<'a> {
                 // The bound a declaration wrote stands beside the
                 // parameter as the evaluator that works it out where
                 // the declaration stands, not as its answer: naming
-                // the parameter asks nothing of it.
+                // the parameter asks nothing of it. What it stands in
+                // is kept with it here, so a later asking needs no road
+                // back to the declaration.
                 if let (Some(held), Value::Thing(o)) = (bound, &made) {
-                    o.holds.borrow_mut().push(("\0type_bound".to_owned(), held.clone()));
+                    let evaluator = match held {
+                        Value::Routine(code) => Value::Bound(code.clone(), room.clone()),
+                        other => other.clone(),
+                    };
+                    o.holds.borrow_mut().push(("\0type_bound".to_owned(), evaluator));
                 }
                 items.push(made);
             }
@@ -1958,7 +1964,7 @@ impl<'a> Machine<'a> {
             // selfsame row.
             if key==self.detail("type_params") {
                 let index=self.routine_storage(&value);
-                let made=self.routine_type_row(&code)?;
+                let made=self.routine_type_row(&code,&room)?;
                 self.routine_members[index].1.holds.borrow_mut().push((format!("\0{key}\0"),made.clone()));
                 return Ok(made);
             }

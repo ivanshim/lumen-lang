@@ -23029,9 +23029,15 @@ impl Machine<'_> {
                     let mut found = self.attribute(standing.as_ref().unwrap_or(&input[0]), &word);
                     // A name the kind keeps no entry under may still be
                     // one the value answers as a plain read of the name
-                    // does; the two ways of asking never disagree.
+                    // does; the two ways of asking never disagree. A
+                    // complaint other than the name simply not being
+                    // there travels on, as it does through the plain
+                    // read itself.
                     if found.is_none() && matches!(op, GetMember | HasAttribute) {
-                        found = self.read_class_member(input[0].clone(), &word, false).ok();
+                        match self.member_for_case(&input[0], &word) {
+                            Ok(held) => found = held,
+                            Err(told) => return Err(told),
+                        }
                     }
                     if op == HasAttribute { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found {
