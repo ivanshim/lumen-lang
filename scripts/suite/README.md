@@ -10,7 +10,7 @@ build (`RUSTFLAGS="-D warnings" cargo build`). None of them edits a test.
 | `fixcheck.py <root> <piece/n>...` | Runs the named `scratch/` programs on both kernels and logs each measured stderr line, for `progcmp.py`. |
 | `progcmp.py <fixcheck.log> <root>` | Compares each logged line with its record and with the other kernel: `agree=`, `stack8=OK/..`, `micro=OK/..`, and how many `.` became `E` or `F`. The dot count covers one kernel only; compare the other by hand. |
 | `fixwrite.py <root> <piece/n>...` | Writes a moved `.out` record from a successful run's stdout, or an `.err` record from the current binary's measured stderr line. It leaves an identical record untouched. Use only once both kernels print the same new line and no `.` was lost on either. |
-| `count_run.py <rawdir> <cap> <binary>` | Runs every `tests/python/*.py` once per kernel into `<rawdir>/<test>.<kernel>.txt` (exit, seconds, stdout, stderr), skipping files already written, so it can be restarted. Reads the tests from `$LUMEN_ROOT` (default: the current directory). One process per core (`SUITE_JOBS`), each file in its own working directory, largest first; about 5 minutes on 16 cores. |
+| `count_run.py <rawdir> <cap> <binary>` | Runs every `*.py` in the selected version table's `tests` directory once per kernel into `<rawdir>/<test>.<kernel>.txt` (exit, seconds, stdout, stderr), skipping files already written, so it can be restarted. Reads the tests from `$LUMEN_ROOT` (default: the current directory). One process per core (`SUITE_JOBS`), each file in its own working directory, largest first; about 5 minutes on 16 cores. |
 | `rerun_one.py <rawdir> <test> <kernel> <cap> <binary>` | Reruns one reference file on one kernel with a longer cap (for a file load pushed past the cap). |
 | `count.py <rawdir> <previous rawdir>` | Per kernel: pass and ran totals, and each file whose pass count changed. |
 | `test-debug.sh --lang python\|php\|lumen` | `test.sh` on the debug binary with a 30 s cut-off per program: Python examples on stack8 and microcode7 only (reference kernels ignore ext.* arithmetic), requiring exit 0 and identical output; other languages on all six kernels, each compared with stream35. Expected: python 128, php 318, lumen 522. |
@@ -34,3 +34,43 @@ piece to `stack8` and `microcode7` objects with `returncode`, `stdout`, and
 `stderr`. Both kernels must agree under stderr_record.py's rule. This mode
 also handles a justified change between successful and failing status; review
 the source change and test identities before supplying such measurements.
+
+All Python suite paths come from `langs/python/versions.json` through
+`scripts/python_versions.py`. `count_run.py` and `rerun_one.py` accept
+`--python <series|release>` alongside their positional arguments; CLI then
+`LUMEN_PYTHON` then newest pin selects the suite. They pass the full pin to
+the interpreter. Use separate raw directories for each full release;
+`suite.json` records the release and `count.py` includes it in count labels.
+`python_version_probe.py` probes identity, selection and precedence on both
+full kernels. `reference_tests.py` runs all registered suites by default,
+or one with `--python`; CI runs all registered suites explicitly.
+
+Saved results have an immutable full-release binding in `suite.json`. Both run
+commands validate it before writing results, and refuse a different release.
+A nonempty directory without metadata cannot be reused or reported. `count.py`
+reads both bindings before comparison and refuses cross-release comparisons;
+it never infers a release from the current table or environment. Existing
+bindings remain valid for reporting after a pin refresh, even if that release
+is no longer registered for execution.
+
+To migrate legacy results, recover the exact full release from the original
+run's provenance (not the current table), and prepare an inventory outside the
+results directory:
+
+```json
+{"release":"3.14.8","sha256":{"test_contains.stack8.txt":"<original result SHA-256>","test_contains.microcode7.txt":"<original result SHA-256>"}}
+```
+
+Include every saved `.txt` result. Verify this inventory against the original
+measurement records, then run:
+
+```sh
+python3 scripts/suite/migrate_results.py old-raw --release 3.14.8 --provenance original-inventory.json
+```
+
+Migration requires an exact full release matching the provenance and verifies
+all result bytes against its hashes before creating `suite.json` exclusively.
+It records the provenance path and digest, and refuses to replace an existing
+binding. The inventory is an explicit assertion from the original run's owner;
+its hashes verify the files, not which interpreter produced them. If the
+original release cannot be established, rerun into a new directory instead.

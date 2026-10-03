@@ -3,6 +3,8 @@
 # one file per invocation, all at once; write each result as count_run.py does (<rawdir>/<test>.<kernel>.txt).
 import json, os, pathlib, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from python_versions import supported
 import boto3
 from botocore.config import Config
 tests = [l.strip() for l in open(sys.argv[1]) if l.strip()]

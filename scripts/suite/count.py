@@ -1,4 +1,5 @@
 import sys, re, pathlib
+from results_metadata import compare_bindings
 def read(d):
     out = {}
     for f in sorted(pathlib.Path(d).glob("*.txt")):
@@ -10,7 +11,13 @@ def read(d):
         if ran and len(line) != int(ran.group(1)): line = "?" + line
         out[(stem, k)] = (line, int(ran.group(1)) if ran else 0, "TIMEOUT" in t)
     return out
+try:
+    release = compare_bindings(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+except (ValueError, KeyError, OSError) as error:
+    sys.exit(f"Error: {error}")
 new, old = read(sys.argv[1]), read(sys.argv[2]) if len(sys.argv) > 2 else {}
+def report(*items):
+    print(*items, f"· CPython {release} suite")
 for k in ("stack8", "microcode7"):
     p = r = files = nothing = 0
     for (stem, kk), (line, ran, to) in new.items():
@@ -23,9 +30,9 @@ for k in ("stack8", "microcode7"):
             ol = o[0]
             if len(ol) == len(line):
                 worse = [(i, ol[i], line[i]) for i in range(len(line)) if ol[i] == "." and line[i] in "EF"]
-                if worse: print("  REGRESSION", stem, k, worse[:5])
+                if worse: report("  REGRESSION", stem, k, worse[:5])
             else:
-                print("  length changed", stem, k, len(ol), "->", len(line))
-            if line.count(".") != ol.count("."): print("  %-20s %-10s %d -> %d" % (stem, k, ol.count("."), line.count(".")))
-        elif line: print("  NEW RUNNING", stem, k, line.count("."), "of", ran)
-    print("%s: %d pass of %d ran, %d files, %d run nothing" % (k, p, r, files, nothing))
+                report("  length changed", stem, k, len(ol), "->", len(line))
+            if line.count(".") != ol.count("."): report("  %-20s %-10s %d -> %d" % (stem, k, ol.count("."), line.count(".")))
+        elif line: report("  NEW RUNNING", stem, k, line.count("."), "of", ran)
+    report("%s: %d pass of %d ran, %d files, %d run nothing" % (k, p, r, files, nothing))
