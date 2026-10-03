@@ -111,6 +111,22 @@ def _check_chars(name1, name2, c1, c2):
 
 
 class Dialect:
+    def __new__(cls, dialect=None, delimiter=_NOT_SET, doublequote=_NOT_SET,
+                escapechar=_NOT_SET, lineterminator=_NOT_SET,
+                quotechar=_NOT_SET, quoting=_NOT_SET,
+                skipinitialspace=_NOT_SET, strict=_NOT_SET):
+        if isinstance(dialect, str):
+            if dialect not in _dialects:
+                raise Error('unknown dialect')
+            dialect = _dialects[dialect]
+        if (isinstance(dialect, Dialect) and delimiter is _NOT_SET
+                and doublequote is _NOT_SET and escapechar is _NOT_SET
+                and lineterminator is _NOT_SET and quotechar is _NOT_SET
+                and quoting is _NOT_SET and skipinitialspace is _NOT_SET
+                and strict is _NOT_SET):
+            return dialect
+        return object.__new__(cls)
+
     def __init__(self, dialect=None, delimiter=_NOT_SET, doublequote=_NOT_SET,
                  escapechar=_NOT_SET, lineterminator=_NOT_SET,
                  quotechar=_NOT_SET, quoting=_NOT_SET,
@@ -120,6 +136,12 @@ class Dialect:
                 if dialect not in _dialects:
                     raise Error('unknown dialect')
                 dialect = _dialects[dialect]
+            if (dialect is self and delimiter is _NOT_SET
+                    and doublequote is _NOT_SET and escapechar is _NOT_SET
+                    and lineterminator is _NOT_SET and quotechar is _NOT_SET
+                    and quoting is _NOT_SET and skipinitialspace is _NOT_SET
+                    and strict is _NOT_SET):
+                return
             if delimiter is _NOT_SET:
                 delimiter = _getattr_or_missing(dialect, 'delimiter')
             if doublequote is _NOT_SET:
