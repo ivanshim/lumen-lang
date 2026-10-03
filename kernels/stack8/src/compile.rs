@@ -9011,7 +9011,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if floor == 0 && !lang.syntax_members.is_empty()
-            && ["pass", "break", "continue"].contains(&self.look().lexeme.as_str())
+            && ["pass", "break", "continue"].contains(&self.look().spelling())
             && self.look_ahead(1).spelling() == "if" {
             return Err("SyntaxError: expected expression before 'if', but statement is given".into());
         }
