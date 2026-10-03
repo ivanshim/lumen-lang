@@ -1287,6 +1287,7 @@ impl Value {
             (Value::Array(x), Value::Array(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
             (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Fields(x), Value::Fields(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Null, Value::Null) => true,
             _ => false,

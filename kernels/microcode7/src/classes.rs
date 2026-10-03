@@ -1841,21 +1841,8 @@ impl<'a> Machine<'a> {
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
         if code.globe.is_some() {
-            // A routine made beside a namespace answers with the name
-            // that namespace goes by, the way the reference reads one
-            // out of the dictionary the routine was made with.
-            let handed = code.globe.clone().unwrap();
-            let within = match &handed {
-                Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),
-                other => other.clone(),
-            };
-            if let Value::Dict(entries) = &within {
-                for word in self.table.strings("ext.system.module.name") {
-                    if let Some((_, worth)) = entries.iter().find(|(key, _)| spells_key(key, word)) {
-                        if !matches!(worth, Value::Nil | Value::Unset) { return worth.clone(); }
-                    }
-                }
-            }
+            // The name a routine was made beside was caught when it was
+            // made, and no later change of that namespace moves it.
             return match &code.framed_in { Some(named) => Value::text(named), None => Value::Nil };
         }
         Value::text(&self.routine_home(code))

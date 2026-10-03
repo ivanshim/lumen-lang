@@ -8203,7 +8203,16 @@ impl<'a> Engine<'a> {
                 let mut entries = Self::fields_entries(o);
                 let mut found = None;
                 for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
-                if let Some(at) = found { entries[at].1 = args[1].clone(); } else { entries.push((key, args[1].clone())); }
+                match found {
+                    // A binding the module's own code reads through a
+                    // slot keeps its cell, and a new value goes into
+                    // that very cell.
+                    Some(at) => match &entries[at].1 {
+                        Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => *cell.borrow_mut() = args[1].clone(),
+                        _ => entries[at].1 = args[1].clone(),
+                    },
+                    None => entries.push((key, args[1].clone())),
+                }
                 Self::fields_restore(o, entries);
                 args[2].clone()
             }
@@ -20390,12 +20399,17 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
-        // A module's routines are made in the module's own dictionary,
-        // the one its names will stand in, so that a name they read and
-        // `globals()` asked from within them reach that dictionary and
-        // no other, as the reference has it.
-        let namespace = Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))));
-        local.globe = Some(Value::Bond(namespace.clone()));
+        // A module's routines are made beside the module's own face:
+        // the very holdings names are read from and written to, so a
+        // name they read, `globals()` asked from within them, an
+        // attribute of the module and a key written through those
+        // globals all meet in one place.
+        self.made += 1;
+        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
+            fields: RefCell::new(Vec::new()), mark: self.made,
+        });
+        local.globe = Some(Value::Fields(object.clone()));
         local.born = Some(self.native_dict());
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
             Ok(program) => program,
@@ -20449,20 +20463,15 @@ impl Engine<'_> {
         if let (Some(word), Some(search)) = (&self.lang.module_path, package_path) {
             if !fields.iter().any(|(name, _)| name == word) { fields.push((word.clone(), search)); }
         }
-        // The dictionary the module's routines were made with is filled
-        // now that its names are known: the same entries the module
-        // shows on its own face, so the two read as one dictionary.
-        let mut kept: Vec<(Value, Value)> = fields.iter().map(|(name, worth)| (Value::text(name), worth.clone())).collect();
+        // The builtins word stands among the module's own names, as the
+        // reference keeps it in every module's dictionary.
         let natives = self.natives_book();
         for word in &self.lang.module_builtins {
-            if !kept.iter().any(|(key, _)| key_spells(key, word)) { kept.push((Value::text(word), Value::Bond(natives.clone()))); }
+            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), Value::Bond(natives.clone()))); }
         }
-        *namespace.borrow_mut() = Value::Map(Rc::new(kept.into()));
-        self.made += 1;
-        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
-            fields: RefCell::new(fields), mark: self.made,
-        });
+        // The names now stand in the face the routines were made
+        // beside, the one holdings place that has been waiting for them.
+        *object.fields.borrow_mut() = fields;
         let module = Value::Object(object);
         self.modules.insert(path.to_string(), module.clone());
         let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
@@ -21210,11 +21219,11 @@ impl Engine<'_> {
         if let Some(book) = self.constructor_book(program) { return book; }
         if let Some(held) = &program.globe {
             let cell = match held {
-                Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Some(cell.clone()),
-                Value::Map(_) => Some(Rc::new(RefCell::new(held.clone()))),
-                _ => None,
+                Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.clone(),
+                Value::Map(_) | Value::Fields(_) => Rc::new(RefCell::new(held.clone())),
+                _ => return self.book_here(true),
             };
-            if let Some(book) = cell { return book; }
+            return cell;
         }
         self.book_here(true)
     }
@@ -21961,12 +21970,13 @@ impl Engine<'_> {
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
             match value {
                 None | Some(Value::Null) => Ok(None),
-                Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_)) => Ok(Some(cell.clone())),
-                // A program's own value, standing in for a dictionary of
-                // its own through the class it answers to: kept in a
-                // cell of its own so the rest of a reading works with it
-                // exactly as it works with a plain dictionary's cell.
-                Some(v @ Value::Object(_)) => Ok(Some(Rc::new(RefCell::new(v.clone())))),
+                Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_) | Value::Fields(_)) => Ok(Some(cell.clone())),
+                // A program's own value -- a thing's own face among
+                // them -- standing in for a dictionary of its own
+                // through what it answers to: kept in a cell of its own
+                // so the rest of a reading works with it exactly as it
+                // works with a plain dictionary's cell.
+                Some(v @ (Value::Object(_) | Value::Fields(_))) => Ok(Some(Rc::new(RefCell::new(v.clone())))),
                 Some(_) => Err(self.source_unready()),
             }
         };
