@@ -17820,7 +17820,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::ZlibNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -18515,7 +18515,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -19391,6 +19391,17 @@ impl Engine<'_> {
                         _ => Value::Null,
                     }
                 } else { self.native_reduce(&args[0]) }
+            }
+            Builtin::ZlibNative => {
+                arity(8, 8)?;
+                if self.lang.zlib_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                let mut numbers = [0i64; 7];
+                for (slot, position) in [0, 1, 3, 4, 5, 6, 7].iter().enumerate() {
+                    numbers[slot] = self.byte_whole(&args[*position])?;
+                }
+                let Value::Bytes(content, ..) = args[2].contents() else { return Err("TypeError: codec input must be bytes".into()); };
+                let answer = lumen_zlib::call(numbers[0], numbers[1], &content.borrow(), numbers[2..].try_into().unwrap());
+                Value::Tuple(Rc::new(vec![Value::Small(answer.status), self.byte_make(answer.output, false), Value::Small(answer.consumed), Value::Flag(answer.ended), Value::text(&answer.text), Value::Small(answer.number)]).into())
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;

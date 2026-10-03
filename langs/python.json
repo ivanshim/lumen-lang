@@ -805,6 +805,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.zlib_native": ["__zlib_native__"],
   "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"

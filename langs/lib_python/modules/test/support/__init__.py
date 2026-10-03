@@ -843,3 +843,6 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+# The supported host targets are ARM64 and x86-64, without s390x acceleration.
+is_s390x = False

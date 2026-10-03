@@ -17,12 +17,16 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("annotationlib", include_str!("annotationlib.py"), "annotationlib.py"),
     ("array", include_str!("array.py"), "array.py"),
     ("ast", include_str!("ast.py"), "ast.py"),
+    ("binascii", include_str!("binascii.py"), "binascii.py"),
     ("bisect", include_str!("bisect.py"), "bisect.py"),
     ("builtins", include_str!("builtins.py"), "builtins.py"),
     ("cmath", include_str!("cmath.py"), "cmath.py"),
     ("codecs", include_str!("codecs.py"), "codecs.py"),
     ("collections.abc", include_str!("collections/abc.py"), "collections/abc.py"),
     ("collections", include_str!("collections.py"), "collections/__init__.py"),
+    ("compression", include_str!("compression/__init__.py"), "compression/__init__.py"),
+    ("compression._common", include_str!("compression/_common/__init__.py"), "compression/_common/__init__.py"),
+    ("compression._common._streams", include_str!("compression/_common/_streams.py"), "compression/_common/_streams.py"),
     ("contextlib", include_str!("contextlib.py"), "contextlib.py"),
     ("copy", concat!(include_str!("copy.py"), "\n", include_str!("runtime_adapters/copy.py")), "copy.py"),
     ("copyreg", concat!(include_str!("copyreg.py"), "\n", include_str!("runtime_adapters/copyreg.py")), "copyreg.py"),
@@ -38,6 +42,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("fractions", include_str!("fractions.py"), "fractions.py"),
     ("functools", concat!(include_str!("functools.py"), "\n", include_str!("runtime_adapters/functools.py")), "functools.py"),
     ("gc", include_str!("gc.py"), "gc.py"),
+    ("gzip", include_str!("gzip.py"), "gzip.py"),
     ("heapq", concat!(include_str!("heapq.py"), "\n", include_str!("runtime_adapters/heapq.py")), "heapq.py"),
     ("inspect", include_str!("inspect.py"), "inspect.py"),
     ("io", include_str!("io.py"), "io.py"),
@@ -100,6 +105,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("unittest", include_str!("unittest.py"), "unittest/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.

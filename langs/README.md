@@ -4925,6 +4925,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.strict` | - | - | `strict` | - | - | - | - | - | - | - |
+| `ext.builtin.zlib_native` | - | - | `__zlib_native__` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |
@@ -5716,3 +5717,7 @@ were introduced after 3.14. Integer math arguments use the index protocol,
 including int subclasses and objects implementing __index__.
 Percent-format type errors follow the release wording; successful ordered
 unittest assertions do not stringify their operands.
+
+`ext.builtin.zlib_native` supplies the private Python codec bridge: reference zlib streaming, dictionaries, stream copies, version, CRC-32 and Adler-32. Other languages do not expose this operation.
+
+The zlib host links reference zlib statically through libz-sys 1.1.29; both full kernels expose it only through the Python codec label. `gzip.py`, `compression/__init__.py`, `compression/_common/__init__.py`, and `compression/_common/_streams.py` preserve CPython v3.14.8 bodies below PSF provenance headers. The zlib Python facade manages argument and object protocols around native streams; binascii's CRC-32 entry uses the same native checksum. The only added test.support helper is `is_s390x`, false on the supported ARM64 and x86-64 hosts. Gzip awaits the independently maintained io implementation; no io or re source was changed here.
