@@ -13,6 +13,42 @@ _OPT = 'opt-'
 BYTECODE_SUFFIXES = ['.pyc']
 
 
+# POSIX path helpers from the pinned source above. These deliberately
+# differ from os.path: split at the last separator, strip component
+# endings when joining, and remove one leading ./ from a relative head.
+path_sep = '/'
+path_separators = '/'
+
+
+def _path_join(*path_parts):
+    """Replacement for os.path.join()."""
+    return path_sep.join([part.rstrip(path_separators)
+                          for part in path_parts if part])
+
+
+def _path_split(path):
+    """Replacement for os.path.split()."""
+    i = max(path.rfind(p) for p in path_separators)
+    if i < 0:
+        return '', path
+    return path[:i], path[i + 1:]
+
+
+def _path_isabs(path):
+    """Replacement for os.path.isabs."""
+    return path.startswith(path_separators)
+
+
+def _path_abspath(path):
+    """Replacement for os.path.abspath."""
+    if not _path_isabs(path):
+        for sep in path_separators:
+            path = path.removeprefix(f".{sep}")
+        return _path_join(_os.getcwd(), path)
+    else:
+        return path
+
+
 def cache_from_source(path, debug_override=None, *, optimization=None):
     if debug_override is not None:
         _warnings.warn('the debug_override parameter is deprecated; use '
@@ -21,7 +57,7 @@ def cache_from_source(path, debug_override=None, *, optimization=None):
             raise TypeError('debug_override or optimization must be set to None')
         optimization = '' if debug_override else 1
     path = _os.fspath(path)
-    head, tail = _os.path.split(path)
+    head, tail = _path_split(path)
     base, sep, rest = tail.rpartition('.')
     tag = sys.implementation.cache_tag
     if tag is None:
@@ -40,12 +76,8 @@ def cache_from_source(path, debug_override=None, *, optimization=None):
     filename = almost_filename + BYTECODE_SUFFIXES[0]
     prefix = getattr(sys, 'pycache_prefix', None)
     if prefix is not None:
-        # The reference's own absolute-path step: an absolute head is
-        # kept as it was written, a relative one is joined to the
-        # working directory, and no part of it is tidied either way.
-        if head[:1] != '/':
-            head = _os.path.join(_os.getcwd(), head)
-        if head[1:2] == ':' and head[0:1] not in '/':
+        head = _path_abspath(head)
+        if head[1:2] == ':' and head[0:1] not in path_separators:
             head = head[2:]
-        return _os.path.join(prefix, head.lstrip('/'), filename)
-    return _os.path.join(head, _PYCACHE, filename)
+        return _path_join(prefix, head.lstrip(path_separators), filename)
+    return _path_join(head, _PYCACHE, filename)
