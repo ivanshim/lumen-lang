@@ -18,7 +18,7 @@ use std::rc::{Rc, Weak};
 
 use crate::data::{Adornment, Blueprint, Env, IteratorKind, SetStore, Thing, Value};
 use crate::exec::Suspension;
-use crate::form::Routine;
+use crate::form::{Callee, CaseTest, Form, Input, Routine};
 
 /// What a weak hold is on.
 #[derive(Clone)]
@@ -60,6 +60,17 @@ pub struct Dim {
     pub ghost: Ghost,
     pub bearer: Weak<Thing>,
     pub notify: Option<Value>,
+    dead: Cell<bool>,
+}
+
+impl Dim {
+    /// A cleared reference stays dead across resurrection; a later
+    /// reference to the same target begins live.
+    pub fn revive(&self) -> Option<Value> {
+        if self.dead.get() { None } else { self.ghost.revive() }
+    }
+
+    fn departed(&self) -> bool { self.dead.get() || self.ghost.departed() }
 }
 
 thread_local! {
@@ -71,7 +82,74 @@ thread_local! {
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
+    static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
+}
+
+/// Mark every reference to a lost knot before handing any callback to
+/// the machine. The knots remain owned until resurrection has been
+/// checked, so their pointer identities cannot be reused during this pass.
+pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
+    let lost: HashSet<_> = knots.iter().filter_map(Knot::place).collect();
+    let in_group = |ghost: &Ghost| -> bool {
+        match ghost {
+            Ghost::StaticKind(_) => false,
+            Ghost::Thing(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Blueprint(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Walk(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Set(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Bound(body, frame) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(frame.as_ptr() as usize)),
+            Ghost::Routine(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Method(body, receiver) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(receiver.as_ptr() as usize)),
+        }
+    };
+    let _ = REFERENCES.try_with(|references| {
+        references.borrow_mut().retain(|entry| match entry.upgrade() {
+            None => false,
+            Some(dim) => { if in_group(&dim.ghost) { dim.dead.set(true); } true }
+        });
+    });
+    LISTENERS.try_with(|listeners| {
+        let mut listeners = listeners.borrow_mut();
+        let mut notices = Vec::new();
+        listeners.retain(|dim| {
+            if !dim.dead.get() { return true; }
+            // A listener in the same lost group has no live owner to
+            // receive a notice, even though the web still holds it.
+            if !lost.contains(&(dim.bearer.as_ptr() as usize)) {
+                if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), &dim.notify) {
+                    notices.push((notify.clone(), Value::Thing(bearer)));
+                }
+            }
+            false
+        });
+        let _ = LISTENING.try_with(|number| number.set(listeners.len()));
+        notices.into_iter().rev().collect()
+    }).unwrap_or_default()
+}
+
+pub fn anchor(thing: &Rc<Thing>) {
+    let _ = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if !all.iter().any(|item| Rc::ptr_eq(item, thing)) { all.push(thing.clone()); }
+    });
+}
+
+pub fn anchored_values() -> Vec<Knot> {
+    ANCHORED.try_with(|all| all.borrow().iter().cloned().map(|item| Knot::Held(Value::Thing(item))).collect()).unwrap_or_default()
+}
+
+pub fn release_anchor(thing: &Rc<Thing>) {
+    let _ = ANCHORED.try_with(|all| all.borrow_mut().retain(|item| !Rc::ptr_eq(item, thing)));
+}
+
+pub fn release_all_anchors() {
+    let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+}
+
+fn anchor_ready() -> bool {
+    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
 }
 
 /// The method a class bids farewell with, where the language has one.
@@ -87,7 +165,7 @@ pub fn bidding() -> bool {
 
 /// Whether the machine has anything to attend to before its next step.
 pub fn stirred() -> bool {
-    STIRRED.try_with(|s| s.get()).unwrap_or(false)
+    STIRRED.try_with(|s| s.get()).unwrap_or(false) || anchor_ready()
 }
 
 fn stir() {
@@ -153,7 +231,18 @@ pub fn walk_departing(again: Rc<RefCell<Suspension>>) {
 /// again until nothing comes back.
 pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
     let _ = STIRRED.try_with(|s| s.set(false));
-    let farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
+    let mut farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
+    let ready = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
+        *all = kept;
+        ready
+    }).unwrap_or_default();
+    for thing in ready {
+        if first_farewell(&thing) {
+            if let Some(farewell) = farewell_of(&thing.of) { farewells.push((thing, farewell)); }
+        }
+    }
     let walks = HALF_WALKS.try_with(|h| std::mem::take(&mut *h.borrow_mut())).unwrap_or_default();
     let mut notices = Vec::new();
     let lost = LOST.try_with(|l| l.replace(false)).unwrap_or(false);
@@ -162,7 +251,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
             let mut all = l.borrow_mut();
             let mut still = Vec::with_capacity(all.len());
             for dim in all.drain(..) {
-                if !dim.ghost.departed() {
+                if !dim.departed() {
                     still.push(dim);
                 } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.as_ref()) {
                     notices.push((notify.clone(), Value::Thing(bearer)));
@@ -172,6 +261,9 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
             *all = still;
         });
     }
+    // Listeners are registered in time order; departure tells the most
+    // recent listener on a target before its earlier listeners.
+    notices.reverse();
     (farewells, walks, notices)
 }
 
@@ -197,7 +289,14 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
 pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     note(ghost.clone());
     let wants_telling = notify.is_some();
-    let held = Rc::new(Dim { ghost, bearer, notify });
+    let held = Rc::new(Dim { ghost, bearer, notify, dead: Cell::new(false) });
+    let _ = REFERENCES.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if all.len() >= all.capacity().max(64) {
+            all.retain(|weak| weak.strong_count() > 0);
+        }
+        all.push(Rc::downgrade(&held));
+    });
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
@@ -216,6 +315,84 @@ pub fn note(ghost: Ghost) {
         }
         n.0.push(ghost);
     });
+}
+
+/// The values embedded in compiled forms are owned by their routine.
+/// In particular, an exception arm may retain nested routine constants
+/// after a generator yields, and those routines may keep its globals.
+pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
+    match form {
+        Form::Const(value) => out.push(Knot::Held(value.clone())),
+        Form::Fits { value, test, kinds, .. } => {
+            form_holds(value, out);
+            case_holds(test, out);
+            for kind in kinds { form_holds(kind, out); }
+        }
+        Form::Write(_, body) | Form::OnLine(_, _, body) | Form::Located(_, _, body)
+        | Form::Tie(_, body) | Form::ShareItem(_, body) | Form::ShareField(body, _)
+        | Form::ShareOwn(body, _) | Form::ShareCalled(body) | Form::ForgetCalled(body)
+        | Form::ReadyCalled(body) | Form::Muted(body) | Form::Silenced(body)
+        | Form::Called(body) | Form::CellOrSaid(_, _, _, body)
+        | Form::HeldEither(_, _, _, body) => form_holds(body, out),
+        Form::Apply(callee, args) => {
+            if let Callee::Code(target) = callee { form_holds(target, out); }
+            for arg in args { form_holds(arg, out); }
+        }
+        Form::Cycle { test, body, step, otherwise, .. } => {
+            form_holds(test, out); form_holds(body, out);
+            if let Some(step) = step { form_holds(step, out); }
+            if let Some(otherwise) = otherwise { form_holds(otherwise, out); }
+        }
+        Form::Dyad { a, b, .. } => {
+            for input in [a, b] {
+                match input {
+                    Input::Form(form) => form_holds(form, out),
+                    Input::Const(value) => out.push(Knot::Held(value.clone())),
+                    Input::Address(_) => {}
+                }
+            }
+        }
+        Form::Class { plan, values } => {
+            for (_, body) in &plan.methods { out.push(Knot::Held(Value::Routine(body.clone()))); }
+            for value in values { form_holds(value, out); }
+        }
+        Form::Assert { condition, message } => { form_holds(condition, out); form_holds(message, out); }
+        Form::Attempt { body, clauses, last, otherwise, .. } => {
+            form_holds(body, out);
+            for clause in clauses {
+                if let Some(choices) = &clause.choices { for choice in choices { form_holds(choice, out); } }
+                form_holds(&clause.body, out);
+            }
+            if let Some(last) = last { form_holds(last, out); }
+            if let Some(otherwise) = otherwise { form_holds(otherwise, out); }
+        }
+        Form::SharePlace(_, forms) => for form in forms { form_holds(form, out); },
+        Form::ShareWithin(base, forms) => {
+            form_holds(base, out);
+            for form in forms { form_holds(form, out); }
+        }
+        Form::ForgetWithin(a, b) | Form::TieCalled(a, b) | Form::CallWrite(a, b) => {
+            form_holds(a, out); form_holds(b, out);
+        }
+        Form::Read(_) | Form::Take(_) | Form::Release(_) | Form::Glance(_)
+        | Form::Bump { .. } | Form::Again | Form::Missing(_) | Form::Share(_)
+        | Form::Forget(_) | Form::Ready(_) | Form::Remark(..) => {}
+    }
+}
+
+fn case_holds(test: &CaseTest, out: &mut Vec<Knot>) {
+    match test {
+        CaseTest::Equal(value) => out.push(Knot::Held(value.clone())),
+        CaseTest::AnyOf(parts) => for part in parts { case_holds(part, out); },
+        CaseTest::Series { members, .. } => for member in members { case_holds(member, out); },
+        CaseTest::Also { test, .. } => case_holds(test, out),
+        CaseTest::Table { pairs, .. } => for (key, value) in pairs { case_holds(key, out); case_holds(value, out); },
+        CaseTest::Shape { positional, named, .. } => {
+            for part in positional { case_holds(part, out); }
+            for (_, part) in named { case_holds(part, out); }
+        }
+        CaseTest::Ignore | CaseTest::Keep(_) | CaseTest::Worth(_) => {}
+    }
 }
 
 /// One place in the web: a value, or a frame, which is no value but
@@ -307,6 +484,13 @@ impl Knot {
                 Value::Generator(g) => {
                     if let Ok(g) = g.try_borrow() { g.reaches(out); }
                 }
+                Value::Routine(p) => {
+                    if let Some(a) = &p.annotator { out.push(Knot::Held(Value::Routine(a.clone()))); }
+                    for v in &p.literals { held(out, v); }
+                    if let Some(v) = &p.globe { held(out, v); }
+                    if let Some(v) = &p.born { held(out, v); }
+                    form_holds(&p.body, out);
+                }
                 Value::Set(s) | Value::SetCursor { source: s, .. } => {
                     if let Ok(store) = s.try_borrow() {
                         for (_, v) in &store.entries { held(out, v); }
@@ -372,8 +556,8 @@ impl Knot {
     /// a bound method for its thing, a keyed pair for its two values.
     fn parts(self) -> Vec<Knot> {
         match self {
-            Knot::Held(Value::Bound(_, env)) => vec![Knot::Frame(env)],
-            Knot::Held(Value::Method(_, thing)) => vec![Knot::Held(Value::Thing(thing))],
+            Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
+            Knot::Held(Value::Method(body, thing)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
             Knot::Held(Value::Keyed(k, v)) => vec![Knot::Held((*k).clone()), Knot::Held((*v).clone())],
             other => vec![other],
         }
@@ -394,21 +578,54 @@ struct Strand {
 /// program can still get at. The rest it cannot.
 pub struct Web {
     strands: HashMap<usize, Strand>,
+    bookkeeping: HashMap<usize, usize>,
+}
+
+/// An inline value is an engine root even though it has no shared
+/// pointer of its own. Follow its parts to the first shared owners.
+fn external_knots(knot: Knot, out: &mut Vec<Knot>) {
+    for part in knot.parts() {
+        if part.place().is_some() { out.push(part); }
+        else {
+            let mut children = Vec::new();
+            part.onward(&mut children);
+            for child in children { external_knots(child, out); }
+        }
+    }
 }
 
 impl Web {
     /// Woven from the notable things still about.
-    pub fn from_notable() -> Web {
-        let roots: Vec<Knot> = NOTABLE.try_with(|n| {
+    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
+        let mut bookkeeping = HashMap::new();
+        for knot in &extra {
+            let parts = match knot {
+                Knot::Held(value) => Knot::Held(value.clone()).parts(),
+                Knot::Frame(room) => vec![Knot::Frame(room.clone())],
+            };
+            for part in parts {
+                if let Some(place) = part.place() { *bookkeeping.entry(place).or_insert(0) += 1; }
+            }
+        }
+        let mut roots: Vec<Knot> = NOTABLE.try_with(|n| {
             let mut n = n.borrow_mut();
             n.0.retain(|g| !g.departed());
             n.1 = (n.0.len() * 2).max(8);
             n.0.iter().filter_map(|g| g.revive()).map(Knot::Held).collect()
         }).unwrap_or_default();
-        Web::weave(roots)
+        roots.extend(extra);
+        for knot in live { external_knots(knot, &mut roots); }
+        Web::weave(roots, bookkeeping)
     }
 
-    fn weave(roots: Vec<Knot>) -> Web {
+    pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
+        let function = match function { Value::Bound(body, _) => Value::Routine(body.clone()), other => other.clone() };
+        if let (Some(from), Some(to)) = (Knot::Held(function).place(), Knot::Held(holder.clone()).place()) {
+            if let Some(strand) = self.strands.get_mut(&from) { strand.onward.push(to); }
+        }
+    }
+
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize>) -> Web {
         let mut strands: HashMap<usize, Strand> = HashMap::new();
         let mut frontier: Vec<usize> = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
@@ -436,7 +653,22 @@ impl Web {
             }
             if let Some(strand) = strands.get_mut(&place) { strand.onward = onward; }
         }
-        Web { strands }
+        Web { strands, bookkeeping }
+    }
+
+    /// Whether a value belongs only to an unreachable round, after
+    /// leaving the machine's function bookkeeping out of its holds.
+    pub fn unowned(&self, value: &Value) -> bool {
+        // A bound function's environment can be the live module frame.
+        // Its own routine is the part that determines whether the
+        // function-attribute record is still owned by the program.
+        let parts = match value {
+            Value::Bound(body, _) => vec![Knot::Held(Value::Routine(body.clone()))],
+            other => Knot::Held(other.clone()).parts(),
+        };
+        parts.iter().all(|part| {
+            part.place().and_then(|place| self.strands.get(&place)).is_some_and(|strand| !strand.reached)
+        })
     }
 
     /// The knots the program cannot get at any more. The web's own hold
@@ -444,7 +676,7 @@ impl Web {
     pub fn unreachable(&mut self) -> Vec<Knot> {
         let mut frontier: Vec<usize> = Vec::new();
         for (place, strand) in self.strands.iter_mut() {
-            if strand.knot.holds() > strand.inward + 1 {
+            if strand.knot.holds() > strand.inward + 1 + self.bookkeeping.get(place).copied().unwrap_or(0) {
                 strand.reached = true;
                 frontier.push(*place);
             }
@@ -469,6 +701,16 @@ impl Web {
             });
         }
         lost
+    }
+
+    /// Determine which original knots remain lost after farewells. New
+    /// rounds made during a farewell wait until another reaping; retained
+    /// original knots are accounted for as the machine's bookkeeping.
+    pub fn remaining(&mut self, original: Vec<Knot>) -> Vec<Knot> {
+        drop(self.unreachable());
+        original.into_iter().filter(|knot| {
+            knot.place().and_then(|at| self.strands.get(&at)).is_some_and(|strand| !strand.reached)
+        }).collect()
     }
 
     /// Cuts every unreachable round: each knot that can be emptied is,
