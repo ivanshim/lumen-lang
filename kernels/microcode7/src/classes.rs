@@ -421,8 +421,13 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn ancestry_includes(class:&Rc<Blueprint>,target:&Rc<Blueprint>)->bool {
         if std::iter::once(class).chain(class.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,target)){return true;}
-        // Intrinsic exception blueprints carry a single stored parent,
-        // whereas a class built from a body carries a full ancestry order.
+        // A kind standing under two stands under the second as well.
+        if class.fields.iter().any(|(key,held)| key=="\0also-under" && matches!(held,Value::Blueprint(other) if Self::ancestry_includes(other,target))) {
+            return true;
+        }
+        // Every named forebear's own line counts, and the one stored
+        // parent carries the line of a kind no body built.
+        if class.parents.iter().any(|parent| Self::ancestry_includes(parent,target)) { return true; }
         match &class.under {Some(parent)=>Self::ancestry_includes(parent,target),None=>false}
     }
     fn visible_blueprint(&self,class:Rc<Blueprint>)->Value {
@@ -2730,6 +2735,10 @@ impl<'a> Machine<'a> {
         let mut replacement = replacement;
         if let Value::Thing(t) = &subject {
             if self.is_fault_kind(&t.blueprint()) {
+                if (self.table.single("ext.builtin.exceptions.group.message") == Some(key) || self.table.single("ext.builtin.exceptions.group.members") == Some(key))
+                    && t.blueprint().every_field().iter().any(|(k, _)| k == "\0gathers") {
+                    return Err(format!("AttributeError: attribute '{key}' of '{}' objects is not writable", t.blueprint().name).into());
+                }
                 for (label, description) in [("ext.builtin.exceptions.cause", "cause"), ("ext.builtin.exceptions.context", "context")] {
                     if self.table.single(label) != Some(key) { continue; }
                     let Some(v) = &replacement else { return Err(format!("TypeError: {key} may not be deleted").into()); };
@@ -2799,8 +2808,9 @@ impl<'a> Machine<'a> {
                             Value::Arguments(items) | Value::Tuple(items) | Value::Vector(items) => Value::Arguments(items),
                             other => return Err(format!("TypeError: '{}' object is not iterable", other.kind_word()).into()),
                         };
+                        let shown = match &sequence { Value::Arguments(items) => Value::Tuple(items.clone()), other => other.clone() };
                         let mut storage = t.holds.borrow_mut();
-                        Self::change_entry(&mut storage, key, Some(sequence.clone()));
+                        Self::change_entry(&mut storage, key, Some(shown));
                         Self::change_entry(&mut storage, "\0raised-values", Some(sequence));
                         return Ok(Value::Nil);
                     }
@@ -3281,6 +3291,10 @@ impl<'a> Machine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
+        if let Value::Tuple(options)|Value::Vector(options)=choice {
+            for option in options.iter() { if self.is_beneath(subject,option,class_only)? { return Ok(true); } }
+            return Ok(false);
+        }
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
@@ -3291,7 +3305,6 @@ impl<'a> Machine<'a> {
         // each of the two has its own words, as the reference has.
         let amiss=if class_only{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         match choice {
-            Value::Tuple(options)|Value::Vector(options)=>{for option in options.iter(){if self.is_beneath(subject,option,class_only)?{return Ok(true);}}Ok(false)},
             // A union built by `|` carries a bare `Nil` for the
             // `NoneType` member, the very value `None` itself is, so
             // a chained union reads it back this way rather than
