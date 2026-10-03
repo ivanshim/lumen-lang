@@ -542,7 +542,15 @@ impl Writer<'_> {
     /// and a character mark holds one byte alone.
     pub fn percent(&self, text: &str, argument: &Value, asked: &mut Ask<'_>, of_bytes: bool) -> Result<String> {
         let settled = argument.contents();
-        let argument = &settled;
+        // A thing whose class stands on tuple spells its items for the
+        // positions, the way a plain row of them would.
+        let worth = match &settled {
+            Value::Object(o) if crate::engine::Engine::kind_beneath(&o.class_now()).as_deref() == Some("tuple") => {
+                crate::engine::Engine::worth_of(&settled).map(|held| held.contents())
+            }
+            _ => None,
+        };
+        let argument = worth.as_ref().unwrap_or(&settled);
         let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
         let mut used = 0;
         let mut at = 0;

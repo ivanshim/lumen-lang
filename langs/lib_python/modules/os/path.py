@@ -8,6 +8,7 @@ dirname = _path.dirname
 exists = _path.exists
 isfile = _path.isfile
 isdir = _path.isdir
+isabs = _path.isabs
 abspath = _path.abspath
 realpath = _path.realpath
 normcase = _path.normcase

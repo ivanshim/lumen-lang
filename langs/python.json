@@ -50,6 +50,9 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.file.stat": [
+    "__file_stat"
+  ],
   "ext.builtin.weak.make": [
     "__weak_make"
   ],

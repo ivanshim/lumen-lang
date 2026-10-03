@@ -124,6 +124,9 @@ pub struct Engine<'a> {
     text_books: Vec<TextBook>,
     /// Which of those the run stands inside at present, if any.
     reading_in: Option<usize>,
+    /// The dictionaries of the modules whose own text is running right
+    /// now, innermost last: what `globals()` answers with there.
+    module_books: Vec<Rc<RefCell<Value>>>,
     /// The names and values of the frame the call to read text stands
     /// in, where it stands in a routine and hands over no dictionaries
     /// of its own. The text is read as a piece of that routine, so the
@@ -1283,6 +1286,7 @@ impl<'a> Engine<'a> {
             outer_book: None,
             text_books: Vec::new(),
             reading_in: None,
+            module_books: Vec::new(),
             text_within: None,
             natives: None,
             builtins_view: None,
@@ -16352,6 +16356,32 @@ impl<'a> Engine<'a> {
                 let path = std::path::PathBuf::from(args[0].display(&sp));
                 Value::Small(if path.is_file() { 1 } else if path.is_dir() { 2 } else { 0 })
             }
+            // Kind, serials, links, owners, size and the three times of
+            // the file a path names, as a row of ten; the host's reason
+            // number where the path names no file to measure.
+            Builtin::FileStat => {
+                arity(1)?;
+                let sp = self.wording();
+                let path = std::path::PathBuf::from(args[0].display(&sp));
+                match std::fs::metadata(&path) {
+                    Ok(info) => {
+                        use std::os::unix::fs::MetadataExt;
+                        let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
+                        let at = |seconds: i64, nanos: i64| -> Value {
+                            let mut told = crate::value::real_of(seconds as f64 + nanos as f64 / 1_000_000_000.0, places);
+                            if let Value::Real(real) = &mut told { Rc::make_mut(real).floating = true; }
+                            told
+                        };
+                        Value::array(vec![
+                            Value::Small(info.mode() as i64), Value::Small(info.ino() as i64), Value::Small(info.dev() as i64),
+                            Value::Small(info.nlink() as i64), Value::Small(info.uid() as i64), Value::Small(info.gid() as i64),
+                            Value::Small(info.len() as i64),
+                            at(info.atime(), info.atime_nsec()), at(info.mtime(), info.mtime_nsec()), at(info.ctime(), info.ctime_nsec()),
+                        ])
+                    }
+                    Err(error) => Value::Small(error.raw_os_error().unwrap_or(5) as i64),
+                }
+            }
             // The working directory (or nothing), the word for the
             // system, the word for the machine, and the environment as
             // a map, in that order.
@@ -20053,6 +20083,28 @@ impl Engine<'_> {
         if let (Some(word), Some(search)) = (&self.lang.module_path, package_path) {
             if !fields.iter().any(|(name, _)| name == word) { fields.push((word.clone(), search)); }
         }
+        // The dictionary the module's own text answers `globals()` with
+        // while it runs: the names the module carries, by the cells they
+        // share with the world's slots, so a read of either finds the
+        // same value. The builtins and the host's own runner word stand
+        // in it as they do in the outermost dictionary.
+        let mut pairs: Vec<(Value, Value)> = fields.iter()
+            .filter(|(name, _)| Self::public_name(name))
+            .map(|(name, held)| (Value::text(name), held.clone()))
+            .collect();
+        let natives = self.natives_book();
+        for name in &self.lang.module_builtins {
+            if !pairs.iter().any(|(key, _)| key_spells(key, name)) { pairs.push((Value::text(name), Value::Bond(natives.clone()))); }
+        }
+        if let Some((_, word)) = self.lang.source_bindings.iter().find(|(part, _)| part == "runner") {
+            if !pairs.iter().any(|(key, _)| key_spells(key, word)) {
+                if let Some(at) = self.registry.idents.iter().position(|known| known == word) {
+                    let held = self.world[at].clone();
+                    if !matches!(held, Value::Blank | Value::Gap) { pairs.push((Value::text(word), held)); }
+                }
+            }
+        }
+        let running_book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
@@ -20066,7 +20118,9 @@ impl Engine<'_> {
         self.module_slots.insert(Rc::from(filename), (offset, path.to_string()));
         self.importing.insert(path.to_string());
         let saved_depth = self.data.len();
+        self.module_books.push(running_book);
         let result = self.invoke(&program, Vec::new());
+        self.module_books.pop();
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
@@ -20641,6 +20695,7 @@ impl Engine<'_> {
                 _ => book.near.clone(),
             };
         }
+        if let Some(book) = self.module_books.last() { return book.clone(); }
         self.outer_book_made()
     }
 

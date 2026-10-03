@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from test import support
+
 
 def _to_file_args(args):
     args = list(args)
@@ -143,3 +145,25 @@ def run_python_until_end(*args, **env_vars):
         p.stdout.close()
         p.stderr.close()
     return _PythonRunResult(p.returncode, out, err)
+
+
+@support.requires_subprocess()
+def run_test_script(script):
+    # use -u to try to get the full output if the test hangs or crash
+    if support.verbose:
+        def title(text):
+            return f"===== {text} ======"
+
+        name = f"script {os.path.basename(script)}"
+        print()
+        print(title(name), flush=True)
+        # In verbose mode, the child process inherit stdout and stdout,
+        # to see output in realtime and reduce the risk of losing output.
+        args = [sys.executable, "-E", "-X", "faulthandler", "-u", script, "-v"]
+        proc = subprocess.run(args)
+        print(title(f"{name} completed: exit code {proc.returncode}"),
+              flush=True)
+        if proc.returncode:
+            raise AssertionError(f"{name} failed")
+    else:
+        assert_python_ok("-u", script, "-v")

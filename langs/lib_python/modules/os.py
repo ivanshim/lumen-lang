@@ -62,6 +62,71 @@ def remove(path, *, dir_fd=None):
 
 unlink = remove
 
+class stat_result(tuple):
+    __slots__ = ()
+    def __new__(cls, fields):
+        return tuple.__new__(cls, fields)
+    @property
+    def st_mode(self):
+        return self[0]
+    @property
+    def st_ino(self):
+        return self[1]
+    @property
+    def st_dev(self):
+        return self[2]
+    @property
+    def st_nlink(self):
+        return self[3]
+    @property
+    def st_uid(self):
+        return self[4]
+    @property
+    def st_gid(self):
+        return self[5]
+    @property
+    def st_size(self):
+        return self[6]
+    @property
+    def st_atime(self):
+        return self[7]
+    @property
+    def st_mtime(self):
+        return self[8]
+    @property
+    def st_ctime(self):
+        return self[9]
+
+def _stat_error(number, path):
+    if number == 2:
+        return FileNotFoundError(2, 'No such file or directory', path)
+    if number == 20:
+        return OSError(20, 'Not a directory', path)
+    if number == 36:
+        return OSError(36, 'File name too long', path)
+    if number == 13:
+        return OSError(13, 'Permission denied', path)
+    return OSError(number, None, path)
+
+def stat(path, *, dir_fd=None, follow_symlinks=True):
+    if dir_fd is not None:
+        raise 'NotImplementedError: os.stat directory descriptors are not supported'
+    if not follow_symlinks:
+        raise 'NotImplementedError: os.stat without following symbolic links is not supported'
+    if '\x00' in path:
+        raise ValueError('embedded null byte')
+    at = 0
+    while at < len(path):
+        code = ord(path[at])
+        if 0xD800 <= code <= 0xDFFF:
+            end = at + 2 if 0xDB00 <= code <= 0xDBFF and at + 1 < len(path) and 0xDC00 <= ord(path[at + 1]) <= 0xDFFF else at + 1
+            raise UnicodeEncodeError('utf-8', path, at, end, 'surrogates not allowed')
+        at += 1
+    answer = __file_stat(path)
+    if isinstance(answer, int):
+        raise _stat_error(answer, path)
+    return stat_result(answer)
+
 class _Path:
     def join(self, path, *parts):
         for part in parts:
@@ -114,6 +179,9 @@ class _Path:
 
     def isdir(self, path):
         return _host_file_kind(path) == 2
+
+    def isabs(self, path):
+        return path[:1] == "/"
 
     def abspath(self, path):
         if path[:1] != '/':

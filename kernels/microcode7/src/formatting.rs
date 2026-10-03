@@ -475,6 +475,15 @@ impl Layout<'_> {
     pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Answer {
         let stored = supplied.settled();
         let supplied = &stored;
+        // A thing of a class standing on tuple is laid out for the
+        // positions by the row it keeps, as a plain row would be.
+        let row = match supplied {
+            Value::Thing(t) if crate::exec::Machine::native_beneath(&t.blueprint()).as_deref() == Some("tuple") => {
+                crate::exec::Machine::underlying(supplied).map(|held| held.settled())
+            }
+            _ => None,
+        };
+        let supplied = row.as_ref().unwrap_or(supplied);
         let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
         let mut used = 0usize;
         let mut named_seen = false;

@@ -225,6 +225,9 @@ pub enum Prim {
     Collect,
     /// What a path names: a file, a directory, or neither.
     PathSort,
+    /// The measurements of the file a path names, as a row of ten, or
+    /// the host's reason number where it names none.
+    PathStat,
     /// The host's facts as a row: directory, system, machine, surroundings.
     HostRow,
     /// Everything the host's own shell wrote out, having been handed a

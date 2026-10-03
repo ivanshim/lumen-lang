@@ -619,6 +619,9 @@ pub enum Builtin {
     Collect,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
+    /// The numbers a path's file answers with, or the host's reason
+    /// number where it answers none.
+    FileStat,
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
     /// A command handed to the host's own shell, answering with all

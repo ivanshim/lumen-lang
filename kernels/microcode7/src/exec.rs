@@ -466,6 +466,9 @@ pub struct Machine<'a> {
     /// has asked for it: from then on those names are read out of it
     /// and written into it, so either side sees the other's writing.
     world_book: Option<Rc<RefCell<Value>>>,
+    /// Dictionaries of the namespaces being read in at present, the one
+    /// being read last: the one `globals()` answers with in such a place.
+    space_books: Vec<Rc<RefCell<Value>>>,
     /// Each text read into dictionaries handed over: the slots it was
     /// given, the dictionary its names live in, and the outer one for
     /// what the near one lacks and for its declared globals.
@@ -1528,6 +1531,7 @@ impl<'a> Machine<'a> {
             loaded_spaces: HashMap::new(),
             within_spare: false,
             world_book: None,
+            space_books: Vec::new(),
             readings: Vec::new(),
             reading_now: None,
             natives_book: None,
@@ -16018,6 +16022,28 @@ impl<'a> Machine<'a> {
                 let meta = std::fs::metadata(&named).ok();
                 Value::Small(match meta { Some(m) if m.is_file() => 1, Some(m) if m.is_dir() => 2, _ => 0 })
             }
+            Prim::PathStat => {
+                n(1)?;
+                let w = self.wording();
+                let named = v[0].render(w);
+                match std::fs::metadata(&named) {
+                    Ok(meta) => {
+                        use std::os::unix::fs::MetadataExt;
+                        let figures = self.rules.count_ext_system_real_digits.unwrap_or(15);
+                        let mut row = Vec::new();
+                        for whole in [meta.mode() as i64, meta.ino() as i64, meta.dev() as i64, meta.nlink() as i64, meta.uid() as i64, meta.gid() as i64, meta.len() as i64] {
+                            row.push(Value::Small(whole));
+                        }
+                        for (seconds, nanos) in [(meta.atime(), meta.atime_nsec()), (meta.mtime(), meta.mtime_nsec()), (meta.ctime(), meta.ctime_nsec())] {
+                            let mut worth = crate::data::worth_of_binary(seconds as f64 + nanos as f64 * 1e-9, figures);
+                            if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = true; }
+                            row.push(worth);
+                        }
+                        Value::Vector(crate::tuples::Sequence::plain(row))
+                    }
+                    Err(failed) => Value::Small(failed.raw_os_error().unwrap_or(5) as i64),
+                }
+            }
             Prim::HostRow => {
                 n(0)?;
                 let here = match std::env::current_dir() {
@@ -20033,6 +20059,32 @@ impl Machine<'_> {
         if let (Some(word), Some(directories)) = (path_word, search) {
             if !members.iter().any(|entry| entry.0 == word) { members.push((word.to_owned(), directories)); }
         }
+        // What the module body itself answers `globals()` with while it
+        // runs: its members by the cells they share with the world's
+        // addresses, with the builtins and the host's runner word
+        // standing there as they do in the outermost dictionary.
+        let running_book = {
+            let mut entries: Vec<(Value, Value)> = Vec::new();
+            for (name, held) in &members {
+                if Self::visible_name(name) { entries.push((Value::text(name), held.clone())); }
+            }
+            let natives = self.natives_kept();
+            for word in self.table.strings("ext.system.module.builtins") {
+                if !entries.iter().any(|(key, _)| spells_key(key, word)) { entries.push((Value::text(word), Value::Shared(natives.clone()))); }
+            }
+            if let Some(word) = self.table.single("ext.system.runner") {
+                if !entries.iter().any(|(key, _)| spells_key(key, word)) {
+                    let main_slot = self.idents.iter().position(|known| known == word);
+                    if let Some(at) = main_slot {
+                        let cells = self.outermost.cells.borrow();
+                        if let Some(held) = cells.get(at) {
+                            if !matches!(held, Value::Unset) { entries.push((Value::text(word), held.clone())); }
+                        }
+                    }
+                }
+            }
+            Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))))
+        };
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
@@ -20050,8 +20102,10 @@ impl Machine<'_> {
         let caller_activation = self.active_trace.take();
         self.written_in = Rc::from(filename);
         self.frames_named.push(built.program.clone());
+        self.space_books.push(running_book);
         let stopped = self.value_of(&built.program.body, &scope);
         let stopped = self.traced_result(stopped);
+        self.space_books.pop();
         self.frames_named.pop();
         self.active_trace = caller_activation;
         (self.written_in, self.row) = caller_location;
@@ -20550,6 +20604,7 @@ impl<'a> Machine<'a> {
                 _ => book.near.clone(),
             };
         }
+        if let Some(book) = self.space_books.last() { return book.clone(); }
         self.world_kept()
     }
 

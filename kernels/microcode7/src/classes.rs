@@ -146,7 +146,7 @@ impl<'a> Machine<'a> {
         if self.native_directory(value).is_empty() { return None; }
         Some(value.clone())
     }
-    pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
+    pub(crate) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
     /// The blueprint every metaclass is built on: the kind primitive
@@ -202,7 +202,7 @@ impl<'a> Machine<'a> {
     pub(super) fn format_spec_complaint_kind(item:&Value)->String {
         match item.settled() { Value::Nil=>"None".to_owned(), other=>other.kind_word() }
     }
-    pub(super) fn underlying(value:&Value)->Option<Value> {
+    pub(crate) fn underlying(value:&Value)->Option<Value> {
         let Value::Thing(t)=value else{return None};
         t.holds.borrow().iter().find(|(k,_)|k=="\0underlying").map(|(_,v)|v.clone())
     }

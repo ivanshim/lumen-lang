@@ -101,7 +101,7 @@ impl<'a> Engine<'a> {
         c.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v.plain())
     }
     /// The builtin kind a class stands on, through any of its line.
-    pub(super) fn kind_beneath(c: &Class) -> Option<String> {
+    pub(crate) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(Self::own_kind)
     }
     /// Whether the class was sealed against change: a sealed class
@@ -114,7 +114,7 @@ impl<'a> Engine<'a> {
     /// The worth a thing keeps of the builtin kind its class stands on,
     /// as it is kept: a row or a map in its cell, so that what is done
     /// to it through the thing is done to the thing's own.
-    pub(super) fn worth_of(value: &Value) -> Option<Value> {
+    pub(crate) fn worth_of(value: &Value) -> Option<Value> {
         let Value::Object(o) = value else { return None };
         o.fields.borrow().iter().find(|(n, _)| n == "\0worth").map(|(_, v)| v.clone())
     }

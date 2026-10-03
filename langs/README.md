@@ -2609,6 +2609,10 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.file.stat`: a builtin answering with the measurements of
+  the file a path names as a row of ten (kind, serials, links, owners,
+  size and the three times), or with the host's reason number where the
+  path names no file to measure.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither.
 - `ext.builtin.dir.list`, `.make` and `.remove_tree`: builtins that
@@ -4565,6 +4569,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
+| `ext.builtin.file.stat` | - | - | `__file_stat` | - | - | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
