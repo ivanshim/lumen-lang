@@ -532,7 +532,7 @@ class TestLoader:
         if cls is TestCase or getattr(cls, '__abstractmethods__', None):
             return self.suiteClass()
         methods = self.getTestCaseNames(cls)
-        if len(methods) == 0 and getattr(cls, 'runTest', None) is not None:
+        if len(methods) == 0 and hasattr(cls, 'runTest'):
             methods = ['runTest']
         suite = self.suiteClass([cls(name) for name in methods])
         suite.class_ = cls
