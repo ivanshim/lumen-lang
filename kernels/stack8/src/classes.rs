@@ -849,6 +849,10 @@ impl<'a> Engine<'a> {
                     let Value::Class(class) = values.remove(0) else { return Err(self.class_refusal()); };
                     self.class_construct(class, values)
                 }
+                122 => {
+                    if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
+                    self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]).map_err(Fault::from)
+                }
                 43 => {
                     if let Some(first) = args.first() { self.iterator(first.clone())?; }
                     self.class_apply(w.1[0].clone(), args)
@@ -1151,6 +1155,35 @@ impl<'a> Engine<'a> {
                     None => { let at = next; next += 1; at }
                 };
                 if at >= parts.len() || parts[at].replace(value).is_some() { return Err("TypeError: invalid function arguments".into()); }
+            }
+            if let Some(code @ Value::Object(_)) = parts[0].as_ref().map(Value::contents) {
+                if let Value::Object(object) = &code {
+                    if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
+                        let globals = parts[1].clone().ok_or_else(|| "TypeError: function() missing required argument 'globals'".to_string())?;
+                        if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+                        let name = match parts[2].as_ref().map(Value::contents) {
+                            None | Some(Value::Null) => Value::text("<module>"),
+                            Some(name @ Value::Text(_)) => name,
+                            _ => return Err("TypeError: arg 3 (name) must be None or string".into()),
+                        };
+                        let defaults = match parts[3].as_ref().map(Value::contents) {
+                            None | Some(Value::Null) => Value::Null,
+                            Some(value @ Value::Tuple(_)) => value,
+                            _ => return Err("TypeError: arg 4 (defaults) must be None or tuple".into()),
+                        };
+                        let closure = match parts[4].as_ref().map(Value::contents) {
+                            None | Some(Value::Null) => Value::Null,
+                            Some(value @ Value::Tuple(_)) => {
+                                if let Value::Tuple(cells) = &value {
+                                    if !cells.is_empty() { return Err("ValueError: module code requires closure of length 0".into()); }
+                                }
+                                value
+                            }
+                            _ => return Err("TypeError: arg 5 (closure) must be None or tuple".into()),
+                        };
+                        return Ok(Self::adapter(122, vec![code, globals, name, defaults, closure]));
+                    }
+                }
             }
             let Some(Value::Adapter(code)) = parts[0].as_ref().map(Value::contents) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let (7, Some(Value::Routine(origin))) = (code.0, code.1.first()) else { return Err("TypeError: function() argument 'code' must be code".into()); };
@@ -1558,6 +1591,20 @@ impl<'a> Engine<'a> {
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
         let raw = subject.contents();
+        if let Value::Adapter(function) = &raw {
+            if function.0 == 122 {
+                match name {
+                    "__code__" => return Ok(function.1[0].clone()),
+                    "__globals__" => return Ok(function.1[1].clone()),
+                    "__name__" => return Ok(function.1[2].clone()),
+                    "__qualname__" => return Ok(Value::text("<module>")),
+                    "__defaults__" => return Ok(function.1[3].clone()),
+                    "__closure__" => return Ok(function.1[4].clone()),
+                    "__kwdefaults__" => return Ok(Value::Null),
+                    _ => {},
+                }
+            }
+        }
         if name == self.class_word("kind") && !name.is_empty()
             && matches!(raw, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Text(_) | Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Complex(_) | Value::Bytes(..) | Value::Null | Value::Set(_)) {
             return Ok(self.named_kind(&raw));
@@ -2989,7 +3036,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,3|7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,3|7|14|31|32|119|122)=>Ok(self.named_kind(&args[0])),
             [_, _, _] => {
                 let mut parts = vec![self.kind_maker_word()]; parts.extend(args.clone());
                 let made = self.class_from_parts(parts)?;
@@ -3213,7 +3260,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|122))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

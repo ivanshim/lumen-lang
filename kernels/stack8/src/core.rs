@@ -76,6 +76,7 @@ impl Value {
                 _ => "object".to_string(),
             },
             Value::Routine(_) => "function",
+            Value::Adapter(function) if function.0 == 122 => "function",
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 3 && (matches!(w.1.first(), Some(Value::Routine(_))) || matches!(w.1.get(2), Some(Value::Flag(true)))) => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",

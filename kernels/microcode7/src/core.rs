@@ -64,6 +64,7 @@ impl Value {
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            Self::Wrapped(122, _) => "function",
             Self::Wrapped(120, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",

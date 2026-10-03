@@ -9759,7 +9759,8 @@ impl<'a> Compiler<'a> {
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
-                if extra == 0 && parent.is_some() && self.method_self.is_some() && member.is_none() && !self.gathered.is_empty() {
+                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
+                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
                     self.gathering().needs_class_cell = true;
                     self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();
@@ -10410,6 +10411,10 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.act(Action::BondNamed, 1);
+            }
+            [.., Instr::Act(Action::At, 2)] if self.lang.bind_names => {
+                let at = self.mark();
+                for word in relocated(read.to_vec(), at as i64 - from as i64) { self.put(word); }
             }
             [.., Instr::Act(Action::At, 2)] => {
                 let (keys, key_at) = keys_apart(read, from, &self.keyed);

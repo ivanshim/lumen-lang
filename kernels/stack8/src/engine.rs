@@ -9089,7 +9089,10 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
-                let holder = self.drop_top()?;
+                let holder = match self.drop_top()? {
+                    Value::Collection(cell, _) if self.lang.bind_names => Value::Bond(cell),
+                    value => value,
+                };
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
@@ -19619,6 +19622,10 @@ impl Engine<'_> {
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
+            Value::Adapter(_) if self.lang.bind_names => match self.class_apply(work.clone(), args) {
+                Ok(value) => Ok(value),
+                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            },
             Value::Method(..) => match self.class_apply(work.clone(), args) {
                 Ok(value) => Ok(value),
                 Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
@@ -21414,10 +21421,7 @@ impl Engine<'_> {
     /// The class of a code value, made once.
     fn code_class(&mut self) -> Rc<Class> {
         if let Some(class) = &self.code_class { return class.clone(); }
-        let class = Rc::new(Class {
-            direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
-            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
-        });
+        let class = self.kind_class("code");
         self.code_class = Some(class.clone());
         class
     }

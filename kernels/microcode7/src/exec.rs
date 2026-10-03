@@ -5644,6 +5644,10 @@ impl<'a> Machine<'a> {
                     }
                     _ => named,
                 };
+                if self.names_in_calls && matches!(&target, Value::Octets { .. }) {
+                    self.octets_shortened(&target, &named)?;
+                    return Ok(Value::Nil);
+                }
                 let at = self.as_key_spoken(&named);
                 // A key no map can hold is refused before the cell is
                 // taken for the deletion, since the key may be that very
@@ -5651,8 +5655,10 @@ impl<'a> Machine<'a> {
                 if matches!(&target, Value::Dict(_)) {
                     if let Some(words) = self.cannot_key(&at) { return Err(words.into()); }
                 }
-                let Value::Shared(cell) = holder else {
-                    return Err("Cannot take a place out of something that is not an array".to_string().into());
+                let cell = match holder {
+                    Value::Shared(cell) => cell,
+                    Value::Mutable(cell, _) if self.names_in_calls => cell,
+                    _ => return Err("Cannot take a place out of something that is not an array".to_string().into()),
                 };
                 // A key that could be no key at all is refused before
                 // the map is taken up for writing, since the key may be
@@ -13622,7 +13628,10 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
+            let reads_dict = self.names_in_calls && matches!(operation, Prim::At | Prim::Fetch)
+                && matches!(settled.first().map(Value::settled), Some(Value::Dict(_)))
+                && !matches!(settled.get(1).map(Value::settled), Some(Value::Thing(_)));
+            if changed && (reads_dict || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
@@ -18997,7 +19006,10 @@ impl<'a> Machine<'a> {
                 }
             };
         }
-        if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
+        if matches!(target, Value::Mutable(..) | Value::Window(..))
+            || self.names_in_calls && matches!(target, Value::Shared(_)) {
+            return self.element(&target.settled(), at, how);
+        }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;
             // A thing kept beside its hash comes back as the thing.
@@ -21393,10 +21405,7 @@ impl<'a> Machine<'a> {
     /// The blueprint of a code value, made once.
     fn code_blueprint(&mut self) -> Rc<Blueprint> {
         if let Some(kind) = &self.code_kind { return kind.clone(); }
-        let kind = Rc::new(Blueprint {
-            parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.builtin.compile.kind").unwrap_or_default().to_owned(),
-            under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-        });
+        let kind = self.native_kind("code");
         self.code_kind = Some(kind.clone());
         kind
     }
@@ -23062,6 +23071,9 @@ impl Machine<'_> {
         match callable {
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::Method(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
+            Value::Wrapped(_, _) if self.names_in_calls => {
+                self.apply_class_member(callable.clone(), values).map_err(|away| self.suspension_fault(away))
+            },
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {

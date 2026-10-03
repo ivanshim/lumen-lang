@@ -970,6 +970,10 @@ impl<'a> Machine<'a> {
                         for (word, held) in keywords { positional.push(Value::Couple(Rc::new((Value::text(&word), held)))); }
                         self.construct_plainly(target, positional)
                     }
+                    122 => {
+                        if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
+                        self.prim(Prim::Weigh, "eval", &[kept[0].clone(), kept[1].clone()]).map_err(Escape::from)
+                    }
                     43 => {
                         if let Some(first) = values.first() { self.make_iterator(first.clone())?; }
                         self.apply_class_member(kept[0].clone(), values)
@@ -1274,6 +1278,33 @@ impl<'a> Machine<'a> {
                     return Err(format!("TypeError: function() got an unexpected keyword argument '{word}'").into());
                 };
                 if options[slot].replace(value).is_some() { return Err(String::from("TypeError: invalid function arguments").into()); }
+            }
+            if let Some(value @ Value::Thing(_)) = options[0].as_ref().map(Value::settled) {
+                let recognized = match &value {
+                    Value::Thing(instance) => self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())),
+                    _ => false,
+                };
+                if recognized {
+                    let namespace = options[1].clone().ok_or_else(|| String::from("TypeError: function() missing required argument 'globals'"))?;
+                    if !matches!(namespace.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+                    let title = match options[2].as_ref().map(Value::settled) {
+                        Some(title @ Value::Text(_)) => title,
+                        None | Some(Value::Nil) => Value::text("<module>"),
+                        _ => return Err(String::from("TypeError: arg 3 (name) must be None or string").into()),
+                    };
+                    let defaults = options[3].as_ref().map(Value::settled).unwrap_or(Value::Nil);
+                    if !matches!(defaults, Value::Nil | Value::Tuple(_)) {
+                        return Err(String::from("TypeError: arg 4 (defaults) must be None or tuple").into());
+                    }
+                    let closure = options[4].as_ref().map(Value::settled).unwrap_or(Value::Nil);
+                    match &closure {
+                        Value::Nil => {},
+                        Value::Tuple(cells) if cells.is_empty() => {},
+                        Value::Tuple(_) => return Err(String::from("ValueError: module code requires closure of length 0").into()),
+                        _ => return Err(String::from("TypeError: arg 5 (closure) must be None or tuple").into()),
+                    }
+                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure]));
+                }
             }
             let Some(Value::Wrapped(7, body)) = options[0].as_ref().map(Value::settled) else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(Value::Routine(origin) | Value::Bound(origin, _)) = body.first() else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
@@ -2006,6 +2037,19 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         let value = if self.table.has_any("ext.stmt.class.builder") { value.settled() } else { value };
+        if let Value::Wrapped(122, fields) = &value {
+            let selected = match key {
+                "__code__" => Some(fields[0].clone()),
+                "__globals__" => Some(fields[1].clone()),
+                "__name__" => Some(fields[2].clone()),
+                "__qualname__" => Some(Value::text("<module>")),
+                "__defaults__" => Some(fields[3].clone()),
+                "__closure__" => Some(fields[4].clone()),
+                "__kwdefaults__" => Some(Value::Nil),
+                _ => None,
+            };
+            if let Some(attribute) = selected { return Ok(attribute); }
+        }
         if let Value::Wrapped(9, binding) = &value {
             if let [Value::Blueprint(defining), instance] = binding.as_slice() {
                 let actual = match instance { Value::Thing(t) => t.blueprint().clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
@@ -3173,7 +3217,7 @@ impl<'a> Machine<'a> {
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(3|7|14|35|60|62|120,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(3|7|14|35|60|62|120|122,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
@@ -3414,7 +3458,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|122))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{
