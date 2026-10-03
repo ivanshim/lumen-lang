@@ -821,6 +821,24 @@ impl Value {
                 out
             }
             Value::Object(o) => {
+                {
+                    let fields = o.fields.borrow();
+                    if let Some((_, Value::Small(style))) = fields.iter().find(|(n, _)| n == "\0source-kind") {
+                        let named = o.class_now().name.clone();
+                        let message = fields.iter().find(|(n, _)| n == "\0heading").map(|(_, v)| v.repr(sp)).unwrap_or_default();
+                        let parts: Vec<Value> = match fields.iter().find(|(n, _)| n == "\0parts") {
+                            Some((_, Value::Tuple(items))) => items.to_vec(),
+                            _ => Vec::new(),
+                        };
+                        let list_like = *style == 1 && matches!(fields.iter().find(|(n, _)| n == "\0arguments"), Some((_, Value::Tuple(args))) if args.len() == 2 && matches!(args[1].contents(), Value::Array(_)));
+                        let body = if *style == 2 {
+                            fields.iter().find(|(n, _)| n == "\0source-repr").map(|(_, v)| v.plain()).unwrap_or_default()
+                        } else if list_like {
+                            format!("[{}]", parts.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "))
+                        } else { Self::tuple_text(&parts, sp) };
+                        return format!("{named}({message}, {body})");
+                    }
+                }
                 if let Some(args) = self.raised_arguments() {
                     let mut parts = args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>();
                     if o.class_now().all_fields().iter().any(|(k, _)| k == "\0import-error") {

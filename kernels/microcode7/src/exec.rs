@@ -946,7 +946,8 @@ impl<'a> Machine<'a> {
             holds.push((String::from("filename2"), second_file));
             if row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
         }
-        let values = Value::Arguments(crate::tuples::Sequence::plain(row));
+        let sequence = crate::tuples::Sequence::plain(row);
+        let values = Value::Tuple(sequence.clone());
         let seeded = [
             ("ext.builtin.exceptions.args", values.clone()), ("ext.builtin.exceptions.cause", because),
             ("ext.builtin.exceptions.context", Value::Nil), ("ext.builtin.exceptions.suppress", Value::Flag(false)),
@@ -954,7 +955,7 @@ impl<'a> Machine<'a> {
         for (label, value) in seeded {
             if let Some(key) = self.table.single(label) { holds.push((key.to_string(), value)); }
         }
-        holds.push(("\0raised-values".into(), values));
+        holds.push(("\0raised-values".into(), Value::Arguments(sequence)));
         Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, turn: self.made, holds: RefCell::new(holds) }))
     }
 
@@ -1083,9 +1084,20 @@ impl<'a> Machine<'a> {
             if row.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", kind.name, wanted, row.len()).into()); }
         }
         let made = if kind.every_field().iter().any(|(key, _)| key == "\0gathers") {
-            if row.len() != 2 { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()); }
-            let members = match row[1].settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
-            self.gather_faults(kind, row[0].clone(), members)?
+            let given = row.len() + named.len();
+            if given != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({given} given)").into()); }
+            let heading = row[0].clone();
+            if !matches!(heading.settled(), Value::Text(_)) {
+                let kind = match heading.settled() { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word().to_string() };
+                return Err(format!("TypeError: BaseExceptionGroup.__new__() argument 1 must be str, not {kind}").into());
+            }
+            let source = row[1].clone();
+            let members = match source.settled() {
+                Value::Vector(items) | Value::Tuple(items) => items.to_vec(),
+                Value::Thing(t) if self.inherited_entry(&t.blueprint(), "__getitem__").is_some() => self.core_collect(&source)?,
+                _ => return Err(String::from("TypeError: second argument (exceptions) must be a sequence").into()),
+            };
+            self.gather_faults(kind, heading, source, members)?
         } else { self.make_fault(kind, row, Value::Nil) };
         if let Value::Thing(thing) = &made {
             self.locate_syntax_fault(thing, &locations);
@@ -1104,24 +1116,43 @@ impl<'a> Machine<'a> {
     /// A gatherer made of a heading and a row of faults, or refused.
     /// The base gatherer given ordinary faults alone comes out as the
     /// ordinary gatherer, as the reference has it.
-    fn gather_faults(&mut self, kind: Rc<Blueprint>, heading: Value, members: Vec<Value>) -> Res<Value> {
-        let refused = self.argument_fault("ext.builtin.exceptions.group.invalid", None);
-        if !matches!(heading, Value::Text(_)) || members.is_empty() { return Err(refused.into()); }
-        if !members.iter().all(|m| matches!(m, Value::Thing(t) if self.is_fault_kind(&t.blueprint()))) { return Err(refused.into()); }
-        let ordinary_only = members.iter().all(|m| matches!(m, Value::Thing(t) if self.stands_under(&t.blueprint(), 1)));
-        let strict = kind.every_field().iter().any(|(key, held)| key == "\0gathers" && matches!(held, Value::Flag(true)));
-        if strict && !ordinary_only { return Err(refused.into()); }
-        let kind = match (ordinary_only, self.furnished_kind(37), self.furnished_kind(38)) {
-            (true, Some(base), Some(ordinary)) if Rc::ptr_eq(&kind, &base) => ordinary,
-            _ => kind,
-        };
+    fn gather_faults(&mut self, kind: Rc<Blueprint>, heading: Value, source: Value, members: Vec<Value>) -> Res<Value> {
+        if members.is_empty() { return Err(String::from("ValueError: second argument (exceptions) must be a non-empty sequence").into()); }
+        for (at, member) in members.iter().enumerate() {
+            if !matches!(member.settled(), Value::Thing(t) if self.is_fault_kind(&t.blueprint())) {
+                return Err(format!("ValueError: Item {at} of second argument (exceptions) is not an exception").into());
+            }
+        }
+        let nested_base = members.iter().any(|m| !matches!(m.settled(), Value::Thing(t) if self.stands_under(&t.blueprint(), 1)));
+        let ordinary_kind = self.furnished_kind(38);
+        let base_kind = self.furnished_kind(37);
+        if nested_base {
+            if ordinary_kind.as_ref().is_some_and(|ordinary| Rc::ptr_eq(&kind, ordinary)) {
+                return Err(String::from("TypeError: Cannot nest BaseExceptions in an ExceptionGroup").into());
+            }
+            let is_base = base_kind.as_ref().is_some_and(|base| Rc::ptr_eq(&kind, base));
+            let under_exception = self.furnished_kind(1).is_some_and(|ordinary| Self::ancestry_includes(&kind, &ordinary));
+            if !is_base && under_exception { return Err(format!("TypeError: Cannot nest BaseExceptions in '{}'", kind.name).into()); }
+        }
+        let kind = if !nested_base {
+            match base_kind {
+                Some(base) if Rc::ptr_eq(&kind, &base) => ordinary_kind.unwrap_or(kind),
+                _ => kind,
+            }
+        } else { kind };
         let how_many = members.len();
         let members = Value::tuple(members);
-        let made = self.make_fault(kind, vec![heading.clone(), members.clone()], Value::Nil);
+        let made = self.make_fault(kind, vec![heading.clone(), source.clone()], Value::Nil);
         if let Value::Thing(thing) = &made {
             let mut holds = thing.holds.borrow_mut();
             holds.push(("\0heading".to_string(), heading.clone()));
             holds.push(("\0gathered".to_string(), members.clone()));
+            let style = match source.settled() { Value::Vector(_) => 1, Value::Tuple(_) => 0, _ => 2 };
+            holds.push(("\0source-kind".to_string(), Value::Small(style)));
+            if style == 2 {
+                let shown = self.converted_string(&source, true)?.bare();
+                holds.push(("\0source-repr".to_string(), Value::text(&shown)));
+            }
             if let [opening, one, several] = self.table.strings("ext.builtin.exceptions.group.summary") {
                 let tail = if how_many == 1 { one } else { several };
                 holds.push(("\0told-as".to_string(), Value::text(&format!("{}{opening}{how_many}{tail}", heading.render(self.wording())))));
@@ -1154,10 +1185,20 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// One gatherer further in, counted as a frame is counted, so that a
+    /// gatherer nested past the recursion limit raises as the reference
+    /// does rather than running out of stack.
+    fn sieve_faults(&mut self, value: Value, sieve: &Sieve) -> Res<(Option<Value>, Option<Value>)> {
+        self.deeper()?;
+        let outcome = self.sieve_faults_inner(value, sieve);
+        self.standing -= 1;
+        outcome
+    }
+
     /// Divide a fault by a sieve into what passes and what stays, each
     /// a gatherer shaped like the whole, or nothing. What a gatherer
     /// holds besides its members is written onto both.
-    fn sieve_faults(&mut self, value: Value, sieve: &Sieve) -> Res<(Option<Value>, Option<Value>)> {
+    fn sieve_faults_inner(&mut self, value: Value, sieve: &Sieve) -> Res<(Option<Value>, Option<Value>)> {
         if self.sieve_takes(&value, sieve)? { return Ok((Some(value), None)); }
         let Some((kind, heading, members)) = Self::gathered(&value) else { return Ok((None, Some(value))) };
         let mut passed = Vec::new();
@@ -1170,7 +1211,7 @@ impl<'a> Machine<'a> {
         let mut sides = [None, None];
         for (row, side) in [passed, stayed].into_iter().zip(sides.iter_mut()) {
             if row.is_empty() { continue; }
-            let made = self.gather_faults(kind.clone(), heading.clone(), row)?;
+            let made = self.derive_gatherer(&value, kind.clone(), heading.clone(), row)?;
             self.write_across(&value, &made);
             *side = Some(made);
         }
@@ -1178,16 +1219,42 @@ impl<'a> Machine<'a> {
         Ok((passed, stayed))
     }
 
+    /// A gatherer made from part of another: the kind's own deriving
+    /// member where it has one, else the plainest gatherer the members
+    /// call for, as the reference makes it.
+    fn derive_gatherer(&mut self, whole: &Value, kind: Rc<Blueprint>, heading: Value, row: Vec<Value>) -> Res<Value> {
+        let word = self.table.single("ext.builtin.exceptions.group.derive").unwrap_or("derive");
+        if let Some(entry) = self.inherited_entry(&kind, word) {
+            let bound = self.member_binding(entry, Some(whole.clone()), kind.clone())?;
+            let made = self.apply_class_member(bound, vec![Value::Vector(crate::tuples::Sequence::plain(row.clone()))])?;
+            if !matches!(&made, Value::Thing(t) if self.is_fault_kind(&t.blueprint()) && self.stands_under(&t.blueprint(), 37)) {
+                return Err(String::from("TypeError: derive must return an instance of BaseExceptionGroup").into());
+            }
+            return Ok(made);
+        }
+        let base = self.furnished_kind(37).unwrap_or(kind);
+        let source = Value::Vector(crate::tuples::Sequence::plain(row.clone()));
+        self.gather_faults(base, heading, source, row)
+    }
+
     /// A gatherer's notes, cause, hushing flag and traceback go onto a
     /// gatherer made out of part of it.
     fn write_across(&self, from: &Value, onto: &Value) {
         let (Value::Thing(source), Value::Thing(target)) = (from, onto) else { return };
-        let labels = ["ext.builtin.exceptions.notes", "ext.builtin.exceptions.cause", "ext.builtin.exceptions.suppress", "ext.builtin.exceptions.traceback.member"];
+        let labels = ["ext.builtin.exceptions.notes", "ext.builtin.exceptions.cause", "ext.builtin.exceptions.context", "ext.builtin.exceptions.suppress", "ext.builtin.exceptions.traceback.member"];
         let source = source.holds.borrow();
         let mut target = target.holds.borrow_mut();
+        let notes = self.table.single("ext.builtin.exceptions.notes");
         for key in labels.iter().filter_map(|label| self.table.single(label)) {
             let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
-            let held = match held { Value::Vector(items) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())), other => other.clone() };
+            // Only a sequence of notes is handed to both halves; notes
+            // that are not a sequence are left behind, as the reference does.
+            let held = match held {
+                Value::Vector(items) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())),
+                Value::Tuple(items) if notes == Some(key) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())),
+                _ if notes == Some(key) => continue,
+                other => other.clone(),
+            };
             match target.iter_mut().find(|(k, _)| k == key) {
                 Some(entry) => entry.1 = held,
                 None => target.push((key.to_string(), held)),
@@ -1345,15 +1412,17 @@ impl<'a> Machine<'a> {
         let [chooser] = given else { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()) };
         if self.table.single("ext.builtin.exceptions.group.derive") == Some(word) {
             let members = match chooser.settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
-            return self.gather_faults(kind, heading, members);
+            return self.gather_faults(kind, heading, Value::tuple(members.clone()), members);
         }
+        let is_callable = self.work_on_class(2, vec![chooser.clone()])?.is_true();
         let sieve = match chooser {
             Value::Blueprint(kind) if self.is_fault_kind(kind) => Sieve::Kinds(vec![kind.clone()]),
-            Value::Tuple(items) if items.iter().all(|k| matches!(k, Value::Blueprint(kind) if self.is_fault_kind(kind))) => {
-                Sieve::Kinds(items.iter().filter_map(|k| match k { Value::Blueprint(kind) => Some(kind.clone()), _ => None }).collect())
+            Value::Tuple(items) if items.iter().all(|k| matches!(k.settled(), Value::Blueprint(kind) if self.is_fault_kind(&kind))) => {
+                Sieve::Kinds(items.iter().filter_map(|k| match k.settled() { Value::Blueprint(kind) => Some(kind.clone()), _ => None }).collect())
             }
-            Value::Routine(_) | Value::Bound(..) | Value::Method(..) => Sieve::Asked(chooser.clone()),
-            _ => return Err(unready.into()),
+            Value::Blueprint(_) | Value::Tuple(_) => return Err(String::from("TypeError: second argument (exception types or predicate) must be an exception type, a tuple of exception types, or a predicate").into()),
+            _ if is_callable => Sieve::Asked(chooser.clone()),
+            _ => return Err(String::from("TypeError: second argument (exception types or predicate) must be an exception type, a tuple of exception types, or a predicate").into()),
         };
         let (passed, stayed) = self.sieve_faults(whole, &sieve)?;
         let both = self.table.single("ext.builtin.exceptions.group.split") == Some(word);
@@ -8258,7 +8327,7 @@ impl<'a> Machine<'a> {
         let lone = Self::gathered(&raised).is_none();
         let whole = if lone {
             let Some(base) = self.furnished_kind(37) else { return Err(unready.into()) };
-            self.gather_faults(base, Value::text(""), vec![raised.clone()])?
+            self.gather_faults(base, Value::text(""), Value::tuple(vec![raised.clone()]), vec![raised.clone()])?
         } else { raised.clone() };
         let mut left = Some(whole.clone());
         let mut anew = Vec::new();
@@ -8299,8 +8368,8 @@ impl<'a> Machine<'a> {
             1 => remaining.into_iter().next(),
             _ => {
                 let Some((kind, heading, _)) = Self::gathered(&whole) else { return Err(unready.into()) };
-                let members = remaining.iter().flat_map(|part| Self::gathered(part).map_or_else(|| vec![part.clone()], |(_, _, items)| items)).collect();
-                let joined = self.gather_faults(kind, heading, members)?;
+                let members: Vec<Value> = remaining.iter().flat_map(|part| Self::gathered(part).map_or_else(|| vec![part.clone()], |(_, _, items)| items)).collect();
+                let joined = self.gather_faults(kind, heading, Value::tuple(members.clone()), members)?;
                 self.write_across(&whole, &joined);
                 Some(joined)
             }
@@ -8315,7 +8384,7 @@ impl<'a> Machine<'a> {
         if anew.len() == 1 && remaining.is_none() { return Err(Escape::Thrown(anew.remove(0))); }
         let Some(base) = self.furnished_kind(37) else { return Err(unready.into()) };
         anew.extend(remaining);
-        let gathered = self.gather_faults(base, Value::text(""), anew)?;
+        let gathered = self.gather_faults(base, Value::text(""), Value::tuple(anew.clone()), anew)?;
         Err(Escape::Thrown(gathered))
     }
 
