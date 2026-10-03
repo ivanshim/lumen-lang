@@ -13920,6 +13920,13 @@ impl<'a> Engine<'a> {
                 args.push(value);
             }
         }
+        if matches!(builtin, Builtin::Bytes(28)) && !named.is_empty() {
+            for (key, value) in std::mem::take(&mut named) {
+                if key.as_str() != "keepends" { return Err(self.byte_fault("arguments")); }
+                if args.len() > 1 { return Err(self.byte_fault("arguments")); }
+                args.push(value);
+            }
+        }
         if let Builtin::Bytes(task @ (14 | 15)) = builtin {
             let mut signed = false;
             let mut supplied: Vec<bool> = vec![true; args.len()];

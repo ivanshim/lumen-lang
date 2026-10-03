@@ -46,7 +46,17 @@ def mkstemp(suffix=None, prefix=None, dir=None, text=False):
 
 
 def mktemp(suffix='', prefix=template, dir=None):
-    raise 'NotImplementedError: tempfile.mktemp would name a file this runtime cannot then create'
+    global _name_counter
+    if dir is None:
+        dir = gettempdir()
+    import time
+    for _ in range(100):
+        _name_counter += 1
+        seed = int(time.time() * 1000000)
+        name = dir + '/' + '%s%06x%04x%s' % (prefix, seed % 16777216, _name_counter % 65536, suffix)
+        if not os.path.exists(name):
+            return name
+    raise FileExistsError(17, 'File exists', name)
 
 
 class _TemporaryFileWrapper:

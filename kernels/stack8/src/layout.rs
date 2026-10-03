@@ -215,6 +215,8 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                         return Err(error("IndentationError: unexpected indent".into()));
                     }
                     if alternate <= other { return Err(error("TabError: inconsistent use of tabs and spaces in indentation".into())); }
+                    // CPython refuses a hundred levels of indentation.
+                    if indents.len() >= 100 { return Err(error("IndentationError: too many levels of indentation".into())); }
                     indents.push((width, alternate));
                     let mut open = token.clone(); open.shape = Shape::Open; open.column = alternate + 1;
                     result.push(open);
