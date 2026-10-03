@@ -46,6 +46,9 @@ def pack(format, *values):
             except OverflowError:
                 raise error(_int_range(code, size, signed))
             at += size
+        while at < extent:
+            out += b'\x00'
+            at += 1
         return out
     raise 'NotImplementedError: struct.pack needs byte values'
 
@@ -132,10 +135,13 @@ def _int_layout(format):
             entry = _INT_SIZES[code]
         else:
             return None
+        size, signed = entry
+        # A field aligns even where its count says none of it stands:
+        # the reference uses a zero repeat to place what follows, or
+        # nothing at all, on the field's own alignment.
+        if native and at % size:
+            at += size - at % size
         for _ in range(int(count) if count else 1):
-            size, signed = entry
-            if native and at % size:
-                at += size - at % size
             pieces.append((size, signed, code, at))
             at += size
         count = ''
@@ -145,13 +151,18 @@ def _int_layout(format):
 
 def _whole(value):
     # The integer index protocol: a whole number, or an object
-    # answering __index__; anything else is refused the way the
-    # reference refuses it, float included.
+    # answering __index__ with a whole number; anything else, a float or
+    # text included, is refused the way the reference refuses it.
     if type(value) == type(1) or type(value) == type(True):
         return int(value)
     ask = getattr(value, '__index__', None)
     if ask is not None:
-        return int(ask())
+        result = ask()
+        if type(result) == type(1):
+            return int(result)
+        if type(result) == type(True):
+            raise TypeError('__index__ returned non-int (type bool)')
+        raise TypeError('__index__ returned non-int (type ' + type(result).__name__ + ')')
     raise error('required argument is not an integer')
 
 def _int_range(code, size, signed):
