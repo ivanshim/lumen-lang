@@ -3120,7 +3120,7 @@ impl<'a> Engine<'a> {
                 }
             }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
-            return Ok(kind.map_or(false,|k|Self::contains_class(k,c)));
+            return Ok(kind.map_or(false,|k|Self::exception_beneath(k,c)||Self::contains_class(k,c)));
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
