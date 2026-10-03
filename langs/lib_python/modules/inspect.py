@@ -5,6 +5,9 @@
 # list of all active calls, so stack() and currentframe() remain unavailable.
 # The helpers below use the available code and frame details.
 
+import functools
+import types
+
 # The flags CPython sets on a compiled body. Code objects expose co_flags
 # so a program can compare these values with a function's compiled flags.
 CO_OPTIMIZED = 1
@@ -37,11 +40,88 @@ def isclass(object):
     return isinstance(object, type)
 
 
-def iscoroutinefunction(obj):
-    # A coroutine function is a function whose compiled body carries the
-    # coroutine flag; the runtime keeps no other coroutine marker.
+def ismethod(object):
+    # A bound method keeps the function it binds under __func__ and the
+    # receiver it binds to under __self__.
+    return hasattr(object, '__func__') and hasattr(object, '__self__')
+
+
+def isfunction(object):
+    # A plain function: a callable keeping a compiled body of its own,
+    # neither a class nor a method.
+    return (callable(object) and not isclass(object) and not ismethod(object)
+            and getattr(object, '__code__', None) is not None)
+
+
+_void = object()
+
+
+def _signature_is_functionlike(obj):
+    """Private helper to test if `obj` is a duck type of FunctionType.
+
+    A good example of such objects are functions compiled with
+    Cython, which have all attributes that a pure Python function
+    would have, but have their code statically compiled.
+    """
+
+    if not callable(obj) or isclass(obj):
+        # All function-like objects are obviously callables,
+        # and not classes.
+        return False
+
+    name = getattr(obj, '__name__', None)
     code = getattr(obj, '__code__', None)
-    return code is not None and bool(code.co_flags & CO_COROUTINE)
+    defaults = getattr(obj, '__defaults__', _void)  # Important to use _void ...
+    kwdefaults = getattr(obj, '__kwdefaults__', _void)  # ... and not None here
+
+    return (isinstance(code, types.CodeType) and
+            isinstance(name, str) and
+            (defaults is None or isinstance(defaults, tuple)) and
+            (kwdefaults is None or isinstance(kwdefaults, dict)))
+
+
+def _has_code_flag(f, flag):
+    """Return true if ``f`` is a function (or a method or functools.partial
+    wrapper wrapping a function or a functools.partialmethod wrapping a
+    function) whose code object has the given ``flag``
+    set in its flags."""
+    f = functools._unwrap_partialmethod(f)
+    while ismethod(f):
+        f = f.__func__
+    f = functools._unwrap_partial(f)
+    if not (isfunction(f) or _signature_is_functionlike(f)):
+        return False
+    return bool(f.__code__.co_flags & flag)
+
+
+# A marker for markcoroutinefunction and iscoroutinefunction.
+_is_coroutine_mark = object()
+
+
+def _has_coroutine_mark(f):
+    while ismethod(f):
+        f = f.__func__
+    f = functools._unwrap_partial(f)
+    return getattr(f, "_is_coroutine_marker", None) is _is_coroutine_mark
+
+
+def markcoroutinefunction(func):
+    """
+    Decorator to ensure callable is recognised as a coroutine function.
+    """
+    if hasattr(func, '__func__'):
+        func = func.__func__
+    func._is_coroutine_marker = _is_coroutine_mark
+    return func
+
+
+def iscoroutinefunction(obj):
+    """Return true if the object is a coroutine function.
+
+    Coroutine functions are normally defined with "async def" syntax, but may
+    be marked via markcoroutinefunction.
+    """
+    return _has_code_flag(obj, CO_COROUTINE) or _has_coroutine_mark(obj)
 
 
 def getmro(cls):
