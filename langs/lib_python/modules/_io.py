@@ -547,9 +547,20 @@ class TextIOWrapper(_TextIOBase):
             raise RuntimeError('reentrant call inside ' + title + '.__repr__')
         self._repr_running = True
         try:
-            if self._buffer is None:
-                return '<{} encoding={!r}>'.format(title, self.encoding)
-            return _method(self, 'TextIOWrapper', '__repr__')()
+            result = '<' + title
+            try:
+                name = self.name
+            except (AttributeError, ValueError):
+                pass
+            else:
+                result += ' name={!r}'.format(name)
+            try:
+                mode = self.mode
+            except AttributeError:
+                pass
+            else:
+                result += ' mode={!r}'.format(mode)
+            return result + ' encoding={!r}>'.format(self.encoding)
         finally:
             self._repr_running = False
     def reconfigure(self, *, encoding=None, errors=None, newline=Ellipsis, line_buffering=None, write_through=None):
