@@ -9139,9 +9139,13 @@ impl<'a> Engine<'a> {
                         // value raised by such code is set aside while
                         // the builtin gives way, so it is raised again
                         // here rather than the words that stood in for
-                        // it, which no handler would know.
+                        // it, which no handler would know. What it
+                        // answers keeps the cell its names stand for,
+                        // the very way the builtin named outright
+                        // keeps it.
                         if let Some(fled) = self.carried.take() { return Err(fled); }
-                        self.data.push(answer?);
+                        let made = answer?;
+                        self.data.push(self.keep_collection(made));
                         Ok(())
                     }
                     Value::Descriptor(d) => {
@@ -14020,14 +14024,7 @@ impl<'a> Engine<'a> {
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
-        if Self::core_builtin(builtin) {
-            // A collection a builtin hands back keeps the cell its
-            // names stand for, the very way the builtin named where
-            // it is called keeps it: a value called for through a
-            // member is no different from one called outright.
-            let made = self.core_call(builtin, name, args, named)?;
-            return Ok(self.keep_collection(made));
-        }
+        if Self::core_builtin(builtin) { return self.core_call(builtin, name, args, named); }
         if let Builtin::Text(op) = builtin {
             crate::strings::keywords(op, &mut args, named, self.lang)?;
             return self.builtin(builtin, name, &mut args);
