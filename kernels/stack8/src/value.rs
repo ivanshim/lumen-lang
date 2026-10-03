@@ -777,7 +777,13 @@ impl Value {
     }
 
     pub fn held(self, quoted: bool) -> Value {
-        match self { Value::Bond(cell) => Value::Collection(cell, quoted), Value::Array(_) | Value::Map(_) => Value::Collection(Rc::new(RefCell::new(self)), quoted), _ => self }
+        let cell = match self {
+            Value::Bond(cell) => cell,
+            Value::Array(_) | Value::Map(_) => Rc::new(RefCell::new(self)),
+            _ => return self,
+        };
+        crate::faint::track_container(&cell);
+        Value::Collection(cell, quoted)
     }
 
     pub fn representation(&self, words: &Wording) -> String {

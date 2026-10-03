@@ -6793,6 +6793,7 @@ impl<'a> Compiler<'a> {
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
         let built = self.routine(name, formals, least, true, |a| {
+            a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
@@ -8083,9 +8084,23 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        if !self.lang.syntax_members.is_empty() {
+            if let Some(sign) = self.second_assign_ahead().filter(|&at| self.lang.compound.contains_key(&self.tokens[at].lexeme)) {
+                let mut left = self.pos;
+                let mut right = sign;
+                while left + 1 < right && self.tokens[left].lexeme == "(" && self.bracket_close(left, right) == Some(right - 1) {
+                    left += 1;
+                    right -= 1;
+                }
+                if left != self.pos && !self.outer_marks(left, right, &self.lang.tuple_marks).0.is_empty() {
+                    return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into());
+                }
+            }
+        }
         if self.tuple_assignment()? { return Ok(()); }
         if !self.lang.tuple_marks.is_empty() && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty()
-            && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty() {
+            && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()
+            && self.second_assign_ahead().map_or(true, |assign| self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0[0] < assign) {
             self.tuple_read(false)?;
             if self.on_writing() { return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into()); }
             self.piece().result_touched = true;
@@ -8291,6 +8306,7 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::Small(by));
                 Ok(())
             }
+            None if !self.lang.tuple_marks.is_empty() => self.tuple_read(false),
             None => self.expr(0),
         }
     }
@@ -8453,6 +8469,24 @@ impl<'a> Compiler<'a> {
         }
         let worked_out = self.waiting.clone().filter(|_| was_waiting.is_none());
         let done = match target.as_slice() {
+            [prefix @ .., Instr::Act(Action::At, 2)]
+                if compound.is_none() && !self.lang.syntax_members.is_empty()
+                    && footing.as_ref().map_or(false, |base| base.iter().any(|i| matches!(i, Instr::Act(Action::Invoke(_) | Action::Send(_), _)))) => {
+                let owner = self.gensym("item_owner");
+                let key = self.gensym("item_key");
+                let offset = self.mark() as i64 - from as i64;
+                for word in relocated(prefix.to_vec(), offset) { self.put(word); }
+                self.write(&key);
+                self.write(&owner);
+                self.read(&key);
+                self.value_written(keep)?;
+                self.read(&owner);
+                self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                self.discard();
+                self.let_go(&key);
+                self.let_go(&owner);
+                Ok(())
+            }
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
                 if !slot.moving
@@ -9715,10 +9749,16 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
+                if extra > 0 && lang.class_details.get("root").map_or(false, |v| !v.is_empty()) {
+                    self.constant(PARENT_CALLABLE.with(Clone::clone));
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                    return self.indexing(from);
+                }
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
-                if extra == 0 && parent.is_some() && self.method_self.is_some() && member.is_none() && !self.gathered.is_empty() {
+                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
+                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
                     self.gathering().needs_class_cell = true;
                     self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();

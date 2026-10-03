@@ -7956,8 +7956,13 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(write) = self.chained_places()? { return Ok(write); }
-        if self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty()
-            && !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() {
+        let commas = self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple");
+        let tuple_before_write = match (commas.first(), self.second_sign_ahead()) {
+            (Some(comma), Some(sign)) => *comma < sign,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if tuple_before_write && self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty() {
             let tuple = self.comma_expression(false)?;
             return if self.on_writing() {
                 Err(String::from("SyntaxError: 'tuple' is an illegal expression for augmented assignment"))
@@ -9321,7 +9326,12 @@ impl<'a> Builder<'a> {
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
-                    (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                    (false, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
+                        let callable = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                        invoke(callable, extra)
+                    }
+                    (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
+                        && (member.is_none() || self.glance(2).lexeme != open) => {
                         self.parts().needs_class_cell = true;
                         self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();

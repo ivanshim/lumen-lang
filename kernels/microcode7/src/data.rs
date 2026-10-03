@@ -597,9 +597,16 @@ impl Value {
     }
 
     pub fn keep(self, quoted: bool) -> Value {
-        if let Value::Shared(cell) = self { return Value::Mutable(cell, quoted); }
+        if let Value::Shared(cell) = self {
+            crate::ghost::note_container(&cell);
+            return Value::Mutable(cell, quoted);
+        }
         if matches!(self, Value::Vector(_) | Value::Dict(_)) {
-            Value::Mutable(Rc::new(RefCell::new(self)), quoted)
+            {
+                let storage = Rc::new(RefCell::new(self));
+                crate::ghost::note_container(&storage);
+                Value::Mutable(storage, quoted)
+            }
         } else { self }
     }
 
