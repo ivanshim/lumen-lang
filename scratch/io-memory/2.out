@@ -1,0 +1,18 @@
+acquire 8
+release b'xb'
+write 1 b'xb'
+utf-8 (b'', 0) 0
+b'a' a (b'', 0) 0
+utf-8-sig (b'', 1) 1
+b'\xef\xbb\xbfa' a (b'', 0) 0
+utf-16 (b'', 2) 2
+b'\xff\xfea\x00' a (b'', 0) 0
+utf-16-le (b'', 0) 0
+b'a\x00' a (b'', 0) 0
+utf-32 (b'', 2) 2
+b'\xff\xfe\x00\x00a\x00\x00\x00' a (b'', 0) 0
+ascii (b'', 0) 0
+b'a' a (b'', 0) 0
+subclass b'abc'
+BytesIO False b''
+StringIO ValueError I/O operation on uninitialized object

@@ -44,6 +44,7 @@
   "ext.builtin.complex.zero": [
     "ZeroDivisionError: division by zero"
   ],
+  "ext.builtin.posix": ["__posix"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -87,6 +88,7 @@
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
+  "ext.builtin.at_end": ["__at_end"],
   "ext.builtin.host.info": [
     "__host_info"
   ],
@@ -165,6 +167,9 @@
     "' and '",
     "'"
   ],
+  "ext.stmt.class.native.name": ["__native_type_name__"],
+  "ext.stmt.class.bases.resolve": ["__mro_entries__", "__orig_bases__"],
+  "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
     "__annotations__"
   ],
@@ -578,6 +583,7 @@
   "ext.builtin.bytes.hex": [
     "hex"
   ],
+  "ext.builtin.bytes.resize": ["resize"],
   "ext.builtin.bytes._export": ["_export"],
   "ext.builtin.bytes.join": [
     "join"
@@ -638,6 +644,7 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
+  "ext.builtin.sre": ["__sre_native"],
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -879,7 +886,11 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "BlockingIOError",
+    "PermissionError",
+    "FileExistsError",
+    "NotADirectoryError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -1036,8 +1047,15 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.frexp": true,
+  "ext.builtin.math.fsum": true,
+  "ext.builtin._random": [
+    "__random"
+  ],
+  "ext.stmt.class.parent.bind": true,
   "ext.builtin.math.sumprod": true,
   "ext.system.module.path": ["__path__"],
+  "ext.system.module.package": ["__package__"],
   "ext.builtin.max": [
     "max"
   ],
@@ -1087,6 +1105,7 @@
   "ext.builtin.method.clear": [
     "clear"
   ],
+  "ext.builtin.method.take_bytes": ["take_bytes", "bytearray.take_bytes"],
   "ext.builtin.method.copy": [
     "copy"
   ],
@@ -2832,6 +2851,7 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.namespace_type": ["__namespace_type"],
   "ext.builtin.inline_values": ["_has_inline_values"],
   "ext.builtin.type_descriptors.clear": ["__clear_type_descriptors"],
   "ext.stmt.class.detail.flags": ["__flags__"],
