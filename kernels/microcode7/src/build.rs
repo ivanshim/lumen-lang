@@ -9914,17 +9914,24 @@ impl<'a> Builder<'a> {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
             let mut parameter_lists = 0usize;
+            let mut walked_past_elements = false;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
-                if inner.is_empty() {
+                if inner.is_empty() && !walked_past_elements {
                     match (part.shape, part.lexeme.as_str()) {
                         (Shape::Sign, ":") => parameter_lists = parameter_lists.saturating_sub(1),
                         (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
                         _ => (),
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        if comma_before_for {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        // A clause unpacks its targets with commas of
+                        // their own; only the gathered elements above
+                        // the first walk can be missing parentheses.
+                        walked_past_elements = true;
                     }
                 }
                 if part.shape == Shape::Sign {
@@ -10336,12 +10343,17 @@ impl<'a> Builder<'a> {
         let mut preceding = 0;
         let mut clause_seen = false;
         let mut binding_names = false;
+        // The parameters of a lambda stand in the argument's own place
+        // and mark their defaults there; the body's colon ends them.
+        let mut defaults_open = 0usize;
         for at in self.pos..self.tokens.len() {
             let token = &self.tokens[at];
             if token.shape != Shape::Sign && token.shape != Shape::Bare { continue; }
             let word = token.lexeme.as_str();
             if nesting.is_empty() {
-                if word == "=" && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
+                if self.table.spells("ext.op.lambda", word) { defaults_open += 1; }
+                else if word == ":" { defaults_open = defaults_open.saturating_sub(1); }
+                if word == "=" && defaults_open == 0 && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
                     if at > begins + 1 && self.table.has_any("ext.builtin.exceptions.syntax") {
                         let spreading = match self.tokens[begins].lexeme.as_str() {
                             "*" => Some("iterable"), "**" => Some("keyword"), _ => None,

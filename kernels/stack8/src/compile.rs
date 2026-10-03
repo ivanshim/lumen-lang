@@ -10530,8 +10530,13 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    if separated {
+                        return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                    }
+                    // Clauses carry targets of their own, whose commas
+                    // belong to the targets and not to the elements.
+                    break;
                 }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }
@@ -10976,11 +10981,16 @@ impl<'a> Compiler<'a> {
         let mut comma = false;
         let mut generator = false;
         let mut target = false;
+        // A lambda's own parameters stand where an argument stands and
+        // carry marks of their own; the body's colon closes them.
+        let mut lambda_parameters = 0usize;
         for i in self.pos..self.tokens.len() {
             let t = &self.tokens[i];
             if !matches!(t.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = t.lexeme.as_str();
-            if depth == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
+            if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { lambda_parameters += 1; }
+            if depth == 0 && word == ":" { lambda_parameters = lambda_parameters.saturating_sub(1); }
+            if depth == 0 && lambda_parameters == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
                 if !self.lang.syntax_members.is_empty() && i > start + 1 {
                     let kind = match self.tokens[start].lexeme.as_str() { "*" => Some("iterable"), "**" => Some("keyword"), _ => None };
                     if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} argument unpacking")); }
