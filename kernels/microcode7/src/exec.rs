@@ -513,6 +513,7 @@ pub struct Machine<'a> {
     builtins_stand_in: Option<Value>,
     body_namespace: Option<(Rc<Routine>, Option<Value>)>,
     code_kind: Option<Rc<Blueprint>>,
+    member_inventories: RefCell<HashMap<(char, String), Vec<String>>>,
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
     property_kind: Option<Rc<Blueprint>>,
@@ -1575,6 +1576,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
+            member_inventories: RefCell::new(HashMap::new()),
             ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), routine_worlds: HashMap::new(), reaping: false, written_over: HashMap::new(),
             table,
             outermost,
@@ -7232,6 +7234,8 @@ impl<'a> Machine<'a> {
             return bounds;
         }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
+        let catalogue = (mark, sample.settled().kind_word().to_owned());
+        if let Some(found) = self.member_inventories.borrow().get(&catalogue) { return found.to_vec(); }
         let mut gathered = Vec::new();
         if matches!(sample.settled(), Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
@@ -7279,6 +7283,7 @@ impl<'a> Machine<'a> {
         gathered.extend(self.table.strings("ext.stmt.class.detail.root.members").get(9).cloned());
         gathered.sort();
         gathered.dedup();
+        self.member_inventories.borrow_mut().insert(catalogue, gathered.clone());
         gathered
     }
 
@@ -8364,6 +8369,24 @@ impl<'a> Machine<'a> {
             return Ok(self.ordinary_directory(receiver));
         }
         if name == "code_replace" {
+            if let Value::Thing(item) = receiver.settled() {
+                if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    if !arguments.is_empty() { return Err(String::from("TypeError: code.replace() takes no positional arguments").into()); }
+                    let mut holds = item.holds.borrow().clone();
+                    for (keyword, value) in keywords {
+                        match (keyword.as_str(), value.settled()) {
+                            ("co_consts", replacement @ Value::Tuple(_)) => {
+                                holds.iter_mut().find(|(word, _)| word == "co_consts").unwrap().1 = replacement;
+                                holds.push(("\0literal_overrides".to_owned(), Value::Flag(true)));
+                            }
+                            ("co_consts", _) => return Err(String::from("TypeError: co_consts must be tuple").into()),
+                            _ => return Err(format!("NotImplementedError: replacement of compiled source {keyword} is unavailable").into()),
+                        }
+                    }
+                    self.made += 1;
+                    return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: item.blueprint(), holds: RefCell::new(holds), turn: self.made })));
+                }
+            }
             let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
             let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
             if !arguments.is_empty() { return Err(Escape::Error(String::from("TypeError: code.replace() takes no positional arguments"))); }
@@ -8376,6 +8399,7 @@ impl<'a> Machine<'a> {
                     continue;
                 }
                 match (keyword.as_str(), value.settled()) {
+                    ("co_consts", Value::Tuple(values)) => copy = copy.with_literals(&values)?,
                     ("co_name", Value::Text(text)) => copy.ident = text.to_string(),
                     ("co_qualname", Value::Text(text)) => copy.qualification = text.to_string(),
                     ("co_filename", Value::Text(text)) => copy.written_in = Some(text),
@@ -21937,7 +21961,12 @@ impl<'a> Machine<'a> {
         }
         let kind = self.code_blueprint();
         let flags = if built.program.generator { 128 } else { 0 };
+        let constants = Value::tuple(built.program.literals.iter().map(|v| match v {
+            Value::Routine(body) => self.code_handle(body), other => other.clone(),
+        }).collect());
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(flags)), ("co_firstlineno".to_owned(), Value::Small(1))];
+        let mut holds = holds;
+        holds.push(("co_consts".to_owned(), constants));
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -22091,6 +22120,11 @@ impl<'a> Machine<'a> {
             }
         }
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
+        let literals = match &first {
+            Value::Thing(code) if code.holds.borrow().iter().any(|(word, _)| word == "\0literal_overrides") =>
+                code.holds.borrow().iter().find(|(word, _)| word == "co_consts").and_then(|(_, worth)| match worth { Value::Tuple(row) => Some(row.as_ref().clone()), _ => None }),
+            _ => None,
+        };
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
             Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
@@ -22130,8 +22164,8 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await),
-                None => self.perform_here(&source, file, mode, top_await),
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals),
+                None => self.perform_here(&source, file, mode, top_await, literals),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -22171,17 +22205,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near, top_await)
+        self.perform_booked(&source, file, mode, outer, near, top_await, literals)
     }
 
     /// Text run where the call stands: within the reading under way, in
     /// its dictionaries; else among the outermost names.
-    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool) -> Result<Value, String> {
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await),
-                None => self.perform_booked(source, file, mode, near, None, top_await),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals),
+                None => self.perform_booked(source, file, mode, near, None, top_await, literals),
             };
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
@@ -22190,12 +22224,13 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None)?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
             self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
         }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -22207,7 +22242,7 @@ impl<'a> Machine<'a> {
     /// writes to a frame of its own, standing apart from the routine's,
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool) -> Result<Value, String> {
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -22225,13 +22260,14 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str()))) {
+        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str()))) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
         for (message, row, column) in built.warnings.clone() {
             self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
         }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         mine.cells.borrow_mut().resize(built.program.idents.len().max(names.len()), Value::Unset);
@@ -22255,7 +22291,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -22287,7 +22323,7 @@ impl<'a> Machine<'a> {
             Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
             None => Value::Mutable(self.natives_kept(), true),
         };
-        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;
         // What the build noted about how the text is written is said
         // under the name the handed globals give the text, each warning
         // through the warnings module.
@@ -22295,6 +22331,7 @@ impl<'a> Machine<'a> {
         for (message, row, column) in built.warnings.clone() {
             self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
         }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);

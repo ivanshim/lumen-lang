@@ -141,6 +141,7 @@ pub struct Engine<'a> {
     builtins_view: Option<Value>,
     class_body_capture: Option<(Rc<Routine>, Option<Value>)>,
     code_class: Option<Rc<Class>>,
+    native_names: RefCell<std::collections::BTreeMap<String, Vec<String>>>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
     fresh_routines: bool,
@@ -1297,6 +1298,7 @@ impl<'a> Engine<'a> {
             builtins_view: None,
             class_body_capture: None,
             code_class: None,
+            native_names: RefCell::new(std::collections::BTreeMap::new()),
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             library_root: None,
@@ -5913,6 +5915,8 @@ impl<'a> Engine<'a> {
             return names;
         }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
+        let inventory = format!("{}:{}", held.core_kind(), match family { Kindred::Bytes(true) | Kindred::Set(true) | Kindred::View(true) => 1, _ => 0 });
+        if let Some(saved) = self.native_names.borrow().get(&inventory) { return saved.clone(); }
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
         for (spelling, working) in self.lang.value_methods.iter() {
@@ -5947,6 +5951,7 @@ impl<'a> Engine<'a> {
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
+        self.native_names.borrow_mut().insert(inventory, names.clone());
         names
     }
 
@@ -14358,6 +14363,20 @@ impl<'a> Engine<'a> {
             return Ok(self.default_directory(receiver));
         }
         if operation == "code_replace" {
+            if let Value::Object(object) = receiver.contents() {
+                if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
+                    if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
+                    let mut fields = object.fields.borrow().clone();
+                    for (key, value) in named {
+                        if key != "co_consts" { return Err(format!("NotImplementedError: compiled source replacement of {key} is unavailable")); }
+                        let Value::Tuple(constants) = value.contents() else { return Err("TypeError: co_consts must be tuple".into()); };
+                        fields.iter_mut().find(|(name, _)| name == "co_consts").unwrap().1 = Value::tuple(constants.as_ref().clone());
+                        fields.push(("\0replace_constants".to_string(), Value::Flag(true)));
+                    }
+                    self.made += 1;
+                    return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: object.class_now(), fields: RefCell::new(fields), mark: self.made })));
+                }
+            }
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };
             if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
@@ -14369,6 +14388,7 @@ impl<'a> Engine<'a> {
                     changed.lineless = true;
                 } else {
                     match (key.as_str(), value.contents()) {
+                        ("co_consts", Value::Tuple(values)) => changed = changed.replacing_constants(&values)?,
                         ("co_name", Value::Text(text)) => changed.ident = text.to_string(),
                         ("co_qualname", Value::Text(text)) => changed.qualified = text.to_string(),
                         ("co_filename", Value::Text(text)) => changed.written_in = Some(text),
@@ -21931,16 +21951,23 @@ impl Engine<'_> {
         trial.value_only = mode == 1;
         trial.interactive = mode == 2;
         trial.allow_top_level_await = allow_top_await;
-        if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
-            return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
-        }
+        let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
+            Ok(checked) => checked,
+            Err(said) => return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source)),
+        };
         for (message, row, column) in std::mem::take(&mut trial.warnings) {
             self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let bits = if trial.top_level_coroutine { 128 } else { 0 };
-        let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1))];
+        let constants = Value::tuple(checked.code_constants.iter().map(|v| match v {
+            Value::Routine(body) => self.routine_code(body), other => other.clone(),
+        }).collect());
+        let fields = vec![("co_consts".to_string(), constants)];
+        let mut fields = fields;
+        let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1))];
+        fields.splice(0..0, source_fields);
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -22084,6 +22111,11 @@ impl Engine<'_> {
             }
         }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
+        let replacements = match &first {
+            Value::Object(code) if code.fields.borrow().iter().any(|(name, _)| name == "\0replace_constants") =>
+                code.fields.borrow().iter().find(|(name, _)| name == "co_consts").and_then(|(_, value)| match value { Value::Tuple(values) => Some(values.as_ref().clone()), _ => None }),
+            _ => None,
+        };
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
             Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
@@ -22124,8 +22156,8 @@ impl Engine<'_> {
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await),
-                None => self.run_text_here_about(&source, file, mode, top_await),
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements),
+                None => self.run_text_here_about(&source, file, mode, top_await, replacements),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -22163,17 +22195,17 @@ impl Engine<'_> {
                 }
             }
         }
-        self.run_text_booked(&source, file, mode, outer, near, top_await)
+        self.run_text_booked(&source, file, mode, outer, near, top_await, replacements)
     }
 
     /// Text run where the call stands: inside a text book, in that
     /// book; else against the outermost names.
-    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool) -> Res<Value> {
+    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, replacements: Option<Vec<Value>>) -> Res<Value> {
         if let Some(at) = self.reading_in {
             let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
             return match outer {
-                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await),
-                None => self.run_text_booked(source, file, mode, near, None, top_await),
+                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await, replacements),
+                None => self.run_text_booked(source, file, mode, near, None, top_await, replacements),
             };
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
@@ -22182,6 +22214,7 @@ impl Engine<'_> {
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None)?;
+        let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
     }
@@ -22192,7 +22225,7 @@ impl Engine<'_> {
     /// writes to a frame of its own making, a copy of the routine's, so
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool) -> Res<Value> {
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
@@ -22215,6 +22248,7 @@ impl Engine<'_> {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
         };
+        let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut mine = values;
         mine.resize(program.idents.len().max(mine.len()), Value::Blank);
@@ -22238,7 +22272,7 @@ impl Engine<'_> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
-    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Res<Value> {
+    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -22283,6 +22317,7 @@ impl Engine<'_> {
         // namespace had when they were made, not one written later.
         local.home = Some(module_hint.as_deref().map(Rc::from));
         let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref())?;
+        let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);

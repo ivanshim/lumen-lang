@@ -1551,6 +1551,12 @@ impl<'a> Engine<'a> {
         let subject = if !self.lang.class_builder.is_empty() {
             match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
         } else { subject };
+        if let Value::Object(code) = &subject {
+            if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &code.class_now()))
+                && self.lang.class_details.get("code.replace").and_then(|words| words.first()).is_some_and(|word| word == name) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_owned()))));
+            }
+        }
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
                 let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
@@ -1591,6 +1597,25 @@ impl<'a> Engine<'a> {
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
         let raw = subject.contents();
+        if self.lang.bind_names && !name.starts_with("__") {
+            if let Value::Object(instance) = &raw {
+                let owner = instance.class_now();
+                if Self::own_kind(&owner).is_none() && Self::kind_beneath(&owner).map_or(true, |kind| kind == self.class_word("root")) {
+                    let own = {
+                        let fields = instance.fields.borrow();
+                        if fields.iter().any(|(key, _)| key.starts_with('\0')) { None }
+                        else { fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone()) }
+                    };
+                    if let Some(held) = own {
+                        let default_reader = plain || self.class_value(&owner, self.class_word("get")).is_none();
+                        let descriptor = self.class_value(&owner, name);
+                        if default_reader && !descriptor.as_ref().is_some_and(|value| self.takes_writes(value)) {
+                            return Ok(held);
+                        }
+                    }
+                }
+            }
+        }
         if let Value::Adapter(function) = &raw {
             if function.0 == 122 {
                 match name {
@@ -2480,6 +2505,13 @@ impl<'a> Engine<'a> {
         fresh
     }
     fn function_storage(&mut self, function: &Value) -> usize {
+        if self.lang.bind_names {
+            if let Value::Routine(program) = function {
+                if let Some(&at) = self.constructor_records.get(&(Rc::as_ptr(program) as usize)) {
+                    if self.function_members.get(at).is_some_and(|(candidate, _)| candidate.equals(function)) { return at; }
+                }
+            }
+        }
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
         let class = self.root_class();
         self.made += 1;

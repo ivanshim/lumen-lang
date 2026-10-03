@@ -1932,6 +1932,15 @@ impl<'a> Machine<'a> {
         fresh
     }
     fn routine_storage(&mut self, code: &Value) -> usize {
+        if self.names_in_calls {
+            let body = match code { Value::Routine(body) | Value::Bound(body, _) => Some(body), _ => None };
+            let cached = body.and_then(|body| self.routine_worlds.get(&(Rc::as_ptr(body) as usize))).copied();
+            if let Some(position) = cached {
+                if let Some((stored, _)) = self.routine_members.get(position) {
+                    if stored.equals(code) { return position; }
+                }
+            }
+        }
         match self.routine_members.iter().position(|(candidate, _)| candidate.equals(code)) {
             Some(found) => found,
             None => {
@@ -2037,6 +2046,12 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         let value = if self.table.has_any("ext.stmt.class.builder") { value.settled() } else { value };
+        if let Value::Thing(item) = &value {
+            let replace = self.table.strings("ext.stmt.class.detail.code.replace").first();
+            if replace.is_some_and(|word| word == key) && self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
+            }
+        }
         if let Value::Wrapped(122, fields) = &value {
             let selected = match key {
                 "__code__" => Some(fields[0].clone()),
@@ -2100,6 +2115,24 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if self.names_in_calls && !key.starts_with("__") {
+            if let Value::Thing(instance) = &value {
+                let class = instance.blueprint();
+                let ordinary = Self::native_word(&class).is_none() && Self::native_beneath(&class).map_or(true, |base| base == self.detail("root"));
+                if ordinary {
+                    let attributes = instance.holds.borrow();
+                    let isolated = attributes.iter().all(|(word, _)| !word.starts_with('\0'));
+                    let stored = isolated.then(|| attributes.iter().find(|(word, _)| word == key)
+                        .map(|(_, worth)| worth.clone())).flatten();
+                    drop(attributes);
+                    if let Some(stored) = stored {
+                        let intercepts = !direct && self.inherited_entry(&class, self.detail("get")).is_some();
+                        let data = self.inherited_entry(&class, key).is_some_and(|entry| self.writes_too(&entry));
+                        if !intercepts && !data { return Ok(stored); }
+                    }
+                }
+            }
+        }
         if matches!(&value, Value::Wrapped(62, _)) {
             if let Some(method) = self.attribute(&value, key) { return Ok(method); }
         }

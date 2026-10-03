@@ -789,6 +789,7 @@ pub struct Routine {
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
+    pub lexical_origin: Rc<str>,
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
     pub flags: i64,
@@ -926,5 +927,96 @@ impl Form {
             }
             _ => {}
         }
+    }
+}
+
+impl Form {
+    pub fn change_literals(&mut self, old: &[Value], new: &[Value]) -> Result<(), String> {
+        fn alter(value: &mut Value, old: &[Value], new: &[Value]) -> Result<(), String> {
+            let chosen = old.iter().zip(new).find(|(prior, _)|
+                std::mem::discriminant(*prior) == std::mem::discriminant(value) && prior.equals(value));
+            if let Some((_, wanted)) = chosen {
+                *value = match (&*value, wanted) {
+                    (Value::Routine(current), Value::Routine(template)) => {
+                        if current.lexical_origin != template.lexical_origin || current.declared_on != template.declared_on || current.formals != template.formals || current.referenced != template.referenced {
+                            return Err(String::from("NotImplementedError: replacing a nested instruction body is unavailable"));
+                        }
+                        let mut adjusted = current.with_literals(&template.literals)?;
+                        adjusted.ident = template.ident.clone();
+                        adjusted.qualification = template.qualification.clone();
+                        adjusted.written_in = template.written_in.clone();
+                        adjusted.declared_on = template.declared_on;
+                        adjusted.flags = template.flags;
+                        Value::Routine(Rc::new(adjusted))
+                    }
+                    _ => wanted.clone(),
+                };
+            } else if let Value::Routine(body) = value {
+                if body.frameless { Rc::make_mut(body).body.change_literals(old, new)?; }
+            }
+            Ok(())
+        }
+        let mut descend: Vec<&mut Form> = Vec::new();
+        match self {
+            Self::Const(value) => alter(value, old, new)?,
+            Self::Write(_, inner) | Self::Tie(_, inner) | Self::ShareItem(_, inner)
+            | Self::ShareField(inner, _) | Self::ShareOwn(inner, _) | Self::ShareCalled(inner)
+            | Self::ForgetCalled(inner) | Self::ReadyCalled(inner) | Self::Muted(inner)
+            | Self::Silenced(inner) | Self::Called(inner) | Self::OnLine(_, _, inner)
+            | Self::Located(_, _, inner) | Self::CellOrSaid(_, _, _, inner)
+            | Self::HeldEither(_, _, _, inner) => descend.push(inner),
+            Self::Apply(callee, arguments) => {
+                if let Callee::Code(target) = callee { descend.push(target); }
+                descend.extend(arguments);
+            }
+            Self::Dyad { a, b, .. } => for input in [a, b] {
+                match input { Input::Form(inner) => descend.push(inner), Input::Const(value) => alter(value, old, new)?, _ => {} }
+            },
+            Self::Bump { by, .. } => {
+                let mut value = Value::Small(*by); alter(&mut value, old, new)?;
+                match value { Value::Small(amount) => *by = amount,
+                    _ => return Err("NotImplementedError: changing the type of a fused increment is unavailable".into()) }
+            }
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                descend.extend([test.as_mut(), body.as_mut()]);
+                descend.extend(step.as_deref_mut()); descend.extend(otherwise.as_deref_mut());
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                descend.push(body);
+                for clause in clauses { descend.push(&mut clause.body); if let Some(choices) = &mut clause.choices { descend.extend(choices); } }
+                descend.extend(last.as_deref_mut()); descend.extend(otherwise.as_deref_mut());
+            }
+            Self::Class { values, .. } => descend.extend(values),
+            Self::Assert { condition, message } => descend.extend([condition.as_mut(), message.as_mut()]),
+            Self::Fits { value, kinds, .. } => { descend.push(value); descend.extend(kinds); }
+            Self::SharePlace(_, keys) => descend.extend(keys),
+            Self::ShareWithin(value, keys) => { descend.push(value); descend.extend(keys); }
+            Self::ForgetWithin(a, b) | Self::TieCalled(a, b) | Self::CallWrite(a, b) => descend.extend([a.as_mut(), b.as_mut()]),
+            _ => {}
+        }
+        for child in descend { child.change_literals(old, new)?; }
+        Ok(())
+    }
+}
+
+impl Routine {
+    pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
+        if values.len() != self.literals.len() {
+            return Err("NotImplementedError: changing the constant table length is unavailable".into());
+        }
+        let mut literals = Vec::new();
+        for value in values {
+            literals.push(match value.settled() {
+                Value::Wrapped(7, parts) => parts[0].clone(),
+                plain => plain,
+            });
+        }
+        let mut adjusted = self.clone();
+        adjusted.body.change_literals(&self.literals, &literals)?;
+        adjusted.doc = literals.first().and_then(|value| match value {
+            Value::Text(word) => Some(word.to_string()), _ => None,
+        });
+        adjusted.literals = literals;
+        Ok(adjusted)
     }
 }

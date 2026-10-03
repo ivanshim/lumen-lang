@@ -889,6 +889,7 @@ pub struct Routine {
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
+    pub source_tokens: Rc<str>,
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
@@ -1001,5 +1002,58 @@ pub struct Plan {
 impl Drop for Routine {
     fn drop(&mut self) {
         crate::faint::plain_departing();
+    }
+}
+
+impl Routine {
+    pub fn replacing_constants(&self, supplied: &[Value]) -> Result<Self, String> {
+        if supplied.len() != self.code_constants.len() {
+            return Err("NotImplementedError: changing the constant table length is unavailable".into());
+        }
+        let replacements: Vec<Value> = supplied.iter().map(|value| match value.contents() {
+            Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
+            other => other,
+        }).collect();
+        let swap = |value: &Value| -> Result<Value, String> {
+            let Some(at) = self.code_constants.iter().position(|old|
+                std::mem::discriminant(old) == std::mem::discriminant(value) && old.equals(value)) else {
+                return Ok(value.clone());
+            };
+            match (value, &replacements[at]) {
+                (Value::Routine(existing), Value::Routine(wanted)) => {
+                    if existing.source_tokens != wanted.source_tokens || existing.declared_on != wanted.declared_on || existing.formals != wanted.formals || existing.code_names != wanted.code_names {
+                        return Err("NotImplementedError: replacing a nested instruction body is unavailable".into());
+                    }
+                    let mut body = existing.replacing_constants(&wanted.code_constants)?;
+                    body.ident = wanted.ident.clone();
+                    body.qualified = wanted.qualified.clone();
+                    body.written_in = wanted.written_in.clone();
+                    body.declared_on = wanted.declared_on;
+                    body.code_flags = wanted.code_flags;
+                    Ok(Value::Routine(Rc::new(body)))
+                }
+                _ => Ok(replacements[at].clone()),
+            }
+        };
+        let mut result = self.clone();
+        let mut instructions = self.instrs.as_ref().clone();
+        for instruction in &mut instructions {
+            match instruction {
+                Instr::Const(value) | Instr::Bump { by: value, .. } => *value = swap(value)?,
+                Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
+                    for operand in [a, b] {
+                        if let Operand::Const(value) = operand { *value = swap(value)?; }
+                    }
+                }
+                _ => {}
+            }
+        }
+        result.instrs = Rc::new(instructions);
+        result.code_constants = replacements;
+        result.doc = result.code_constants.first().and_then(|value| match value {
+            Value::Text(text) => Some(text.to_string()), _ => None,
+        });
+        result.revised = RefCell::new(None);
+        Ok(result)
     }
 }
