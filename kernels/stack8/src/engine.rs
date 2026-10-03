@@ -20001,6 +20001,13 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
+        // A module's routines are made in the module's own dictionary,
+        // the one its names will stand in, so that a name they read and
+        // `globals()` asked from within them reach that dictionary and
+        // no other, as the reference has it.
+        let namespace = Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))));
+        local.globe = Some(Value::Bond(namespace.clone()));
+        local.born = Some(self.native_dict());
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
             Ok(program) => program,
             Err(said) => {
@@ -20053,6 +20060,15 @@ impl Engine<'_> {
         if let (Some(word), Some(search)) = (&self.lang.module_path, package_path) {
             if !fields.iter().any(|(name, _)| name == word) { fields.push((word.clone(), search)); }
         }
+        // The dictionary the module's routines were made with is filled
+        // now that its names are known: the same entries the module
+        // shows on its own face, so the two read as one dictionary.
+        let mut kept: Vec<(Value, Value)> = fields.iter().map(|(name, worth)| (Value::text(name), worth.clone())).collect();
+        let natives = self.natives_book();
+        for word in &self.lang.module_builtins {
+            if !kept.iter().any(|(key, _)| key_spells(key, word)) { kept.push((Value::text(word), Value::Bond(natives.clone()))); }
+        }
+        *namespace.borrow_mut() = Value::Map(Rc::new(kept.into()));
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
@@ -20644,6 +20660,40 @@ impl Engine<'_> {
         self.outer_book_made()
     }
 
+    /// The dictionary a routine reads its outer names through: the one
+    /// it was made in, or the one handed to it in place of that, where
+    /// it keeps one of those; else the outermost dictionary the run
+    /// stands in, as the reference reads a frame's own globals.
+    fn routine_outer(&mut self, program: &Rc<Routine>) -> Rc<RefCell<Value>> {
+        if let Some(book) = self.constructor_book(program) { return book; }
+        if let Some(held) = &program.globe {
+            let cell = match held {
+                Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Some(cell.clone()),
+                Value::Map(_) => Some(Rc::new(RefCell::new(held.clone()))),
+                _ => None,
+            };
+            if let Some(book) = cell { return book; }
+        }
+        self.book_here(true)
+    }
+
+    /// The same, asked from wherever a run now stands: the routine
+    /// behind the frame at the top answers for it, since a builtin
+    /// called through a name rather than spelled out still stands
+    /// inside the call it was made in.
+    fn running_outer(&mut self) -> Rc<RefCell<Value>> {
+        let stands = self.trace_frame.as_ref().and_then(|frame| {
+            frame.fields.borrow().iter().find(|(name, _)| name == "\0routine").and_then(|(_, held)| match held {
+                Value::Routine(code) => Some(code.clone()),
+                _ => None,
+            })
+        });
+        match stands {
+            Some(code) => self.routine_outer(&code),
+            None => self.book_here(true),
+        }
+    }
+
     /// The names about a call with nothing given: the outermost
     /// dictionary, or inside a routine a fresh dictionary of its own
     /// names; listed in order for dir.
@@ -20651,8 +20701,10 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
-        let book = if kind == Builtin::OuterNames || program.body_of_all {
-            self.book_here(kind == Builtin::OuterNames)
+        let book = if kind == Builtin::OuterNames {
+            self.routine_outer(program)
+        } else if program.body_of_all {
+            self.book_here(false)
         } else {
             let mut pairs = Vec::new();
             for (name, held) in program.idents.iter().zip(frame.iter()) {
@@ -20944,7 +20996,8 @@ impl Engine<'_> {
         match builtin {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
-                Ok(Value::Bond(self.book_here(builtin == Builtin::OuterNames)))
+                let book = if builtin == Builtin::OuterNames { self.running_outer() } else { self.book_here(false) };
+                Ok(Value::Bond(book))
             }
             // A dictionary fresh and empty every time it is asked for,
             // and never the one the world answers `locals()` with: the
@@ -21365,7 +21418,7 @@ impl Engine<'_> {
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
-            (None, near) => (self.book_here(true), near),
+            (None, near) => (self.running_outer(), near),
         };
         // A dictionary given for the outer names is given the builtins
         // too, unless it names a dictionary of its own for them; a

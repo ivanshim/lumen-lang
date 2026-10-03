@@ -19974,7 +19974,11 @@ impl Machine<'_> {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
         };
-        let built = match crate::build::build_module_position(&ready, self.table, &hidden, Rc::from(filename)) {
+        // The routines of a module are built beside the dictionary of
+        // the module's own names, so that what they read as their world
+        // names reads that dictionary and no other.
+        let namespace = Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into()))));
+        let built = match crate::build::build_module_position(&ready, self.table, &hidden, Rc::from(filename), Some(Value::Shared(namespace.clone()))) {
             Ok(built) => built,
             Err((words, line, (column, end_column, end_line))) => return Err(self.text_unreadable_at(0, words, filename, line, column, Some((end_line, end_column)), &text)),
         };
@@ -20033,6 +20037,15 @@ impl Machine<'_> {
         if let (Some(word), Some(directories)) = (path_word, search) {
             if !members.iter().any(|entry| entry.0 == word) { members.push((word.to_owned(), directories)); }
         }
+        // The dictionary the module's routines were built beside is
+        // filled now that its names are known: the same links the module
+        // carries as its own, with the builtins word among them as the    // world's own dictionary keeps it.
+        let mut entries: Vec<(Value, Value)> = members.iter().map(|(word, link)| (Value::text(word), link.clone())).collect();
+        let natives = self.natives_kept();
+        for word in self.table.strings("ext.system.module.builtins") {
+            if !entries.iter().any(|(key, _)| spells_key(key, word)) { entries.push((Value::text(word), Value::Shared(natives.clone()))); }
+        }
+        *namespace.borrow_mut() = Value::Dict(Rc::new(entries.into()));
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
@@ -20553,12 +20566,25 @@ impl<'a> Machine<'a> {
         self.world_kept()
     }
 
+    /// The dictionary the program now running reads its world names
+    /// through: the namespace it was built beside, where its maker    /// passed one in; failing that, the world's own standing one.
+    fn standing_world(&mut self) -> Rc<RefCell<Value>> {
+        let made_beside = self.frames_named.last().and_then(|program| program.globe.clone());
+        match made_beside {
+            Some(Value::Shared(cell)) | Some(Value::Mutable(cell, _)) => cell,
+            Some(Value::Dict(entries)) => Rc::new(RefCell::new(Value::Dict(entries))),
+            _ => self.book_about(true),
+        }
+    }
+
     /// The names about a call given nothing: the outermost dictionary;
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
-        let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
-            self.book_about(op == Prim::WorldBook)
+        let book = if op == Prim::WorldBook {
+            self.standing_world()
+        } else if Rc::ptr_eq(frame, &self.outermost) {
+            self.book_about(false)
         } else {
             let mut entries = Vec::new();
             if let Some(program) = self.frames_named.last() {
@@ -20850,7 +20876,8 @@ impl<'a> Machine<'a> {
         match op {
             Prim::WorldBook | Prim::HereBook => {
                 if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
-                Ok(Value::Shared(self.book_about(op == Prim::WorldBook)))
+                let book = if op == Prim::WorldBook { self.standing_world() } else { self.book_about(false) };
+                Ok(Value::Shared(book))
             }
             // __import__(name, globals=None, locals=None, fromlist=(),
             // level=0): the level is weighed before the name is fetched,
