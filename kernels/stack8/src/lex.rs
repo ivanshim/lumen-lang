@@ -1266,6 +1266,7 @@ impl<'a> Cursor<'a> {
             s.push(c);
             self.step();
         }
+        if lang.identifier_normalized { s = crate::unicode::normalized(&s); }
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;

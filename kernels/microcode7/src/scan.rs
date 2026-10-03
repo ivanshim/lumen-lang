@@ -1519,6 +1519,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             }
             s.extend(&src[k..k + longest]);
             k += longest;
+            if table.flag("ext.lexical.identifier.normalized") { s = crate::unicode::collated(&s); }
             let low = s.to_lowercase();
             if fold_id || (fold_kw && table.keywords.contains(&low)) {
                 s = low;
