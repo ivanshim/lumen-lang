@@ -58,6 +58,12 @@ class _Kind(ABC):
     # kind here has from ABC.
     pass
 
+    def __class_getitem__(cls, item):
+        from types import GenericAlias
+        return GenericAlias(cls, item)
+
+    __class_getitem__ = classmethod(__class_getitem__)
+
 
 class Hashable(_Kind):
     @abstractmethod

@@ -67,7 +67,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("pprint", include_str!("pprint.py"), "pprint.py"),
     ("pty", include_str!("pty.py"), "pty.py"),
     ("random", include_str!("random.py"), "random.py"),
-    ("re", include_str!("re.py"), "re.py"),
+    ("re", concat!(include_str!("re.py"), "\n", include_str!("runtime_adapters/re.py")), "re.py"),
     ("reprlib", include_str!("reprlib.py"), "reprlib.py"),
     ("shlex", include_str!("shlex.py"), "shlex.py"),
     ("shutil", include_str!("shutil.py"), "shutil.py"),

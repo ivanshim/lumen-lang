@@ -9617,6 +9617,17 @@ impl<'a> Engine<'a> {
                         }
                         // The property builtin, read as a class to stand on.
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => Some(self.property_class()),
+                        // A parameterized generic stands in the bases for
+                        // the class it was made from, as PEP 560 spells it.
+                        Some(v) if self.fuller_classes() && matches!(v.contents(), Value::Object(ref alias) if alias.class_now().name == "GenericAlias") => {
+                            let Value::Object(alias) = v.contents() else { unreachable!() };
+                            if alias.class_now().name == "GenericAlias" {
+                                let origin = alias.fields.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
+                                match origin { Some(held) => Some(self.type_base(&held)?), None => return Err("TypeError: bases must be types".into()) }
+                            } else {
+                                return Err(self.class_word("unready").to_string().into());
+                            }
+                        }
                         Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
                         None => return Err("Stack underflow".to_string().into()),
                     },

@@ -57,12 +57,12 @@ class _Record:
         self._frozen_sealed = True
 
     def __setattr__(self, name, value):
-        if getattr(self, '_frozen_sealed', False) and name in self._fields:
+        if getattr(self, '_frozen_sealed', False) and getattr(type(self), '_frozen', False) and name in self._fields:
             raise FrozenInstanceError("cannot assign to field '" + name + "'")
         object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        if getattr(self, '_frozen_sealed', False) and name in self._fields:
+        if getattr(self, '_frozen_sealed', False) and getattr(type(self), '_frozen', False) and name in self._fields:
             raise FrozenInstanceError('cannot delete field ' + repr(name))
         object.__delattr__(self, name)
 
@@ -88,7 +88,7 @@ class _Record:
         return result + ')'
 
     def __eq__(self, other):
-        if not isinstance(other, _Record):
+        if getattr(type(other), '_record_token', None) is None:
             return False
         if self._record_token is not other._record_token:
             return False
@@ -120,7 +120,13 @@ def dataclass(cls=None, frozen=False, **options):
             base_fields = list(base._fields)
             base_defaults = list(base._defaults)
             base_kw_only = list(getattr(base, '_kw_only_fields', []))
-    names = list(getattr(cls, '__annotations__', {}))
+    annotations = getattr(cls, '__annotations__', {})
+    names = []
+    for name in annotations:
+        annotation = annotations[name]
+        if isinstance(annotation, str) and (annotation == 'ClassVar' or annotation.startswith('ClassVar[') or annotation == 'typing.ClassVar' or annotation.startswith('typing.ClassVar[')):
+            continue
+        names.append(name)
     defaults = []
     kw_only = []
     optional = len(base_defaults) > 0 and any(
@@ -132,22 +138,28 @@ def dataclass(cls=None, frozen=False, **options):
         if optional and not supplied:
             raise 'TypeError: non-default argument follows default argument'
         optional = optional or supplied
+        specification.name = name
         defaults.append(specification)
         if kw_only_class or specification.kw_only is True:
             kw_only.append(name)
+    dataclass_fields = {}
+    for i in range(len(names)):
+        dataclass_fields[names[i]] = defaults[i]
     namespace = {'_fields': base_fields + names, '_defaults': base_defaults + defaults,
                  '_kw_only_fields': base_kw_only + kw_only, '_record_name': cls.__name__,
                  '_record_token': _Missing(), '__name__': cls.__name__,
                  '__annotations__': getattr(cls, '__annotations__', {}),
+                 '__dataclass_fields__': dataclass_fields,
                  '__init__': _Record.__init__, '__setattr__': _Record.__setattr__,
-                 '__delattr__': _Record.__delattr__, '_frozen': frozen}
+                 '__delattr__': _Record.__delattr__, '__repr__': _Record.__repr__,
+                 '__eq__': _Record.__eq__, '__replace__': _Record.__replace__, '_frozen': frozen}
     return __derive_class(cls.__name__, cls, namespace)
 
 def asdict(obj):
-    if not isinstance(obj, _Record):
+    if getattr(type(obj), '_record_token', None) is None:
         raise 'TypeError: asdict should be called on dataclass instances'
     result = {}
     for name in obj._fields:
         value = getattr(obj, name)
-        result[name] = asdict(value) if isinstance(value, _Record) else __copy_value(value, True)
+        result[name] = asdict(value) if getattr(type(value), '_record_token', None) is not None else __copy_value(value, True)
     return result

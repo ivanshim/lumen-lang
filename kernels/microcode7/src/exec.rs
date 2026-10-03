@@ -5789,6 +5789,14 @@ impl<'a> Machine<'a> {
                         }
                         // The property builtin, stood on as a class.
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
+                        // A parameterized generic stands in the bases
+                        // for the class it was made from, as PEP 560
+                        // spells it.
+                        Some(named) if self.has_class_order() && matches!(named.settled(), Value::Thing(ref alias) if alias.blueprint().name == "GenericAlias") => {
+                            let Value::Thing(alias) = named.settled() else { unreachable!() };
+                            let origin = alias.holds.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
+                            match origin { Some(held) => Some(self.parent_from_type(&held)?), None => return Err(String::from("TypeError: bases must be types").into()) }
+                        }
                         Some(Value::Intrinsic(_,word)) if self.table.spells("ext.builtin.bool", &word) && self.rules.has_any_ext_builtin_bool_base => {
                             return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into());
                         }

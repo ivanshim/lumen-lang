@@ -12,6 +12,7 @@
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",
     "operator": "runtime_adapters/operator.py",
-    "io": "runtime_adapters/io.py"
+    "io": "runtime_adapters/io.py",
+    "re": "runtime_adapters/re.py"
   }
 }

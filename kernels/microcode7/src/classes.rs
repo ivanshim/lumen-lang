@@ -2460,7 +2460,7 @@ impl<'a> Machine<'a> {
         if nowhere{return Err(self.unwritable_attribute(&subject,key));}
         Err(self.absent_attribute(&subject,key))
     }
-    fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
+    pub(crate) fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
         let settled = parent.settled();
         if let Value::Blueprint(class) = settled {
             if Self::sealed(&class) { return Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()); }

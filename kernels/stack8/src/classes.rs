@@ -2329,7 +2329,7 @@ impl<'a> Engine<'a> {
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
-    fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
+    pub(crate) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         match value.contents() {
             Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
             Value::Class(class) => Ok(class),

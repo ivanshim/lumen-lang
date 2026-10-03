@@ -7,14 +7,6 @@
 # the way out, this port keeps the decoded text and its columns are
 # character columns throughout, which is the same number the C produces.
 
-# The suite's re module is still growing its flag roster, while tokenize.py
-# compiles its cookie patterns with re.ASCII.  Supply the standard value
-# (CPython Lib/re/__init__.py: ASCII = A = 256) only when re does not name
-# it yet; the bit is passed through to re's engine unchanged.
-import re as _re
-if not hasattr(_re, 'ASCII'):
-    _re.ASCII = _re.A = 256
-
 import warnings as _warnings
 
 # Token types (CPython Include/internal/pycore_token.h).
