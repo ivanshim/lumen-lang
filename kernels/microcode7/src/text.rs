@@ -331,7 +331,8 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 lines.push(source[begin..if ends {following} else {position}].to_owned());begin=following;
             }
             if begin<source.len() {lines.push(source[begin..].to_owned());}
-            Value::TextRow(Rc::new(lines),false)
+            // The reference answers a list of the parts.
+            Value::Vector(crate::tuples::Sequence::plain(lines.iter().map(|part| Value::text(part)).collect()))
         }
         PARTITION|RPARTITION=>{
             let separator=g.word(0)?;
