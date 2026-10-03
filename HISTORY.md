@@ -2430,6 +2430,14 @@ class builders and appends the real shared Generic base after any explicit bases
 custom `__build_class__` dispatch to ordinary construction; the PEP branch's identity, scope and subscription probes
 again print CPython's output on both kernels.
 
+The pull request's own CI then caught what the checks had not: stack8 printed the right traceback for
+`a, b = forever()` (an infinite generator) and then overflowed its stack while finalizing the abandoned generator, a
+crash from fix/generator-resurrection. The Lambda checker compared only a crashing program's first error line, so it
+now also treats a death by signal as a mismatch, and an earlier build was swept for other crashes (none). stack8 now
+closes a suspended generator once, while the engine is alive, and never rebuilds one during teardown; every
+generators-* scratch program exits with its expected status on both kernels. microcode7 still skips some finalizers at
+shutdown while exiting cleanly; that is left for later work.
+
 Measured on both kernels, the sixty files count 3224 of 3596 (3218 before): test_builtin 108 to 112, test_functools 152
 to 153, test_generators 54 to 55; no passing test was lost. The merged full check agrees on 1182 scratch programs with
 no mismatch and passes every gate (lumen 522/522, PHP 318/318, Python 128/128); kernel independence reports no problem.
