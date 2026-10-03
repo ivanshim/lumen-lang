@@ -10412,10 +10412,19 @@ impl<'a> Machine<'a> {
         let mut numbers = cell.borrow_mut();
         match at {
             Value::Span(bounds) if self.rules.has_any_ext_builtin_slice => {
-                let (_, picked, _) = self.span_selection(bounds, numbers.len())?;
+                let (range, picked, unit) = self.span_selection(bounds, numbers.len())?;
                 if !picked.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                let kept = numbers.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, n)| *n).collect();
-                *numbers = kept;
+                if unit {
+                    numbers.drain(range);
+                } else {
+                    let removed: std::collections::HashSet<usize> = picked.into_iter().collect();
+                    let mut position = 0;
+                    numbers.retain(|_| {
+                        let keep = !removed.contains(&position);
+                        position += 1;
+                        keep
+                    });
+                }
             }
             key => {
                 let place = self.octet_at(key, numbers.len(), true)?;

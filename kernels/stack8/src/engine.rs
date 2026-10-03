@@ -15274,11 +15274,16 @@ impl<'a> Engine<'a> {
         let mut held = content.borrow_mut();
         match at {
             Value::Slice(bounds) if self.lang.slice_values() => {
-                let (_, _, _, mut picked) = self.slice_places(bounds, held.len())?;
-                picked.sort_unstable();
-                picked.dedup();
+                let (_, _, _, picked) = self.slice_places(bounds, held.len())?;
                 if !picked.is_empty() && ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                for place in picked.into_iter().rev() { held.remove(place); }
+                let mut discarded = vec![false; held.len()];
+                for offset in picked { discarded[offset] = true; }
+                let mut offset = 0;
+                held.retain(|_| {
+                    let retain = !discarded[offset];
+                    offset += 1;
+                    retain
+                });
             }
             key => {
                 let place = self.byte_position(key, held.len(), true)?;

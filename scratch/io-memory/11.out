@@ -1,0 +1,8 @@
+tail b'abc'
+slice b'bdfhj'
+slice b'acegi'
+slice b'abcdefghij'
+slice b'abij'
+raw b'abcdefg'
+empty exported b'abc'
+BufferError Existing exports of data: object cannot be re-sized
