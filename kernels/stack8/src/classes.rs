@@ -1118,7 +1118,21 @@ impl<'a> Engine<'a> {
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
-        if c.name == "FunctionType" && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
+        if self.lang.bind_names && Self::own_kind(&c).as_deref() == Some("method") {
+            let entries = self.call_items(args)?;
+            if entries.len() != 2 || entries.iter().any(|(name, _)| name.is_some()) {
+                return Err("TypeError: method expected 2 arguments".into());
+            }
+            let function = entries[0].1.contents();
+            let callable = self.class_work(2, vec![function.clone()])?;
+            if !self.truth(&callable) && !matches!(function, Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) | Value::ByteKind(..)) {
+                return Err("TypeError: first argument must be callable".into());
+            }
+            let instance = entries[1].1.contents();
+            if matches!(instance, Value::Null) { return Err("TypeError: instance must not be None".into()); }
+            return Ok(Self::adapter(3, vec![function, instance, Value::Flag(true)]));
+        }
+        if Self::own_kind(&c).as_deref() == Some("function") && self.lang.trace_fields.len() > 18 {
             let mut parts = vec![None; 5];
             let mut next = 0;
             for (named, value) in self.call_items(args)? {
@@ -1152,6 +1166,12 @@ impl<'a> Engine<'a> {
                 let Some(held @ (Value::Binding(_) | Value::Bond(_))) = wrapped.1.first() else { return Err("TypeError: arg 5 (closure) must contain cells".into()); };
                 made.enclosed.push((*at, held.clone()));
             }
+            made.globe = Some(globals.clone());
+            let builtins_word = self.lang.module_builtins.first().cloned().unwrap_or_default();
+            made.born = Some(match self.dyn_lookup(&globals.contents(), &builtins_word)? {
+                Some(held) => held,
+                None => self.ambient_builtins(),
+            });
             let created = Value::Routine(Rc::new(made));
             let at = self.function_storage(&created);
             self.routine_namespace_write(at, Some(globals))?;
@@ -1442,6 +1462,9 @@ impl<'a> Engine<'a> {
             return self.call_descriptor(&value, reader, vec![subject.unwrap_or(Value::Null), Value::Class(class)]);
         }
         match (value,subject) {
+            (Value::Routine(f), Some(receiver)) if self.lang.bind_names => {
+                Ok(Self::adapter(3, vec![Value::Routine(f), receiver]))
+            }
             (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::Method(o,f)),
             (Value::Routine(f),Some(other)) => Ok(Self::adapter(3, vec![Value::Routine(f), other])),
             (v,_) => Ok(v),
@@ -2140,6 +2163,9 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
+                if name != self.class_word("kind") && (matches!(w.1.first(), Some(Value::Routine(_))) || matches!(w.1.get(2), Some(Value::Flag(true)))) {
+                    return self.class_get(w.1[0].clone(), name, true);
+                }
             }
             _ => {}
         }
@@ -2810,7 +2836,7 @@ impl<'a> Engine<'a> {
             // A method keeps nothing of its own: the thing and routine
             // it binds are fixed, its account of itself is the
             // routine's, and nothing else can be written or taken away.
-            Value::Method(..) => {
+            Value::Method(..) | Value::Adapter(_) if subject.core_kind() == "method" => {
                 if name==self.class_word("receiver") || name==self.class_word("function") {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("kind") {
                     let part=if value.is_some(){"kind.fixed"}else{"kind.kept"};
@@ -2948,7 +2974,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,3|7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
             [_, _, _] => {
                 let mut parts = vec![self.kind_maker_word()]; parts.extend(args.clone());
                 let made = self.class_from_parts(parts)?;
@@ -3264,6 +3290,9 @@ impl<'a> Engine<'a> {
     pub(super) fn default_directory(&self, one: &Value) -> Value {
         // A routine lists the members it can honestly answer
         // for, alongside any it was given of its own.
+        if let Value::Adapter(bound) = one {
+            if bound.0 == 3 && one.core_kind() == "method" { return self.default_directory(&bound.1[0]); }
+        }
         if let Value::Routine(_)|Value::Method(..)=one {
             let mut names:Vec<String>=vec![];
             for part in ["name","qualified","doc","module","defaults","call"] {

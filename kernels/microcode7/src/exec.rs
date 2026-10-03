@@ -5434,6 +5434,13 @@ impl<'a> Machine<'a> {
             // both.
             Form::ShareField(of, called) => {
                 let thing = self.value_of(of, frame)?;
+                if self.names_in_calls && self.has_class_order() {
+                    if let Value::Thing(_) = &thing {
+                        // Subscription mutates what lookup returns. The
+                        // blueprint's descriptor must remain untouched.
+                        return self.read_class_member(thing, called, false);
+                    }
+                }
                 // A namespace is not a field kept under that name but a
                 // view of the thing's own, and is written into as one.
                 if self.has_class_order() && called.as_ref() == self.rules.detail_namespace && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Thing(_)) {

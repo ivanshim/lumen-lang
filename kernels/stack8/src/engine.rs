@@ -5372,7 +5372,7 @@ impl<'a> Engine<'a> {
                         Some(v) => v,
                         None => self.special_dyad(op, av, bv)?,
                     };
-                    self.data.push(r);
+                    self.data.push(self.keep_collection(r));
                 }
                 Instr::Bump { slot, by } => {
                     // A shared cell holds its value elsewhere, so it is
@@ -7938,7 +7938,7 @@ impl<'a> Engine<'a> {
         if op == Builtin::Hash && args.len() == 1 {
             if let Some(hash) = Self::python_constructor_hash(&args[0]) { return Ok(Some(hash)); }
         }
-        if op == Builtin::Hash && args.len() == 1 && matches!(args[0], Value::Method(..)) {
+        if op == Builtin::Hash && args.len() == 1 && (matches!(args[0], Value::Method(..)) || matches!(&args[0], Value::Adapter(bound) if bound.0 == 3)) {
             return Ok(args[0].core_hash().map(Value::Small));
         }
         let first = args.first();
@@ -10269,7 +10269,15 @@ impl<'a> Engine<'a> {
             // takes it both stand for, so a write through either is a
             // write both see.
             Action::BondField(name) => {
-                match self.drop_top()? {
+                let receiver = self.drop_top()?;
+                // A Python subscript writes into the attribute's value,
+                // including a descriptor result, rather than its storage.
+                if self.lang.bind_names && self.fuller_classes() && matches!(receiver, Value::Object(_)) {
+                    let value = self.class_get(receiver, name, false)?;
+                    self.data.push(value);
+                    return Ok(());
+                }
+                match receiver {
                     // A class named outright keeps its own values where
                     // a thing keeps its properties, so a place within one
                     // is reached through the cell the class holds, which
@@ -19813,6 +19821,7 @@ impl Engine<'_> {
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Adapter(bound) if bound.0 == 3 => Rc::as_ptr(bound) as usize as u64,
                     Value::Native(b, _) => {
                         let mut state = std::collections::hash_map::DefaultHasher::new();
                         std::hash::Hash::hash(&format!("{:?}", b), &mut state);

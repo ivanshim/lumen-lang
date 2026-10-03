@@ -41,16 +41,11 @@ def isclass(object):
 
 
 def ismethod(object):
-    # A bound method keeps the function it binds under __func__ and the
-    # receiver it binds to under __self__.
-    return hasattr(object, '__func__') and hasattr(object, '__self__')
+    return isinstance(object, types.MethodType)
 
 
 def isfunction(object):
-    # A plain function: a callable keeping a compiled body of its own,
-    # neither a class nor a method.
-    return (callable(object) and not isclass(object) and not ismethod(object)
-            and getattr(object, '__code__', None) is not None)
+    return isinstance(object, types.FunctionType)
 
 
 _void = object()

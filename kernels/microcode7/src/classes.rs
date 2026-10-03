@@ -1245,7 +1245,20 @@ impl<'a> Machine<'a> {
             return self.make_type_parameter(class, given);
         }
 
-        if class.name == "FunctionType" && self.table.has_any("ext.builtin.exceptions.traceback") && matches!(given.first().map(Value::settled), Some(Value::Wrapped(7, _))) {
+        if self.names_in_calls && Self::native_word(&class).as_deref() == Some("method") {
+            let (args, keywords) = self.open_arguments(given)?;
+            if !keywords.is_empty() || args.len() != 2 {
+                return Err(String::from("TypeError: method expected 2 arguments").into());
+            }
+            let answer = self.work_on_class(2, vec![args[0].clone()])?;
+            let native = matches!(args[0].settled(), Value::Intrinsic(..) | Value::Member(..) | Value::TextCall { .. } | Value::OctetKind { .. });
+            if !answer.is_true() && !native { return Err(String::from("TypeError: first argument must be callable").into()); }
+            if matches!(args[1].settled(), Value::Nil) { return Err(String::from("TypeError: instance must not be None").into()); }
+            let mut payload = args;
+            payload.push(Value::Flag(true));
+            return Ok(Self::wrap(3, payload));
+        }
+        if Self::native_word(&class).as_deref() == Some("function") && self.table.has_any("ext.builtin.exceptions.traceback") {
             let (positional, keywords) = self.open_arguments(given)?;
             let mut options = vec![None; 5];
             for (slot, value) in positional.into_iter().enumerate() {
@@ -1299,6 +1312,12 @@ impl<'a> Machine<'a> {
                 Value::Wrapped(35, items) => matches!(items.first(), Some(Value::Bound(_, other)) if Rc::ptr_eq(other, room)),
                 _ => false,
             }));
+            fresh.globe = Some(globals.clone());
+            let word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
+            fresh.born = Some(match self.mapping_read(&globals, &word)? {
+                Some(value) => value,
+                None => self.builtins_here(),
+            });
             let source = Rc::new(fresh);
             let base = shared_room.or_else(|| layers.first().cloned()).unwrap_or_else(|| self.outermost.clone());
             let (source, room) = if let Some(Value::Tuple(defaults)) = options[3].as_ref().map(Value::settled) {
@@ -1495,6 +1514,10 @@ impl<'a> Machine<'a> {
         // class the read came through.
         if let Some(reader)=self.protocol_entry(&entry,"descriptor.get") {
             return self.through_descriptor(&entry,reader,vec![receiver.unwrap_or(Value::Nil),Value::Blueprint(owner)]);
+        }
+        if self.names_in_calls && matches!(entry, Value::Routine(_) | Value::Bound(..)) {
+            if let Some(instance) = receiver { return Ok(Self::wrap(3, vec![entry, instance])); }
+            return Ok(entry);
         }
         match receiver {
             Some(Value::Thing(t))=>match entry {Value::Routine(code)=>Ok(Value::Method(code,t)),Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,Value::Thing(t)])),_=>Ok(entry)},

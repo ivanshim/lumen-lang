@@ -77,6 +77,7 @@ impl Value {
             },
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
+            Value::Adapter(w) if w.0 == 3 && (matches!(w.1.first(), Some(Value::Routine(_))) || matches!(w.1.get(2), Some(Value::Flag(true)))) => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 119 => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
@@ -168,6 +169,13 @@ impl Value {
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
+            Value::Adapter(bound) if bound.0 == 3 && bound.1.len() >= 2 => {
+                let receiver = match &bound.1[1] {
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    other => other.core_hash()?,
+                };
+                Some(bound.1[0].core_hash()? ^ receiver)
+            },
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
             // The three bounds, folded as a tuple's items are, without a

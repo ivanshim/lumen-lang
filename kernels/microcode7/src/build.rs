@@ -8235,9 +8235,9 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
-        // The live class book can supply an object with no writable name.
-        // Keep the evaluated object and key, then perform its actual write.
-        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+        // A subscription writes into its evaluated receiver. Saving
+        // the receiver and key also keeps descriptor reads to one call.
+        if self.table.flag("ext.syntax.call.bind_names") {
             if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
                 if operands.len() == 2 {
                     let object = self.gensym("target_object");
@@ -8252,8 +8252,10 @@ impl<'a> Builder<'a> {
                         let combined = self.kept_after(prim_call(operation, vec![current, value]));
                         steps.push(Form::Write(put.clone(), Box::new(combined)));
                     }
-                    steps.push(prim_call(Prim::Replace, vec![Form::Read(object), Form::Read(key), Form::Read(put.clone())]));
-                    steps.push(if gives_back { Form::Read(put) } else { constant(Value::Nil) });
+                    steps.push(prim_call(Prim::Replace, vec![Form::Read(object.clone()), Form::Read(key.clone()), Form::Read(put.clone())]));
+                    steps.extend([Form::Forget(object), Form::Forget(key)]);
+                    if gives_back { steps.push(Form::Read(put)); }
+                    else { steps.extend([Form::Forget(put), constant(Value::Nil)]); }
                     return Ok(sequence(steps));
                 }
             }

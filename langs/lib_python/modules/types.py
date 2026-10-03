@@ -7,14 +7,7 @@
 NoneType = type(None)
 
 
-class FunctionType:
-    def __init__(self, code, globals):
-        self.__code__ = code
-        self.__globals__ = globals
-
-    def __call__(self):
-        return eval(self.__code__, self.__globals__)
-
+FunctionType = type(lambda: None)
 
 LambdaType = FunctionType
 
@@ -119,31 +112,13 @@ class CellType:
         return '<cell: ' + repr(self._contents[0]) + '>'
 
 
-# A function bound to a thing, called as one: reading through it reads the
-# function, and it keeps no namespace to write anything else into.
-class method:
-    __slots__ = ('__func__', '__self__')
-
-    def __init__(self, function, instance):
-        self.__func__ = function
-        self.__self__ = instance
-
-    def __call__(self, *args, **keywords):
-        return self.__func__(self.__self__, *args, **keywords)
-
-    def __getattr__(self, name):
-        return getattr(self.__func__, name)
-
-    def __eq__(self, other):
-        if isinstance(other, MethodType):
-            return self.__func__ == other.__func__ and self.__self__ is other.__self__
-        return NotImplemented
-
-    def __repr__(self):
-        return '<bound method of ' + repr(self.__self__) + '>'
+class _MethodProbe:
+    def method(self):
+        pass
 
 
-MethodType = method
+MethodType = type(_MethodProbe().method)
+del _MethodProbe
 
 
 # A place to hang names on, which is all a module is from here.

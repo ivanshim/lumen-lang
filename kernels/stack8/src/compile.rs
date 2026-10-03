@@ -8406,9 +8406,9 @@ impl<'a> Compiler<'a> {
                 return Err(format!("Cannot re-assign {}", this));
             }
         }
-        // Python composite stores mutate the evaluated object. They do not
-        // assign the object expression back into the class namespace.
-        if !self.lang.class_builder.is_empty() && self.in_class_body()
+        // Python subscription stores mutate the object reached by the
+        // expression, without assigning it back through an attribute.
+        if self.lang.bind_names
             && matches!(target.last(), Some(Instr::Act(Action::At, 2))) {
             let value = self.gensym("target_value");
             if compound.is_none() { self.value_written(keep)?; self.write(&value); }
@@ -8423,6 +8423,7 @@ impl<'a> Compiler<'a> {
             }
             self.read(&key); self.read(&value); self.read(&object);
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            for temporary in [&value, &key, &object] { self.let_go(temporary); }
             if hushed || silenced { self.put(if silenced { Instr::Mute(false) } else { Instr::Hush(false) }); }
             return Ok(());
         }
