@@ -7029,7 +7029,7 @@ impl<'a> Machine<'a> {
                     if *op == Prim::ClassWork(13) { return self.work_on_class(13, values); }
                     if *op == Prim::ClassWork(11) && self.has_class_order() && !self.rules.detail_descriptor_get.is_empty() { return self.work_on_class(11, values); }
                     if self.names_in_calls && self.table.prims.contains_key(name.as_ref()) {
-                        let (mut positions, keywords) = self.open_arguments(values)?;
+                        let (mut positions, keywords) = self.arguments_for_native(name, values)?;
                         if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
                             return Ok(answer);
                         }
@@ -10611,6 +10611,19 @@ impl<'a> Machine<'a> {
 
     /// Gather the positional things apart from the named ones, retaining
     /// every keyword until the call has checked for repeated names.
+    pub(super) fn arguments_for_native(&mut self, name: &str, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let only_expansion = self.has_class_order() && values.iter().all(|v| matches!(v, Value::Couple(_)))
+            && values.iter().filter(|v| matches!(v, Value::Couple(pair) if matches!(pair.0, Value::Flag(false)))).count() == 1;
+        let opened = self.open_arguments(values);
+        if only_expansion {
+            if let Err(Escape::Error(text)) = &opened {
+                if let Some(kind) = text.strip_prefix("TypeError: Value after * must be an iterable, not ") {
+                    return Err(format!("TypeError: {name}() argument after * must be an iterable, not {kind}").into());
+                }
+            }
+        }
+        opened
+    }
     pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();

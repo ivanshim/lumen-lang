@@ -3050,6 +3050,17 @@ impl<'a> Engine<'a> {
 
     /// Untie call arguments only at the call boundary. A literal's ties
     /// have already become a map by then and remain ordinary values.
+    pub(super) fn call_items_named(&mut self, called: &str, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+        let direct = !self.lang.class_builder.is_empty() && args.iter().filter(|value| matches!(value, Value::Tie(pair) if matches!(pair.0, Value::Flag(false)))).count() == 1
+            && args.iter().all(|value| matches!(value, Value::Tie(_)));
+        match self.call_items(args) {
+            Err(Fault::Note(message)) if direct && message.starts_with("TypeError: Value after * must be an iterable, not ") => {
+                let kind = message.trim_start_matches("TypeError: Value after * must be an iterable, not ");
+                Err(format!("TypeError: {called}() argument after * must be an iterable, not {kind}").into())
+            }
+            result => result,
+        }
+    }
     fn call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
         let mut items = Vec::new();
         for value in args {
@@ -10024,7 +10035,7 @@ impl<'a> Engine<'a> {
                     }
                     Value::Native(b, word) => {
                         let args = self.drop_many(argc - 1)?;
-                        let items = self.call_items(args)?;
+                        let items = self.call_items_named(&word, args)?;
                         let answer = self.builtin_call(b, &word, items);
                         // A builtin reached as a value runs the same
                         // work as one named where it is called, and
@@ -11935,7 +11946,7 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 let result = if self.lang.bind_names {
-                    let items = self.call_items(std::mem::take(&mut args))?;
+                    let items = self.call_items_named(name, std::mem::take(&mut args))?;
                     self.builtin_call(*builtin, name, items)
                 } else { self.builtin(*builtin, name, &mut args) };
                 // What the builtin was given is let go now, not when the

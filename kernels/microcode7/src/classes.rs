@@ -1040,7 +1040,7 @@ impl<'a> Machine<'a> {
             Value::Intrinsic(Prim::ClassWork(op), _) if self.table.has_any("ext.stmt.class.builder") => self.work_on_class(op, values),
             Value::Intrinsic(Prim::SortOf, _) if self.table.has_any("ext.stmt.class.builder") => self.class_from_type(values),
             Value::Intrinsic(operation, name) => {
-                let (mut input, keywords) = self.open_arguments(values)?;
+                let (mut input, keywords) = self.arguments_for_native(&name, values)?;
                 if let Some(answer) = self.builtin_names(operation, &name, &mut input, keywords)? { return Ok(answer); }
                 let result = self.prim(operation, &name, &input);
                 if let Some(raised) = self.got_away.take() { return Err(raised); }
@@ -2279,6 +2279,10 @@ impl<'a> Machine<'a> {
     /// names among the root's members, or, read off a thing, one of the
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting, left loose to be bound to it.
+    fn common_allocation(&self) -> Value {
+        self.loose_members.borrow_mut().entry("allocate the root".to_owned())
+            .or_insert_with(|| Self::wrap(1, Vec::new())).clone()
+    }
     fn common_initialiser(&self) -> Value {
         let spelling = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
         self.loose_entries.borrow_mut().entry((String::from("object"), spelling)).or_insert_with(|| Self::wrap(2, Vec::new())).clone()
@@ -2297,7 +2301,7 @@ impl<'a> Machine<'a> {
             else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}
             else if self.table.strings("ext.stmt.class.special").get(72).map_or(false,|word|word==key){59}
             else{return None};
-        Some(if tag == 2 && self.table.single("ext.stmt.class.constructor") == Some(key) { self.common_initialiser() } else { Self::wrap(tag,Vec::new()) })
+        Some(if tag == 1 { self.common_allocation() } else if tag == 2 && self.table.single("ext.stmt.class.constructor") == Some(key) { self.common_initialiser() } else { Self::wrap(tag,Vec::new()) })
     }
     /// The root's own answer for one of its members, the value it
     /// answers about coming first.
@@ -2862,7 +2866,7 @@ impl<'a> Machine<'a> {
                 return Ok(Self::wrap(135, vec![Value::tuple(vec![getter, Value::tuple(vec![receiver, name])])]));
             }
         }
-        if key == self.detail("allocate") && matches!(&value, Value::Intrinsic(op, _) if !Self::names_a_kind(op)) { return Ok(Self::wrap(1, vec![])); }
+        if key == self.detail("allocate") && matches!(&value, Value::Intrinsic(op, _) if !Self::names_a_kind(op)) { return Ok(self.common_allocation()); }
         if key == "__reduce_ex__" && matches!(&value, Value::Intrinsic(working, _) if !Self::names_a_kind(working)) || key == "__reduce_ex__" && matches!(&value, Value::Member(..) | Value::TextCall { .. } | Value::Method(..) | Value::Wrapped(3, _)) {
             return Ok(Value::Member(Rc::new(value), "callable_reduce_ex".into()));
         }
@@ -3274,8 +3278,8 @@ impl<'a> Machine<'a> {
             if key == self.detail("allocate") {
                 let inherited = Self::native_beneath(b).and_then(|word| self.table.prims.get(&word).filter(|op| Self::names_a_kind(op)).map(|_| word));
                 return Ok(match inherited {
-                    Some(word) => Self::wrap(14, vec![Value::text(&word)]),
-                    None => Self::wrap(1, Vec::new()),
+                    Some(word) => self.native_allocation(&word),
+                    None => self.common_allocation(),
                 });
             }
             // A class reads what the metaclass that built it holds as

@@ -920,7 +920,7 @@ impl<'a> Engine<'a> {
         };
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
-            Value::Native(operation, name) => { let items = self.call_items(args)?; Ok(self.builtin_call(operation, &name, items)?) }
+            Value::Native(operation, name) => { let items = self.call_items_named(&name, args)?; Ok(self.builtin_call(operation, &name, items)?) }
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
             Value::ValueMethod(bound) => {
@@ -1710,6 +1710,13 @@ impl<'a> Engine<'a> {
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting. Given the class of a thing, the hooks come bare, to
     /// be bound to the thing.
+    fn root_allocator(&self) -> Value {
+        let key = "root allocator".to_string();
+        if let Some(callable) = self.loose_members.borrow().get(&key) { return callable.clone(); }
+        let value = Self::adapter(1, Vec::new());
+        self.loose_members.borrow_mut().insert(key, value.clone());
+        value
+    }
     fn root_initialiser(&self) -> Value {
         let name = self.lang.constructor.as_deref().unwrap_or_default();
         let mut entries = self.kind_descriptors.borrow_mut();
@@ -1735,7 +1742,7 @@ impl<'a> Engine<'a> {
             else if name==self.class_word("remove") {12}
             else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
             else {return None};
-        Some(if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else { Self::adapter(hook,vec![]) })
+        Some(if hook == 1 { self.root_allocator() } else if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else { Self::adapter(hook,vec![]) })
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
@@ -2240,7 +2247,7 @@ impl<'a> Engine<'a> {
                 return Ok(Self::adapter(132, vec![Value::tuple(vec![lookup, Value::tuple(vec![owner, title])])]));
             }
         }
-        if name == self.class_word("allocate") && matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) { return Ok(Self::adapter(1, Vec::new())); }
+        if name == self.class_word("allocate") && matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) { return Ok(self.root_allocator()); }
         if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::Adapter(entry) if entry.0 == 3))) {
             return Ok(Value::ValueMethod(Rc::new((subject, String::from("callable_reduce_ex")))));
         }
@@ -2669,9 +2676,9 @@ impl<'a> Engine<'a> {
                 }
                 if name == self.class_word("allocate") {
                     if let Some(native) = Self::kind_beneath(c).filter(|word| self.lang.builtins.get(word).is_some_and(Self::kind_builtin)) {
-                        return Ok(Self::adapter(14, vec![Value::text(&native)]));
+                        return Ok(self.native_allocator(&native));
                     }
-                    return Ok(Self::adapter(1, Vec::new()));
+                    return Ok(self.root_allocator());
                 }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
