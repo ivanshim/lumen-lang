@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/posixpath.py; PSF License.
 """Common operations on Posix pathnames.
 
 Instead of importing this module directly, import os and refer to

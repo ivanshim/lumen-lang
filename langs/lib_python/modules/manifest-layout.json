@@ -1,7 +1,8 @@
 {
   "files": {
     "collections": "collections/__init__.py",
-    "unittest": "unittest/__init__.py"
+    "unittest": "unittest/__init__.py",
+    "urllib": "urllib/__init__.py"
   },
   "aliases": {
     "os.path": "path"
@@ -10,6 +11,8 @@
     "copy": "runtime_adapters/copy.py",
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",
-    "operator": "runtime_adapters/operator.py"
+    "operator": "runtime_adapters/operator.py",
+    "json": "runtime_adapters/json.py",
+    "statistics": "runtime_adapters/statistics.py"
   }
 }

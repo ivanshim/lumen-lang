@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/types.py; PSF License.
 """
 Define names for built-in types that aren't directly accessible as a builtin.
 """

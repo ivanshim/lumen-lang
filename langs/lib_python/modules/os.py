@@ -74,6 +74,13 @@ def remove(path, *, dir_fd=None):
 unlink = remove
 
 class _Path:
+    def lexists(self, filename):
+        try:
+            lstat(filename)
+        except (OSError, ValueError):
+            return False
+        return True
+
     def join(self, path, *parts):
         for part in parts:
             if part[:1] == '/':
@@ -363,3 +370,19 @@ def _path_islink(name):
 path.islink = _path_islink
 
 supports_follow_symlinks.add(stat)
+
+# Filesystem path protocol, including structural subclass recognition.
+from abc import ABC as _PathABC, abstractmethod as _path_abstractmethod
+class PathLike(_PathABC):
+    @_path_abstractmethod
+    def __fspath__(self):
+        raise NotImplementedError
+    @classmethod
+    def __subclasshook__(cls, subclass):
+        if cls is PathLike:
+            from _collections_abc import _check_methods
+            return _check_methods(subclass, '__fspath__')
+        return NotImplemented
+    def __class_getitem__(cls, item):
+        from types import GenericAlias
+        return GenericAlias(cls, item)
