@@ -1305,6 +1305,15 @@ impl<'a> Machine<'a> {
                         self.root_turns_away(&t.blueprint(),'i')?;
                         Ok(Value::Nil)
                     }
+                    // A native forebear's constructing, read off the
+                    // parent walk: it runs upon the thing the walk was
+                    // made of, past the class it was made against, as
+                    // the parent call of the method spelled out runs.
+                    126 => {
+                        let ahead = kept[1].bare();
+                        let called = kept[2].bare();
+                        self.next_ancestor_call(kept[0].clone(), &ahead, &called, values)
+                    }
                     73 => self.initialise_type_object(values),
                     70 => self.class_of_parts(values),
                     71 => {
@@ -4759,12 +4768,10 @@ impl<'a> Machine<'a> {
                 }
                 if Self::native_word(base).is_some() || self.is_fault_kind(base) {
                     if self.table.single("ext.stmt.class.constructor") == Some(key) {
-                        // The constructing of a native forebear is the
-                        // descriptor the kind itself answers with, tied
-                        // to what the reading stands on.
-                        let builds = self.builds_classes(base) || base.ancestry.iter().any(|p| self.builds_classes(p));
-                        let descriptor = Self::wrap(if builds { 73 } else { 2 }, Vec::new());
-                        return Ok(Some(if loose { descriptor } else { Self::wrap(3, vec![descriptor, receiver.clone()]) }));
+                        // The constructing of a native forebear runs the
+                        // way a parent's call of the method spelled out
+                        // runs it, worth and all.
+                        return Ok(Some(Self::wrap(126, vec![receiver.clone(), Value::text(&owner.name), Value::text(key)])));
                     }
                     if let Some(member @ Value::Member(..)) = Self::underlying(receiver).and_then(|worth| self.attribute(&worth, key)) {
                         return Ok(Some(member));
