@@ -1037,6 +1037,19 @@ impl<'a> Compiler<'a> {
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
+        // A unit that declared the class's kind word `nonlocal` reads
+        // the hidden cell the declaration named, exactly as it writes
+        // it.
+        if let Some(cell) = self.class_cell_written(name) {
+            if self.lang.closes_over && !self.discovering {
+                if let Some(found) = self.enclosing_cell(self.pieces.len() - 1, &cell) { return Cell { moving, ..found }; }
+            }
+        }
+        // The class's kind word where the unit holds no name of its own
+        // for it is the hidden cell an enclosing unit closes over.
+        if !self.piece().idents.iter().any(|named| named == name) {
+            if let Some(cell) = self.class_cell_read(name) { return Cell { moving, ..cell }; }
+        }
         if self.lang.closes_over && !self.discovering {
             if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return Cell { moving, ..cell }; }
         }
@@ -1056,6 +1069,14 @@ impl<'a> Compiler<'a> {
     /// block's own, forgotten on leaving.
     fn cell_to_write(&mut self, name: &str) -> Cell {
         if !self.importing { self.note_seen(name, SEEN_WRITTEN); }
+        // A unit that declared the class's kind word `nonlocal` writes
+        // the hidden cell the declaration named, before any member or
+        // name of its own is thought of.
+        let declared;
+        let name = match self.class_cell_written(name) {
+            Some(cell) => { declared = cell; declared.as_str() }
+            None => name,
+        };
         // A name a class body knows is written where the body keeps
         // it, as it is read from there: so the loops, imports and
         // handlers of a body bind members by the ordinary writes.
@@ -1282,6 +1303,49 @@ impl<'a> Compiler<'a> {
         self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len())
     }
 
+    /// The hidden cell a `nonlocal` of the class's kind word reaches:
+    /// the cell of the class whose body holds this method, or, said in
+    /// a class body itself, the cell of the class around that one. The
+    /// cell is marked as wanted, so the class made fills it. Any other
+    /// name, or the word said where no such class stands, has none.
+    fn class_cell_declared(&mut self, name: &str) -> Option<String> {
+        let words = self.lang.class_details.get("kind")?;
+        if self.lang.class_builder.is_empty() || !words.iter().any(|word| word == name) { return None; }
+        let back = if self.in_class_body() { 2 } else { 1 };
+        let at = self.gathered.len().checked_sub(back)?;
+        self.gathered[at].needs_class_cell = true;
+        self.gathered[at].class_cell_protocol = true;
+        Some(self.gathered[at].class_cell.clone())
+    }
+
+    /// The hidden cell a write of the class's kind word reaches, where
+    /// the unit declared that word `nonlocal`: the declaration turned
+    /// the name into the cell's own, so the write goes where the cell
+    /// is kept rather than to a member or a name of the unit's own.
+    fn class_cell_written(&self, name: &str) -> Option<String> {
+        let words = self.lang.class_details.get("kind")?;
+        if self.lang.class_builder.is_empty() || !words.iter().any(|word| word == name) { return None; }
+        let unit = self.pieces.last()?;
+        self.gathered.iter().rev().map(|held| held.class_cell.clone())
+            .find(|cell| unit.nonlocals.iter().any(|named| named == cell))
+    }
+
+    /// The hidden cell a class body's own read of the class's kind word
+    /// reaches: the cell of the class around the body, so a class
+    /// nested in a method reads the very `__class__` the methods of
+    /// that class carry, however many functions stand between. A method
+    /// never reaches here: the parent word's own arm reads it first.
+    fn class_cell_read(&mut self, name: &str) -> Option<Cell> {
+        let words = self.lang.class_details.get("kind")?;
+        if self.lang.class_builder.is_empty() || !self.lang.closes_over || self.discovering || !words.iter().any(|word| word == name) { return None; }
+        if !self.in_class_body() { return None; }
+        let at = self.gathered.len().checked_sub(2)?;
+        self.gathered[at].needs_class_cell = true;
+        self.gathered[at].class_cell_protocol = true;
+        let cell = self.gathered[at].class_cell.clone();
+        self.enclosing_cell(self.pieces.len() - 1, &cell)
+    }
+
     /// Whether the current unit already holds this name `global` or
     /// `nonlocal`, the two declarations that carry a name past a class
     /// body to the place it named before the body was ever entered.
@@ -1291,6 +1355,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.last().expect("a unit");
         unit.globals.iter().any(|(named, _)| named == name) || unit.nonlocals.iter().any(|named| named == name)
+            || self.class_cell_written(name).is_some()
     }
 
     /// A map built from the class body's own names, bound so far, each
@@ -2837,6 +2902,10 @@ impl<'a> Compiler<'a> {
                     // is kept where any other's is, and a write of the
                     // name within the body goes there rather than to a
                     // member, exactly as a name declared `global` does.
+                    // Said of the class's own kind word, the declaration
+                    // names the hidden cell that class keeps, so a write
+                    // of the name fills the class's very place.
+                    let name = self.class_cell_declared(&name).unwrap_or(name);
                     self.piece().nonlocals.push(name.clone());
                     if self.in_class_body() { self.piece().class_nonlocals.push(name.clone()); }
                     if lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
@@ -9843,8 +9912,11 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
                 && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
                 && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
+                // Standing alone the parent word is a name like another:
+                // the program's own `super`, where it gave the name one,
+                // is what the reading finds.
                 self.take();
-                self.constant(PARENT_CALLABLE.with(Clone::clone));
+                self.read(&tok.lexeme);
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
@@ -9855,9 +9927,50 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
-                if extra > 0 && lang.class_details.get("root").map_or(false, |v| !v.is_empty()) {
-                    self.constant(PARENT_CALLABLE.with(Clone::clone));
-                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                if lang.class_details.get("root").map_or(false, |v| !v.is_empty()) {
+                    // Python: the parent word is a name the program may
+                    // have given a meaning of its own, so it is read
+                    // where names are read. Only the parent class itself
+                    // is handed the class cell and the first argument a
+                    // call with none written takes from the frame, and
+                    // those two are read without complaint so the call
+                    // can say which one was not there to give.
+                    if extra > 0 {
+                        self.read(&tok.lexeme);
+                        self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                        return self.indexing(from);
+                    }
+                    self.read(&tok.lexeme);
+                    match self.piece().parameters.first().cloned() {
+                        Some(this) if !self.gathered.is_empty() => {
+                            self.gathering().needs_class_cell = true;
+                            self.gathering().class_cell_protocol = true;
+                            self.constant(Value::Small(0));
+                            let cell = self.gathering().class_cell.clone();
+                            let held = self.cell_to_read(&cell, false);
+                            self.put(Instr::Glance(held.clone()));
+                            let taken = self.cell_to_read(&this, false);
+                            self.put(Instr::Glance(taken.clone()));
+                            if let Some(at) = held.near.first() { self.put(Instr::Missing(*at)); } else { self.constant(Value::Flag(false)); }
+                            if let Some(at) = taken.near.first() { self.put(Instr::Missing(*at)); } else { self.constant(Value::Flag(false)); }
+                        }
+                        Some(this) => {
+                            self.constant(Value::Small(1));
+                            self.constant(Value::Null);
+                            let taken = self.cell_to_read(&this, false);
+                            self.put(Instr::Glance(taken.clone()));
+                            self.constant(Value::Flag(false));
+                            if let Some(at) = taken.near.first() { self.put(Instr::Missing(*at)); } else { self.constant(Value::Flag(false)); }
+                        }
+                        None => {
+                            self.constant(Value::Small(2));
+                            self.constant(Value::Null);
+                            self.constant(Value::Null);
+                            self.constant(Value::Flag(false));
+                            self.constant(Value::Flag(false));
+                        }
+                    }
+                    self.act(Action::Superless, 6);
                     return self.indexing(from);
                 }
                 for _ in 0..extra { self.discard(); }
