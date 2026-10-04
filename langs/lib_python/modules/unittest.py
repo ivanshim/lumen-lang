@@ -365,7 +365,11 @@ class TestCase:
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
-            getattr(self, self._method)()
+            outcome = _host_call_outcome(getattr(self, self._method))
+            if not outcome[0]:
+                if isinstance(outcome[1], BaseException):
+                    raise outcome[1]
+                raise RuntimeError(outcome[2])
         finally:
             self.tearDown()
 

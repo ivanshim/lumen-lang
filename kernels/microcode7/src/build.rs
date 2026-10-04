@@ -294,6 +294,7 @@ pub struct Builder<'a> {
     annotation_lookup: bool,
     annotation_owner: Option<(String, Vec<String>)>,
     generic_class_body: bool,
+    generic_class_parameters: Vec<String>,
     annotations_as_strings: bool,
     annotation_sites: Vec<(String, usize)>,
     module_site_flags: HashMap<usize, String>,
@@ -572,7 +573,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -4889,6 +4890,7 @@ impl<'a> Builder<'a> {
     }
 
     fn python_class(&mut self, generic: bool) -> Res<(Form, bool)> {
+        let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let builder = self.gensym("class_builder");
         let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
         self.advance();
@@ -4911,7 +4913,7 @@ impl<'a> Builder<'a> {
         let mut namespace = None;
         let mut cannot = false;
         let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
-            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone())?;
+            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone(), &parameters)?;
             namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
@@ -4926,7 +4928,7 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String) -> Res<(Form, String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String]) -> Res<(Form, String, Option<String>, bool, bool)> {
         let table = self.table;
         let parent: Option<Address> = None;
         let cannot = false;
@@ -4957,6 +4959,12 @@ impl<'a> Builder<'a> {
             setup.push(made);
         }
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+        if !parameters.is_empty() {
+            let values = parameters.iter().map(|word| self.read(word)).collect();
+            self.member_ranked("__type_params__");
+            self.parts().attributes.push("__type_params__".into());
+            self.parts().held.push(prim_call(Prim::MakeTuple, values));
+        }
         // Seed documentation only when the body starts with a docstring.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
             let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
@@ -5020,6 +5028,7 @@ impl<'a> Builder<'a> {
                 let (mut forms, names) = reader.declare_type_objects()?;
                 reader.pos = beginning;
                 reader.generic_class_body = true;
+                reader.generic_class_parameters = names.clone();
                 forms.push(reader.class_with_receiver()?.0);
                 forms.push(reader.give_type_parameters(&name, &names));
                 forms.push(reader.read(&name));
@@ -10651,12 +10660,6 @@ impl<'a> Builder<'a> {
             r.reject_gathering_assignment("generator expression")?;
             async_result = r.layers.last().unwrap().async_walk_seen;
             r.generator_seen = true;
-            if r.table.has_any("ext.stmt.class.builder") && !r.table.spells("ext.op.comprehension.async", &r.tokens[clause].lexeme) {
-                let input = r.read(&parameter);
-                let checked = prim_call(Prim::ClassWork(21), vec![input]);
-                let binding = r.write(&parameter, checked);
-                return Ok(sequence(vec![binding, body]));
-            }
             Ok(body)
         })?;
         self.source_before = previous;

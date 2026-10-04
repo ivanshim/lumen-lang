@@ -114,7 +114,6 @@ class Scanner:
         self.parse_constant = context.parse_constant
         self.object_hook = context.object_hook
         self.object_pairs_hook = context.object_pairs_hook
-        self.array_hook = context.array_hook
         self.parse_object = context.parse_object
         self.parse_array = context.parse_array
         self.memo = context.memo
@@ -147,7 +146,7 @@ class Scanner:
             return self.parse_object((string, index + 1), self.strict, self._scan,
                                      self.object_hook, self.object_pairs_hook, self.memo)
         if char == '[':
-            return self.parse_array((string, index + 1), self._scan, self.array_hook)
+            return self.parse_array((string, index + 1), self._scan)
         for literal, value in [('null', None), ('true', True), ('false', False)]:
             if string[index:index + len(literal)] == literal:
                 return value, index + len(literal)

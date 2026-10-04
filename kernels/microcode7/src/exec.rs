@@ -3677,13 +3677,6 @@ impl<'a> Machine<'a> {
         Ok(taken)
     }
 
-    pub(super) fn require_generator_cursor(&mut self, input: Value) -> Res {
-        let exposed = input.settled();
-        if matches!(exposed, Value::Iterator(_) | Value::Cursor(_) | Value::Generator(_) | Value::Traversal(..) | Value::SetCursor { .. }) { return Ok(input); }
-        if self.appointment(&exposed, 16).is_some() { return Ok(Self::cursor_value(IteratorKind::Handed(exposed))); }
-        let kind = Self::format_spec_complaint_kind(&exposed);
-        Err(self.core_complaint("core.not_iterator", &kind).into())
-    }
 
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
         if let (true, Some(walk)) = (self.rules.suspends, Self::live_walk(&source)) {
@@ -7053,6 +7046,9 @@ impl<'a> Machine<'a> {
                                     || self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word| word == &values[1].bare())) => {
                                 return self.read_class_member(values[0].clone(), &values[1].bare(), false);
                             },
+                            Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
+                                return self.read_class_member(values[0].settled(), &values[1].bare(), false);
+                            },
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
@@ -7301,7 +7297,7 @@ impl<'a> Machine<'a> {
             let copied = self.frame_aside(caller);
             let previous = self.text_within.replace(copied);
             let former_book = self.text_caller_book.take();
-            let Value::Shared(book) = self.names_here(caller, Prim::WorldBook)? else { return Err(self.bad_answer().into()) };
+            let book = match self.names_here(caller, Prim::WorldBook)? { Value::Shared(cell) | Value::Mutable(cell, _) => cell, value => Rc::new(RefCell::new(value)) };
             self.text_caller_book = Some(book);
             let (mut positioned, named) = self.open_arguments(values)?;
             let spelling = match callable { Value::Intrinsic(_, name) => name.to_string(), _ => match primitive { Prim::Weigh => "eval".into(), _ => "exec".into() } };
@@ -14093,7 +14089,7 @@ impl<'a> Machine<'a> {
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
-            return self.prim(operation, "", &[owner.as_ref().clone(), key.clone()]).map(Some);
+            return self.prim(operation, "", &[owner.proxy_pairs(), key.clone()]).map(Some);
         }
         if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _) | Value::Intrinsic(..))]) = (operation, operands) {
             return Ok(method.hash_number().map(Value::Small));
@@ -17011,7 +17007,10 @@ impl<'a> Machine<'a> {
                 let call = Form::Apply(Callee::Code(Box::new(Form::Const(v[0].clone()))), Vec::new());
                 let outer = self.outermost.clone();
                 let mut items = Vec::with_capacity(3);
-                match self.value_of(&call, &outer) {
+                match self.value_of(&call, &outer).and_then(|value| {
+                    let coroutine = matches!(&value, Value::Generator(held) if held.borrow().of.as_ref().is_some_and(|program| program.flags & 128 != 0));
+                    if coroutine { self.await_completion(value) } else { Ok(value) }
+                }) {
                     Ok(value) => items.extend([Value::Flag(true), value, Value::text("")]),
                     // The mark that says a complaint is told in full is
                     // the kernel's own note to itself, so it comes off
@@ -25012,16 +25011,6 @@ impl Machine<'_> {
         // one; the value is kept before it settles into a copy.
         let reverse_owner = if op == Prim::Backwards { input.first().cloned() } else { None };
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
-        if op == Prim::Dictionary && input.len() == 1 {
-            fn mapping_contents(source: &Value) -> Option<Value> {
-                match source {
-                    Value::Window(owner, 'm') => Some(owner.settled()),
-                    Value::Mutable(cell, _) | Value::Shared(cell) => mapping_contents(&cell.borrow()),
-                    _ => None,
-                }
-            }
-            if let Some(contents) = mapping_contents(&input[0]) { input[0] = contents; }
-        }
         if !matches!(op, Prim::IdentityOf | Prim::HeapNative) {
             for (position, item) in input.iter_mut().enumerate() {
                 if op == Prim::SetMember && position == 2 { continue; }

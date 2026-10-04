@@ -5271,7 +5271,7 @@ impl<'a> Engine<'a> {
                                 other => other.clone(),
                             }).collect();
                             let saved_book = self.text_caller_book.take();
-                            let Value::Bond(book) = self.names_about(program, frame, Builtin::OuterNames)? else { unreachable!() };
+                            let book = match self.names_about(program, frame, Builtin::OuterNames)? { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell, value => Rc::new(RefCell::new(value)) };
                             self.text_caller_book = Some(book);
                             let held = std::mem::replace(&mut self.text_within, Some((program.idents.clone(), mine)));
                             let done = self.perform(op, *argc);
@@ -5299,7 +5299,7 @@ impl<'a> Engine<'a> {
                                 value => value.clone(),
                             }).collect();
                             let earlier_book = self.text_caller_book.take();
-                            let Value::Bond(book) = self.names_about(program, frame, Builtin::OuterNames)? else { unreachable!() };
+                            let book = match self.names_about(program, frame, Builtin::OuterNames)? { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell, value => Rc::new(RefCell::new(value)) };
                             self.text_caller_book = Some(book);
                             let preceding = self.text_within.replace((program.idents.clone(), copied));
                             let result = self.perform(op, *argc);
@@ -7819,7 +7819,7 @@ impl<'a> Engine<'a> {
             return self.dyadic(op, a, b);
         }
         if let (Action::At, Value::View(proxy)) = (op, a) {
-            if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0, b); }
+            if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0.proxy_dictionary(), b); }
         }
         if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
             && Self::sequence_row(a).is_some() && Self::sequence_row(a) == Self::sequence_row(b) {
@@ -8557,6 +8557,7 @@ impl<'a> Engine<'a> {
                 let mut settled = args.to_vec();
                 for value in settled.iter_mut() {
                     if let Some(index) = self.special_index(value)? { *value = index; }
+                    else if matches!(value, Value::Object(_)) { return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.core_kind())); }
                 }
                 let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
                 self.builtin(op, &word, &mut settled)?
@@ -9338,6 +9339,10 @@ impl<'a> Engine<'a> {
                         || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name.as_ref())) => {
                     let module = self.drop_top()?;
                     Some(self.class_get(module, name, false)?)
+                },
+                Action::Grab(name) if name.as_ref() == self.class_word("allocate") && self.data.last().is_some_and(|v| matches!(v.contents(), Value::Null | Value::Ellipsis | Value::Declined(_))) => {
+                    let singleton = self.drop_top()?.contents();
+                    Some(self.class_get(singleton, name, false)?)
                 },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
@@ -18237,7 +18242,13 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let depth = self.data.len();
                 self.data.push(args[0].clone());
-                let result = self.perform(&Action::Invoke(Rc::from(name)), 1);
+                let result = self.perform(&Action::Invoke(Rc::from(name)), 1).and_then(|()| {
+                    let value = self.drop_top()?;
+                    let coroutine = matches!(&value, Value::Generator(held) if held.borrow().program.as_ref().is_some_and(|program| program.code_flags & 128 != 0));
+                    let value = if coroutine { self.await_value(value)? } else { value };
+                    self.data.push(value);
+                    Ok(())
+                });
                 let answer = match result {
                     Ok(()) => {
                         let value = self.drop_top()?;
@@ -21261,16 +21272,6 @@ impl Engine<'_> {
         // A cursor over a list, or over a window upon a map, reads it as
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
-        if b == Builtin::Dict && args.len() == 1 {
-            fn proxy_dictionary(value: &Value) -> Option<Value> {
-                match value {
-                    Value::View(view) if view.1 == "mapping" => Some(view.0.contents()),
-                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => proxy_dictionary(&cell.borrow()),
-                    _ => None,
-                }
-            }
-            if let Some(dictionary) = proxy_dictionary(&args[0]) { args[0] = dictionary; }
-        }
         let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
         let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
