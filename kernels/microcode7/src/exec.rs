@@ -2713,12 +2713,7 @@ impl<'a> Machine<'a> {
         if self.rules.has_any_ext_builtin_format {
             let rhs = self.remainder_operand(rhs);
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-            let held = Self::underlying(rhs);
-            let source = match held.as_ref() {
-                Some(value) if matches!(value.settled(), Value::Tuple(_)) => value,
-                _ => rhs,
-            };
-            return layout.remainder(pattern, source, self, false);
+            return layout.remainder(pattern, &rhs, self, false);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -16171,7 +16166,7 @@ impl<'a> Machine<'a> {
                     return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if star.is_none() && values.len() != wanted {
-                    let count = match &v[0] {
+                    let count = match &subject {
                         Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) => {
                             self.table.strings("ext.stmt.unpack.long").get(2)
                                 .map(|between| format!("{wanted}{between}{}", values.len()))
