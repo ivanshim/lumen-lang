@@ -9320,6 +9320,11 @@ impl<'a> Machine<'a> {
                 _ => None,
             };
             if let Some(c) = maker.filter(|c| Self::native_beneath(c).is_some()) {
+                // The builtin `dict` makes a plain map, as the class method
+                // itself does; a subclass makes one of itself.
+                if c.name == "dict" {
+                    return self.dict_fromkeys(&target, filling).map_err(Escape::from);
+                }
                 let made = self.apply_class_member(Value::Blueprint(c.clone()), Vec::new())?;
                 let copy = Self::frozen_beneath(&made);
                 let mut working = if copy { self.frozen_rows(&made)? } else { made };
@@ -14762,6 +14767,34 @@ impl<'a> Machine<'a> {
                 // rather than a walk of every entry — unless the place
                 // itself cannot say (some other pair carries no address
                 // of its own), when only the walk can answer.
+                let placed = match key.hash_address() {
+                    Ok(address) => match entries.locate(&address) {
+                        Found::Found(_) => Some(true),
+                        Found::Absent => Some(false),
+                        Found::Unknown => None,
+                    },
+                    Err(_) => None,
+                };
+                let found = match placed {
+                    Some(found) => found,
+                    None => {
+                        let mut found = false;
+                        for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
+                        found
+                    }
+                };
+                Value::Flag(found != (operation == Prim::Absent))
+            }
+            // A thing standing on a mapping kind is searched by its worth's
+            // own places, not by walking every key and asking each one; the
+            // walk would call a key's __eq__ for keys the hash keeps apart.
+            (Prim::Contains | Prim::Absent, [needle, haystack @ Value::Thing(_)])
+                if self.appointment(haystack, 14).is_none()
+                    && matches!(Self::underlying(haystack).map(|worth| worth.settled()), Some(Value::Dict(_))) => {
+                let worth = Self::underlying(haystack).unwrap().settled();
+                let Value::Dict(entries) = worth else { unreachable!() };
+                if let Some(words) = self.cannot_key(needle) { return Err(words); }
+                let key = self.hash_key(needle)?;
                 let placed = match key.hash_address() {
                     Ok(address) => match entries.locate(&address) {
                         Found::Found(_) => Some(true),
@@ -25231,7 +25264,7 @@ impl Machine<'_> {
                 }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
-                let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, _ => false };
+                let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };
                 if !lazy_input { *item = item.settled(); }
             }
         }
