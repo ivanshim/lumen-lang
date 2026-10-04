@@ -154,6 +154,8 @@ pub struct Engine<'a> {
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
     modules: HashMap<String, Value>,
+    module_by_address: RefCell<HashMap<usize, String>>,
+    module_addresses_ready: std::cell::Cell<bool>,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
     wildcard_file: Option<Rc<str>>,
@@ -1335,6 +1337,8 @@ impl<'a> Engine<'a> {
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
+            module_by_address: RefCell::new(HashMap::new()),
+            module_addresses_ready: std::cell::Cell::new(false),
             wildcard_file: None,
             wildcard_active: false,
             wildcard_slots: HashMap::new(),
@@ -6060,7 +6064,17 @@ impl<'a> Engine<'a> {
     /// module and nothing else.
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
-        self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
+        if !self.module_addresses_ready.get() {
+            let mut addresses = self.module_by_address.borrow_mut();
+            addresses.clear();
+            for (path, value) in &self.modules {
+                let Value::Object(module) = value else { continue };
+                let address = Rc::as_ptr(module) as usize;
+                if !addresses.contains_key(&address) { addresses.insert(address, path.clone()); }
+            }
+            self.module_addresses_ready.set(true);
+        }
+        self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)).cloned()
     }
 
     /// The word a value goes by as a kind: a class its own name, a
@@ -21521,7 +21535,7 @@ impl Engine<'_> {
             (Value::text(name), self.world[offset + i].clone())).collect::<Vec<_>>();
         object.fields.borrow_mut().push(("\0bindings".into(), Value::Map(Rc::new(links.into()))));
         let module = Value::Object(object);
-        self.modules.insert(path.to_string(), module.clone());
+        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false);
         let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.embedded_names.remove(path);
         if embedded { self.embedded_names.insert(path.to_string()); }
@@ -21533,7 +21547,7 @@ impl Engine<'_> {
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
-            self.modules.remove(path); self.refresh_module_cache(path); return Err(fault);
+            self.modules.remove(path); self.module_addresses_ready.set(false); self.refresh_module_cache(path); return Err(fault);
         }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
@@ -21557,7 +21571,7 @@ impl Engine<'_> {
                     Ok(loaded) => loaded,
                     Err(fault) => {
                         self.importing.remove(path); self.embedded_names.remove(path);
-                        self.modules.remove(path); self.refresh_module_cache(path); return Err(fault);
+                        self.modules.remove(path); self.module_addresses_ready.set(false); self.refresh_module_cache(path); return Err(fault);
                     },
                 };
                 // A cached alias must also be bound on this newly initialized parent.
@@ -22283,7 +22297,7 @@ impl Engine<'_> {
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), declares_slots: false, weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false) }),
             fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
         });
-        self.modules.insert(main.clone(), Value::Object(object));
+        self.modules.insert(main.clone(), Value::Object(object)); self.module_addresses_ready.set(false);
         self.refresh_module_cache(&main);
     }
 

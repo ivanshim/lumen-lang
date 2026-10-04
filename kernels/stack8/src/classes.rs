@@ -1283,7 +1283,7 @@ impl<'a> Engine<'a> {
         let class = self.kind_class("module");
         self.made += 1;
         let module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made }));
-        self.modules.insert("_typing".into(), module.clone());
+        self.modules.insert("_typing".into(), module.clone()); self.module_addresses_ready.set(false);
         module
     }
     fn no_type_default(&mut self) -> Value {

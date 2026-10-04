@@ -493,6 +493,7 @@ pub struct Machine<'a> {
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value>,
+    namespace_places: RefCell<Option<HashMap<usize, String>>>,
     wildcard_site: RefCell<Option<(Rc<str>, bool)>>,
     wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
     loaded_spaces: HashMap<Rc<str>, String>,
@@ -1812,6 +1813,7 @@ impl<'a> Machine<'a> {
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
+            namespace_places: RefCell::new(None),
             wildcard_site: RefCell::new(None),
             wildcard_names: HashMap::new(),
             loaded_spaces: HashMap::new(),
@@ -8655,7 +8657,17 @@ impl<'a> Machine<'a> {
     /// very namespace and nothing else.
     pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
         let Value::Thing(thing) = value else { return None };
-        self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing))).map(|(path, _)| path.clone())
+        let mut places = self.namespace_places.borrow_mut();
+        let names = places.get_or_insert_with(|| {
+            let mut names = HashMap::new();
+            for (name, worth) in &self.imported {
+                if let Value::Thing(space) = worth {
+                    names.entry(Rc::as_ptr(space) as usize).or_insert_with(|| name.clone());
+                }
+            }
+            names
+        });
+        names.get(&(Rc::as_ptr(thing) as usize)).cloned()
     }
 
     /// The word a value goes by as a kind: a blueprint its own name, a
@@ -21925,7 +21937,7 @@ impl Machine<'_> {
         };
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
-        self.imported.insert(path.into(), value.clone());
+        self.imported.insert(path.into(), value.clone()); self.namespace_places.borrow_mut().take();
         let from_library = self.rules.lists[214].first().map(String::as_str).is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
         if from_library { self.library_origins.insert(path.to_owned()); }
@@ -21949,7 +21961,7 @@ impl Machine<'_> {
         (self.written_in, self.row) = caller_location;
         if let Err(stopped) = stopped {
             self.importing.remove(path); self.library_origins.remove(path);
-            self.imported.remove(path);
+            self.imported.remove(path); self.namespace_places.borrow_mut().take();
             self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
@@ -21978,7 +21990,7 @@ impl Machine<'_> {
                     Ok(namespace) => namespace,
                     Err(message) => {
                         self.importing.remove(path); self.library_origins.remove(path);
-                        self.imported.remove(path); self.refresh_import_table(path); return Err(message);
+                        self.imported.remove(path); self.namespace_places.borrow_mut().take(); self.refresh_import_table(path); return Err(message);
                     },
                 };
                 // Loading may return a retained child of the previous parent.
@@ -22618,7 +22630,7 @@ impl<'a> Machine<'a> {
         };
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: Rc::new(kind), holds: RefCell::new(vec![("\0dictionary".to_string(), Value::Shared(book))]), turn: self.made }));
-        self.imported.insert(main.clone(), value);
+        self.imported.insert(main.clone(), value); self.namespace_places.borrow_mut().take();
         self.refresh_import_table(&main);
     }
 

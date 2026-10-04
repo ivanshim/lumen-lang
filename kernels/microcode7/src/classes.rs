@@ -1414,7 +1414,7 @@ impl<'a> Machine<'a> {
         self.made += 1;
         let space = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: self.native_kind("module"),
             holds: RefCell::new(entries), turn: self.made }));
-        self.imported.insert(String::from("_typing"), space.clone());
+        self.imported.insert(String::from("_typing"), space.clone()); self.namespace_places.borrow_mut().take();
         space
     }
     fn absent_type_default(&mut self) -> Value {
@@ -3337,7 +3337,7 @@ impl<'a> Machine<'a> {
                 }
                 // A loaded namespace keeps each binding in a cell its own
                 // code reads through; a new value goes into the cell.
-                if self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
+                if self.namespace_holding(&Value::Thing(t.clone())).is_some() {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
                     if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
                 }
