@@ -1,6 +1,32 @@
 // CPython 3b564385e4c9 Modules/_sre provides these instruction rules; PSF License.
 use crate::data::Value;
 use num_traits::ToPrimitive;
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
+
+type CachedSubject = (Rc<str>, Rc<Vec<u32>>);
+thread_local! {
+    static RECENT_INPUTS: RefCell<VecDeque<CachedSubject>> = const { RefCell::new(VecDeque::new()) };
+}
+fn characters_for_regex(value: &Value) -> Result<Rc<Vec<u32>>, String> {
+    match value.settled() {
+        Value::Text(source) => RECENT_INPUTS.with(|cache| {
+            let mut rows = cache.borrow_mut();
+            if let Some(index) = rows.iter().position(|row| Rc::ptr_eq(&row.0, &source)) {
+                let item = rows.remove(index).unwrap();
+                let numbers = item.1.clone();
+                rows.push_front(item);
+                return Ok(numbers);
+            }
+            let numbers: Rc<Vec<u32>> = Rc::new(source.chars().map(|letter| letter as u32).collect());
+            rows.push_front((source, numbers.clone()));
+            rows.truncate(2);
+            Ok(numbers)
+        }),
+        other => other.character_numbers().map(Rc::new).ok_or_else(|| String::from("TypeError: SRE input must be text")),
+    }
+}
 
 fn folded(value: u32, narrow: bool) -> u32 {
     match (narrow, value) {
@@ -254,7 +280,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     if input.len() != 8 { return Err(String::from("TypeError: SRE matcher needs eight arguments")); }
     let Value::Vector(raw) = &input[1] else { return Err(String::from("TypeError: SRE code must be a list")); };
     let program: Vec<u32> = raw.iter().map(|v| integer(v).and_then(|n| u32::try_from(n).map_err(|_| String::from("OverflowError: regular expression code size limit exceeded")))).collect::<Result<_, _>>()?;
-    let subject = input[2].character_numbers().ok_or_else(|| String::from("TypeError: SRE input must be text"))?;
+    let subject = characters_for_regex(&input[2])?;
     let begin = integer(&input[3])?.max(0) as usize;
     let limit = (integer(&input[4])?.max(0) as usize).min(subject.len());
     let groups = integer(&input[5])?.max(0) as usize;

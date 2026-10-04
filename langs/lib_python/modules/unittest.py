@@ -48,6 +48,10 @@ class TestResult:
     def wasSuccessful(self):
         return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
 
+class TextTestResult(TestResult):
+    def __repr__(self):
+        return '<unittest.runner.TextTestResult run=%d errors=%d failures=%d>' % (self.testsRun, len(self.errors), len(self.failures))
+
 class TestCase:
     _test_case = True
     failureException = AssertionError
@@ -950,7 +954,7 @@ class TextTestRunner:
 
     def run(self, test):
         self._progress = ""
-        result = TestResult()
+        result = TextTestResult()
         if self.resultclass is not None:
             result = self.resultclass()
         started = _host_clock()

@@ -75,6 +75,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("functools", concat!(include_str!("functools.py"), "\n", include_str!("runtime_adapters/functools.py")), "functools.py"),
     ("gc", include_str!("gc.py"), "gc.py"),
     ("genericpath", include_str!("genericpath.py"), "genericpath.py"),
+    ("getopt", include_str!("getopt.py"), "getopt.py"),
     ("gettext", include_str!("gettext.py"), "gettext.py"),
     ("glob", include_str!("glob.py"), "glob.py"),
     ("graphlib", include_str!("graphlib.py"), "graphlib.py"),

@@ -80,6 +80,9 @@ def scanstring(string, end, strict=True):
 def _quote(string, ascii_only):
     if not isinstance(string, str):
         raise TypeError('first argument must be a string')
+    encoded = _string_scan(string, ascii_only, True)
+    if encoded is not None:
+        return encoded
     parts = ['"']
     for character in string:
         if character in _quotes:
@@ -238,7 +241,7 @@ class Encoder:
                         error.add_note(f'when serializing {type(value).__name__} item {index - 1}')
                         raise
                 return self._container(parts, '[', ']', level)
-            if isinstance(value, (dict, frozendict)):
+            if isinstance(value, dict):
                 items = value.items()
                 if self.sort_keys:
                     items = sorted(items)

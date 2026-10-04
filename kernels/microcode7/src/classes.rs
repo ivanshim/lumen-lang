@@ -1728,7 +1728,10 @@ impl<'a> Machine<'a> {
             Some(word) if word == "Generic" && self.table.has_any("ext.stmt.type_params.open") => None,
             other => other,
         };
-        let allocator=self.inherited_entry(&class,self.detail("allocate"));
+        let allocator=self.inherited_entry(&class,self.detail("allocate")).filter(|value| {
+            !matches!(value, Value::Wrapped(14, _))
+                || Self::own_entry(&class, self.detail("allocate")).is_some()
+        });
         // A metaclass called outright builds a class, the way the kind
         // primitive does, from a name, parents and a namespace.
         let metaclass=self.builds_classes(&class)||class.ancestry.iter().any(|b|self.builds_classes(b));
@@ -2223,7 +2226,14 @@ impl<'a> Machine<'a> {
                 }
                 self.reduction_permitted(&first)?;
                 let kind=self.class_from_type(vec![first.clone()])?;
-                Value::tuple(vec![kind,Value::tuple(Vec::new()),Self::held_as_state(&first)])
+                let state = if let Value::Thing(object) = &first {
+                    let name = self.table.strings("ext.stmt.class.detail.root.members").get(10).cloned().unwrap_or_default();
+                    if let Some(getter) = self.inherited_entry(&object.blueprint(), &name) {
+                        let bound = self.member_binding(getter, Some(first.clone()), object.blueprint())?;
+                        self.apply_class_member(bound, Vec::new())?
+                    } else { Self::held_as_state(&first) }
+                } else { Self::held_as_state(&first) };
+                Value::tuple(vec![kind,Value::tuple(Vec::new()),state])
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
             _=>return Err(self.class_unready()),
@@ -2231,7 +2241,7 @@ impl<'a> Machine<'a> {
     }
     /// What a thing holds of its own as a dictionary, or nothing where
     /// it holds nothing.
-    fn held_as_state(value:&Value)->Value {
+    pub(super) fn held_as_state(value:&Value)->Value {
         let Value::Thing(t)=value else{return Value::Nil};
         let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
         let ordinary = if pairs.is_empty() { Value::Nil } else { Value::Dict(Rc::new(pairs.into())) };
@@ -2406,6 +2416,10 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if key == self.detail("doc") && matches!(value.settled(), Value::Nil) {
+            return Ok(Value::text("The type of the None singleton."));
+        }
+
         if key == self.detail("allocate") && matches!(value.settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
             let owner = self.kind_named_after(&value.settled());
             return self.read_class_member(owner, key, direct);
@@ -2902,7 +2916,10 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            if key == self.detail("allocate") { return Ok(Self::wrap(1, vec![])); }
+            if key == self.detail("allocate") {
+                let mut cache = self.loose_members.borrow_mut();
+                return Ok(cache.entry("root:allocation".into()).or_insert_with(|| Self::wrap(1, Vec::new())).clone());
+            }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
@@ -3069,6 +3086,10 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
             }
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
+                let protocol = self.table.strings("ext.stmt.class.special").iter().position(|word| word == key);
+                if protocol == Some(79) || protocol == Some(81) {
+                    return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                }
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
             if let Some(text @ Value::Text(_)) = &native {
@@ -3656,6 +3677,12 @@ impl<'a> Machine<'a> {
                     }
                     return Err("AttributeError: readonly attribute".to_owned().into());
                 }
+                if key == self.detail("bases") {
+                    if let Some(Value::Tuple(bases)) = replacement.as_ref().map(Value::settled) {
+                        if bases.len() == b.parents.len() && bases.iter().zip(&b.parents).all(|(given, base)| given.selfsame(&self.visible_blueprint(base.clone()))) { return Ok(Value::Nil); }
+                    }
+                    return Err(self.class_unready());
+                }
                 if key == self.detail("qualified") {
                     if let Some(worth) = replacement.as_ref().map(Value::settled) {
                         if !matches!(worth, Value::Text(_)) { return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", b.name, worth.kind_word()).into()); }
@@ -3837,7 +3864,7 @@ impl<'a> Machine<'a> {
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let (args, options) = self.open_arguments(values)?;
         let mut values: Vec<Value> = args.iter().map(Value::settled).collect();
-        if values.len() != 3 && !options.is_empty() { return Err("TypeError: type() takes no keyword arguments".to_owned().into()); }
+        if values.len() != 3 && !options.is_empty() { return Err("TypeError: type() takes 1 or 3 arguments".to_owned().into()); }
         let options: Vec<Value> = options.into_iter().map(|(word, value)| Value::Couple(Rc::new((Value::text(&word), value)))).collect();
         if values.len() == 3 {
             self.checked_type_name(&values[0])?;

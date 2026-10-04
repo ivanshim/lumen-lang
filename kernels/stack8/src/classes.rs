@@ -1522,7 +1522,10 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
-        let allocation = self.class_value(&c,self.class_word("allocate"));
+        let allocation = self.class_value(&c,self.class_word("allocate")).filter(|value| {
+            !matches!(value, Value::Adapter(entry) if entry.0 == 14)
+                || Self::own_class_value(&c, self.class_word("allocate")).is_some()
+        });
         // A metaclass called outright makes a class, the way the kind
         // builtin does, from a name, bases and a namespace.
         let makes_classes = self.is_metaclass_root(&c) || c.lineage.iter().any(|b| self.is_metaclass_root(b));
@@ -1681,7 +1684,14 @@ impl<'a> Engine<'a> {
                 }
                 self.check_native_reduction(&subject).map_err(Fault::Note)?;
                 let class = match &subject { Value::Object(o) => Value::Class(o.class_now().clone()), other => self.class_type(vec![other.clone()])? };
-                Value::tuple(vec![class, Value::tuple(Vec::new()), self.root_state(&subject)])
+                let state = if let Value::Object(object) = &subject {
+                    let name = self.lang.class_details.get("root.members").and_then(|names| names.get(10)).cloned().unwrap_or_default();
+                    if let Some(getter) = self.class_value(&object.class_now(), &name) {
+                        let bound = self.bind_class_value(getter, Some(subject.clone()), object.class_now())?;
+                        self.class_apply(bound, Vec::new())?
+                    } else { self.root_state(&subject) }
+                } else { self.root_state(&subject) };
+                Value::tuple(vec![class, Value::tuple(Vec::new()), state])
             }
             13 => Value::Small(match &subject { Value::Object(o) if o.class_now().name != self.class_word("root") => 24, _ => 16 }),
             _ => return Err(self.class_refusal()),
@@ -1689,7 +1699,7 @@ impl<'a> Engine<'a> {
     }
     /// What a thing holds of its own, as a dictionary, or nothing where
     /// it holds nothing.
-    fn root_state(&self, subject: &Value) -> Value {
+    pub(super) fn root_state(&self, subject: &Value) -> Value {
         let Value::Object(o) = subject else { return Value::Null };
         let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
         let dictionary = if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) };
@@ -1847,15 +1857,25 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
+            return Ok(Value::text("The type of the None singleton."));
+        }
         if name == self.class_word("allocate") && matches!(subject.contents(), Value::Null | Value::Ellipsis | Value::Declined(_)) {
             let kind = self.named_kind(&subject.contents());
             return self.class_get(kind, name, plain);
         }
 
 
-        let subject = if !self.lang.class_builder.is_empty() {
-            match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
-        } else { subject };
+        let mut subject = subject;
+        if !self.lang.class_builder.is_empty() {
+            loop {
+                let next = match &subject {
+                    Value::Bond(cell) | Value::Binding(cell) => Some(cell.borrow().clone()),
+                    _ => None,
+                };
+                match next { Some(value) => subject = value, None => break }
+            }
+        }
         if !self.lang.weak_refused.is_empty() {
             if let Value::Object(proxy) = subject.contents() {
                 if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
@@ -2298,7 +2318,10 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                if name == self.class_word("allocate") { return Ok(Self::adapter(1, Vec::new())); }
+                if name == self.class_word("allocate") {
+                    let mut cache = self.loose_members.borrow_mut();
+                    return Ok(cache.entry("root:allocation".into()).or_insert_with(|| Self::adapter(1, Vec::new())).clone());
+                }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.
@@ -2461,6 +2484,9 @@ impl<'a> Engine<'a> {
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 // The worth a thing keeps answers for the methods of its kind.
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
+                    if [79, 81].iter().any(|slot| self.lang.class_special.get(*slot).is_some_and(|word| word == name)) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                    }
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
                 }
                 if let Some(word @ Value::Text(_)) = Self::worth_of(&subject) {
@@ -3263,6 +3289,12 @@ impl<'a> Engine<'a> {
                     }
                     return Err("AttributeError: readonly attribute".into());
                 }
+                if name == self.class_word("bases") {
+                    if let Some(Value::Tuple(bases)) = value.as_ref().map(Value::contents) {
+                        if bases.len() == c.direct.len() && bases.iter().zip(&c.direct).all(|(given, base)| given.identical(&self.public_class(base.clone()))) { return Ok(Value::Null); }
+                    }
+                    return Err(self.class_refusal());
+                }
                 if name == self.class_word("qualified") {
                     match value.as_ref().map(Value::contents) {
                         Some(Value::Text(_)) => {},
@@ -3504,7 +3536,7 @@ impl<'a> Engine<'a> {
             else { plain.push(value.contents()); }
         }
         let mut args = plain;
-        if args.len() != 3 && !named.is_empty() { return Err("TypeError: type() takes no keyword arguments".into()); }
+        if args.len() != 3 && !named.is_empty() { return Err("TypeError: type() takes 1 or 3 arguments".into()); }
         if args.len() == 3 {
             self.type_title(&args[0])?;
             let original = args[2].clone();

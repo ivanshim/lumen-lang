@@ -1,6 +1,27 @@
 // Bytecode semantics from CPython 3b564385e4c9 Modules/_sre/{sre.c,sre_lib.h}; PSF License.
 use crate::value::Value;
 use num_traits::ToPrimitive;
+use std::{cell::RefCell, rc::Rc};
+
+thread_local! {
+    static SUBJECT: RefCell<Option<(Rc<str>, Rc<Vec<u32>>)>> = const { RefCell::new(None) };
+}
+
+fn subject_codes(value: &Value) -> Result<Rc<Vec<u32>>, String> {
+    let held = value.contents();
+    if let Value::Text(word) = &held {
+        return SUBJECT.with(|slot| {
+            let mut entry = slot.borrow_mut();
+            if let Some((source, codes)) = entry.as_ref() {
+                if Rc::ptr_eq(source, word) { return Ok(codes.clone()); }
+            }
+            let codes: Rc<Vec<u32>> = Rc::new(word.chars().map(u32::from).collect());
+            *entry = Some((word.clone(), codes.clone()));
+            Ok(codes)
+        });
+    }
+    held.text_codes().map(Rc::new).ok_or_else(|| "TypeError: SRE input must be text".to_string())
+}
 
 #[derive(Clone)]
 struct Repeat { body: usize, tail: usize, min: usize, max: usize, count: usize, before: usize }
@@ -257,7 +278,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let Value::Array(items) = args[1].contents() else { return Err("TypeError: SRE code must be a list".into()) };
     let mut code = Vec::with_capacity(items.len());
     for item in items.iter() { code.push(u32::try_from(item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?); }
-    let text = args[2].contents().text_codes().ok_or_else(|| "TypeError: SRE input must be text".to_string())?;
+    let text = subject_codes(&args[2])?;
     let start = number(3)?.max(0) as usize;
     let end = (number(4)?.max(0) as usize).min(text.len());
     let groups = number(5)?.max(0) as usize;

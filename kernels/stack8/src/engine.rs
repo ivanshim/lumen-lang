@@ -1188,6 +1188,7 @@ impl<'a> Engine<'a> {
                 }
                 let values = match separate {
                     Value::Tuple(items) => items.as_ref().clone(),
+                    Value::Null => Vec::new(),
                     value => vec![value],
                 };
                 let made = if Self::exception_has_methods(class) || self.class_value(class, self.class_word("allocate")).is_some() {
@@ -5980,6 +5981,10 @@ impl<'a> Engine<'a> {
     }
 
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
+        if let Value::Class(class) = value {
+            let maker = Self::maker_beneath(class)?;
+            return self.class_value(&maker, self.lang.class_special.get(place)?);
+        }
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
         let actual = object.class_now();
@@ -6098,10 +6103,10 @@ impl<'a> Engine<'a> {
             return names;
         }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
-        let cache_key = match &held {
+        let cache_key = if matches!(sample, Value::View(_)) { None } else { match &held {
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Bytes(..) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) | Value::Counted(_) => Some(held.core_kind()),
             _ => None,
-        };
+        }};
         if let Some(names) = cache_key.as_ref().and_then(|key| self.kind_directory_cache.borrow().get(key).cloned()) { return names; }
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
@@ -6363,6 +6368,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
@@ -6730,11 +6736,15 @@ impl<'a> Engine<'a> {
     }
 
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
-        if matches!(place, 79 | 81) && matches!(receiver.contents(), Value::Set(_)) {
-            if !named.is_empty() || args.len() != usize::from(place == 81) { return Err(self.lang.method_errors["arguments"].clone()); }
-            if place == 81 { self.reduction_protocol(&args[0])?; }
-            let contents = self.core_members(receiver)?;
-            return Ok(Value::tuple(vec![self.named_kind(receiver), Value::tuple(vec![Value::array(contents)]), Value::Null]));
+        if matches!(place, 79 | 81) {
+            let underlying = Self::worth_of(receiver).unwrap_or_else(|| receiver.clone());
+            if matches!(underlying.contents(), Value::Set(_)) {
+                if !named.is_empty() || args.len() != usize::from(place == 81) { return Err(self.lang.method_errors["arguments"].clone()); }
+                if place == 81 { self.reduction_protocol(&args[0])?; }
+                let contents = self.core_members(&underlying)?;
+                let class = match receiver { Value::Object(object) => Value::Class(object.class_now().clone()), _ => self.named_kind(receiver) };
+                return Ok(Value::tuple(vec![class, Value::tuple(vec![Value::array(contents)]), self.root_state(receiver)]));
+            }
         }
         if place == usize::MAX - 2 {
             let wants_protocol = self.lang.class_details.get("root.members").and_then(|row| row.get(12)).is_some_and(|word| word == operation);
@@ -6801,6 +6811,16 @@ impl<'a> Engine<'a> {
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
         if place == 79 || place == 81 { return self.pickle_reduction(original); }
         if place == 8 { if let Some(hash) = Self::native_hash_identity(original) { return Ok(hash); } }
+        if place == 1 {
+            if let (Value::Object(object), Value::Set(members)) = (original, receiver.contents()) {
+                let rendered = receiver.core_repr(self.lang.shortest_reals);
+                let class = object.class_now().name.clone();
+                let text = if members.borrow().row.is_empty() { format!("{class}()") }
+                    else if members.borrow().fixed { rendered.replacen("frozenset", &class, 1) }
+                    else { format!("{class}({rendered})") };
+                return Ok(Value::text(&text));
+            }
+        }
         if place == 80 { return self.pickle_position(&receiver.contents(), &args[0]); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
         if family == Kindred::Complex {
@@ -8499,7 +8519,7 @@ impl<'a> Engine<'a> {
                 if said.is_ascii() { result } else { Value::text(&crate::strings::ascii_escaped(&said)) }
             }
             Builtin::ToText if args.len() == 1 => {
-                if matches!(args[0], Value::Codepoints(_)) { args[0].clone() }
+                if matches!(args[0], Value::Text(_) | Value::Codepoints(_)) { args[0].clone() }
                 else { self.digits_shown(&args[0])?; self.string_conversion(&args[0], false)? }
             }
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
@@ -17421,6 +17441,13 @@ impl<'a> Engine<'a> {
             // else out the ordinary way. Answers how many characters went.
             Builtin::StreamPut => {
                 use std::io::Write;
+                if args.len() == 3 && self.truth(&args[2]) {
+                    let Value::Bytes(bytes, _, _) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
+                    let bytes = bytes.borrow();
+                    let mut output: Box<dyn std::io::Write> = if self.truth(&args[1]) { Box::new(std::io::stderr()) } else { self.written_out.set(true); Box::new(std::io::stdout()) };
+                    output.write_all(&bytes).and_then(|_| output.flush()).map_err(|_| self.lang.stream_failed[0].clone())?;
+                    return Ok(Value::Small(bytes.len() as i64));
+                }
                 let (Some(Value::Text(text)), Some(to_error), None) = (args.first(), args.get(1), args.get(2)) else {
                     return Err(self.lang.stream_amiss[0].clone());
                 };
@@ -17447,6 +17474,19 @@ impl<'a> Engine<'a> {
             // spell a character, so a character never comes back in part.
             Builtin::StreamTake => {
                 use std::io::Read;
+                if args.len() == 3 && self.truth(&args[2]) {
+                    let Value::Small(wanted) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
+                    let by_line = self.truth(&args[1]);
+                    let mut input = std::io::stdin().lock();
+                    let mut bytes = Vec::new();
+                    while wanted < 0 || (bytes.len() as i64) < wanted {
+                        let mut byte = [0u8];
+                        match input.read(&mut byte) { Ok(0) => break, Ok(_) => (), Err(_) => return Err(self.lang.stream_failed[0].clone()) }
+                        bytes.push(byte[0]);
+                        if by_line && byte[0] == b'\n' { break; }
+                    }
+                    return Ok(self.byte_make(bytes, false));
+                }
                 let (Some(Value::Small(wanted)), Some(by_line), None) = (args.first().cloned(), args.get(1).cloned(), args.get(2)) else {
                     return Err(self.lang.stream_amiss[0].clone());
                 };
@@ -17963,6 +18003,32 @@ impl<'a> Engine<'a> {
                 Value::Small((begin + consumed) as i64)
             }
             Builtin::JsonString => {
+                if args.len() == 3 && self.truth(&args[2]) {
+                    let Value::Text(text) = args[0].contents() else { return Ok(Value::Null); };
+                    let ascii_only = self.truth(&args[1]);
+                    let mut quoted = String::from("\"");
+                    for character in text.chars() {
+                        match character {
+                            '"' => quoted.push_str("\\\""),
+                            '\\' => quoted.push_str("\\\\"),
+                            '\u{8}' => quoted.push_str("\\b"),
+                            '\u{c}' => quoted.push_str("\\f"),
+                            '\n' => quoted.push_str("\\n"),
+                            '\r' => quoted.push_str("\\r"),
+                            '\t' => quoted.push_str("\\t"),
+                            c if c < ' ' || ascii_only && c > '~' => {
+                                let code = c as u32;
+                                if code > 0xffff {
+                                    let code = code - 0x10000;
+                                    quoted.push_str(&format!("\\u{:04x}\\u{:04x}", 0xd800 + (code >> 10), 0xdc00 + (code & 1023)));
+                                } else { quoted.push_str(&format!("\\u{code:04x}")); }
+                            },
+                            c => quoted.push(c),
+                        }
+                    }
+                    quoted.push('"');
+                    return Ok(Value::text(&quoted));
+                }
                 arity(2)?;
                 let source = args[0].contents();
                 let Value::Text(text) = &source else { return Ok(Value::Null); };
@@ -18489,6 +18555,12 @@ impl<'a> Engine<'a> {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "isqrt" {
+                    if args.len() != 2 { return Err("TypeError: isqrt expected one argument".into()); }
+                    let integer = args[1].as_big()?;
+                    if integer.is_negative() { return Err("ValueError: isqrt argument must be non-negative".into()); }
+                    return Ok(Value::of_big(integer.sqrt()));
+                }
                 if working == "method" && args.len() == 3 {
                     return Ok(Self::adapter(64, vec![args[1].clone(), args[2].clone()]));
                 }
@@ -19297,7 +19369,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
-                if matches!(args[0], Value::Codepoints(_)) { return Ok(args[0].clone()); }
+                if matches!(args[0], Value::Text(_) | Value::Codepoints(_)) { return Ok(args[0].clone()); }
                 self.digits_shown(&args[0])?;
                 Value::text(&self.told(&args[0], &sp))
             }
@@ -21067,7 +21139,17 @@ impl Engine<'_> {
 
     /// The size of the map a window looks upon.
     fn window_size(window: &Value) -> (usize, u64) {
-        match window { Value::View(view) => match view.0.proxy_dictionary() { Value::Map(pairs) => (pairs.len(), pairs.revision), _ => (0, 0) }, _ => (0, 0) }
+        match window { Value::View(view) => match view.0.proxy_dictionary() {
+            Value::Map(pairs) => {
+                if matches!(view.0.contents(), Value::Class(_)) {
+                    use std::hash::{Hash, Hasher};
+                    let mut keys = std::collections::hash_map::DefaultHasher::new();
+                    for (key, _) in pairs.iter() { key.plain().hash(&mut keys); }
+                    (pairs.len(), keys.finish())
+                } else { (pairs.len(), pairs.revision) }
+            },
+            _ => (0, 0)
+        }, _ => (0, 0) }
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,
@@ -21413,7 +21495,7 @@ impl Engine<'_> {
                 }
                 if let Some(view) = window {
                     return Ok(Value::text(&if view.1 == "mapping" {
-                        format!("mappingproxy({})", self.special_text(&view.0.proxy_dictionary(), true)?)
+                        format!("mappingproxy({})", self.special_text(&view.0, true)?)
                     } else {
                         format!("dict_{}({})", view.1, args[0].core_repr(self.lang.shortest_reals))
                     }));

@@ -7788,7 +7788,8 @@ impl<'a> Machine<'a> {
                 if at == 81 { self.check_reduction_protocol(&arguments[0])?; }
                 let rows = self.gathered_members(receiver)?;
                 let arguments = Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(rows))]);
-                return Ok(Value::tuple(vec![self.kind_named_after(receiver), arguments, Value::Nil]));
+                let maker = if let Value::Thing(instance) = original { Value::Blueprint(instance.blueprint().clone()) } else { self.kind_named_after(receiver) };
+                return Ok(Value::tuple(vec![maker, arguments, Self::held_as_state(original)]));
             }
         }
         match at {
@@ -7797,6 +7798,16 @@ impl<'a> Machine<'a> {
             _ => {}
         }
         if at == 8 { if let Some(hash) = Self::native_receiver_hash(original) { return Ok(hash); } }
+        if at == 1 {
+            if let (Value::Thing(object), Value::Set(members)) = (original, receiver.settled()) {
+                let rendered = receiver.quoted(self.rules.lone_system_real_render == Some("shortest"));
+                let class = object.blueprint().name.clone();
+                let text = if members.borrow().entries.is_empty() { format!("{class}()") }
+                    else if members.borrow().sealed { rendered.replacen("frozenset", &class, 1) }
+                    else { format!("{class}({rendered})") };
+                return Ok(Value::text(&text));
+            }
+        }
         let mark = Self::native_mark(receiver).ok_or_else(|| self.bad_answer())?;
         match (mark, at) {
             ('c', 74) => return Ok(receiver.settled()),
@@ -8054,6 +8065,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if name == self.detail("doc") && matches!(value.settled(), Value::Nil) { return Some(Value::text("The type of the None singleton.")); }
         if matches!(value, Value::Window(_, 'm')) && matches!(name, "get" | "keys" | "values" | "items" | "copy") {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
         }
@@ -12891,6 +12903,10 @@ impl<'a> Machine<'a> {
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
         let names = self.rules.specials;
         let word = names.get(index)?;
+        if let Value::Blueprint(class) = subject {
+            let maker = Self::builder_over(class)?;
+            return self.inherited_entry(&maker, word);
+        }
         let Value::Thing(thing) = subject else { return None };
         let actual=thing.blueprint();
         if self.table.has_class_order&&!actual.ancestry.is_empty() {
@@ -14833,7 +14849,7 @@ impl<'a> Machine<'a> {
                 if plain.is_ascii() { rendered } else { Value::text(&crate::text::ascii_escaped(&plain)) }
             }
             (Prim::AsText, [one]) => match one {
-                Value::Unpaired(_) => one.clone(),
+                Value::Text(_) | Value::Unpaired(_) => one.clone(),
                 _ => { self.figures_allowed(one)?; self.converted_string(one, false)? }
             },
             (Prim::Truthful, []) => Value::Flag(false),
@@ -17964,6 +17980,28 @@ impl<'a> Machine<'a> {
                 Value::Small(end as i64)
             }
             Prim::JsonStringScan => {
+                if v.len() == 3 && self.stands_true(&v[2]) {
+                    let Value::Text(text) = v[0].settled() else { return Ok(Value::Nil); };
+                    let escape_non_ascii = self.stands_true(&v[1]);
+                    let mut quoted = String::with_capacity(text.len() + 2);
+                    quoted.push('"');
+                    let escapes = [(34, "\\\""), (92, "\\\\"), (8, "\\b"), (12, "\\f"), (10, "\\n"), (13, "\\r"), (9, "\\t")];
+                    for letter in text.chars() {
+                        let number = u32::from(letter);
+                        if let Some((_, escaped)) = escapes.iter().find(|(code, _)| *code == number) {
+                            quoted.push_str(escaped);
+                        } else if number < 32 || (escape_non_ascii && number >= 127) {
+                            let mut units = [0; 2];
+                            for unit in letter.encode_utf16(&mut units) {
+                                quoted.push_str(&format!("\\u{:04x}", *unit));
+                            }
+                        } else {
+                            quoted.push(letter);
+                        }
+                    }
+                    quoted.push('"');
+                    return Ok(Value::text(&quoted));
+                }
                 n(2)?;
                 if let (Value::Text(input), Some(position)) = (v[0].settled(), v[1].as_big().ok().and_then(|number| number.to_usize())) {
                     if let Some((begin, _)) = input.char_indices().nth(position) {
@@ -18369,6 +18407,18 @@ impl<'a> Machine<'a> {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "isqrt" {
+                    let [_, input] = v else { return Err("TypeError: isqrt expected one argument".to_owned()); };
+                    let number = input.as_big()?;
+                    if number < BigInt::zero() { return Err("ValueError: isqrt argument must be non-negative".to_owned()); }
+                    if number.is_zero() { return Ok(Value::Small(0)); }
+                    let mut estimate = BigInt::one() << number.bits().div_ceil(2) as usize;
+                    loop {
+                        let next = (&estimate + &number / &estimate) >> 1usize;
+                        if next >= estimate { return Ok(Value::from_big(estimate)); }
+                        estimate = next;
+                    }
+                }
                 if working == "method" && v.len() == 3 {
                     return Ok(Value::Wrapped(134, Rc::new(vec![v[1].clone(),v[2].clone()]).into()));
                 }
@@ -19558,6 +19608,13 @@ impl<'a> Machine<'a> {
             // of characters poured is answered.
             Prim::PourOut => {
                 use std::io::Write;
+                if v.len() == 3 && self.stands_true(&v[2]) {
+                    let Value::Octets { cell: data, .. } = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
+                    let bytes = data.borrow();
+                    let mut output: Box<dyn std::io::Write> = if self.stands_true(&v[1]) { Box::new(std::io::stderr()) } else { self.written_out.set(true); Box::new(std::io::stdout()) };
+                    output.write_all(&bytes).and_then(|_| output.flush()).map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                    return Ok(Value::Small(bytes.len() as i64));
+                }
                 let (Some(Value::Text(content)), true) = (v.first(), v.len() == 2) else {
                     return Err(self.argument_fault("ext.builtin.stream.amiss", None));
                 };
@@ -19582,6 +19639,19 @@ impl<'a> Machine<'a> {
             // its first byte says how many more belong to it.
             Prim::DrawIn => {
                 use std::io::Read;
+                if v.len() == 3 && self.stands_true(&v[2]) {
+                    let Value::Small(limit) = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
+                    let by_line = self.stands_true(&v[1]);
+                    let mut input = std::io::stdin().lock();
+                    let mut bytes = Vec::new();
+                    while limit < 0 || (bytes.len() as i64) < limit {
+                        let mut byte = [0u8];
+                        match input.read(&mut byte) { Ok(0) => break, Ok(_) => (), Err(_) => return Err(self.argument_fault("ext.builtin.stream.failed", None)) }
+                        bytes.push(byte[0]);
+                        if by_line && byte[0] == b'\n' { break; }
+                    }
+                    return Ok(self.octets(bytes, false));
+                }
                 let (Some(Value::Small(limit)), true) = (v.first(), v.len() == 2) else {
                     return Err(self.argument_fault("ext.builtin.stream.amiss", None));
                 };
@@ -19818,7 +19888,7 @@ impl<'a> Machine<'a> {
                 Value::text(&v[0].representation(self.wording()))
             }
             Prim::AsText => {
-                if let [value @ Value::Unpaired(_)] = v { return Ok(value.clone()); }
+                if let [value @ (Value::Text(_) | Value::Unpaired(_))] = v { return Ok(value.clone()); }
                 n(1)?;
                 self.figures_allowed(&v[0])?;
                 Value::text(&self.told(&v[0], w))
@@ -25005,7 +25075,7 @@ impl Machine<'_> {
         // iter is handed is looked at before it is settled into a copy.
         let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
-        let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some(owner.proxy_pairs()), _ => None };
+        let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some((**owner).clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one; the value is kept before it settles into a copy.

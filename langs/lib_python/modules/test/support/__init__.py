@@ -898,6 +898,9 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
     if pattern is None:
         pattern = "test*"
     top_dir = STDLIB_DIR
+    # Reference packages live in the interpreter's versioned test directory.
+    if not os.path.abspath(pkg_dir).startswith(os.path.abspath(top_dir).rstrip('/') + '/'):
+        top_dir = os.path.dirname(pkg_dir)
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,
@@ -1555,3 +1558,6 @@ def check_sanitizer(*, address=False, memory=False, ub=False, thread=False,
     return any(enabled and ('sanitizer=' + name in flags or
                             '-fsanitize=' + name in flags)
                for enabled, name in requested)
+
+# Repository root used to locate optional CPython source-tree resources.
+REPO_ROOT = __file__.split("/langs/lib_python/modules/test/support/", 1)[0]

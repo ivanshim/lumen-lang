@@ -72,10 +72,7 @@ class MappingProxyType:
         return gathered
 
     def copy(self):
-        copied = {}
-        for key in list(self._mapping):
-            copied[key] = self._mapping[key]
-        return copied
+        return self._mapping.copy()
 
     def __eq__(self, other):
         if isinstance(other, MappingProxyType):
@@ -134,6 +131,14 @@ class GenericAlias:
             self.__args__ = args
         else:
             self.__args__ = (args,)
+        parameters = []
+        for arg in self.__args__:
+            found = (arg,) if type(arg).__name__ in ('TypeVar', 'ParamSpec', 'TypeVarTuple') else getattr(arg, '__parameters__', ())
+            for parameter in found:
+                if parameter not in parameters:
+                    parameters.append(parameter)
+        self.__parameters__ = tuple(parameters)
+        self.__unpacked__ = False
 
     def __call__(self, *args, **keywords):
         return self.__origin__(*args, **keywords)
