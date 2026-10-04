@@ -20982,6 +20982,16 @@ impl Engine<'_> {
             if let Some(worth) = self.worth_free_of(source, &[15]) { return self.core_iterator(&worth); }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
+        // A plain map is walked through a keys window, whose walk
+        // remembers the revision it began at: a change made while the
+        // walk runs is refused, as the reference refuses it.
+        if let Value::Map(_) = source {
+            let window = Value::View(Rc::new((source.clone(), "keys".to_string())));
+            let size = Self::window_size(&window);
+            let walk = Self::core_cursor(CursorSource::Viewed(window, 0, size));
+            if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
+            return Ok(walk);
+        }
         let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?).into(), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         if let (Value::Cursor(state), Value::Object(_)) = (&walk, source) { state.borrow_mut().origin = Some(source.clone()); }
@@ -21265,11 +21275,24 @@ impl Engine<'_> {
             Value::View(_) => Some(CursorSource::Viewed(value.clone(), 0, Self::window_size(value))),
             Value::Bond(cell) | Value::Binding(cell) => match &*cell.borrow() {
                 Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
+                // A map in a name's cell is walked keys-first through a
+                // window upon the cell, so a change made while the walk
+                // runs is refused rather than passed over.
+                Value::Map(_) => {
+                    let window = Value::View(Rc::new((value.clone(), "keys".to_string())));
+                    let size = Self::window_size(&window);
+                    Some(CursorSource::Viewed(window, 0, size))
+                }
                 inner @ (Value::Collection(..) | Value::View(_)) => Self::living_source(inner),
                 _ => None,
             },
             Value::Collection(cell, _) => match &*cell.borrow() {
                 Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
+                Value::Map(_) => {
+                    let window = Value::View(Rc::new((value.clone(), "keys".to_string())));
+                    let size = Self::window_size(&window);
+                    Some(CursorSource::Viewed(window, 0, size))
+                }
                 _ => None,
             },
             _ => None,

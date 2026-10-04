@@ -803,11 +803,16 @@ def _native_ordered_dict(base):
                 return dict.__eq__(self, other)
             version = self._version
             plain = dict.__eq__(self, other)
-            if self._version != version:
-                # A key changed the map inside the plain comparison: the
-                # reference reports the two as unequal rather than walking on.
+            changed = self._version != version
+            if not plain and not changed:
                 return False
-            return plain and all(map(_eq, self, other))
+            # The ordered pass still runs when a key changed the map during
+            # the plain comparison, so every key the reference would compare
+            # is compared; the answer is inequality either way.
+            ordered = all(map(_eq, self, other))
+            if changed:
+                return False
+            return ordered
 
         def __iter__(self):
             version = self._version

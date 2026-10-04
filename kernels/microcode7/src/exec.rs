@@ -25035,10 +25035,24 @@ impl Machine<'_> {
             Value::Window(..) => Some(IteratorKind::Watching { window: value.clone(), at: 0, size: Self::window_extent(value) }),
             Value::Shared(cell) => match &*cell.borrow() {
                 Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
+                // A map in a name's cell is walked keys-first through a
+                // window on the cell, so a change made while the walk
+                // runs is refused rather than passed over.
+                Value::Dict(_) => {
+                    let window = Value::Window(Rc::new(value.clone()), 'k');
+                    Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
+                }
                 inner @ (Value::Mutable(..) | Value::Window(..)) => Self::live_walk(inner),
                 _ => None,
             },
-            Value::Mutable(cell, _) => matches!(&*cell.borrow(), Value::Vector(_)).then(|| IteratorKind::Living(cell.clone(), 0)),
+            Value::Mutable(cell, _) => match &*cell.borrow() {
+                Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
+                Value::Dict(_) => {
+                    let window = Value::Window(Rc::new(value.clone()), 'k');
+                    Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
