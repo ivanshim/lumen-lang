@@ -95,6 +95,13 @@ def _global_name(value):
     name = getattr(value, '__qualname__', getattr(value, '__name__', None))
     module = getattr(value, '__module__', None)
     if name is not None and '<locals>' not in name:
+        if module is not None:
+            try:
+                advertised = _global(module, name)
+            except (ImportError, AttributeError, KeyError):
+                advertised = None
+            if advertised is value:
+                return (module, name)
         parts = name.split('.')
         # The module the value names as its own first, then the rest:
         # the reference finds the value under its own name where it
@@ -117,7 +124,12 @@ def _global_name(value):
         if candidate is value:
             # Instances are global only when their reduction says so.
             if isinstance(value, type) or callable(value):
-                return ('__main__', name)
+                try:
+                    published = _global('__main__', name)
+                except (AttributeError, KeyError):
+                    continue
+                if published is value:
+                    return ('__main__', name)
     if name is not None and module is not None and isinstance(value, type):
         return (module, name)
     return None
