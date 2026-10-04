@@ -405,6 +405,14 @@ def open(*args, **kwargs):
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
 class memoryview:
+    def __buffer__(self, flags, /):
+        from _buffer import getbuffer
+        return getbuffer(self, flags)
+
+    def __release_buffer__(self, view, /):
+        from _buffer import releasebuffer
+        return releasebuffer(self, view)
+
     def __init__(self, object):
         self._init_buffer(object, 284)
     def _init_buffer(self, object, flags):
@@ -431,7 +439,7 @@ class memoryview:
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
-        elif isinstance(object, array) and object.typecode in ('B', 'b', 'i'):
+        elif isinstance(object, array):
             self._source = object
             self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
             self._format = object.typecode
@@ -451,8 +459,7 @@ class memoryview:
         if isinstance(self._source, array):
             if self._source.typecode in ('B', 'b'):
                 return self._source.data[offset] & 255
-            word = self._source.data[offset // 4]
-            return word.to_bytes(4, 'little', signed=True)[offset % 4]
+            return self._source.tobytes()[offset]
         if isinstance(self._source, bytes):
             return bytes.__getitem__(self._source, offset)
         return bytearray.__getitem__(self._source, offset)
@@ -463,10 +470,14 @@ class memoryview:
             if self._source.typecode in ('B', 'b'):
                 self._source.data[offset] = value - 256 if self._source.typecode == 'b' and value >= 128 else value
             else:
-                index = offset // 4
-                data = bytearray(self._source.data[index].to_bytes(4, 'little', signed=True))
-                data[offset % 4] = value
-                self._source.data[index] = int.from_bytes(data, 'little', signed=True)
+                source = self._source
+                index = offset // source.itemsize
+                start = index * source.itemsize
+                data = bytearray(source.tobytes()[start:start + source.itemsize])
+                data[offset % source.itemsize] = value
+                element = array(source.typecode)
+                element.frombytes(data)
+                source.data[index] = element.data[0]
         else:
             self._source[offset] = value
 

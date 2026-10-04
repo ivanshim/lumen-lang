@@ -166,6 +166,8 @@ def _reduce_native(value):
         state = reduction[2]
         if isinstance(state, tuple) and len(state) == 2:
             reduction = (*reduction[:2], (None, state[1]), *reduction[3:])
+        elif isinstance(state, dict) and not state:
+            reduction = (*reduction[:2], None, *reduction[3:])
     return reduction
 
 def _reduction_hook(value, name):

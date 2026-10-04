@@ -20,7 +20,13 @@ impl Value {
     pub fn kind_word(&self) -> String {
         let word = match self {
             Self::Complex(_) => "complex",
-            Self::Thing(thing) => return thing.blueprint().name.to_owned(),
+            Self::Thing(thing) => {
+                let blueprint = thing.blueprint();
+                if let Some((_, Self::Text(name))) = blueprint.constants.iter().find(|(key, _)| key == "\0native-name") {
+                    return name.to_string();
+                }
+                return blueprint.name.to_owned();
+            }
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
             Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },
@@ -57,22 +63,29 @@ impl Value {
                 IteratorKind::Select(..) => "filter",
                 _ => state.walks.as_deref().unwrap_or("iterator"),
             })),
+            Self::Backtrace(_) => "traceback",
             Self::Span(_) => "slice", Self::Ellipsis => "ellipsis", Self::Refusal(_) => "NotImplementedType",
             Self::Blueprint(_) | Self::KindOf(_) | Self::OctetKind { .. } => "type",
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Wrapped(130, _) => "function",
+            Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
             Self::Wrapped(122, _) => "function",
-            Self::Wrapped(120, _) => "wrapper_descriptor",
+            Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
+            Self::Wrapped(133, _) => "method_descriptor",
+            Self::Wrapped(134, _) => "builtin_function_or_method",
+            Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _))) => "builtin_function_or_method",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
-            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) || matches!(parts.get(2), Some(Self::Flag(true))) => "method",
+            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
+            Self::Wrapped(3, _) => "method-wrapper",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
@@ -183,10 +196,11 @@ impl Value {
                 return Self::text(&letters).hash_number();
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
+            Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
-            Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
+            Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => {

@@ -15,7 +15,7 @@ def validate(code, groups):
             bad()
         return skip
     def category(value):
-        if value >= 68:
+        if value >= 18:
             bad()
     def charset(at, end):
         if at < 0 or at > end:

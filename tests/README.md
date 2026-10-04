@@ -12,7 +12,6 @@ order the reference suites need it.
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
 
-
 ## CPython 3.14.8 suite
 
 The supported pins and directories come from

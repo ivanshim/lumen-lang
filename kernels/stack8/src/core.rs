@@ -44,6 +44,7 @@ impl Value {
                 }
             }),
             Value::View(view) => crate::value::view_kind(&view.1),
+            Value::Trace(_) => "traceback",
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
             Value::Declined(_) => "NotImplementedType",
@@ -75,19 +76,29 @@ impl Value {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
                 _ => "object".to_string(),
             },
+            Value::Adapter(w) if w.0 == 129 => "function",
+            Value::Adapter(w) if w.0 == 63 => "method_descriptor",
+            Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
             Value::Routine(_) => "function",
-            Value::Adapter(function) if function.0 == 122 => "function",
+            Value::Adapter(function) if function.0 == 180 => "function",
             Value::Method(..) => "method",
-            Value::Adapter(w) if w.0 == 3 && (matches!(w.1.first(), Some(Value::Routine(_))) || matches!(w.1.get(2), Some(Value::Flag(true)))) => "method",
+            Value::Adapter(w) if w.0 == 131 => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
-            Value::Adapter(w) if w.0 == 119 => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119) => "wrapper_descriptor",
+            Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
-            Value::Object(o) => return o.class_now().name.clone(),
+            Value::Object(o) => {
+                let class = o.class_now();
+                return class.constants.iter().find_map(|(key, value)| match (key.as_str(), value) {
+                    ("\0native-name", Value::Text(name)) => Some(name.to_string()), _ => None,
+                }).unwrap_or_else(|| class.name.clone());
+            }
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => return c.borrow().core_kind(),
             _ => "object",
         }.to_string()
@@ -167,16 +178,10 @@ impl Value {
                 Value::text(&text).core_hash()
             }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
+            Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
-            Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
-            Value::Adapter(bound) if bound.0 == 3 && bound.1.len() >= 2 => {
-                let receiver = match &bound.1[1] {
-                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
-                    other => other.core_hash()?,
-                };
-                Some(bound.1[0].core_hash()? ^ receiver)
-            },
+            Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
             // The three bounds, folded as a tuple's items are, without a

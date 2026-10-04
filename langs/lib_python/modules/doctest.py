@@ -19,6 +19,7 @@ _host_call_outcome = __call_outcome
 
 import sys
 import unittest
+import types
 
 
 # Option flags. The numbers are CPython's, so a file that adds two of them
@@ -359,6 +360,8 @@ class DocTestFinder:
             if key[:1] == '#' or key == '__test__':
                 continue
             value = names[key]
+            if not isinstance(value, (type, types.FunctionType, types.BuiltinFunctionType, types.MethodType)):
+                continue
             if getattr(value, '__module__', None) != module_name:
                 continue
             label = module_name + '.' + key
