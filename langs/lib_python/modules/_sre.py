@@ -72,6 +72,11 @@ class Pattern:
         from types import MappingProxyType
         return MappingProxyType(self._groupindex)
     def _input(self, string, pos, endpos):
+        if type(string) is str and type(pos) is int and type(endpos) is int:
+            if self._isbytes is True:
+                raise TypeError('cannot use a bytes pattern on a string-like object')
+            pos, endpos = _native(9, string, pos, endpos)
+            return string, pos, endpos
         text = _buffer(string)
         if self._isbytes is True and isinstance(string, str):
             raise TypeError('cannot use a bytes pattern on a string-like object')
@@ -80,7 +85,7 @@ class Pattern:
         pos, endpos = _native(9, text, _index(pos), _index(endpos))
         return text, pos, endpos
     def _run(self, string, text, pos, endpos, mode, must_advance=0):
-        state = _native(0, self._code, text, pos, endpos, self.groups, mode, must_advance)
+        state = _native(0, self._code, text, pos, endpos, self._groups, mode, must_advance)
         if state is None:
             return None
         return Match(_TOKEN, self, string, text, pos, endpos, state)
@@ -245,14 +250,15 @@ class Match:
         return tuple(self.span(i) for i in range(self.re.groups+1))
     def _index(self, group):
         if isinstance(group, str):
-            if group not in self.re._groupindex:
+            if group not in self._re._groupindex:
                 raise IndexError('no such group')
-            return self.re._groupindex[group]
+            return self._re._groupindex[group]
         try:
-            group = _index(group)
+            if type(group) is not int:
+                group = _index(group)
         except TypeError:
             raise IndexError('no such group') from None
-        if group < 0 or group > self.re.groups:
+        if group < 0 or group > self._re._groups:
             raise IndexError('no such group')
         return group
     def span(self, group=0):
@@ -263,17 +269,22 @@ class Match:
         a, b = marks[(group-1)*2:(group-1)*2+2]
         return (-1, -1) if a < 0 or b < a else (a, b)
     def start(self, group=0):
+        if type(group) is int and group == 0:
+            return self._state[0]
         return self.span(group)[0]
     def end(self, group=0):
+        if type(group) is int and group == 0:
+            return self._state[1]
         return self.span(group)[1]
     def group(self, *groups):
         if not groups:
             groups = (0,)
         result = []
+        source = self._string
         for group in groups:
             a, b = self.span(group)
-            value = None if a < 0 else _buffer(self.string)[a:b]
-            if value is not None and not isinstance(self.string, str):
+            value = None if a < 0 else (source if type(source) is str else _buffer(source))[a:b]
+            if value is not None and not isinstance(source, str):
                 value = value.encode('latin1')
             result.append(value)
         return result[0] if len(result) == 1 else tuple(result)
