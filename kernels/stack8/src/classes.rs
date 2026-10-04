@@ -2495,7 +2495,7 @@ impl<'a> Engine<'a> {
                             if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name)) { return Ok(value.clone()); }
                         }
                         Value::Fields(view) => {
-                            if let Some((_, value)) = view.fields.borrow().iter().find(|(key, _)| key.as_str() == name) { return Ok(value.clone()); }
+                            if let Some((_, value)) = view.fields.borrow().iter().find(|(key, held)| key.as_str() == name && !matches!(held.contents(), Value::Blank)) { return Ok(value.clone()); }
                         }
                         _ => {}
                     }
@@ -4137,7 +4137,11 @@ impl<'a> Engine<'a> {
                 }
                 continue;
             }
-            if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
+            if let Some(member) = Self::own_class_value(c, name) {
+                let bound = if name == self.class_word("allocate") { member }
+                    else { self.bind_class_value(member, Some(subject.clone()), receiver.clone())? };
+                return self.class_apply(bound, args);
+            }
             if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
                 if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }
             }

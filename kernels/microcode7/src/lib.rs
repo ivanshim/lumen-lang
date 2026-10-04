@@ -27,6 +27,7 @@ mod core;
 mod posix;
 mod complex;
 mod byteformat;
+mod crypto;
 pub mod tuples;
 
 use std::cell::RefCell;

@@ -17921,6 +17921,53 @@ impl<'a> Engine<'a> {
             // The working directory (or nothing), the word for the
             // system, the word for the machine, and the environment as
             // a map, in that order.
+            Builtin::Crypto => {
+                let operation = as_index(args.first().ok_or("TypeError: missing cryptographic operation")?)?;
+                match operation {
+                    0 => {
+                        arity(14)?;
+                        let Value::Text(name) = args[1].contents() else { return Err("TypeError: hash name must be str".into()) };
+                        let data = self.byte_row(&args[2].contents(), false)?;
+                        let length = as_index(&args[3])? as usize;
+                        let key = self.byte_row(&args[4].contents(), false)?;
+                        let salt = self.byte_row(&args[5].contents(), false)?;
+                        let person = self.byte_row(&args[6].contents(), false)?;
+                        let tree = args[7..].iter().map(|v| v.as_big()?.to_u64().ok_or_else(|| "OverflowError: int too big to convert".to_string())).collect::<Result<Vec<_>, String>>()?;
+                        let flags = tree;
+                        self.byte_make(crate::crypto::hash(&name, &data, length, &flags, &key, &salt, &person)?, false)
+                    }
+                    1 => {
+                        arity(2)?;
+                        let count = args[1].as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+                        if count < 0 { return Err("ValueError: negative argument not allowed".into()); }
+                        let mut bytes = Vec::new();
+                        bytes.try_reserve_exact(count as usize).map_err(|_| "MemoryError: ".to_string())?;
+                        bytes.resize(count as usize, 0);
+                        use std::io::Read as _;
+                        std::fs::File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes)).map_err(|e| format!("OSError: {e}"))?;
+                        self.byte_make(bytes, false)
+                    }
+                    2 => {
+                        arity(3)?;
+                        let a = self.byte_row(&args[1].contents(), false)?;
+                        let b = self.byte_row(&args[2].contents(), false)?;
+                        Value::Flag(crate::crypto::equal(&a, &b))
+                    }
+                    3 => {
+                        arity(2)?;
+                        use base64::Engine as _;
+                        let bytes = self.byte_row(&args[1].contents(), false)?;
+                        self.byte_make(base64::engine::general_purpose::STANDARD.encode(bytes).into_bytes(), false)
+                    }
+                    4 => {
+                        arity(2)?;
+                        let Value::Class(class) = args[1].contents() else { return Err("TypeError: expected a type".into()) };
+                        class.sealed.set(true);
+                        Value::Null
+                    }
+                    _ => return Err("NotImplementedError: unsupported cryptographic operation".into()),
+                }
+            }
             Builtin::HostFacts => {
                 if args.len() == 1 && matches!(&args[0], Value::Text(query) if query.as_ref() == "build") {
                     return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));

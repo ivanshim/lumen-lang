@@ -17913,6 +17913,59 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            Prim::CryptoWork => {
+                let first = v.first().ok_or("TypeError: missing cryptographic operation")?;
+                match as_index(first)? {
+                    0 => {
+                        n(14)?;
+                        let name = v[1].render(self.wording());
+                        let input = self.octet_gathered(&v[2], false, false)?;
+                        let output_count = as_index(&v[3])? as usize;
+                        let secret = self.octet_gathered(&v[4], false, false)?;
+                        let seasoning = self.octet_gathered(&v[5], false, false)?;
+                        let personal = self.octet_gathered(&v[6], false, false)?;
+                        let mut tree = Vec::with_capacity(7);
+                        for field in &v[7..] {
+                            tree.push(field.as_big()?.to_u64().ok_or("OverflowError: int too big to convert")?);
+                        }
+                        let result = crate::crypto::calculate(&name, &input, output_count, &tree, &secret, &seasoning, &personal)?;
+                        self.octets(result, false)
+                    }
+                    1 => {
+                        n(2)?;
+                        let requested = v[1].as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+                        if requested < 0 { return Err(String::from("ValueError: negative argument not allowed")); }
+                        use std::io::Read;
+                        let mut entropy = std::fs::File::open("/dev/urandom").map_err(|err| format!("OSError: {err}"))?;
+                        let mut result = Vec::new();
+                        if result.try_reserve_exact(requested as usize).is_err() { return Err(String::from("MemoryError: ")); }
+                        result.resize(requested as usize, 0_u8);
+                        entropy.read_exact(&mut result).map_err(|err| format!("OSError: {err}"))?;
+                        self.octets(result, false)
+                    }
+                    2 => {
+                        n(3)?;
+                        let left = self.octet_gathered(&v[1], false, false)?;
+                        let right = self.octet_gathered(&v[2], false, false)?;
+                        Value::Flag(crate::crypto::constant_time(&left, &right))
+                    }
+                    3 => {
+                        n(2)?;
+                        let content = self.octet_gathered(&v[1], false, false)?;
+                        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, content);
+                        self.octets(encoded.as_bytes().into(), false)
+                    }
+                    4 => {
+                        n(2)?;
+                        match v[1].settled() {
+                            Value::Blueprint(kind) => kind.sealed.set(true),
+                            _ => return Err(String::from("TypeError: expected a type")),
+                        }
+                        Value::Nil
+                    }
+                    _ => return Err(String::from("NotImplementedError: unsupported cryptographic operation")),
+                }
+            }
             Prim::HostRow => {
                 if v.len() == 1 && matches!(&v[0], Value::Text(query) if query.as_ref() == "build") {
                     return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));

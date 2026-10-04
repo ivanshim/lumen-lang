@@ -3087,7 +3087,7 @@ impl<'a> Machine<'a> {
                 // by handing one `__dict__` to another; the name is read
                 // out of those holds then.
                 if let Value::Attributes(view) = mapping.settled() {
-                    if let Some((_, held)) = view.holds.borrow().iter().find(|(name, _)| name.as_str() == key) { return Ok(held.clone()); }
+                    if let Some((_, held)) = view.holds.borrow().iter().find(|(name, held)| name.as_str() == key && !matches!(held.settled(), Value::Unset)) { return Ok(held.clone()); }
                 }
                 let native = Self::underlying(&mapping).unwrap_or(mapping);
                 if let Value::Dict(entries) = native.settled() {
@@ -4383,7 +4383,11 @@ impl<'a> Machine<'a> {
                 }
                 continue;
             }
-            if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
+            if let Some(entry) = Self::own_entry(b, key) {
+                if key == self.detail("allocate") { return self.apply_class_member(entry, args); }
+                let method = self.member_binding(entry, Some(receiver.clone()), class.clone())?;
+                return self.apply_class_member(method, args);
+            }
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
                 if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
             }

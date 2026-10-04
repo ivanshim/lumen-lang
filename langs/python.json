@@ -89,6 +89,7 @@
     "__remove_tree"
   ],
   "ext.builtin.at_end": ["__at_end"],
+  "ext.builtin.crypto": ["__crypto"],
   "ext.builtin.host.info": [
     "__host_info"
   ],

@@ -1,6 +1,3 @@
-# CPython v3.14.8 (8e6e75d9102e), Lib/gzip.py.
-# Copyright Python Software Foundation; PSF License (tests/python/LICENSE).
-
 """Functions that read and write gzipped files.
 
 The user of the file doesn't have to worry about the compression,

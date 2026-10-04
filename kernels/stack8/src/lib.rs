@@ -25,6 +25,7 @@ mod core;
 mod posix;
 mod complex;
 mod structpack;
+mod crypto;
 pub mod tuples;
 
 use lang::Lang;

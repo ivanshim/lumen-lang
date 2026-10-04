@@ -16,3 +16,6 @@ def get_path(name, scheme=None, vars=None, expand=True):
 
 def is_python_build(check_home=False):
     return False
+# This interpreter has no CPython configure-time variable database.
+def get_config_var(name):
+    return None
