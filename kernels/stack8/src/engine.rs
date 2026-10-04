@@ -11340,6 +11340,47 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(o.class_now().named(&name, self.lang.classes_folded)),
                 _ => Value::Flag(false),
             },
+            // A parent call with no argument written: the word read as
+            // a name stands for the parent class itself, the cell and
+            // the first argument make the thing, each absence said the
+            // way the reference says it; any other callable the name
+            // was given is called with no arguments at all.
+            Action::Superless => {
+                let given = self.drop_many(6)?;
+                let callable = given[0].contents();
+                let descended = match &callable {
+                    Value::Class(c) => Self::super_descended(c),
+                    Value::Adapter(w) => w.0 == 9 && w.1.is_empty(),
+                    _ => false,
+                };
+                if !descended {
+                    let answer = self.class_apply(callable, Vec::new())?;
+                    self.data.push(answer);
+                    return Ok(());
+                }
+                let mode = match given[1] { Value::Small(n) => n, _ => 0 };
+                if mode == 2 {
+                    return Err("RuntimeError: super(): no arguments".into());
+                }
+                if matches!(given[5], Value::Flag(true)) {
+                    return Err("RuntimeError: super(): arg[0] deleted".into());
+                }
+                if mode == 1 {
+                    return Err("RuntimeError: super(): __class__ cell not found".into());
+                }
+                if matches!(given[4], Value::Flag(true)) {
+                    return Err("RuntimeError: super(): empty __class__ cell".into());
+                }
+                let cell = given[2].contents();
+                let Value::Class(owner) = cell else {
+                    return Err(format!("RuntimeError: super(): __class__ is not a type ({})", self.super_tp_name(&cell)).into());
+                };
+                let this = given[3].contents();
+                let class = match &callable { Value::Class(c) => c.clone(), _ => self.kind_class("super") };
+                let made = self.super_made(class, vec![Value::Class(owner), this])?;
+                self.data.push(made);
+                return Ok(());
+            }
             // A routine written where a value stands, taking away with
             // it the values under it: one for each slot it names.
             Action::Close => {
@@ -12990,6 +13031,12 @@ impl<'a> Engine<'a> {
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
+                    // A cell asked after twice is the one cell: the
+                    // wrappers differ, the storage they look into is one.
+                    (Value::Adapter(x), Value::Adapter(y)) if x.0 == 31 && y.0 == 31 => match (x.1.first(), y.1.first()) {
+                        (Some(Value::Bond(a) | Value::Binding(a)), Some(Value::Bond(b) | Value::Binding(b))) => Rc::ptr_eq(a, b),
+                        _ => Rc::ptr_eq(x, y),
+                    },
                     (Value::Adapter(x), Value::Adapter(y)) => Rc::ptr_eq(x,y),
                     (Value::ValueMethod(x), Value::ValueMethod(y)) => Rc::ptr_eq(x,y),
                     // A method is bound afresh at every read; no two reads are one.
@@ -22314,7 +22361,9 @@ impl Engine<'_> {
                 else if self.lang.module_names.contains(name) { Value::text(path) }
                 else if file_word.as_ref() == Some(name) { own_file.as_deref().map_or(Value::Null, Value::text) }
                 else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
-                else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) { Self::adapter(9, Vec::new()) }
+                else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) {
+                    if self.fuller_classes() { Value::Class(self.kind_class(name)) } else { Self::adapter(9, Vec::new()) }
+                }
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
@@ -22941,9 +22990,18 @@ impl Engine<'_> {
         };
         if let Some(Value::Bond(cell) | Value::Binding(cell)) = class_cell {
             if !protocol { *cell.borrow_mut() = result.clone(); return Ok(result); }
+            // What the metaclass answered may be no class at all: the
+            // cell then names nothing and nothing is asked of it.
+            let Value::Class(made) = result.contents() else { return Ok(result) };
             let held = cell.borrow().contents();
-            if matches!(held, Value::Blank) { return Err(format!("RuntimeError: __class__ not set defining '{}'", name).into()); }
-            if !matches!((held, result.contents()), (Value::Class(a), Value::Class(b)) if Rc::ptr_eq(&a, &b)) { return Err(format!("TypeError: __class__ set to a different value defining '{}'", name).into()); }
+            let shown = made.outline.clone().unwrap_or_else(|| format!("<class '{}'>", made.name));
+            if matches!(held, Value::Blank) {
+                return Err(format!("RuntimeError: __class__ not set defining '{}' as {}. Was __classcell__ propagated to type.__new__?", name, shown).into());
+            }
+            if !matches!(&held, Value::Class(a) if Rc::ptr_eq(a, &made)) {
+                let had = match &held { Value::Class(a) => a.outline.clone().unwrap_or_else(|| format!("<class '{}'>", a.name)), other => other.plain() };
+                return Err(format!("TypeError: __class__ set to {} defining '{}' as {}", had, name, shown).into());
+            }
         }
         Ok(result)
     }

@@ -1222,6 +1222,13 @@ impl Value {
             (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
             (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            // A cell asked after twice is the one cell: the wrappers
+            // differ, the storage they look into is one.
+            (Value::Adapter(x), Value::Adapter(y)) if x.0 == 31 && y.0 == 31 => match (x.1.first(), y.1.first()) {
+                (Some(Value::Bond(a) | Value::Binding(a)), Some(Value::Bond(b) | Value::Binding(b))) => Rc::ptr_eq(a, b),
+                _ => Rc::ptr_eq(x, y),
+            },
+            (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Flag(x), Value::Flag(y)) => x == y,
             (Value::Null, Value::Null) => true,
@@ -1318,6 +1325,21 @@ impl Value {
             },
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
                 a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
+            },
+            // A method taken off a thing is another where what is called
+            // is equal and what it is called upon is the very same, as a
+            // bound method in the reference compares.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 3 && b.0 == 3 => {
+                match (a.1.first(), a.1.get(1), b.1.first(), b.1.get(1)) {
+                    (Some(f), Some(x), Some(g), Some(y)) => a.1.len() == b.1.len() && f.equals(g) && x.same_value(y),
+                    _ => Rc::ptr_eq(a, b),
+                }
+            },
+            // A cell asked after twice is the one cell: the wrappers
+            // differ, the storage they look into is one.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 31 && b.0 == 31 => match (a.1.first(), b.1.first()) {
+                (Some(Value::Bond(x) | Value::Binding(x)), Some(Value::Bond(y) | Value::Binding(y))) => Rc::ptr_eq(x, y),
+                _ => Rc::ptr_eq(a, b),
             },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
