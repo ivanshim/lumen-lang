@@ -97,15 +97,15 @@ Not spelled: `clone`, `declare`, `enddeclare`, `goto`, `insteadof`, `match`, `na
 | `array_merge` | 8 | no |
 | `is_uploaded_file` | 8 | no |
 
-## Python · CPython 3.14.8 suite: 60 tests
+## Python · CPython 3.14.8 suite: 62 tests
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `python-3.14.8` | 60 | pass 0, differs 50, error 10, skipped 0 | pass 0, differs 50, error 10, skipped 0 |
+| `python-3.14.8` | 62 | pass 0, differs 52, error 10, skipped 0 | pass 0, differs 52, error 10, skipped 0 |
 
 | Reason | Tests |
 |---|---|
-| ran to the end without asserting anything | 50 |
+| ran to the end without asserting anything | 52 |
 | unittest: 1 failure(s), 0 error(s) | 2 |
 | unittest: 0 failure(s), 1 error(s) | 2 |
 | unittest: 0 failure(s), 7 error(s) | 1 |
@@ -592,6 +592,7 @@ Not spelled:
 | `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | pass | pass |  |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
+| `python-3.14.8/test_abc.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_augassign.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_bigmem.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_binop.py` | differs | differs | ran to the end without asserting anything |
@@ -603,6 +604,7 @@ Not spelled:
 | `python-3.14.8/test_compare.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_complex.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_contains.py` | differs | differs | ran to the end without asserting anything |
+| `python-3.14.8/test_contextlib.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_copy.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_decorators.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_dict.py` | error | error | unittest: 1 failure(s), 0 error(s) |
