@@ -5165,11 +5165,7 @@ impl<'a> Engine<'a> {
                     // and keeps no namespace name of its own; the word
                     // the language writes an anonymous routine under is
                     // such a mark and yet is a function all the same.
-                    if self.takes_a_title(&program.ident) {
-                        if let Some(globe) = &program.globe {
-                            if let Some(named) = self.captured_title(globe) { closed.home = Some(named); }
-                        }
-                    }
+                    if let Some(title) = self.creation_title(program) { closed.home = Some(title); }
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
                         closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
@@ -5196,11 +5192,7 @@ impl<'a> Engine<'a> {
                     let value = match v {
                         Value::Routine(body) if self.fresh_routines => {
                             let mut made = (**body).clone();
-                            if self.takes_a_title(&body.ident) {
-                                if let Some(globe) = &body.globe {
-                                    if let Some(named) = self.captured_title(globe) { made.home = Some(named); }
-                                }
-                            }
+                            if let Some(title) = self.creation_title(body) { made.home = Some(title); }
                             Value::Routine(Rc::new(made))
                         }
                         other => other.clone(),
@@ -11369,11 +11361,7 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 let mut made = (*program).clone();
-                if self.takes_a_title(&program.ident) {
-                    if let Some(globe) = &program.globe {
-                        if let Some(named) = self.captured_title(globe) { made.home = Some(named); }
-                    }
-                }
+                if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
                 made.held = carried;
                 Value::Routine(Rc::new(made))
             }

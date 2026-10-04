@@ -2798,6 +2798,18 @@ impl<'a> Engine<'a> {
         }
         Some(None)
     }
+    /// Capture a function's name from its globals, including the main
+    /// program's live dictionary when no imported namespace was attached.
+    pub(super) fn creation_title(&mut self, routine: &Routine) -> Option<Option<Rc<str>>> {
+        if !self.takes_a_title(&routine.ident) || self.lang.module_names.is_empty() { return None; }
+        match &routine.globe {
+            Some(globals) => self.captured_title(globals),
+            None => {
+                let globals = Value::Bond(self.book_here(true));
+                self.captured_title(&globals)
+            }
+        }
+    }
     /// The same question asked of the face a thing holds: its entries
     /// stand as rows of its own rather than of a map.
     fn titled_fields(&self, held: &Value) -> Option<Option<Rc<str>>> {

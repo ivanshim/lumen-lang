@@ -534,12 +534,6 @@ pub struct Machine<'a> {
     /// routine was, kept so the pair stays its own, what calls of it now
     /// run, and the program whose code it now runs.
     written_over: HashMap<(usize, usize), (Rc<Routine>, Rc<Env>, Rc<Routine>, Rc<Env>, Rc<Routine>)>,
-    /// The namespace name caught as each function was made, kept for
-    /// those alone whose namespace named itself something other than
-    /// the name the module was read under: the rest answer with that
-    /// one already, and one caught name is one entry only where names
-    /// actually differ.
-    caught_names: HashMap<(usize, usize), Value>,
     table: &'a Table,
     fault_kinds: HashMap<String, Value>,
     pub outermost: Rc<Env>,
@@ -1625,7 +1619,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(), caught_names: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()),
             descriptor_files: std::collections::BTreeMap::new(),
@@ -3517,7 +3511,18 @@ impl<'a> Machine<'a> {
                 return Ok(());
             }
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
-                if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
+                let binding = match &destination.cells.borrow()[slot.at] {
+                    Value::Shared(cell) => Some(cell.clone()),
+                    _ => None,
+                };
+                match binding {
+                    Some(cell) => { *cell.borrow_mut() = stored; }
+                    // Released compiler temporaries have no binding left.
+                    // Recreate its outer cell so the next imported read
+                    // removes that layer, rather than the collection's cell.
+                    None => { destination.cells.borrow_mut()[slot.at] = Value::Shared(Rc::new(RefCell::new(stored))); }
+                }
+                return Ok(());
             }
             if Rc::ptr_eq(destination, &self.outermost) { self.booked_write(slot.at, &slot.ident, Some(stored.clone())); }
             destination.cells.borrow_mut()[slot.at] = stored;
@@ -4991,6 +4996,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
+        if let Some(template) = &body.definition { return self.code_handle(template); }
         let address = Rc::as_ptr(body) as usize;
         if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
             return Value::Wrapped(7, parts.into());
@@ -8549,46 +8555,32 @@ impl<'a> Machine<'a> {
     /// unrelated locals in each defining call.
     fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Value {
         let environment = self.closure_environment(program, defining);
-        if (self.table.has_any("ext.stmt.class.special") && !program.frameless) || crate::ghost::bidding() {
-            crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(program), Rc::downgrade(&environment)));
-        }
-        let place = (Rc::as_ptr(program) as usize, Rc::as_ptr(&environment) as usize);
-        let made = Value::Bound(program.clone(), environment);
-        // The name the namespace went by is caught as a function is
-        // made and kept with that one function, so no later change of
-        // the namespace moves it and two made at different names keep
-        // each its own. A routine the builder named within marks of its
-        // own is a piece of the program around it -- an arm of a branch
-        // among them -- and is no function of its own to carry a name.
-        let anonymous = self.table.strings("ext.stmt.function.anonymous").iter().any(|word| word == &program.ident);
-        if !program.ident.starts_with('#') && (!program.ident.starts_with('<') || anonymous) {
-        if let Some(globe) = &program.globe {
-            let within = match globe {
-                Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),
-                other => other.clone(),
-            };
-            let mut named = Value::Nil;
-            for word in self.table.strings("ext.system.module.name") {
-                match self.mapping_read(&within, word) {
-                    Ok(Some(worth @ Value::Text(_))) => { named = worth; break; }
+        let lambda = self.table.strings("ext.stmt.function.anonymous").iter().any(|word| word == &program.ident);
+        let function = !program.ident.starts_with('#') && (!program.ident.starts_with('<') || lambda);
+        // Python makes a new function each time a definition is reached,
+        // even when its defining environment is the unchanged module root.
+        // Its code remains the compiled definition; its attributes belong
+        // to this creation, including the globals' name at this instant.
+        let bound = if function && self.table.flag("ext.stmt.function.closes_over") {
+            let mut instance = (**program).clone();
+            instance.definition = Some(program.definition.as_ref().unwrap_or(program).clone());
+            let namespace = program.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+            instance.framed_in = None;
+            for key in self.table.strings("ext.system.module.name") {
+                match self.mapping_read(&namespace, key) {
+                    Ok(Some(Value::Text(name))) => { instance.framed_in = Some(name); break; }
                     Ok(Some(_)) => break,
-                    Ok(None) | Err(_) => {}
+                    _ => {}
                 }
             }
-            // Where the namespace named itself just what the module was
-            // read under, that name is the answer already and nothing is
-            // kept here; only a name that differs is written down, one
-            // entry for that one binding.
-            let older = match &program.framed_in {
-                Some(word) => Value::text(word),
-                None => Value::Nil,
-            };
-            if !named.equals(&older) {
-                self.caught_names.insert(place, named);
-            }
+            Rc::new(instance)
+        } else {
+            program.clone()
+        };
+        if (self.table.has_any("ext.stmt.class.special") && !bound.frameless) || crate::ghost::bidding() {
+            crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(&bound), Rc::downgrade(&environment)));
         }
-        }
-        made
+        Value::Bound(bound, environment)
     }
 
     fn frame_for(&self, program: &Rc<Routine>, env: &Rc<Env>) -> Rc<Env> {
@@ -14908,11 +14900,18 @@ impl<'a> Machine<'a> {
                 // An additional non-string key can compare equal to a name,
                 // so that case retains the full mapping protocol below.
                 if let Value::Text(word) = key {
+                    let module = self.namespace_holding(&Value::Thing(t.clone())).is_some();
                     let members = t.holds.borrow();
                     if members.iter().all(|entry| entry.0 != "\0keys") {
                         let answer = members.iter().find(|(name, item)| name == word.as_ref()
                             && !name.starts_with('#') && !name.starts_with('\0') && !matches!(item.settled(), Value::Unset));
-                        return answer.map(|entry| Some(entry.1.clone())).ok_or_else(|| self.bad_answer());
+                        // A module's cell binds the name; the value it
+                        // holds can itself be the list's shared storage.
+                        // Strip only the binding, as attribute_entries does.
+                        return answer.map(|entry| Some(match &entry.1 {
+                            Value::Shared(binding) if module => binding.borrow().clone(),
+                            value => value.clone(),
+                        })).ok_or_else(|| self.bad_answer());
                     }
                 }
                 // The key may be a name of any kind the dictionary can

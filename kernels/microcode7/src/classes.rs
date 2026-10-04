@@ -2310,7 +2310,7 @@ impl<'a> Machine<'a> {
         if let Some((_, members)) = kept {
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
-        if code.globe.is_some() {
+        if code.globe.is_some() || code.definition.is_some() {
             // The name a routine was made beside was caught when it was
             // made, and no later change of that namespace moves it.
             return match &code.framed_in { Some(named) => Value::text(named), None => Value::Nil };
@@ -3250,13 +3250,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
             if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
             if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
-            if key==self.detail("module"){
-                let place = match self.caught_names.get(&Self::written_key(&value, &self.outermost)) {
-                    Some(named) => named.clone(),
-                    None => self.routine_module(&code),
-                };
-                return Ok(self.routine_kept(&value,key,place));
-            }
+            if key==self.detail("module"){let place=self.routine_module(&code);return Ok(self.routine_kept(&value,key,place));}
             if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
