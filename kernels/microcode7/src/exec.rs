@@ -6726,18 +6726,11 @@ impl<'a> Machine<'a> {
                             let mut entries = self.attribute_entries(t);
                             let mut found = false;
                             for (stored, held) in entries.iter_mut() {
-                                if self.keys_agree(stored, &wanted)? {
-                                    // A binding a module's own code
-                                    // reads through a slot keeps its
-                                    // cell, and a new value goes into
-                                    // that cell.
-                                    match held {
-                                        Value::Shared(link) | Value::Mutable(link, _) => *link.borrow_mut() = value.clone(),
-                                        other => *other = value.clone(),
-                                    }
-                                    found = true;
-                                    break;
-                                }
+                                // A key written among the holdings a
+                                // thing shows takes its new value here;
+                                // a module's own bindings keep their
+                                // cells by way of the restoring below.
+                                if self.keys_agree(stored, &wanted)? { *held = value.clone(); found = true; break; }
                             }
                             if !found { entries.push((wanted, value.clone())); }
                             self.attribute_restore(t, entries);
