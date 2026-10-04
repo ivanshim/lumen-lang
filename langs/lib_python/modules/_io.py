@@ -724,6 +724,7 @@ class FileIO(_RawIOBase):
                     fd = opener(file, flags)
                     if not isinstance(fd, int):
                         raise TypeError('expected integer from opener')
+                    fd = _index(fd)
                     if fd < -2147483648 or fd > 2147483647:
                         raise OverflowError('Python int too large to convert to C int')
                     if fd < 0:
