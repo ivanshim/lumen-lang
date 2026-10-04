@@ -1,0 +1,5 @@
+priority b'converted' bytearray(b'x')
+descriptor b'static'
+bad result TypeError __bytes__ returned non-bytes (type int)
+word buffer b'abcdefgh'
+strided buffer b'ace'

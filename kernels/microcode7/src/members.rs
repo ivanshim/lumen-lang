@@ -366,7 +366,8 @@ impl Request<'_> {
                 self.takes(0,0)?;
                 let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
                 self.replace(Value::Dict(Rc::new(entries.into())))?;
-                return Ok(Value::tuple(vec![key,value]));
+                let raw = if let Value::Keyed(item, _) = key { item.as_ref().clone() } else { key };
+                return Ok(Value::tuple(vec![raw,value]));
             }
             "keys"|"values"|"items"=>{
                 self.takes(0,0)?;

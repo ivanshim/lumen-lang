@@ -1,0 +1,8 @@
+MRO ['test_left', 'test_own', 'test_right']
+count 3
+module hook *.py 3
+generated 4
+hook error 1 1 1
+package hook [('test*.py', 'package updated')]
+package tests 2 2 0 0 0
+generated doctest 1 1 0 0

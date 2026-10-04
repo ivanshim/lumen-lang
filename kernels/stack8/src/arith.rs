@@ -399,3 +399,50 @@ fn integer_quotient(a: &BigInt, b: &BigInt) -> Result<Value, String> {
     if result.is_infinite() { return Err(overflow()); }
     Ok(crate::value::real_of(signed(result), DEFAULT_PLACES))
 }
+
+// Expansion summation follows CPython Modules/mathmodule.c (8e6e75d9102e),
+// under the PSF license retained in tests/python/LICENSE.
+pub fn expansion_sum(values: impl IntoIterator<Item = Result<f64, String>>) -> Result<f64, String> {
+    let mut kept: Vec<f64> = Vec::new();
+    let (mut infinities, mut special) = (0.0f64, 0.0f64);
+    for input in values {
+        let original = input?;
+        let mut x = original;
+        let mut write = 0;
+        for read in 0..kept.len() {
+            let mut y = kept[read];
+            if x.abs() < y.abs() { std::mem::swap(&mut x, &mut y); }
+            let high = x + y;
+            let low = y - (high - x);
+            if low != 0.0 { kept[write] = low; write += 1; }
+            x = high;
+        }
+        kept.truncate(write);
+        if x != 0.0 {
+            if x.is_finite() { kept.push(x); }
+            else {
+                if original.is_finite() { return Err("OverflowError: intermediate overflow in fsum".into()); }
+                if original.is_infinite() { infinities += original; }
+                special += original;
+                kept.clear();
+            }
+        }
+    }
+    if special != 0.0 {
+        if infinities.is_nan() { return Err("ValueError: -inf + inf in fsum".into()); }
+        return Ok(special);
+    }
+    let (mut high, mut low) = (kept.pop().unwrap_or(0.0), 0.0);
+    while let Some(y) = kept.pop() {
+        let x = high;
+        high = x + y;
+        low = y - (high - x);
+        if low != 0.0 { break; }
+    }
+    if kept.last().is_some_and(|tail| low.is_sign_negative() == tail.is_sign_negative()) {
+        let twice = low * 2.0;
+        let adjusted = high + twice;
+        if adjusted - high == twice { high = adjusted; }
+    }
+    Ok(high)
+}
