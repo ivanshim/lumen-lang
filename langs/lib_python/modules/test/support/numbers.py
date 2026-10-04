@@ -1,4 +1,4 @@
-# Source: CPython Lib/test/support/numbers.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/numbers.py; PSF License.
 # These are shared with test_tokenize and other test modules.
 #
 # Note: since several test cases filter out floats by looking for "e" and ".",

@@ -8,7 +8,6 @@
   },
   "adapters": {
     "copy": "runtime_adapters/copy.py",
-    "copyreg": "runtime_adapters/copyreg.py",
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",
     "operator": "runtime_adapters/operator.py"
