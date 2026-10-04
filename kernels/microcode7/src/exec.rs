@@ -7861,7 +7861,16 @@ impl<'a> Machine<'a> {
             _ => return None,
         };
         let fullname = format!("{word}.{name}");
-        if let Some(operation) = self.table.prims.get(&fullname) { return Some(Value::Intrinsic(*operation, Rc::from(fullname))); }
+        match self.table.prims.get(&fullname) {
+            None | Some(Prim::Octets(15)) => {}
+            Some(operation) => {
+                let working = if word == "float" && self.table.spells("ext.builtin.method.fromhex", &fullname) { "float_fromhex" }
+                    else if self.table.spells("ext.builtin.method.from_number", &fullname) { "float_from_number" }
+                    else { "" };
+                if working.is_empty() { return Some(Value::Intrinsic(*operation, Rc::from(fullname))); }
+                return Some(Value::Member(Rc::new(value.clone()), working.to_owned()));
+            }
+        }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));
         }
@@ -8780,6 +8789,7 @@ impl<'a> Machine<'a> {
             let number = self.value_member(&arguments[0], "fromhex", Vec::new(), Vec::new())?;
             return match receiver {
                 Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![number]),
+                Value::Intrinsic(Prim::AsReal, _) => Ok(number),
                 _ => Err(self.method_fault("arguments").into()),
             };
         }

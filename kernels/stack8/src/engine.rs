@@ -6130,7 +6130,15 @@ impl<'a> Engine<'a> {
             _ => return None,
         };
         let qualified = format!("{word}.{name}");
-        if let Some(operation) = self.lang.builtins.get(&qualified) { return Some(Value::Native(*operation, Rc::from(qualified))); }
+        if let Some(operation) = self.lang.builtins.get(&qualified).filter(|operation| !matches!(operation, Builtin::Bytes(15))) {
+            let factory = if word.as_ref() == "float" && self.lang.value_methods.get(&qualified).is_some_and(|working| working == "fromhex") { Some("float_fromhex") }
+                else if self.lang.float_from_number.iter().any(|spelling| spelling == &qualified) { Some("float_from_number") }
+                else { None };
+            return Some(match factory {
+                Some(working) => Value::ValueMethod(Rc::new((value.clone(), working.to_string()))),
+                None => Value::Native(*operation, Rc::from(qualified)),
+            });
+        }
         if word.as_ref() == "function" && [self.class_word("code"), self.class_word("globals")].contains(&name) {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
         }
@@ -14898,6 +14906,7 @@ impl<'a> Engine<'a> {
         if operation == "float_fromhex" {
             if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
             let parsed = self.value_method(&args[0], "fromhex", Vec::new(), Vec::new())?;
+            if matches!(receiver, Value::Native(Builtin::AsReal, _)) { return Ok(parsed); }
             if let Value::Class(class) = receiver {
                 return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
