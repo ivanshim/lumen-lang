@@ -590,6 +590,7 @@ pub enum Builtin {
     /// whether a file is there at all; and taking one away
     /// (ext.builtin.file.*). Only a language that spells these reaches
     /// outside the run at all.
+    FileReadBytes,
     FileRead,
     FileWrite,
     FileThere,
@@ -750,6 +751,7 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    StructNative,
     HeapNative,
     ReduceNative,
     RebuildNative,
