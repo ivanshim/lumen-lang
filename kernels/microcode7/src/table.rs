@@ -148,7 +148,7 @@ ext.stmt.import.value:B ext.stmt.import.nonpackage:L ext.stmt.import.missing:L e
 ext.builtin.program.namespace:L ext.builtin.itertools.product_step:L \
 ext.builtin.frame.module:L \
 ext.builtin.class.seal:L \
-ext.builtin.member.get:L \
+ext.builtin.storage.get:L ext.builtin.storage.set:L ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \
 ext.builtin.module.load:L \
@@ -230,7 +230,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 304] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 306] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -455,6 +455,8 @@ pub const BUILTIN_LABELS: [(&str, Prim); 304] = [
     ("ext.builtin.program.namespace", Prim::ProgramNames),
     ("ext.builtin.frame.module", Prim::FrameModule),
     ("ext.builtin.class.seal", Prim::ClassSeal),
+    ("ext.builtin.storage.get", Prim::ReadMember),
+    ("ext.builtin.storage.set", Prim::WriteMember),
     ("ext.builtin.member.get", Prim::GetMember),
     ("ext.builtin.member.set", Prim::SetMember),
     ("ext.builtin.instance", Prim::Belongs),

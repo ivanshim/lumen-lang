@@ -280,6 +280,17 @@ impl Value {
                 let residue = (integer.abs() % BigInt::from(2_305_843_009_213_693_951u64)).to_i64()?;
                 if integer.is_negative() { -residue } else { residue }
             }
+            // A loose member descriptor hashes by the kind's word and the
+            // member's name it is kept as, so two readings of the same
+            // member, and of the same member on the same kind, hash alike.
+            Self::Wrapped(60, parts) => {
+                let mut code = 0_i64;
+                for part in parts.iter() {
+                    let lane = part.hash_number()? as u64;
+                    code = code.wrapping_mul(1_000_003) ^ lane as i64;
+                }
+                code
+            }
             _ => return None,
         };
         Some(if raw == -1 { -2 } else { raw })

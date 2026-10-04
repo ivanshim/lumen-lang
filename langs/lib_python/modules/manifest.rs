@@ -135,6 +135,17 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("html", include_str!("html/__init__.py"), "html/__init__.py"),
     ("html.entities", include_str!("html/entities.py"), "html/entities.py"),
     ("html.parser", include_str!("html/parser.py"), "html/parser.py"),
+    ("_imp", include_str!("_imp.py"), "_imp.py"),
+    ("_template_core", include_str!("_template_core.py"), "_template_core.py"),
+    ("_warnings", include_str!("_warnings.py"), "_warnings.py"),
+    ("importlib", include_str!("importlib/__init__.py"), "importlib/__init__.py"),
+    ("importlib._abc", include_str!("importlib/_abc.py"), "importlib/_abc.py"),
+    ("importlib._bootstrap", include_str!("importlib/_bootstrap.py"), "importlib/_bootstrap.py"),
+    ("importlib._bootstrap_external", include_str!("importlib/_bootstrap_external.py"), "importlib/_bootstrap_external.py"),
+    ("importlib.machinery", include_str!("importlib/machinery.py"), "importlib/machinery.py"),
+    ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
+    ("py_compile", include_str!("py_compile.py"), "py_compile.py"),
+    ("test.test_import.data.syntax_warnings", include_str!("test/test_import/data/syntax_warnings.py"), "test/test_import/data/syntax_warnings.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.
@@ -144,4 +155,15 @@ pub static MODULE_ALIASES: &[(&str, &str)] = &[
     ("html", include_str!("html/__init__.py"), "html/__init__.py"),
     ("html.entities", include_str!("html/entities.py"), "html/entities.py"),
     ("html.parser", include_str!("html/parser.py"), "html/parser.py"),
+    ("_imp", include_str!("_imp.py"), "_imp.py"),
+    ("_template_core", include_str!("_template_core.py"), "_template_core.py"),
+    ("_warnings", include_str!("_warnings.py"), "_warnings.py"),
+    ("importlib", include_str!("importlib/__init__.py"), "importlib/__init__.py"),
+    ("importlib._abc", include_str!("importlib/_abc.py"), "importlib/_abc.py"),
+    ("importlib._bootstrap", include_str!("importlib/_bootstrap.py"), "importlib/_bootstrap.py"),
+    ("importlib._bootstrap_external", include_str!("importlib/_bootstrap_external.py"), "importlib/_bootstrap_external.py"),
+    ("importlib.machinery", include_str!("importlib/machinery.py"), "importlib/machinery.py"),
+    ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
+    ("py_compile", include_str!("py_compile.py"), "py_compile.py"),
+    ("test.test_import.data.syntax_warnings", include_str!("test/test_import/data/syntax_warnings.py"), "test/test_import/data/syntax_warnings.py"),
 ];

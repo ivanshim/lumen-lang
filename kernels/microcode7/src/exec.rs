@@ -537,6 +537,10 @@ pub struct Machine<'a> {
     idents: Vec<String>,
     memo: HashMap<String, Value>,
     identities: Vec<(String, u64)>,
+    /// A loose member descriptor, keyed by the kind's word and the member
+    /// name, so asking twice for `dict.__repr__` answers the descriptor
+    /// asked the first time.
+    loose_members: RefCell<HashMap<String, Value>>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
     /// Whether the language can read what a call was handed. Where it
@@ -1586,6 +1590,7 @@ impl<'a> Machine<'a> {
             idents,
             memo: HashMap::new(),
             identities: Vec::new(),
+            loose_members: RefCell::new(HashMap::new()),
             reads_handed: ["ext.builtin.args.all", "ext.builtin.args.count", "ext.builtin.args.at"]
                 .iter()
                 .any(|label| table.single(label).is_some()),
@@ -8387,7 +8392,18 @@ impl<'a> Machine<'a> {
     /// very namespace and nothing else.
     pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
         let Value::Thing(thing) = value else { return None };
-        self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing))).map(|(path, _)| path.clone())
+        for (path, held) in &self.imported {
+            if matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing)) { return Some(path.clone()); }
+        }
+        let names = self.table.strings("ext.system.module.name");
+        if names.is_empty() || Self::native_beneath(&thing.blueprint()).as_deref() != Some("module") { return None; }
+        let entries = thing.holds.borrow();
+        for (key, item) in entries.iter() {
+            if names.contains(key) {
+                if let Value::Text(text) = item.settled() { return Some(text.to_string()); }
+            }
+        }
+        None
     }
 
     /// The word a value goes by as a kind: a blueprint its own name, a
@@ -8410,6 +8426,13 @@ impl<'a> Machine<'a> {
         let settled = value.settled();
         if let Some(path) = self.namespace_holding(&settled) {
             return Self::member_worded(self.table.strings("ext.builtin.member.absent.module"), &path, name);
+        }
+        if self.table.has_any("ext.builtin.member.absent.module") {
+            if let Value::Thing(item) = &settled {
+                if Self::native_beneath(&item.blueprint()).as_deref() == Some("module") {
+                    return ["AttributeError: module has no attribute '", name, "'"].concat();
+                }
+            }
         }
         match self.kind_word_of(&settled) {
             Some(word) => Self::member_worded(self.table.strings("ext.builtin.member.absent.class"), &word, name),
@@ -8451,7 +8474,8 @@ impl<'a> Machine<'a> {
                 Value::Mutable(cell, _) | Value::Shared(cell) => match &*cell.borrow() { Value::Window(owner, _) => Some(owner.clone()), _ => None },
                 _ => None,
             };
-            if let Some(owner) = raw { return Ok(Value::Window(owner, 'm')); }
+            // Each proxy retains a separate allocation around the live dictionary.
+            if let Some(owner) = raw { return Ok(Value::Window(Rc::new(owner.as_ref().clone()), 'm')); }
         }
         if ["numerator", "denominator", "real", "imag"].contains(&operation) {
             match receiver.settled() {
@@ -15297,6 +15321,20 @@ impl<'a> Machine<'a> {
             return self.prim_values(op, name, &exposed);
         }
 
+        if matches!(op, Prim::Selfsame | Prim::Unlike) && self.rules.has_any_ext_op_identical_negated && v.len() == 2 {
+            fn window(value: &Value) -> Option<(Rc<Value>, char)> {
+                match value {
+                    Value::Window(held, portion) => Some((held.clone(), *portion)),
+                    Value::Shared(place) | Value::Mutable(place, _) => window(&place.borrow()),
+                    _ => None,
+                }
+            }
+            let pair = (window(&v[0]), window(&v[1]));
+            if pair.0.is_some() || pair.1.is_some() {
+                let same = matches!(pair, (Some((ref x, xp)), Some((ref y, yp))) if xp == yp && Rc::ptr_eq(x, y));
+                return Ok(Value::Flag(if op == Prim::Unlike { !same } else { same }));
+            }
+        }
         if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
             return self.text_operation(op, name, v);
         }
@@ -15950,7 +15988,7 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let portion = self.underlying_unless(&v[0], &[15]).unwrap_or_else(|| v[0].clone()).settled();
+                let portion = self.underlying_unless(&v[0], &[11, 15]).unwrap_or_else(|| v[0].clone()).settled();
                 let mut values: Vec<Value> = match &portion {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
@@ -16308,7 +16346,20 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
-            Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::TemplateField | Prim::TemplateParts => {
+                let module = self.load_namespace("_template_core")?;
+                let key = if op == Prim::TemplateField { "Interpolation" } else { "Template" };
+                let constructor = self.namespace_item(&module, "_template_core", key)?;
+                let Value::Blueprint(kind) = constructor else { return Err("invalid template constructor".to_owned()); };
+                self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
+            }
+            Prim::LoadModule => {
+                match (v.len(), v.get(1)) {
+                    (2, Some(Value::Flag(false))) => Value::Flag(self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
+                    (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
+                    _ => { n(1)?; self.load_namespace(&v[0].bare())? }
+                }
+            }
             Prim::MakeHeir => {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
@@ -16403,6 +16454,10 @@ impl<'a> Machine<'a> {
             Prim::ClassSeal => {
                 n(1)?;
                 match v[0].settled() {
+                    Value::Thing(instance) => {
+                        instance.holds.borrow_mut().push(("\0immutable".to_owned(), Value::Flag(true)));
+                        Value::Nil
+                    }
                     Value::Blueprint(class) => {
                         class.sealed.set(true);
                         Value::Nil
@@ -16435,6 +16490,12 @@ impl<'a> Machine<'a> {
             }
             Prim::WriteMember => {
                 n(3)?;
+                let sealed = match &v[0] {
+                    Value::Thing(instance) => instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable"),
+                    Value::Blueprint(kind) => kind.sealed.get(),
+                    _ => false,
+                };
+                if sealed { return Err(String::from("AttributeError: sealed storage is immutable")); }
                 let key = v[1].bare();
                 let places = match &v[0] {
                     Value::Thing(object) => &object.holds,
@@ -18500,6 +18561,7 @@ impl<'a> Machine<'a> {
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(_, _, a), Value::Method(_, _, b)) => Rc::ptr_eq(a, b),
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
+                    (Value::Member(owner, operation), Value::Member(other, action)) => operation == action && Rc::ptr_eq(owner, other),
                     (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Text(_), Value::Thing(_)) | (Value::Thing(_), Value::Text(_)) => false,
@@ -21715,6 +21777,10 @@ impl Machine<'_> {
     }
 
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
+        if path.as_bytes().first() == Some(&b'.') {
+            let full_name = self.qualified_import(path)?;
+            return self.namespace_item(value, &full_name, wanted);
+        }
         if let Value::Thing(space) = value {
             for (name, cell) in space.holds.borrow().iter() {
                 if name != wanted { continue; }
@@ -23646,6 +23712,9 @@ impl Machine<'_> {
             // for a member only when one is wanted.
             Value::Cursor(_) => Ok(Self::cursor_value(IteratorKind::Handed(source.clone()))),
             Value::Thing(_) => {
+                if let Some(native) = self.underlying_unless(source, &[15, 11]) {
+                    return self.iterated_value(&native.settled());
+                }
                 if let Some(handed) = self.ask_special(source, 15, &[])? {
                     // What a thing hands over is a walk or it is
                     // nothing: one that cannot be asked for a next
@@ -24032,7 +24101,11 @@ impl Machine<'_> {
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &class.name)) }
             },
             Value::Thing(_) => self.ask_special(callable, 17, &values)?.ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word())),
-            other => Err(self.core_complaint("core.uncallable", &other.kind_word())),
+            // A descriptor reached as a value of its own -- a bound
+            // classmethod, a staticmethod, a loose member of a kind -- is
+            // applied the way a program would call it, so map and filter
+            // can hand it over to be called.
+            other => self.apply_within(other.clone(), values),
         }
     }
 
@@ -24116,6 +24189,16 @@ impl Machine<'_> {
         // one; the value is kept before it settles into a copy.
         let reverse_owner = if op == Prim::Backwards { input.first().cloned() } else { None };
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
+        if op == Prim::Dictionary && input.len() == 1 {
+            fn mapping_contents(source: &Value) -> Option<Value> {
+                match source {
+                    Value::Window(owner, 'm') => Some(owner.settled()),
+                    Value::Mutable(cell, _) | Value::Shared(cell) => mapping_contents(&cell.borrow()),
+                    _ => None,
+                }
+            }
+            if let Some(contents) = mapping_contents(&input[0]) { input[0] = contents; }
+        }
         if !matches!(op, Prim::IdentityOf | Prim::HeapNative) {
             for (position, item) in input.iter_mut().enumerate() {
                 if op == Prim::SetMember && position == 2 { continue; }
@@ -24318,10 +24401,15 @@ impl Machine<'_> {
                         inner => inner.settled(),
                     },
                     Value::Mutable(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                    Value::Window(..) => input[0].clone(),
                     other => other.settled(),
                 };
                 let address: u64 = match &held {
+                    // Windows own their retained allocation, including through a shared name.
+                    Value::Window(retained, _) => Rc::as_ptr(retained) as usize as u64,
+                    Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
+                    Value::Ellipsis => 5,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Intrinsic(_, word) => {
@@ -24346,9 +24434,11 @@ impl Machine<'_> {
                     // definition reached that time: two reachings of the
                     // one definition are two routines.
                     Value::Bound(p, env) => (Rc::as_ptr(p) as usize as u64) ^ (Rc::as_ptr(env) as usize as u64).rotate_left(21),
+                    Value::Method(p, receiver, _) => (Rc::as_ptr(p) as usize as u64) ^ (Rc::as_ptr(receiver) as usize as u64).rotate_left(21),
                     Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Complex(c) => Rc::as_ptr(c) as usize as u64,
                     _ => return Err(self.core_complaint("core.unready", name)),
                 };
                 let stamp = (input[0].kind_word(), address);

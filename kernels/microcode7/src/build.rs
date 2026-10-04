@@ -4529,7 +4529,8 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !(table.keywords.contains(&self.look().lexeme) && !table.spells("ext.stmt.type_alias", &self.look().lexeme))
+            } else if self.look().shape == Shape::Bare
+                && (!table.keywords.contains(&self.look().lexeme) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().lexeme)))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -5047,13 +5048,16 @@ impl<'a> Builder<'a> {
             for token in &self.tokens[self.pos..] {
                 let word = token.lexeme.as_str();
                 if levels.is_empty() && word == end { break; }
+                if levels.is_empty() && table.has_any("ext.stmt.class.detail.mro.entries") && table.spells("ext.op.comprehension.for", word) {
+                    return Err(String::from("SyntaxError: invalid syntax"));
+                }
                 if levels.is_empty() && (table.spells("op.mul", word) || table.spells("op.pow", word)) { spreading = true; }
                 match word {
                     "(" => levels.push(")"), "[" => levels.push("]"), "{" => levels.push("}"),
                     _ if levels.last().copied() == Some(word) => { levels.pop(); }, _ => {}
                 }
             }
-            if spreading {
+            if spreading || table.has_any("ext.stmt.class.detail.mro.entries") {
                 let arguments = self.args("syntax.call.close", "syntax.call.separator")?;
                 let kept = self.gensym("header_arguments");
                 setup.push(Form::Write(kept.clone(), Box::new(prim_call(Prim::MakeTuple, arguments))));
@@ -9065,18 +9069,23 @@ impl<'a> Builder<'a> {
         if start.shape != Shape::Woven {
             return Err(self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned());
         }
-        let mut result = constant(Value::text(""));
-        loop {
-            if self.look().shape == Shape::WovenEnd { self.advance(); break; }
-            let piece = if self.look().shape == Shape::Field {
+        let keeps_fields = start.lexeme.chars().next().is_some_and(|lead| self.table.spells("ext.lexical.string.prefix.template", &lead.to_string()));
+        let mut fragments = Vec::new();
+        while self.look().shape != Shape::WovenEnd {
+            let fragment = if self.look().shape == Shape::Field {
                 let conversion = self.advance().lexeme;
+                let expression = self.advance().lexeme;
                 let value = self.expr(0)?;
                 let spec = self.quotation()?;
-                prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))])
+                if keeps_fields {
+                    prim_call(Prim::TemplateField, vec![value, constant(Value::text(&expression)), constant(if conversion.is_empty() { Value::Nil } else { Value::text(&conversion) }), spec])
+                } else { prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))]) }
             } else { self.quotation()? };
-            result = prim_call(Prim::Join, vec![result, piece]);
+            fragments.push(fragment);
         }
-        Ok(result)
+        self.advance();
+        if keeps_fields { return Ok(prim_call(Prim::TemplateParts, fragments)); }
+        Ok(fragments.into_iter().fold(constant(Value::text("")), |text, fragment| prim_call(Prim::Join, vec![text, fragment])))
     }
 
     fn monadic_piece(&mut self) -> Res<Form> {

@@ -212,6 +212,8 @@ pub enum Action {
     Join,
     /// A field rendered with its specification and conversion.
     StringRender,
+    Interpolation,
+    TemplateMake,
     BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,

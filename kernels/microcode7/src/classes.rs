@@ -328,6 +328,26 @@ impl<'a> Machine<'a> {
         } {
             return if given.is_empty(){Ok(singleton)}else{Err(format!("TypeError: {shown} takes no arguments").into())};
         }
+        if word=="module" {
+            let (values, keywords)=self.open_arguments(given)?;
+            if values.len()>2{return Err(String::from("TypeError: invalid module arguments").into());}
+            let mut name=values.first().cloned();
+            let mut doc=values.get(1).cloned().unwrap_or(Value::Nil);
+            for (key,value) in keywords {
+                if key=="name" && name.is_none(){name=Some(value);}
+                else if key=="doc" && values.len()<2{doc=value;}
+                else{return Err(String::from("TypeError: invalid module arguments").into());}
+            }
+            match name {
+                Some(name @ Value::Text(_))=>{
+                    self.made+=1;
+                    let entries=vec![(String::from("__name__"),name),(String::from("__doc__"),doc),
+                        (String::from("__loader__"),Value::Nil),(String::from("__spec__"),Value::Nil),(String::from("__package__"),Value::Nil)];
+                    return Ok(Value::Thing(Rc::new(Thing{reclassified:RefCell::new(None),of:class,holds:RefCell::new(entries),turn:self.made})));
+                }
+                _=>return Err(String::from("TypeError: module name must be str").into()),
+            }
+        }
         // A routine framed by hand from a code value and a dictionary
         // of names: the reference's own way of making a function, which
         // keeps the dictionary it was handed and the builtins in force
@@ -376,18 +396,38 @@ impl<'a> Machine<'a> {
                 if self.table.spells("ext.stmt.class.metaclass", &key) { factory = Some(item); }
                 else { extra.push((key, item)); }
             }
+            let mut resolved = Vec::new();
+            let source = Value::tuple(positional.clone());
+            let key = self.detail("mro.entries").to_owned();
+            let mut substituted = false;
+            for item in positional {
+                if !key.is_empty() && matches!(item.settled(), Value::Thing(_)) {
+                    let member = self.read_class_member(item, &key, false)?;
+                    let result = self.apply_class_member(member, vec![source.clone()])?;
+                    match result.settled() {
+                        Value::Tuple(sequence) => resolved.extend(sequence.iter().cloned()),
+                        _ => return Err("TypeError: __mro_entries__ must return a tuple".to_string().into()),
+                    }
+                    substituted = true;
+                } else { resolved.push(item); }
+            }
+            if substituted { entries.push((self.detail("original.bases").to_string(), source)); }
             match factory {
                 Some(callable) if !matches!(callable, Value::Intrinsic(Prim::SortOf, _)) => {
                     let pairs = entries.iter().filter_map(|(key, item)| {
                         (!matches!(item, Value::Unset)).then(|| (Value::text(key), item.clone()))
                     }).collect::<Vec<_>>();
                     let mapping = Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs.into())))), true);
-                    let mut supplied = vec![Value::text(&title), Value::tuple(positional), mapping];
+                    let mut supplied = vec![Value::text(&title), Value::tuple(resolved), mapping];
                     for (key, item) in extra { supplied.push(Value::Couple(Rc::new((Value::text(&key), item)))); }
                     return self.apply_class_member(callable, supplied);
                 }
                 _ => {
-                    parents = positional.iter().map(|item| self.parent_from_type(item)).collect::<Result<_, _>>()?;
+                    parents.clear();
+                    for base in resolved {
+                        if self.table.has_any("ext.stmt.class.detail.mro.entries") && matches!(base.settled(), Value::Nil) { return Err(String::from("TypeError: NoneType takes no arguments").into()); }
+                        parents.push(self.parent_from_type(&base)?);
+                    }
                     for (key, item) in extra { entries.push((format!("\0handed:{key}"), item)); }
                 }
             }
@@ -1162,7 +1202,12 @@ impl<'a> Machine<'a> {
                         self.apply_class_member(kept[0].clone(), values)
                     }
                     72 => Ok(Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true)),
-                    36=>{let named=kept[0].bare();self.root_answers(&named,values)}
+                    36=>{
+                        if kept.get(1).is_some_and(|owner|owner.bare()!=self.detail("root")) {
+                            if let Some(native)=values.first().and_then(Self::underlying){values[0]=native.settled();}
+                        }
+                        let named=kept[0].bare();self.root_answers(&named,values)
+                    }
                     // The maker of a native kind: the blueprint to make a
                     // thing of, then what the kind's primitive takes.
                     14 if !values.is_empty()=>{
@@ -1653,7 +1698,7 @@ impl<'a> Machine<'a> {
         if !self.missing_member_escape(&escaped) { return escaped; }
         let said = match value {
             Value::Blueprint(kind) => format!("type object '{}' has no attribute '{key}'", self.full_class_name(kind)),
-            Value::Thing(thing) if thing.blueprint().name == "ModuleType" => {
+            Value::Thing(thing) if self.table.has_any("ext.system.module.name") && Self::native_beneath(&thing.blueprint()).as_deref() == Some("module") => {
                 let held = thing.holds.borrow();
                 let label = held.iter().find(|(name, _)| name == "__name__").and_then(|(_, item)| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{key}'"), |label| format!("module '{label}' has no attribute '{key}'"))
@@ -2003,9 +2048,14 @@ impl<'a> Machine<'a> {
     /// names among the root's members, or, read off a thing, one of the
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting, left loose to be bound to it.
-    fn from_the_root(&self,key:&str,of_a_thing:bool)->Option<Value> {
+    fn from_the_root(&self,key:&str,of_a_thing:bool,class:&Blueprint)->Option<Value> {
         if key.is_empty(){return None;}
-        if self.table.strings("ext.stmt.class.detail.root.members").iter().any(|word|word==key) {return Some(Self::wrap(36,vec![Value::text(key)]));}
+        if self.table.strings("ext.stmt.class.detail.root.members").iter().any(|word|word==key) {
+            let owner = Self::native_beneath(class).unwrap_or_else(|| self.detail("root").to_owned());
+            let cache_key = format!("{owner} member {key}");
+            let mut cache = self.loose_members.borrow_mut();
+            return Some(cache.entry(cache_key).or_insert_with(|| Self::wrap(36,vec![Value::text(key),Value::text(&owner)])).clone());
+        }
         if !of_a_thing{return None;}
         let tag=if key==self.detail("allocate"){1}
             else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}
@@ -2262,6 +2312,11 @@ impl<'a> Machine<'a> {
             }
             _=>{},
         }
+        if key.as_bytes().first()==Some(&0) {
+            if let Value::Thing(instance)=&value {
+                if instance.holds.borrow().iter().any(|entry|entry.0=="\0immutable"){return Err(self.absent_attribute(&value,key));}
+            }
+        }
         if let Value::Wrapped(9, binding) = &value {
             if let [Value::Blueprint(defining), instance] = binding.as_slice() {
                 let actual = match instance { Value::Thing(t) => t.blueprint().clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
@@ -2300,7 +2355,7 @@ impl<'a> Machine<'a> {
                 // answers with its own members as a plain read of a
                 // thing does: the maker every blueprint stands on, its
                 // beginning among them.
-                if let Some(root)=self.from_the_root(key,true) {
+                if let Some(root)=self.from_the_root(key,true,&actual) {
                     if key==self.detail("allocate"){return Ok(root);}
                     let bound=if key==self.detail("subclass"){Value::Blueprint(actual.clone())}else{instance.clone()};
                     return Ok(Self::wrap(3,vec![root,bound]));
@@ -2640,7 +2695,7 @@ impl<'a> Machine<'a> {
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
                 if tag!=255{return Ok(Self::wrap(tag,Vec::new()));}
             }
-            if let Some(root)=self.from_the_root(key,false){return Ok(root);}
+            if let Some(root)=self.from_the_root(key,false,b){return Ok(root);}
         }else if let Value::Thing(t)=&value {
             if self.namespace_holding(&value).is_some() || t.blueprint().name == "ModuleType" {
                 let title = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
@@ -2782,7 +2837,7 @@ impl<'a> Machine<'a> {
                 if let Some(member) = self.attribute(text, key) { return Ok(member); }
             }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
-            if let Some(root)=self.from_the_root(key,true) {
+            if let Some(root)=self.from_the_root(key,true,&t.blueprint()) {
                 if !native.as_ref().map_or(false,|under|Self::kind_method_named(self.table,key).is_some()||self.attribute(&under.settled(),key).is_some()) {
                     // The maker takes a class and stays loose; the hook
                     // for a class stood on hears from the class; the
@@ -3084,6 +3139,11 @@ impl<'a> Machine<'a> {
             let message = if known { format!("AttributeError: '{}' object attribute '{}' is read-only", subject.kind_word(), key) }
                 else { format!("AttributeError: '{}' object has no attribute '{}' and no __dict__ for setting new attributes", subject.kind_word(), key) };
             return Err(message.into());
+        }
+        if let Value::Thing(instance) = &subject {
+            if instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable") {
+                return Err(format!("AttributeError: '{}' object is immutable", subject.kind_word()).into());
+            }
         }
         if let Value::Generator(g) = &subject {
             if self.table.single("ext.stmt.yield.running") == Some(key) {

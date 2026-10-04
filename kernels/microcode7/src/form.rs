@@ -151,6 +151,8 @@ pub enum Prim {
     AsChars,
     /// The value, specification and conversion of a field in text.
     RenderField,
+    TemplateField,
+    TemplateParts,
     /// Stop upon reaching a character the run cannot represent.
     UnheldText,
     /// The value made a flag.

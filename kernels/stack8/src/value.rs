@@ -1073,6 +1073,12 @@ impl Value {
                 Ok(held) if held.fixed => Ok(held.address()),
                 _ => Err("set"),
             },
+            // A loose member descriptor is addressed by the descriptor it
+            // is kept as: two readings of the same member, and of the
+            // same member on the same kind, are the one key.
+            Value::Adapter(held) => Ok(format!("descriptor:{:p}", Rc::as_ptr(held))),
+            Value::Native(_, word) => Ok(format!("native:{word}")),
+            Value::ByteKind(mutable, _) => Ok(format!("bytekind:{mutable}")),
             Value::Bond(cell) => cell.borrow().member_key(),
             _ => Err(""),
         }

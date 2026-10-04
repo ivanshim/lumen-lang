@@ -5918,7 +5918,8 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme))
+        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme)
+            || Lang::spells(&lang.match_words, &self.look().lexeme) || Lang::spells(&lang.match_cases, &self.look().lexeme))
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
@@ -6329,13 +6330,14 @@ impl<'a> Compiler<'a> {
             let mut expanded = false;
             for token in &self.tokens[self.pos..] {
                 if depth == 0 && token.lexeme == close { break; }
+                if depth == 0 && lang.class_details.contains_key("mro.entries") && Lang::spells(&lang.comprehension_for, &token.lexeme) { return Err("SyntaxError: invalid syntax".into()); }
                 if depth == 0 && (Lang::spells(&lang.call_spread, &token.lexeme) || Lang::spells(&lang.call_spread_pairs, &token.lexeme)) { expanded = true; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {}
                 }
             }
-            if expanded {
+            if expanded || lang.class_details.contains_key("mro.entries") {
                 let pair = lang.calling.clone().expect("class call marks");
                 let count = self.arguments(&pair)?;
                 self.act(Action::MakeTuple, count);
@@ -9467,18 +9469,25 @@ impl<'a> Compiler<'a> {
                 self.act(Action::StringFault, 1);
             }
             Shape::StringBegin => {
-                self.constant(Value::text(""));
+                let template = token.lexeme.chars().next().is_some_and(|prefix| self.lang.template_prefixes.contains(&prefix));
+                if !template { self.constant(Value::text("")); }
+                let mut count = 0;
                 while self.look().shape != Shape::StringEnd {
                     if self.look().shape == Shape::StringField {
                         let field = self.take();
+                        let expression = self.take().lexeme;
                         self.expr(0)?;
                         self.string_piece()?;
-                        self.constant(Value::text(&field.lexeme));
-                        self.act(Action::StringRender, 3);
+                        self.constant(if template && field.lexeme.is_empty() { Value::Null } else { Value::text(&field.lexeme) });
+                        if template {
+                            self.constant(Value::text(&expression));
+                            self.act(Action::Interpolation, 4);
+                        } else { self.act(Action::StringRender, 3); }
                     } else { self.string_piece()?; }
-                    self.act(Action::Join, 2);
+                    if template { count += 1; } else { self.act(Action::Join, 2); }
                 }
                 self.take();
+                if template { self.act(Action::TemplateMake, count); }
             }
             _ => return Err(self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())),
         }

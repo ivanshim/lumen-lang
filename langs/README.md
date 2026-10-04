@@ -643,7 +643,9 @@ only. The extension labels so far, all from PHP:
   than text. The letters read as format letters everywhere a prefix is
   classified; the string's opening token keeps the letter it opened
   with, so a reader can tell a template's pieces apart from a format
-  string's. Nothing here yet makes the value a template of its own kind.
+  string's. The full kernels retain the literal runs and interpolation
+  values in `string.templatelib` objects, with expressions, conversions
+  and rendered format specifications kept separately.
 - `ext.lexical.string.prefix.incompatible`: what the language says of a
   run of prefix letters that names two kinds that cannot stand
   together (raw and plain, byte and plain, byte and format), a word on
@@ -3537,6 +3539,11 @@ only. The extension labels so far, all from PHP:
   module, and giving a wanted name another name here.
   `ext.stmt.import.lazy` is unset for Python 3.14; `lazy` remains an
   ordinary identifier, including in relative module paths. A module path
+  `ext.stmt.import.lazy` names the word that may stand before either
+  asking (`lazy import os`, `lazy from sys import path`); the asking is
+  deferred until its binding is read, then cached. Relative imports use
+  the importing module's package context, retained by deferred bindings.
+  A module path
   is a name with dots in it, using the pipe spelling as its divider,
   never a pipe expression. A plain import binds the first word of
   each path, or its alias; a from-import binds each wanted name, or
@@ -3666,6 +3673,8 @@ only. The extension labels so far, all from PHP:
 - `ext.system.module.cache`: two names, the module keeping the cache
   and the member under which it keeps it. That member is refreshed as a
   map of imported names to their namespaces whenever a load finishes.
+  Reads honor entries supplied by Python, including `None` entries that
+  block imports; a load updates only its own cache entry.
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
@@ -4869,6 +4878,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.sre` | - | - | `__sre_native` | - | - | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
+| `ext.builtin.storage.get` | - | - | `__storage_get` | - | - | - | - | - | - | - |
+| `ext.builtin.storage.set` | - | - | `__storage_set` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
@@ -5311,14 +5322,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.main` | - | - | `__main__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.method.fixed` | - | - | `AttributeError: attribute '` `' of '` `' objects is not writable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.module` | - | - | `__module__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.module.path` | - | - | `__path__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.module.spec` | - | - | `__spec__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro` | - | - | `__mro__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro.amiss` | - | - | `TypeError: cannot create a consistent method resolution order` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.mro.entries` | - | - | `__mro_entries__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.native.protocols` | - | - | `str` `__add__ __contains__ __eq__ __format__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __sizeof__ __str__` `int` `__abs__ __add__ __and__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __index__ __int__ __invert__ __le__ __lshift__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __or__ __pos__ __pow__ __radd__ __rand__ __rdivmod__ __repr__ __rfloordiv__ __rlshift__ __rmod__ __rmul__ __ror__ __round__ __rpow__ __rrshift__ __rshift__ __rsub__ __rtruediv__ __rxor__ __sizeof__ __sub__ __truediv__ __trunc__ __xor__` `bool` `__and__ __invert__ __new__ __or__ __rand__ __repr__ __ror__ __rxor__ __xor__` `float` `__abs__ __add__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getformat__ __getnewargs__ __gt__ __hash__ __int__ __le__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __rdivmod__ __repr__ __rfloordiv__ __rmod__ __rmul__ __round__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__ __trunc__` `complex` `__abs__ __add__ __bool__ __complex__ __eq__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __le__ __lt__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __repr__ __rmul__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__` `list` `__add__ __class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __reversed__ __rmul__ __setitem__ __sizeof__` `tuple` `__add__ __class_getitem__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __rmul__` `dict` `__class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __init__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __setitem__ __sizeof__` `set` `__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iand__ __init__ __ior__ __isub__ __iter__ __ixor__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__` `frozenset` `__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__` `bytes` `__add__ __buffer__ __bytes__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __str__` `bytearray` `__add__ __alloc__ __buffer__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __reduce__ __reduce_ex__ __release_buffer__ __repr__ __rmod__ __rmul__ __setitem__ __sizeof__ __str__` `range` `__bool__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __reduce__ __repr__ __reversed__` `slice` `__eq__ __ge__ __gt__ __hash__ __le__ __lt__ __ne__ __new__ __reduce__ __repr__` `enumerate` `__class_getitem__ __iter__ __new__ __next__ __reduce__` `zip` `__iter__ __new__ __next__ __reduce__ __setstate__` `map` `__iter__ __new__ __next__ __reduce__ __setstate__` `filter` `__iter__ __new__ __next__ __reduce__` `reversed` `__iter__ __length_hint__ __new__ __next__ __reduce__ __setstate__` `list_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `list_reverseiterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `tuple_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `str_ascii_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `str_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `range_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `longrange_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `set_iterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_keyiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_valueiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_itemiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reversekeyiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reversevalueiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reverseitemiterator` `__iter__ __length_hint__ __next__ __reduce__` `bytes_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `bytearray_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `callable_iterator` `__iter__ __next__ __reduce__` `dict_keys` `__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__` `dict_values` `__iter__ __len__ __repr__ __reversed__` `dict_items` `__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__` `mappingproxy` `__class_getitem__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __str__` `generator` `__class_getitem__ __del__ __iter__ __next__ __repr__ __sizeof__` `iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.original.bases` | - | - | `__orig_bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.prepare` | - | - | `__prepare__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
@@ -5921,3 +5936,12 @@ class itself and is not inherited by Python subclasses.
 `ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
+`ext.stmt.class.detail.mro.entries` names the non-type base substitution hook; `ext.stmt.class.detail.original.bases` names the retained original base tuple. Module-load helpers accept a false second argument to query source availability without importing and a true second argument to return its source path.
+
+The class-seal helper also seals completed instance storage against all subsequent attribute writes, including direct object writes. Template-prefix labels construct the native template storage adapter; the public templatelib executes pinned source.
+
+`ext.builtin.storage.get` and `ext.builtin.storage.set` expose internal field access for native adapters, bypassing Python slots and descriptors. Writes honor sealed storage; zero-prefixed storage in sealed objects remains inaccessible to ordinary attribute reads.
+
+`ext.stmt.class.detail.module.path` names the search-path attribute of imported source packages, initialized to the directory containing their initializer.
+
+`ext.stmt.class.detail.module.spec` names the import specification slot of native source namespaces. It starts empty; the Python import machinery installs the specification when it creates a module through a finder. Source discovery accepts packages and searches a child within its parent package path.

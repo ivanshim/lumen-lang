@@ -177,6 +177,10 @@ pub struct Engine<'a> {
     held_base: usize,
     memo: HashMap<String, Value>,
     core_ids: HashMap<String, usize>,
+    /// A loose member descriptor, keyed by the kind's word and the member
+    /// name, so that asking twice for `dict.__repr__` answers the very
+    /// descriptor asked the first time.
+    loose_members: RefCell<HashMap<String, Value>>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -1244,6 +1248,7 @@ impl<'a> Engine<'a> {
             held_base: 0,
             memo: HashMap::new(),
             core_ids: HashMap::new(),
+            loose_members: RefCell::new(HashMap::new()),
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -2587,6 +2592,25 @@ impl<'a> Engine<'a> {
     /// A load: the first local slot holding a value, else the global. A
     /// taking load moves the value out and leaves a hole.
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
+        let value = self.load_cell_raw(slot, frame)?;
+        let unboxed = match &value { Value::Bond(cell) | Value::Binding(cell) => cell.borrow().clone(), _ => value.clone() };
+        if let Value::Adapter(request) = &unboxed {
+            if request.0 == 61 {
+                let [path, member, root, Value::Binding(cache)] = request.1.as_slice() else { unreachable!("deferred import layout") };
+                if let Some(found) = match &*cache.borrow() { Value::Blank => None, ready => Some(ready.clone()) } { return Ok(found); }
+                let path = path.plain();
+                let namespace = self.import_module(&path).map_err(|fault| fault.told(&self.wording()))?;
+                let result = if matches!(member, Value::Null) {
+                    if root.is_true() { self.import_module(path.split('.').next().unwrap_or(&path)).map_err(|fault| fault.told(&self.wording()))? } else { namespace }
+                } else { self.import_member(&namespace, &path, &member.plain()).map_err(|fault| fault.told(&self.wording()))? };
+                *cache.borrow_mut() = result.clone();
+                return Ok(result);
+            }
+        }
+        Ok(value)
+    }
+
+    fn load_cell_raw(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Binding(shared) = &frame[s] {
                 // A taking read of a name closed-over locals still box
@@ -6013,7 +6037,15 @@ impl<'a> Engine<'a> {
     /// module and nothing else.
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
-        self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
+        if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
+        if !self.lang.module_names.is_empty() && Self::kind_beneath(&o.class_now()).as_deref() == Some("module") {
+            let fields = o.fields.borrow();
+            return fields.iter().find_map(|(key, held)| {
+                if !self.lang.module_names.contains(key) { return None; }
+                match held.contents() { Value::Text(word) => Some(word.to_string()), _ => None }
+            });
+        }
+        None
     }
 
     /// The word a value goes by as a kind: a class its own name, a
@@ -6036,6 +6068,9 @@ impl<'a> Engine<'a> {
     pub(super) fn member_named_amiss(&self, value: &Value, name: &str) -> String {
         let held = value.contents();
         if let Some(path) = self.module_holding(&held) { return Self::member_said(&self.lang.member_absent_module, &path, name); }
+        if self.lang.member_absent_module.is_some() && matches!(&held, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("module")) {
+            return format!("AttributeError: module has no attribute '{name}'");
+        }
         match self.kind_word_of(&held) {
             Some(word) => Self::member_said(&self.lang.member_absent_class, &word, name),
             None => String::new(),
@@ -7549,6 +7584,20 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::Same | Action::Unsame) && !self.lang.identity_not.is_empty() {
+            fn view(value: &Value) -> Option<Rc<(Value, String)>> {
+                match value {
+                    Value::View(retained) => Some(retained.clone()),
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => view(&cell.borrow()),
+                    _ => None,
+                }
+            }
+            let (left, right) = (view(a), view(b));
+            if left.is_some() || right.is_some() {
+                let equal = match (left, right) { (Some(one), Some(two)) => Rc::ptr_eq(&one, &two), _ => false };
+                return Ok(Value::Flag(equal == matches!(op, Action::Same)));
+            }
+        }
         if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
             && Self::sequence_row(a).is_some() && Self::sequence_row(a) == Self::sequence_row(b) {
             return self.sequence_comparison(op, a, b);
@@ -8414,6 +8463,14 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::Hash if args.len() == 1 => {
+                // A loose member descriptor hashes by what it is kept as,
+                // even where its kind names no hash method of its own.
+                if let Value::Adapter(held) = &args[0] {
+                    return Ok(Some(Value::Small(Rc::as_ptr(held) as usize as i64)));
+                }
+                if matches!(args[0], Value::Native(..) | Value::ByteKind(..)) {
+                    return Ok(args[0].core_hash().map(Value::Small));
+                }
                 // A class that says how its things are equal but not how
                 // they hash, or sets the hash method to nothing, has
                 // things that cannot be hashed.
@@ -8429,6 +8486,10 @@ impl<'a> Engine<'a> {
                         Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
                         Value::Small(_) | Value::Huge(_) => args[0].clone(),
                         Value::Flag(flag) => Value::Small(i64::from(*flag)),
+                        // A loose member descriptor hashes by what it is
+                        // kept as: the cached descriptor itself, so two
+                        // readings of the same member hash alike.
+                        Value::Adapter(held) => Value::Small(Rc::as_ptr(held) as usize as i64),
                         _ => return Err(self.special_fault()),
                     }
                 }
@@ -9739,7 +9800,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
-                let source = self.worth_free_of(&source, &[15]).map(|worth| worth.contents()).unwrap_or(source);
+                let source = self.worth_free_of(&source, &[15, 11]).unwrap_or(source).contents();
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
@@ -10415,6 +10476,10 @@ impl<'a> Engine<'a> {
                 },
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
                 Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class_now().clone()),
+                subject if self.lang.class_special.get(35).is_some_and(|word| word == name.as_ref()) => {
+                    let mut values = vec![subject];
+                    self.builtin(Builtin::SortOf, name, &mut values)?
+                }
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
                     // A thing that keeps a namespace of its own hands
                     // that over; one that keeps only fields stands as
@@ -11396,6 +11461,18 @@ impl<'a> Engine<'a> {
                     let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
                     Value::text(&writer.field(&value, &specification, &conversion)?)
                 }
+            }
+            Action::Interpolation | Action::TemplateMake => {
+                let mut arguments = Vec::with_capacity(argc);
+                for _ in 0..argc { arguments.push(self.drop_top()?); }
+                arguments.reverse();
+                let constructor = if matches!(op, Action::Interpolation) { "Interpolation" } else { "Template" };
+                if matches!(op, Action::Interpolation) {
+                    arguments.swap(1, 3);
+                }
+                let namespace = self.import_module("_template_core")?;
+                let Value::Class(class) = self.import_member(&namespace, "_template_core", constructor)? else { return Err("invalid template constructor".into()); };
+                self.class_make(class, arguments)?
             }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
@@ -12536,6 +12613,7 @@ impl<'a> Engine<'a> {
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
                     (Value::Adapter(x), Value::Adapter(y)) => Rc::ptr_eq(x,y),
+                    (Value::ValueMethod(x), Value::ValueMethod(y)) => Rc::ptr_eq(x,y),
                     // A method is bound afresh at every read; no two reads are one.
                     (Value::Method(_, _, x), Value::Method(_, _, y)) => Rc::ptr_eq(x, y),
                     (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
@@ -17535,6 +17613,11 @@ impl<'a> Engine<'a> {
             // What the run has bound under a name, by name: the
             // classes, and the routines.
             Builtin::ModuleLoad => {
+                if args.len() == 2 {
+                    let path = args[0].display(&sp);
+                    if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
+                    if matches!(args[1], Value::Flag(true)) { return Ok(self.sys_path_source(&path).map(|(file, _)| file).or_else(|| self.library_module_file(&path)).map_or(Value::Null, |file| Value::text(&file))); }
+                }
                 arity(1)?;
                 match self.import_module(&args[0].display(&sp)) {
                     Ok(module) => module,
@@ -17629,7 +17712,11 @@ impl<'a> Engine<'a> {
             // reach it, and every later look at the class answers from it.
             Builtin::ClassSeal => {
                 arity(1)?;
-                let Value::Class(c) = args[0].contents() else { return Err("TypeError: a class is required".into()) };
+                if let Value::Object(object) = args[0].contents() {
+                    object.fields.borrow_mut().push(("\0immutable".to_string(), Value::Flag(true)));
+                    return Ok(Value::Null);
+                }
+                let Value::Class(c) = args[0].contents() else { return Err("TypeError: a class or instance is required".into()) };
                 c.sealed.set(true);
                 Value::Null
             }
@@ -17656,6 +17743,10 @@ impl<'a> Engine<'a> {
             }
             Builtin::MemberSet => {
                 arity(3)?;
+                if matches!(&args[0], Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable"))
+                    || matches!(&args[0], Value::Class(class) if class.sealed.get()) {
+                    return Err("AttributeError: sealed storage is immutable".into());
+                }
                 let name = args[1].display(&sp);
                 let value = args[2].clone();
                 let fields = match &args[0] { Value::Object(o) => &o.fields, Value::Class(c) => &c.shared, _ => return Err(self.lang.module_helper_amiss.clone()) };
@@ -20430,6 +20521,11 @@ impl Engine<'_> {
                 self.drop_top()
             }
             Value::Object(_) => self.special_call(work, 17, args)?.ok_or_else(|| self.core_fault("core.uncallable", &work.core_kind())),
+            // A descriptor reached as a value in its own right -- a bound
+            // classmethod, a staticmethod, a loose member of a kind -- is
+            // applied the way the class applies it, so map and filter can
+            // hand it over to be called as a program could call it.
+            Value::Adapter(_) => self.class_apply(work.clone(), args).map_err(|f| f.told(&self.wording())),
             _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
         }
     }
@@ -20535,6 +20631,16 @@ impl Engine<'_> {
         // A cursor over a list, or over a window upon a map, reads it as
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
+        if b == Builtin::Dict && args.len() == 1 {
+            fn proxy_dictionary(value: &Value) -> Option<Value> {
+                match value {
+                    Value::View(view) if view.1 == "mapping" => Some(view.0.contents()),
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => proxy_dictionary(&cell.borrow()),
+                    _ => None,
+                }
+            }
+            if let Some(dictionary) = proxy_dictionary(&args[0]) { args[0] = dictionary; }
+        }
         let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
         let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
@@ -20722,6 +20828,12 @@ impl Engine<'_> {
                         return Ok(Value::Small(match &*cell.borrow() { Value::Collection(inner, _) => Rc::as_ptr(inner) as usize as i64, _ => Rc::as_ptr(cell) as usize as i64 }));
                     }
                     Value::Collection(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                    // A view is known by the retained view object it is
+                    // kept in, which stays put however the map it reads
+                    // changes; contents() would hand back a fresh array
+                    // each ask, and the array's pointer is not the view's.
+                    Value::View(view) => return Ok(Value::Small(Rc::as_ptr(view) as usize as i64)),
+                    Value::ValueMethod(method) => return Ok(Value::Small(Rc::as_ptr(method) as usize as i64)),
                     _ => {}
                 }
                 let held = args[0].contents();
@@ -20741,6 +20853,7 @@ impl Engine<'_> {
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Method(a, b, _) => (Rc::as_ptr(a) as usize ^ Rc::as_ptr(b) as usize) as u64,
                     Value::Native(b, _) => {
                         let mut state = std::collections::hash_map::DefaultHasher::new();
                         std::hash::Hash::hash(&format!("{:?}", b), &mut state);
@@ -20748,8 +20861,10 @@ impl Engine<'_> {
                     },
                     Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Real(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Complex(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Flag(v) => if *v { 2 } else { 1 },
+                    Value::Ellipsis => 5,
                     Value::Null => 0,
                     _ => return Err(self.core_fault("core.unready", name)),
                 };
@@ -21549,6 +21664,10 @@ impl Engine<'_> {
     }
 
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
+        if path.starts_with('.') {
+            let resolved = self.qualified_import(path)?;
+            return self.import_member(module, &resolved, name);
+        }
         if let Value::Object(object) = module {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
                 let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };

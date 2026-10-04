@@ -230,6 +230,26 @@ impl<'a> Engine<'a> {
         } {
             return if args.is_empty() { Ok(singleton) } else { Err(format!("TypeError: {shown} takes no arguments").into()) };
         }
+        if word == "module" {
+            let supplied = self.call_items(args)?;
+            let mut name = None;
+            let mut doc = Value::Null;
+            let mut count = 0;
+            for (key, value) in supplied {
+                match key.as_deref() {
+                    None if count == 0 => { name = Some(value); count += 1; }
+                    None if count == 1 => { doc = value; count += 1; }
+                    Some("name") if name.is_none() => name = Some(value),
+                    Some("doc") if count < 2 => doc = value,
+                    _ => return Err("TypeError: invalid module arguments".into()),
+                }
+            }
+            let Some(name @ Value::Text(_)) = name else { return Err("TypeError: module name must be str".into()); };
+            self.made += 1;
+            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c,
+                fields: RefCell::new(vec![("__name__".to_string(), name), ("__doc__".to_string(), doc),
+                    ("__package__".to_string(), Value::Null), ("__loader__".to_string(), Value::Null), ("__spec__".to_string(), Value::Null)]), mark: self.made })));
+        }
         // A routine built by hand out of a code value and a
         // dictionary of names: the reference's way of making a
         // function, which keeps the dictionary it was handed.
@@ -274,16 +294,33 @@ impl<'a> Engine<'a> {
                     Some(word) => keywords.push((word, value)), None => raw_bases.push(value),
                 }
             }
+            let original = Value::tuple(raw_bases.clone());
+            let hook_name = self.class_word("mro.entries").to_string();
+            let mut replaced = false;
+            let mut normalized = Vec::new();
+            for value in raw_bases {
+                if !hook_name.is_empty() && matches!(value.contents(), Value::Object(_)) {
+                    let hook = self.class_get(value.clone(), &hook_name, false)?;
+                    let result = self.class_apply(hook, vec![original.clone()])?;
+                    let Value::Tuple(listed) = result.contents() else { return Err("TypeError: __mro_entries__ must return a tuple".into()); };
+                    normalized.extend(listed.iter().cloned());
+                    replaced = true;
+                } else { normalized.push(value); }
+            }
+            if replaced { members.push((self.class_word("original.bases").to_string(), original)); }
             if let Some(factory) = maker.filter(|v| !matches!(v, Value::Native(Builtin::SortOf, _))) {
                 let entries = members.iter().filter(|(_, value)| !matches!(value, Value::Blank))
                     .map(|(word, value)| (Value::text(word), value.clone())).collect::<Vec<_>>();
                 let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
-                let mut given = vec![Value::text(&name), Value::tuple(raw_bases), namespace];
+                let mut given = vec![Value::text(&name), Value::tuple(normalized), namespace];
                 given.extend(keywords.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
                 return self.class_apply(factory, given);
             }
             bases.clear();
-            for value in raw_bases { bases.push(self.type_base(&value)?); }
+            for value in normalized {
+                if !self.class_word("mro.entries").is_empty() && matches!(value.contents(), Value::Null) { return Err("TypeError: NoneType takes no arguments".into()); }
+                bases.push(self.type_base(&value)?);
+            }
             members.extend(keywords.into_iter().map(|(word, value)| (format!("\0keyword:{word}"), value)));
         }
         if bases.is_empty() { bases.push(self.root_class()); }
@@ -1018,7 +1055,14 @@ impl<'a> Engine<'a> {
                     self.class_apply(w.1[0].clone(), args)
                 }
                 42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
-                30 => self.root_work(&w.1[0].plain(),args),
+                30 => {
+                    if w.1.get(1).is_some_and(|owner| owner.plain() != self.class_word("root")) {
+                        if let Some(first) = args.first_mut() {
+                            if let Some(native) = Self::worth_of(first) { *first = native.contents(); }
+                        }
+                    }
+                    self.root_work(&w.1[0].plain(),args)
+                },
                 // The maker of a builtin kind: given the class to make a
                 // thing of and what the kind's builtin takes.
                 14 if !args.is_empty() => {
@@ -1488,7 +1532,12 @@ impl<'a> Engine<'a> {
     fn root_member(&self, name: &str, of: Option<&Rc<Class>>) -> Option<Value> {
         if name.is_empty() { return None; }
         if self.lang.class_details.get("root.members").map_or(false,|names| names.iter().any(|n| n==name)) {
-            return Some(Self::adapter(30,vec![Value::text(name)]));
+            let owner = of.and_then(|class| Self::kind_beneath(class)).unwrap_or_else(|| self.class_word("root").to_string());
+            let key = format!("root:{owner}:{name}");
+            if let Some(member) = self.loose_members.borrow().get(&key) { return Some(member.clone()); }
+            let member = Self::adapter(30, vec![Value::text(name), Value::text(&owner)]);
+            self.loose_members.borrow_mut().insert(key, member.clone());
+            return Some(member);
         }
         of?;
         let hook = if name==self.class_word("allocate") {1}
@@ -1574,7 +1623,7 @@ impl<'a> Engine<'a> {
         if !self.attribute_fault(&failure) { return failure; }
         let qualified = match subject {
             Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
-            Value::Object(instance) if instance.class_now().name == "ModuleType" => {
+            Value::Object(instance) if !self.lang.module_names.is_empty() && Self::kind_beneath(&instance.class_now()).as_deref() == Some("module") => {
                 let fields = instance.fields.borrow();
                 let label = fields.iter().find(|(key, _)| key == "__name__").and_then(|(_, value)| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{name}'"), |label| format!("module '{label}' has no attribute '{name}'"))
@@ -1723,6 +1772,9 @@ impl<'a> Engine<'a> {
             if matches!(entry.0, 63 | 64) && matches!(name, "__name__" | "__qualname__" | "__doc__") {
                 return self.class_get(entry.1[1].clone(), name, plain);
             }
+        }
+        if name.starts_with('\0') && matches!(&subject, Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable")) {
+            return Err(self.missing_member(&subject, name));
         }
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
@@ -2112,7 +2164,7 @@ impl<'a> Engine<'a> {
                         else if name==self.class_word("remove") {Some(12)} else {None};
                     if let Some(i)=index {return Ok(Self::adapter(i,vec![]));}
                 }
-                if let Some(root)=self.root_member(name,None) {return Ok(root);}
+                if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }
             Value::Object(o) => {
                 let module = self.module_holding(&subject).is_some() || o.class_now().name == "ModuleType";
@@ -2792,6 +2844,9 @@ impl<'a> Engine<'a> {
                 return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{kind}'").into());
             }
         }
+        if matches!(&subject, Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable")) {
+            return Err(format!("AttributeError: '{}' object is immutable", subject.core_kind()).into());
+        }
         if self.lang.traceback_member.as_deref() == Some(name) && matches!(&subject, Value::Object(o) if self.exception_class(&o.class_now())) {
             match &value {
                 Some(Value::Null | Value::Trace(_)) => {},
@@ -3212,7 +3267,7 @@ impl<'a> Engine<'a> {
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         if matches!(Self::own_kind(c).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let own=Self::own_class_value(c,self.class_word("slots"));
-        let Some(own)=own else{return Self::own_kind(c).is_none();};
+        let Some(own)=own else{return Self::own_kind(c).map_or(true, |word| word == "module");};
         let slots=own.contents();
         let allows=|v:&Value|match v {Value::Text(s)=>s.as_ref()==name||s.as_ref()==self.class_word("namespace"),_=>false};
         let fits=match &slots {Value::Array(v)|Value::Tuple(v)=>v.iter().any(allows),v=>allows(v)};
