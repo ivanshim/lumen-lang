@@ -5338,7 +5338,7 @@ impl<'a> Compiler<'a> {
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.take();
             named = self.want_name("as the method name")?;
-            let (body, formals, spares) = self.method(&named)?;
+            let (body, _, spares) = self.method(&named)?;
             // What a parameter falls back on is read where the method
             // is written, and the reading goes with the routine, as the
             // reference reads a default once at the definition -- but
@@ -5349,21 +5349,9 @@ impl<'a> Compiler<'a> {
             let after = self.pos;
             for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
                 self.pos = *from;
-                // A default that is one bare name spelled like a
-                // parameter means the name outside, as the reference
-                // reads it: the parameter itself never stands here.
-                let lone = if self.tokens.get(*from).map_or(false, |t| t.shape == Shape::Instr)
-                    && self.tokens.get(*from + 1).map_or(true, |t| t.shape == Shape::Sign)
-                    && formals.contains(&self.tokens[*from].lexeme) {
-                    self.tokens[*from].lexeme.clone()
-                } else { String::new() };
-                if lone.is_empty() {
-                    self.expr(0)?;
-                } else {
-                    let cell = self.enclosing_cell(self.pieces.len() - 1, &lone)
-                        .unwrap_or_else(|| Cell { free: false, ident: Rc::from(lone.as_str()), near: Vec::new(), far: self.registry.slot(&lone), moving: false });
-                    self.put(Instr::Read(cell));
-                }
+                // The method's frame has been left behind. Read the entire
+                // default here, where class members and enclosing names bind.
+                self.expr(0)?;
             }
             self.pos = after;
             self.constant(Value::Routine(body));
@@ -5606,28 +5594,16 @@ impl<'a> Compiler<'a> {
             self.take();
             let named = self.want_name("as the method name")?;
             let original = self.spelled[self.pos - 1].lexeme.clone();
-            let (method, formals, spares) = self.method(&original)?;
+            let (method, _, spares) = self.method(&original)?;
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
             let after = self.pos;
             for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
                 self.pos = *from;
-                // A default that is one bare name spelled like a
-                // parameter means the name outside, as the reference
-                // reads it: the parameter itself never stands here.
-                let lone = if self.tokens.get(*from).map_or(false, |t| t.shape == Shape::Instr)
-                    && self.tokens.get(*from + 1).map_or(true, |t| t.shape == Shape::Sign)
-                    && formals.contains(&self.tokens[*from].lexeme) {
-                    self.tokens[*from].lexeme.clone()
-                } else { String::new() };
-                if lone.is_empty() {
-                    self.expr(0)?;
-                } else {
-                    let cell = self.enclosing_cell(self.pieces.len() - 1, &lone)
-                        .unwrap_or_else(|| Cell { free: false, ident: Rc::from(lone.as_str()), near: Vec::new(), far: self.registry.slot(&lone), moving: false });
-                    self.put(Instr::Read(cell));
-                }
+                // The method's frame has been left behind. Read the entire
+                // default here, where class members and enclosing names bind.
+                self.expr(0)?;
             }
             self.pos = after;
             self.constant(Value::Routine(method.clone()));
