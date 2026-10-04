@@ -952,6 +952,30 @@ impl<'a> Engine<'a> {
                 // Domain edges and custom numeric protocols keep that frame.
                 64 => {
                     let operation = w.1[0].plain();
+                    if operation == "normal_pdf" && args.len() == 2 {
+                        let x = args[1].contents();
+                        if matches!(x, Value::Real(_)) {
+                            let mu = self.class_get(args[0].clone(), "_mu", false)?.contents();
+                            let sigma = self.class_get(args[0].clone(), "_sigma", false)?.contents();
+                            if let (Value::Real(m), Value::Real(s), Value::Real(point)) = (&mu, &sigma, &x) {
+                                let scale = crate::value::as_binary(&s.p, &s.q);
+                                let mean = crate::value::as_binary(&m.p, &m.q);
+                                let input = crate::value::as_binary(&point.p, &point.q);
+                                if mean.is_finite() && input.is_finite() && scale.is_finite() && scale * scale > 0.0 && (scale * scale).is_finite() {
+                                    return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), x, mu, sigma]);
+                                }
+                            }
+                        }
+                    }
+                    if operation == "sqrt_frac_rto" && args.len() == 2 && args.iter().all(|value| matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
+                        return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone(), args[1].clone()]);
+                    }
+                    if operation == "isqrt" && args.len() == 1 {
+                        let number = args[0].contents();
+                        if matches!(number, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), number]);
+                        }
+                    }
                     if operation == "fsum" && self.lang.math_fsum && args.len() == 1 {
                         let values = match args[0].contents() { Value::Array(values) | Value::Tuple(values) => Some(values), _ => None };
                         if values.is_some_and(|row| row.iter().all(|item| matches!(item.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_)))) {
@@ -1795,6 +1819,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 29 | 122 | 124 | 126 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),

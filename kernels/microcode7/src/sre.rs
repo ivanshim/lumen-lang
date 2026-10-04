@@ -207,7 +207,29 @@ impl Regex<'_> {
                             _ => { alternatives.push(again); current = leave; }
                         }
                     }
-                    24 | 26 | 28 | 29 => {
+                    26 => {
+                        let low = self.instruction(ip + 2) as usize;
+                        let high = self.instruction(ip + 3) as usize;
+                        let mut trial = current.clone();
+                        let mut taken = 0;
+                        while taken <= high {
+                            trial.instruction = ip + operand + 1;
+                            if taken >= low {
+                                let attempt = self.follow(trial.clone(), terminal, entire, forbidden, nesting + 1)?;
+                                if attempt.is_some() { return Ok(attempt); }
+                            }
+                            if taken >= high { break; }
+                            let previous = trial.offset;
+                            trial.instruction = ip + 4;
+                            match self.follow(trial, None, false, None, nesting + 1)? {
+                                Some(next) if next.offset != previous => trial = next,
+                                _ => break,
+                            }
+                            taken += 1;
+                        }
+                        break;
+                    }
+                    24 | 28 | 29 => {
                         let least = self.instruction(ip+2) as usize;
                         let most = self.instruction(ip+3) as usize;
                         let boundary = ip+operand+1;
@@ -228,7 +250,6 @@ impl Regex<'_> {
                         else {
                             choices.drain(..least);
                             for option in &mut choices { option.instruction = boundary; }
-                            if tag == 26 { choices.reverse(); }
                             current = choices.pop().unwrap(); alternatives.extend(choices);
                         }
                     }

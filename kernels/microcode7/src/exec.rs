@@ -8638,10 +8638,19 @@ impl<'a> Machine<'a> {
 
     pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
         let Value::Thing(thing) = value else { return None };
+        let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
+        if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
+        let class = thing.blueprint();
+        if !class.parents.is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
         for (path, held) in &self.imported {
             if matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing)) { return Some(path.clone()); }
         }
         let names = self.table.strings("ext.system.module.name");
+        let blueprint = thing.blueprint();
+        if blueprint.parents.is_empty() && blueprint.under.is_none() && blueprint.type_names.borrow().is_none() {
+            let declared = thing.holds.borrow().iter().find(|entry| names.contains(&entry.0)).map(|entry| entry.1.settled());
+            if let Some(Value::Text(label)) = declared { return Some(label.to_string()); }
+        }
         if names.is_empty() || Self::native_beneath(&thing.blueprint()).as_deref() != Some("module") { return None; }
         let entries = thing.holds.borrow();
         for (key, item) in entries.iter() {
@@ -9638,7 +9647,7 @@ impl<'a> Machine<'a> {
     fn recipe_factory(&mut self, operands: &[Value]) -> Result<Value, String> {
         if operands.len() == 1 {
             if let Value::Text(name) = &operands[0] {
-                let specialized = match name.as_ref() { "combinations" => Some(5), "islice" => Some(6), "zip_longest" => Some(7), _ => None };
+                let specialized = match name.as_ref() { "combinations" => Some(5), "islice" => Some(6), "zip_longest" => Some(7), "group" => Some(8), "groupby" => Some(9), "group_peek" => Some(10), _ => None };
                 if let Some(operation) = specialized {
                     return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(operation)])));
                 }
@@ -9687,9 +9696,69 @@ impl<'a> Machine<'a> {
         self.cartesian_step(operands)
     }
 
+    fn group_buffer(&mut self, owner: &Rc<Thing>) -> Result<bool, String> {
+        if self.object_truth(&Self::recipe_member(owner, "done")?)? { return Ok(false); }
+        if !self.object_truth(&Self::recipe_member(owner, "ready")?)? {
+            let source = Self::recipe_member(owner, "source")?;
+            match self.next_value(&source)? {
+                None => { Self::recipe_replace(owner, "done", Value::Flag(true)); return Ok(false); }
+                Some(value) => {
+                    Self::recipe_replace(owner, "current", value.clone());
+                    let function = Self::recipe_member(owner, "key")?;
+                    let key = if matches!(function, Value::Nil) { value } else { self.core_run(&function, vec![value])? };
+                    Self::recipe_replace(owner, "current_key", key);
+                    Self::recipe_replace(owner, "ready", Value::Flag(true));
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    fn group_key_matches(&mut self, key: &Value, current: &Value) -> Result<bool, String> {
+        if key.selfsame(current) { return Ok(true); }
+        let answer = self.prim(Prim::Eq, "", &[key.clone(), current.clone()])?;
+        self.object_truth(&answer)
+    }
+
+    fn recipe_group(&mut self, operation: i64, thing: &Rc<Thing>) -> Result<Option<Value>, String> {
+        match operation {
+            10 => self.group_buffer(thing).map(|answer| Some(Value::Flag(answer))),
+            8 => {
+                let Value::Thing(owner) = Self::recipe_member(thing, "owner")?.settled() else { return Err("TypeError: invalid group owner".to_owned()); };
+                let active = Self::recipe_member(&owner, "generation")?.as_big()? == Self::recipe_member(thing, "generation")?.as_big()?;
+                if !active || !self.group_buffer(&owner)? { return Ok(None); }
+                let key = Self::recipe_member(thing, "key")?;
+                let buffered = Self::recipe_member(&owner, "current_key")?;
+                if !self.group_key_matches(&key, &buffered)? || !self.object_truth(&Self::recipe_member(&owner, "ready")?)? { return Ok(None); }
+                Self::recipe_replace(&owner, "ready", Value::Flag(false));
+                Self::recipe_member(&owner, "current").map(Some)
+            }
+            _ => {
+                let generation = Self::recipe_member(thing, "generation")?.as_big()? + BigInt::from(1);
+                Self::recipe_replace(thing, "generation", Value::from_big(generation.clone()));
+                if self.object_truth(&Self::recipe_member(thing, "started")?)? {
+                    while self.group_buffer(thing)? {
+                        let old = Self::recipe_member(thing, "target")?;
+                        let new = Self::recipe_member(thing, "current_key")?;
+                        if !self.group_key_matches(&old, &new)? { break; }
+                        Self::recipe_replace(thing, "ready", Value::Flag(false));
+                    }
+                }
+                if !self.group_buffer(thing)? { return Ok(None); }
+                let key = Self::recipe_member(thing, "current_key")?;
+                Self::recipe_replace(thing, "target", key.clone());
+                Self::recipe_replace(thing, "started", Value::Flag(true));
+                let constructor = Self::recipe_member(thing, "_group_type")?;
+                let group = self.core_run(&constructor, vec![Value::Thing(thing.clone()), key.clone(), Value::from_big(generation)])?;
+                Ok(Some(Value::tuple(vec![key, group])))
+            }
+        }
+    }
+
     pub(super) fn recipe_advance(&mut self, operation: i64, receiver: &Value) -> Result<Option<Value>, String> {
         let Value::Thing(thing) = receiver else { return Err("TypeError: invalid iterator receiver".to_owned()); };
         match operation {
+            8..=10 => return self.recipe_group(operation, thing),
             6 => return self.recipe_slice(thing),
             7 => return self.recipe_zip(thing),
             5 => return self.recipe_combinations(thing),
@@ -18407,6 +18476,41 @@ impl<'a> Machine<'a> {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "normal_pdf" {
+                    let [_, input, center, deviation] = v else { return Err("TypeError: normal_pdf expected three arguments".to_owned()); };
+                    let (point, midpoint, scale) = (self.real_math_input(input)?, self.real_math_input(center)?, self.real_math_input(deviation)?);
+                    let squared_scale = scale.powi(2);
+                    let offset = point - midpoint;
+                    let exponent = offset * offset / (-2.0 * squared_scale);
+                    let divisor = (std::f64::consts::TAU * squared_scale).sqrt();
+                    let mut result = crate::data::worth_of_binary(exponent.exp() / divisor, self.real_figures());
+                    if let Value::Frac(number) = &mut result { Rc::make_mut(number).float_style = self.rules.floating_math; }
+                    return Ok(result);
+                }
+                if working == "normal_dist_inv_cdf" {
+                    if v.len() != 4 { return Err("TypeError: _normal_dist_inv_cdf expected three arguments".to_owned()); }
+                    let mut inputs = Vec::with_capacity(3);
+                    for value in &v[1..] { inputs.push(self.real_math_input(value)?); }
+                    let answer = crate::normal::quantile(inputs[0], inputs[1], inputs[2])?;
+                    let mut number = crate::data::worth_of_binary(answer, self.real_figures());
+                    if let Value::Frac(ratio) = &mut number { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
+                    return Ok(number);
+                }
+                if working == "sqrt_frac_rto" {
+                    let [_, upper, lower] = v else { return Err("TypeError: sqrt_frac_rto expected two arguments".to_owned()); };
+                    let (n, m) = (upper.as_big()?, lower.as_big()?);
+                    if m.is_zero() { return Err("ZeroDivisionError: integer division or modulo by zero".to_owned()); }
+                    let value = n.div_floor(&m);
+                    if value < BigInt::zero() { return Err("ValueError: isqrt argument must be non-negative".to_owned()); }
+                    let mut root = if value.is_zero() { BigInt::zero() } else { BigInt::one() << value.bits().div_ceil(2) as usize };
+                    while !root.is_zero() {
+                        let next = (&root + &value / &root) >> 1usize;
+                        if next >= root { break; }
+                        root = next;
+                    }
+                    if &root * &root * m != n { root |= BigInt::one(); }
+                    return Ok(Value::from_big(root));
+                }
                 if working == "isqrt" {
                     let [_, input] = v else { return Err("TypeError: isqrt expected one argument".to_owned()); };
                     let number = input.as_big()?;
@@ -22441,6 +22545,7 @@ impl Machine<'_> {
         let slot_links = exported.iter().enumerate().map(|(position, name)|
             (Value::text(name), self.outermost.cells.borrow()[beginning + position].clone())).collect::<Vec<_>>();
         members.push(("\0bindings".to_owned(), Value::Dict(Rc::new(slot_links.into()))));
+        members.push(("\0loaded-module".to_owned(), Value::text(path)));
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),

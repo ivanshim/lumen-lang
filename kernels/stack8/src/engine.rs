@@ -3369,7 +3369,7 @@ impl<'a> Engine<'a> {
 
     fn iterator_operation(&mut self, args: &[Value]) -> Res<Value> {
         if let [Value::Text(word)] = args {
-            let mode = match word.as_ref() { "repeat" => 0, "product" => 1, "tee" => 2, "combinations" => 5, "islice" => 6, "zip_longest" => 7, _ => return Err("TypeError: unknown iterator operation".into()) };
+            let mode = match word.as_ref() { "repeat" => 0, "product" => 1, "tee" => 2, "combinations" => 5, "islice" => 6, "zip_longest" => 7, "group" => 8, "groupby" => 9, "group_peek" => 10, _ => return Err("TypeError: unknown iterator operation".into()) };
             return Ok(Self::adapter(119, vec![Value::Small(mode)]));
         }
         if let [Value::Text(word), source] = args {
@@ -3406,8 +3406,57 @@ impl<'a> Engine<'a> {
         self.product_step(args)
     }
 
+    fn group_peek(&mut self, owner: &Rc<Instance>) -> Res<bool> {
+        if self.truth(&Self::iterator_state_field(owner, "done")?) { return Ok(false); }
+        if !self.truth(&Self::iterator_state_field(owner, "ready")?) {
+            let source = Self::iterator_state_field(owner, "source")?;
+            let Some(value) = self.special_step(&source)? else {
+                Self::iterator_state_store(owner, "done", Value::Flag(true));
+                return Ok(false);
+            };
+            Self::iterator_state_store(owner, "current", value.clone());
+            let key = Self::iterator_state_field(owner, "key")?;
+            let keyed = if matches!(key, Value::Null) { value } else { self.core_apply(&key, vec![value])? };
+            Self::iterator_state_store(owner, "current_key", keyed);
+            Self::iterator_state_store(owner, "ready", Value::Flag(true));
+        }
+        Ok(true)
+    }
+
+    fn group_recipe_next(&mut self, mode: i64, object: &Rc<Instance>) -> Res<Option<Value>> {
+        if mode == 10 { return self.group_peek(object).map(|ready| Some(Value::Flag(ready))); }
+        if mode == 8 {
+            let Value::Object(owner) = Self::iterator_state_field(object, "owner")?.contents() else { return Err("TypeError: invalid group owner".into()); };
+            if Self::iterator_state_field(object, "generation")?.as_big()? != Self::iterator_state_field(&owner, "generation")?.as_big()? || !self.group_peek(&owner)? { return Ok(None); }
+            let key = Self::iterator_state_field(object, "key")?;
+            let current = Self::iterator_state_field(&owner, "current_key")?;
+            if !self.sequence_equal_item(&key, &current)? || !self.truth(&Self::iterator_state_field(&owner, "ready")?) { return Ok(None); }
+            let value = Self::iterator_state_field(&owner, "current")?;
+            Self::iterator_state_store(&owner, "ready", Value::Flag(false));
+            return Ok(Some(value));
+        }
+        let generation = Self::iterator_state_field(object, "generation")?.as_big()? + BigInt::from(1);
+        Self::iterator_state_store(object, "generation", Value::of_big(generation.clone()));
+        if self.truth(&Self::iterator_state_field(object, "started")?) {
+            while self.group_peek(object)? {
+                let target = Self::iterator_state_field(object, "target")?;
+                let current = Self::iterator_state_field(object, "current_key")?;
+                if !self.sequence_equal_item(&target, &current)? { break; }
+                Self::iterator_state_store(object, "ready", Value::Flag(false));
+            }
+        }
+        if !self.group_peek(object)? { return Ok(None); }
+        let key = Self::iterator_state_field(object, "current_key")?;
+        Self::iterator_state_store(object, "target", key.clone());
+        Self::iterator_state_store(object, "started", Value::Flag(true));
+        let factory = Self::iterator_state_field(object, "_group_type")?;
+        let group = self.core_apply(&factory, vec![Value::Object(object.clone()), key.clone(), Value::of_big(generation)])?;
+        Ok(Some(Value::tuple(vec![key, group])))
+    }
+
     pub(super) fn iterator_recipe_next(&mut self, mode: i64, value: &Value) -> Res<Option<Value>> {
         let Value::Object(object) = value else { return Err("TypeError: invalid iterator receiver".into()); };
+        if (8..=10).contains(&mode) { return self.group_recipe_next(mode, object); }
         if mode == 6 { return self.slice_recipe_next(object); }
         if mode == 7 { return self.zip_recipe_next(object); }
         if mode == 5 { return self.combination_next(object); }
@@ -6206,7 +6255,21 @@ impl<'a> Engine<'a> {
 
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
+        if let Some((_, owner)) = o.fields.borrow().iter().find(|(name, _)| name == "\0module-owner") {
+            if let Value::Text(path) = owner.contents() { return Some(path.to_string()); }
+        }
+        let own = o.class_now();
+        if !own.direct.is_empty() && Self::kind_beneath(&own).as_deref() != Some("module") { return None; }
         if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
+        let class = o.class_now();
+        if class.direct.is_empty() && class.base.is_none() && class.python_names.borrow().is_none() {
+            let fields = o.fields.borrow();
+            for (key, held) in fields.iter() {
+                if self.lang.module_names.contains(key) {
+                    if let Value::Text(name) = held.contents() { return Some(name.to_string()); }
+                }
+            }
+        }
         if !self.lang.module_names.is_empty() && Self::kind_beneath(&o.class_now()).as_deref() == Some("module") {
             let fields = o.fields.borrow();
             return fields.iter().find_map(|(key, held)| {
@@ -10752,7 +10815,10 @@ impl<'a> Engine<'a> {
                     }
                 },
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
-                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class_now().clone()),
+                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => {
+                    let owner = Value::Object(o.clone());
+                    if self.module_holding(&owner).is_some() { self.named_kind(&owner) } else { Value::Class(o.class_now().clone()) }
+                },
                 subject if self.lang.class_special.get(35).is_some_and(|word| word == name.as_ref()) => {
                     let mut values = vec![subject];
                     self.builtin(Builtin::SortOf, name, &mut values)?
@@ -18555,6 +18621,39 @@ impl<'a> Engine<'a> {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "normal_pdf" {
+                    if args.len() != 4 { return Err("TypeError: normal_pdf expected three arguments".into()); }
+                    let x = self.math_operand(&args[1])?;
+                    let mean = self.math_operand(&args[2])?;
+                    let spread = self.math_operand(&args[3])?;
+                    let variance = spread * spread;
+                    let difference = x - mean;
+                    let answer = (difference * difference / (-2.0 * variance)).exp() / (std::f64::consts::TAU * variance).sqrt();
+                    let mut real = crate::value::real_of(answer, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(number) = &mut real { Rc::make_mut(number).floating = self.lang.math_floating; }
+                    return Ok(real);
+                }
+                if working == "normal_dist_inv_cdf" {
+                    if args.len() != 4 { return Err("TypeError: _normal_dist_inv_cdf expected three arguments".into()); }
+                    let p = self.math_operand(&args[1])?;
+                    let mu = self.math_operand(&args[2])?;
+                    let sigma = self.math_operand(&args[3])?;
+                    let answer = crate::statistics::inverse(p, mu, sigma)?;
+                    let mut real = crate::value::real_of(answer, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(number) = &mut real { Rc::make_mut(number).floating = self.lang.math_floating; }
+                    return Ok(real);
+                }
+                if working == "sqrt_frac_rto" {
+                    if args.len() != 3 { return Err("TypeError: sqrt_frac_rto expected two arguments".into()); }
+                    let numerator = args[1].as_big()?;
+                    let denominator = args[2].as_big()?;
+                    if denominator.is_zero() { return Err("ZeroDivisionError: integer division or modulo by zero".into()); }
+                    let quotient = numerator.div_floor(&denominator);
+                    if quotient.is_negative() { return Err("ValueError: isqrt argument must be non-negative".into()); }
+                    let root = quotient.sqrt();
+                    let odd = BigInt::from(i32::from(&root * &root * denominator != numerator));
+                    return Ok(Value::of_big(root | odd));
+                }
                 if working == "isqrt" {
                     if args.len() != 2 { return Err("TypeError: isqrt expected one argument".into()); }
                     let integer = args[1].as_big()?;
@@ -21373,7 +21472,8 @@ impl Engine<'_> {
                 }
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
                     && matches!(value.contents(), Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) { continue; }
-                *value = value.contents();
+                let lazy_source = match b { Builtin::Enumerate => position == 0, Builtin::Zip => true, Builtin::Map => position != 0, Builtin::Filter => position == 1, _ => false };
+                if !lazy_source { *value = value.contents(); }
             }
         }
         if named.is_empty() {

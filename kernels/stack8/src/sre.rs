@@ -181,7 +181,27 @@ impl Machine<'_> {
                         });
                         if !same { break; } s.pos += (b-a) as usize; s.pc += 2;
                     }
-                    24 | 26 | 29 => {
+                    26 => {
+                        let min = self.code[s.pc + 2] as usize;
+                        let max = self.code[s.pc + 3] as usize;
+                        let body = s.pc + 4;
+                        let tail = s.pc + arg + 1;
+                        let mut consumed = 0;
+                        loop {
+                            if consumed >= min {
+                                let mut continuation = s.clone(); continuation.pc = tail;
+                                if let Some(result) = self.run(continuation, stop, full, advance, depth + 1)? { return Ok(Some(result)); }
+                            }
+                            if consumed == max { break; }
+                            let mut atom = s.clone(); atom.pc = body;
+                            let Some(next) = self.run(atom, None, false, None, depth + 1)? else { break };
+                            let unchanged = next.pos == s.pos;
+                            s = next; consumed += 1;
+                            if unchanged && consumed >= min { break; }
+                        }
+                        break;
+                    }
+                    24 | 29 => {
                         let min = self.code.get(s.pc+2).copied().unwrap_or(0) as usize;
                         let max = self.code.get(s.pc+3).copied().unwrap_or(0) as usize;
                         let mut ends = vec![s.clone()];
@@ -194,7 +214,7 @@ impl Machine<'_> {
                         if ends.len()-1 < min { break; }
                         let tail = s.pc + 1 + arg;
                         let mut choices: Vec<State> = ends.into_iter().skip(min).map(|mut v| { v.pc = tail; v }).collect();
-                        if op != 26 { choices.reverse(); }
+                        choices.reverse();
                         let first = choices.remove(0);
                         if op != 29 { pending.extend(choices.into_iter().rev()); }
                         s = first;

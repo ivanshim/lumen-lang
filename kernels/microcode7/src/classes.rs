@@ -1186,6 +1186,33 @@ impl<'a> Machine<'a> {
                         // the C module's common case. Other values retain
                         // all of the library's protocol and error handling.
                         let operation=kept[0].bare();
+                        if operation == "normal_pdf" {
+                            if let [distribution, input] = values.as_slice() {
+                                let input = input.settled();
+                                if matches!(input, Value::Frac(_)) {
+                                    let center = self.read_class_member(distribution.clone(), "_mu", false)?.settled();
+                                    let spread = self.read_class_member(distribution.clone(), "_sigma", false)?.settled();
+                                    if let (Value::Frac(a), Value::Frac(b), Value::Frac(c)) = (&input, &center, &spread) {
+                                        let coordinates = [a, b, c].map(|r| crate::data::nearest_binary(&r.above, &r.beneath));
+                                        let variance = coordinates[2] * coordinates[2];
+                                        if coordinates.iter().all(|n| n.is_finite()) && variance > 0.0 && variance.is_finite() {
+                                            return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), input, center, spread]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if operation == "sqrt_frac_rto" && values.len() == 2 && values.iter().all(|value| matches!(value.settled(), Value::Flag(_) | Value::Huge(_) | Value::Small(_))) {
+                            return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), values[0].clone(), values[1].clone()]);
+                        }
+                        if operation == "isqrt" {
+                            if let [integer] = values.as_slice() {
+                                let native = integer.settled();
+                                if matches!(native, Value::Flag(_) | Value::Huge(_) | Value::Small(_)) {
+                                    return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), native]);
+                                }
+                            }
+                        }
                         if operation == "fsum" && self.table.flag("ext.builtin.math.fsum") {
                             if let [sequence] = values.as_slice() {
                                 let items = match sequence.settled() { Value::Vector(items) | Value::Tuple(items) => Some(items), _ => None };
@@ -1890,6 +1917,7 @@ impl<'a> Machine<'a> {
             }
         }
         match &entry {
+            Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(133 | 60 | 120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),

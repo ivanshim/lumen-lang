@@ -1561,3 +1561,28 @@ def check_sanitizer(*, address=False, memory=False, ub=False, thread=False,
 
 # Repository root used to locate optional CPython source-tree resources.
 REPO_ROOT = __file__.split("/langs/lib_python/modules/test/support/", 1)[0]
+
+# Color controls mirror CPython's test-support contract.
+@contextlib.contextmanager
+def force_color(color):
+    import _colorize
+    from .os_helper import EnvironmentVarGuard
+    with swap_attr(_colorize, "can_colorize", lambda *, file=None: color), EnvironmentVarGuard() as env:
+        for name in ("FORCE_COLOR", "NO_COLOR", "PYTHON_COLORS"):
+            env.unset(name)
+        env.set("FORCE_COLOR" if color else "NO_COLOR", "1")
+        yield
+
+def force_colorized(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with force_color(True):
+            return func(*args, **kwargs)
+    return wrapper
+
+def force_not_colorized(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with force_color(False):
+            return func(*args, **kwargs)
+    return wrapper
