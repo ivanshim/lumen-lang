@@ -1058,7 +1058,7 @@ impl Value {
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
             (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
-                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
+                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| Value::text(word.as_str()).equals(value));
             }
             _ => (),
         }

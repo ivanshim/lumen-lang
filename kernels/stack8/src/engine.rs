@@ -5799,7 +5799,7 @@ impl<'a> Engine<'a> {
     /// The cell a map method's receiver stands in, written over with a
     /// new set of rows, exactly as `methods::call`'s own `store` writes it.
     fn replace_map(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Res<()> {
-        let Value::Collection(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
+        let (Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell)) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
         let new_value = Value::Map(Rc::new(pairs.into()));
         if crate::methods::reaches(&new_value, cell, 0) { return Err(self.lang.method_errors["unready"].clone()); }
         *cell.borrow_mut() = new_value;
@@ -7480,6 +7480,16 @@ impl<'a> Engine<'a> {
         matches!(value, Value::Object(_)) && Self::worth_of(value).is_none()
     }
 
+    /// Whether a native value keeps an in-place answer of its own for a
+    /// compound sign, so that the other side's reflected method is not
+    /// asked first. A map written into with the set-or sign is one: the
+    /// mapping's own write takes the pairs and answers with itself,
+    /// while a list has no such number-slot answer and lets the other
+    /// side's reflected method be heard before its sequence write.
+    fn native_writes_over(op: &Action, held: &Value) -> bool {
+        matches!(op, Action::SetWrite(0)) && Self::map_cell(held).is_some()
+    }
+
     /// Whether a value is read at numbered places: a row, a text, a
     /// tuple or a range, and never a map, whose keys are things entire.
     fn counts_places(value: &Value) -> bool {
@@ -7857,6 +7867,17 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// A value read as a row for comparison: a row or tuple as itself,
+    /// and the row of words a string method hands back as the row of
+    /// texts it stands for, so the two may be weighed item by item.
+    fn as_row(value: &Value) -> Option<Value> {
+        if Self::sequence_row(value).is_some() { return Some(value.clone()); }
+        match value.contents() {
+            Value::Words(row, _) => Some(Value::Array(Rc::new(row.iter().map(|s| Value::text(s)).collect::<Vec<_>>()).into())),
+            _ => None,
+        }
+    }
+
     fn sequence_comparison(&mut self, op: &Action, left: &Value, right: &Value) -> Res<Value> {
         if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
             if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
@@ -7932,9 +7953,15 @@ impl<'a> Engine<'a> {
         if let (Action::At, Value::View(proxy)) = (op, a) {
             if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0.proxy_dictionary(), b); }
         }
-        if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
-            && Self::sequence_row(a).is_some() && Self::sequence_row(a) == Self::sequence_row(b) {
-            return self.sequence_comparison(op, a, b);
+        if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            // A row of words a string method hands back stands for the
+            // row of texts it reads, and is compared item by item with
+            // a list exactly as one, each item by its own equality.
+            if let (Some(left), Some(right)) = (Self::as_row(a), Self::as_row(b)) {
+                if Self::sequence_row(&left) == Self::sequence_row(&right) {
+                    return self.sequence_comparison(op, &left, &right);
+                }
+            }
         }
         if self.lang.sequence_values && matches!(op, Action::Contains | Action::Lacks)
             && Self::sequence_row(b).is_some() {
@@ -10181,6 +10208,12 @@ impl<'a> Engine<'a> {
                         let walk = self.core_iterator(&source)?;
                         self.apart_members(&walk, *count, rest.is_some())?
                     }
+                    // A thing of a class standing on a tuple or list
+                    // that adds no walk of its own is taken apart by
+                    // what it holds, the members a loop over it sees.
+                    Value::Object(_) if self.worth_free_of(&source, &[15]).is_some() => {
+                        self.comprehension_items(&source)?
+                    }
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
@@ -10402,6 +10435,14 @@ impl<'a> Engine<'a> {
                     // the way any dyad goes, so the thing's ordinary
                     // methods are heard; the byte and set writings stand
                     // for their plain dyads there.
+                    // A map written into with the set-or sign keeps its
+                    // cell and takes the pairs of whatever mapping or
+                    // row of pairs stands on the right, exactly as its
+                    // own update would, and answers with itself.
+                    None if Self::native_writes_over(inner, &held) => {
+                        self.dict_update(&held, vec![by], &[])?;
+                        held
+                    }
                     None if Self::plain_thing(&held.contents()) || Self::plain_thing(&by.contents()) => {
                         let plain = Self::plain_dyad(inner);
                         self.special_dyad(&plain, &held, &by)?
