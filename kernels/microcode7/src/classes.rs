@@ -831,6 +831,8 @@ impl<'a> Machine<'a> {
         for part in ["property.fget","property.fset","property.fdel","doc"] {
             entries.push((self.detail(part).to_owned(),Self::wrap(58,vec![Value::text(Self::accessor_key(part))])));
         }
+        entries.push((self.detail("name").to_owned(),Self::wrap(58,vec![Value::text("\0name")])));
+        entries.push(("__isabstractmethod__".to_owned(),Self::wrap(58,vec![Value::text("\0abstract")])));
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
@@ -841,6 +843,18 @@ impl<'a> Machine<'a> {
     /// any name a program can write.
     fn accessor_key(part:&str)->&'static str {
         match part {"property.fget"=>"\0fget","property.fset"=>"\0fset","property.fdel"=>"\0fdel","doc"=>"\0doc",_=>"\0name"}
+    }
+    /// Whether a property subclass can keep a docstring on the thing
+    /// itself: a class laying out slots keeps one only where a slot
+    /// names it, and the property blueprint, which keeps none, is no
+    /// namespace for a subclass.
+    fn property_keeps_doc(&self,class:&Rc<Blueprint>)->bool {
+        let Some(property)=&self.property_kind else { return true };
+        if Rc::ptr_eq(class,property){return true;}
+        let Some(declared)=Self::own_entry(class,self.detail("slots")) else { return true };
+        let slots=declared.settled();
+        let matching=|x:&Value| matches!(x,Value::Text(s) if s.as_ref()==self.detail("doc") || s.as_ref()==self.detail("namespace"));
+        match &slots { Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching), v=>matching(v) }
     }
     /// Whether a value stands for the property builtin read as a class:
     /// its word, before anything else was bound to that name.
@@ -858,19 +872,46 @@ impl<'a> Machine<'a> {
         let words=self.table.strings(&format!("ext.stmt.class.detail.{part}"));
         if words.len()!=3{return self.class_unready();}
         let title=Self::kept_accessor(property,"\0name").map(|n|format!(" '{}'",n.bare())).unwrap_or_default();
-        let of=match about {Value::Thing(t)=>t.blueprint().name.clone(),Value::Blueprint(b)=>if self.detail("name").is_empty(){b.name.clone()}else{Self::builder_over(b).map_or_else(||b.name.clone(),|builder|builder.type_names.borrow().as_ref().map_or_else(||builder.name.clone(),|names|names.short.type_text().bare()))},other=>other.bare()};
+        let of=match about {Value::Thing(t)=>{ let b=t.blueprint(); let shown=b.type_names.borrow().as_ref().map_or_else(||b.name.clone(),|names|names.full.bare()); shown },Value::Blueprint(b)=>if self.detail("name").is_empty(){b.name.clone()}else{Self::builder_over(b).map_or_else(||b.name.clone(),|builder|builder.type_names.borrow().as_ref().map_or_else(||builder.name.clone(),|names|names.short.type_text().bare()))},other=>other.bare()};
         format!("{}{title}{}{of}{}",words[0],words[1],words[2]).into()
     }
-    /// What a property's kept accessor shows: itself; or, for the first
-    /// string, the one given, else the getter's own.
-    fn accessor_shown(&self,property:&Thing,key:&str)->Value {
-        if let Some(v)=Self::kept_accessor(property,key){return v;}
+    /// What a property's kept accessor shows: itself; or, for a first
+    /// string, the one given, else the getter's own. A name is the one a
+    /// class gave it, else the getter's; whether it is abstract any of
+    /// its accessors says.
+    fn accessor_shown(&mut self,property:&Thing,key:&str)->Res {
+        if let Some(v)=Self::kept_accessor(property,key){return Ok(v);}
         if key=="\0doc" {
             if let Some(Value::Routine(getter)|Value::Bound(getter,_))=Self::kept_accessor(property,"\0fget") {
-                return getter.doc.as_ref().map_or(Value::Nil,|d|Value::text(d));
+                return Ok(getter.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));
             }
+            return Ok(Value::Nil);
         }
-        Value::Nil
+        if key=="\0name" {
+            if let Some((_,held))=property.holds.borrow().iter().find(|(k,_)|k=="\0name") { return Ok(held.clone()); }
+            if let Some(getter)=Self::kept_accessor(property,"\0fget") {
+                let name_word=self.detail("name").to_owned();
+                return match self.read_class_member(getter,&name_word,false) {
+                    Ok(held)=>Ok(held),
+                    Err(escaped) if self.missing_member_escape(&escaped)=>Err("AttributeError: 'property' object has no attribute '__name__'".to_owned().into()),
+                    Err(escaped)=>Err(escaped),
+                };
+            }
+            return Err("AttributeError: 'property' object has no attribute '__name__'".to_owned().into());
+        }
+        if key=="\0abstract" {
+            for part in ["\0fget","\0fset","\0fdel"] {
+                let Some(accessor)=Self::kept_accessor(property,part) else { continue };
+                let held=match self.read_class_member(accessor,"__isabstractmethod__",false) {
+                    Ok(held)=>held,
+                    Err(escaped) if self.missing_member_escape(&escaped)=>continue,
+                    Err(escaped)=>return Err(escaped),
+                };
+                if self.object_truth(&held)? { return Ok(Value::Flag(true)); }
+            }
+            return Ok(Value::Flag(false));
+        }
+        Ok(Value::Nil)
     }
     /// The workings of the property blueprint. Each is handed the
     /// property first, then whatever the program gave.
@@ -901,10 +942,25 @@ impl<'a> Machine<'a> {
             53|54|55=>{
                 let [accessor]=rest else{return Err(self.class_unready())};
                 let key=match tag {53=>"\0fget",54=>"\0fset",_=>"\0fdel"};
-                let mut holds:Vec<(String,Value)>=property.holds.borrow().iter().filter(|(k,_)|k!=key&&k!="\0name").cloned().collect();
-                holds.push((key.to_owned(),accessor.clone()));
-                self.made+=1;
-                Ok(Value::Thing(Rc::new(Thing{reclassified: RefCell::new(None), of:property.blueprint().clone(),holds:RefCell::new(holds),turn:self.made})))
+                let kept=|part:&str| if part==key { Some(accessor.clone()) } else { Self::kept_accessor(&property,part) };
+                // A copy is built the way any property is, from the
+                // accessors and the docstring the reference carries over:
+                // where the docstring came from a getter it is picked
+                // again from the accessor the copy is made with.
+                let carried=property.holds.borrow().iter().find(|(k,_)|k=="\0getterdoc").map(|(_,v)|matches!(v,Value::Flag(true))).unwrap_or(false);
+                let doc=if carried && kept("\0fget").is_some() { Value::Nil } else {
+                    property.holds.borrow().iter().find(|(k,_)|k=="\0doc").map(|(_,v)|v.clone()).unwrap_or(Value::Nil)
+                };
+                // The copy is made by calling the class, as the reference
+                // does, so a subclass's own making has its say.
+                let made=self.make_instance(property.blueprint().clone(),vec![kept("\0fget").unwrap_or(Value::Nil),kept("\0fset").unwrap_or(Value::Nil),kept("\0fdel").unwrap_or(Value::Nil),doc])?;
+                if let Value::Thing(thing)=&made {
+                    let class=thing.blueprint();
+                    if self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(&class,known) || class.ancestry.iter().any(|b| Rc::ptr_eq(b,known))) {
+                        if let Some(name)=Self::kept_accessor(&property,"\0name") { Self::change_entry(&mut thing.holds.borrow_mut(),"\0name",Some(name)); }
+                    }
+                }
+                Ok(made)
             }
             56=>{
                 let parts=["property.fget","property.fset","property.fdel","property.doc"];
@@ -916,13 +972,43 @@ impl<'a> Machine<'a> {
                     let Some(i)=parts.iter().position(|p|self.detail(p)==key) else{return Err(self.argument_fault("ext.syntax.call.amiss.unknown",Some(&key)).into())};
                     taken[i]=v;
                 }
-                let mut holds=property.holds.borrow_mut();
-                for (key,v) in ["\0fget","\0fset","\0fdel","\0doc"].into_iter().zip(taken){holds.push((key.to_owned(),v));}
+                // A docstring given is kept as it is; where none was given
+                // the getter's own is taken, and that it came from there is
+                // remembered so a later copy takes the new getter's.
+                let mut doc=taken[3].clone();
+                let mut getter_doc=false;
+                if matches!(doc,Value::Nil) && !matches!(taken[0],Value::Nil) {
+                    let doc_word=self.detail("doc").to_owned();
+                    if let Ok(found)=self.read_class_member(taken[0].clone(),&doc_word,false) {
+                        if !matches!(found.settled(),Value::Nil) { doc=found; getter_doc=true; }
+                    }
+                }
+                let plain=self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(known,&property.blueprint()));
+                {
+                    let mut holds=property.holds.borrow_mut();
+                    holds.retain(|(k,_)| k!="\0name" && k!="\0doc" && k!="\0getterdoc" && k!="__doc__");
+                    for (key,v) in ["\0fget","\0fset","\0fdel"].into_iter().zip(taken.iter().take(3)) { holds.push((key.to_owned(),v.clone())); }
+                    holds.push(("\0doc".to_owned(),doc.clone()));
+                    holds.push(("\0getterdoc".to_owned(),Value::Flag(getter_doc)));
+                }
+                if !plain {
+                    // A subclass keeps its docstring on the thing itself, as
+                    // the reference does, so the class's own __doc__ does not
+                    // shadow it. A class with nowhere to keep one drops an
+                    // ordinary docstring and refuses one that came from a
+                    // getter, which is the reference's own exception.
+                    let doc_word=self.detail("doc").to_owned();
+                    if self.property_keeps_doc(&property.blueprint()) {
+                        self.alter_class_member(Value::Thing(property.clone()),&doc_word,Some(doc),false)?;
+                    } else if getter_doc {
+                        return Err("AttributeError: readonly attribute".to_owned().into());
+                    }
+                }
                 Ok(Value::Nil)
             }
             57=>{
-                let [_,name]=rest else{return Err(self.class_unready())};
-                Self::change_entry(&mut property.holds.borrow_mut(),"\0name",Some(name.clone()));
+                if rest.len()!=2 { return Err(format!("TypeError: __set_name__() takes 2 positional arguments but {} were given",rest.len()).into()); }
+                Self::change_entry(&mut property.holds.borrow_mut(),"\0name",Some(rest[1].clone()));
                 Ok(Value::Nil)
             }
             _=>Err(self.class_unready()),
@@ -1927,7 +2013,7 @@ impl<'a> Machine<'a> {
             // property, is tied to it; a kept accessor reads at once.
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(36 | 50..=57 | 78..=79,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(58,items)=>return Ok(match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>entry}),
+            Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
         // A member whose blueprint furnishes a reader answers through it,
@@ -2737,7 +2823,12 @@ impl<'a> Machine<'a> {
                 if key=="__getformat__" && word.as_ref()=="float" {
                     return Ok(Value::Member(Rc::new(value.clone()), "float_getformat".to_owned()));
                 }
-                if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
+                if key==self.detail("allocate"){
+                    // Making a property outright allocates the subclass it
+                    // is handed, the way the root's making does.
+                    if *op == Prim::ClassWork(11) { return Ok(Self::wrap(1, Vec::new())); }
+                    return Ok(Self::wrap(14,vec![Value::text(word)]));
+                }
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 // The flags of the kind read as a class: a native kind
                 // is never sealed and its values are no collector's,
@@ -3577,10 +3668,17 @@ impl<'a> Machine<'a> {
                         // not, as CPython keeps them read-only.
                         Value::Wrapped(58,parts)=>{
                             let place=parts.first().map_or(String::new(),|p|p.bare());
-                            if place!="\0doc"{return Err(self.detail("property.readonly").to_owned().into());}
-                            let mut holds=t.holds.borrow_mut();
-                            Self::change_entry(&mut holds,"\0doc",replacement);
-                            return Ok(Value::Nil);
+                            if place=="\0doc" {
+                                let mut holds=t.holds.borrow_mut();
+                                Self::change_entry(&mut holds,"\0doc",replacement);
+                                return Ok(Value::Nil);
+                            }
+                            if place=="\0name" {
+                                let mut holds=t.holds.borrow_mut();
+                                Self::change_entry(&mut holds,"\0name",replacement);
+                                return Ok(Value::Nil);
+                            }
+                            return Err(self.detail("property.readonly").to_owned().into());
                         }
                         _=>{}
                     }

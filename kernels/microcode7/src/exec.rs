@@ -7072,7 +7072,7 @@ impl<'a> Machine<'a> {
                             Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
                                 return self.read_class_member(values[0].settled(), &values[1].bare(), false);
                             },
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful | Prim::ClassWork(11), _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -8393,7 +8393,7 @@ impl<'a> Machine<'a> {
         })
     }
 
-    fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+    pub(super) fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
         if self.trace_kind.as_ref().map_or(false, |known| Rc::ptr_eq(known, &class)) { return self.traceback_from_parts(args); }
         if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", class.name).into());
@@ -17286,6 +17286,9 @@ impl<'a> Machine<'a> {
                 }
                 n(2)?;
                 if matches!(v[0], Value::OctetKind { .. }) || matches!(v[0], Value::Octets { changeable, .. } if v[1].bare() == "__buffer__" || changeable && v[1].bare() == "__release_buffer__") { return Ok(Value::Flag(true)); }
+                // A kind read as a class answers for its own making, the
+                // way a class does, whatever word spells the kind.
+                if v[1].bare() == self.rules.detail_allocate && matches!(&v[0], Value::Intrinsic(op, _) if op.names_a_kind()) { return Ok(Value::Flag(true)); }
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
                 if self.integer_attribute(&v[0], &word).is_some()
