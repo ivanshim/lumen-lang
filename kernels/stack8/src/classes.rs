@@ -239,14 +239,6 @@ impl<'a> Engine<'a> {
             if matches!(args[1], Value::Null) { return Err("TypeError: instance must not be None".into()); }
             return Ok(Self::adapter(131, args));
         }
-        if word == "module" {
-            if args.is_empty() || args.len() > 2 { return Err("TypeError: module() takes at most 2 arguments".into()); }
-            if !matches!(args[0].contents(), Value::Text(_)) { return Err(format!("TypeError: module() argument 'name' must be str, not {}", args[0].core_kind()).into()); }
-            self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c,
-                fields: RefCell::new(vec![("__name__".into(), args[0].clone()), ("__doc__".into(), args.get(1).cloned().unwrap_or(Value::Null)),
-                    ("__package__".into(), Value::Null), ("__loader__".into(), Value::Null), ("__spec__".into(), Value::Null)]), mark: self.made })));
-        }
         if word == "mappingproxy" {
             let entries = self.call_items(args)?;
             if entries.len() != 1 || entries[0].0.is_some() { return Err("TypeError: mappingproxy() takes exactly one argument".into()); }
@@ -3821,6 +3813,10 @@ impl<'a> Engine<'a> {
     /// own for, named as the reference names that kind. It is made once
     /// and kept, so that two askings answer with the very same class.
     pub(super) fn named_kind(&mut self,value:&Value)->Value {
+        if let Value::Object(instance) = value.contents() {
+            let declared = instance.class_now();
+            if Self::kind_beneath(&declared).as_deref() == Some("module") { return Value::Class(declared); }
+        }
         let word=if matches!(value, Value::Native(Builtin::Text(_), name) if name.contains('.')) { String::from("method_descriptor") } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.module_holding(value) {Some(_)=>String::from("module"),None=>value.core_kind()} };
         // Where the definition spells that very kind, its builtin word
         // is the answer, so that a kind asked for and a kind answered

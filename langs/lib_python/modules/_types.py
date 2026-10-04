@@ -24,14 +24,10 @@ MethodType = type(_MethodSample().method)
 del _MethodSample
 
 
-# A place to hang names on, which is all a module is from here.
-class ModuleType:
-    def __init__(self, name, doc=None):
-        self.__name__ = name
-        self.__doc__ = doc
-
-    def __repr__(self):
-        return "<module '" + str(getattr(self, '__name__', '?')) + "'>"
+# Module construction and identity use the interpreter's native module kind.
+import sys as _sys
+ModuleType = type(_sys)
+del _sys
 
 
 # A reading of a mapping that cannot be written through.

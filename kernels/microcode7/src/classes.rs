@@ -316,15 +316,6 @@ impl<'a> Machine<'a> {
             if matches!(values[1], Value::Nil) { return Err(String::from("TypeError: instance must not be None").into()); }
             return Ok(Self::wrap(132, values));
         }
-        if word == "module" {
-            let (values, named) = self.open_arguments(given)?;
-            if values.is_empty() || values.len() > 2 || !named.is_empty() { return Err(String::from("TypeError: module() takes at most 2 arguments").into()); }
-            if !matches!(values[0].settled(), Value::Text(_)) { return Err(format!("TypeError: module() argument 'name' must be str, not {}", values[0].kind_word()).into()); }
-            let entries = [("__name__", values[0].clone()), ("__doc__", values.get(1).cloned().unwrap_or(Value::Nil)),
-                ("__package__", Value::Nil), ("__loader__", Value::Nil), ("__spec__", Value::Nil)].into_iter().map(|(name, v)| (name.to_owned(), v)).collect();
-            self.made += 1;
-            return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: class, holds: RefCell::new(entries), turn: self.made })));
-        }
         if word == "mappingproxy" {
             let (positional, keywords) = self.open_arguments(given)?;
             if positional.len() != 1 || !keywords.is_empty() { return Err(String::from("TypeError: mappingproxy() takes exactly one argument").into()); }
@@ -4125,6 +4116,14 @@ impl<'a> Machine<'a> {
     /// own for, named as the reference names that kind. It is built
     /// once and kept, so two askings answer with the very same one.
     pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
+        let concrete_module = match value.settled() {
+            Value::Thing(object) => {
+                let owner = object.blueprint();
+                (Self::native_beneath(&owner).as_deref() == Some("module")).then_some(owner)
+            }
+            _ => None,
+        };
+        if let Some(owner) = concrete_module { return Value::Blueprint(owner); }
         let word=if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
