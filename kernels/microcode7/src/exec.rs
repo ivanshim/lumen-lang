@@ -9035,6 +9035,11 @@ impl<'a> Machine<'a> {
         let bare = Rc::new(Vec::new());
         let kept = place.replace(Value::Vector(Rc::clone(&bare).into()));
         let outcome = self.ordered_members(&kept, &keywords);
+        // A key thing let go while the row is put in order bids its
+        // farewell now, as the reference does when the key is freed:
+        // the row stands aside, so a farewell that writes to it is
+        // seen as meddling once the ordering is done.
+        self.attend_to_gone();
         let meddled = !matches!(&*place.borrow(), Value::Vector(row) if Rc::ptr_eq(row, &bare));
         let ordered = match outcome { Err(away) => { place.replace(kept); return Err(away); }, Ok(row) => row };
         place.replace(Value::Vector(crate::tuples::Sequence::plain(ordered)));
@@ -14578,9 +14583,21 @@ impl<'a> Machine<'a> {
     }
 
     fn weighed_member_wise(&mut self, op: Prim, one: &Value, two: &Value) -> Result<Option<Value>, String> {
+        // A thing standing on a native row or tuple, whose blueprint
+        // appointed no ordering of its own, is weighed by the members
+        // of the worth beneath it: that worth is what the plain road
+        // would have read, and each pair among its members is asked in
+        // turn. Anything else is handed on as it came.
+        let beneath = |value: &Value| -> Value {
+            match Self::underlying(value) {
+                Some(worth) if matches!(worth.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_)) => worth.settled(),
+                _ => value.clone(),
+            }
+        };
+        let (first, second) = (beneath(one), beneath(two));
         let members = |value: &Value| match value { Value::Vector(held) | Value::Tuple(held) | Value::Row(held) => Some(held.clone()), _ => None };
-        let rows = matches!(one, Value::Vector(_)) == matches!(two, Value::Vector(_));
-        if let (Some(left), Some(right), true) = (members(one), members(two), rows) {
+        let rows = matches!(first, Value::Vector(_)) == matches!(second, Value::Vector(_));
+        if let (Some(left), Some(right), true) = (members(&first), members(&second), rows) {
             for place in 0..left.len().min(right.len()) {
                 if contained_equal(&left[place], &right[place]) { continue; }
                 let same = self.prim(Prim::Eq, "", &[left[place].clone(), right[place].clone()])?;
@@ -14591,7 +14608,7 @@ impl<'a> Machine<'a> {
             let settled = match op { Prim::Lt => rank.is_lt(), Prim::Le => rank.is_le(), Prim::Gt => rank.is_gt(), _ => rank.is_ge() };
             return Ok(Some(Value::Flag(settled)));
         }
-        if matches!(one, Value::Thing(_)) || matches!(two, Value::Thing(_)) {
+        if matches!(first, Value::Thing(_)) || matches!(second, Value::Thing(_)) {
             return Err(self.unordered_complaint(op, one, two));
         }
         Ok(None)

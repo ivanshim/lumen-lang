@@ -15081,6 +15081,11 @@ impl<'a> Engine<'a> {
             let vacant = Rc::new(Vec::new());
             let held = cell.replace(Value::Array(Rc::clone(&vacant).into()));
             let outcome = self.order_values(&held, &named);
+            // A key object let go while the row is put in order runs its
+            // last words now, as the reference does when the key is
+            // freed: the row stands aside, so a last word that writes to
+            // it is seen as meddling once the ordering is done.
+            self.settle_departed();
             let meddled = !matches!(&*cell.borrow(), Value::Array(row) if Rc::ptr_eq(row, &vacant));
             match outcome {
                 Err(told) => { *cell.borrow_mut() = held; return Err(told); }
