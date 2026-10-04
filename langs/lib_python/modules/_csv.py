@@ -451,22 +451,39 @@ class Writer:
                 raise Error('empty field must be quoted if delimiter is a '
                             'space and skipinitialspace is true')
             quoted = True
-        if chars and type(chars) is str:
-            plain = True
-            for stop in (d.delimiter, d.escapechar, d.quotechar, '\n', '\r') + tuple(d.lineterminator):
-                if stop is not None and chars.find(stop) >= 0:
-                    plain = False
-                    break
-            if plain:
-                if self._num_fields:
-                    self._rec.append(d.delimiter)
-                if quoted:
-                    self._rec.append(d.quotechar)
-                self._rec.append(chars)
-                if quoted:
-                    self._rec.append(d.quotechar)
-                self._num_fields += 1
-                return
+        if type(chars) is str:
+            replacements = {}
+            for c in (d.delimiter, d.escapechar, d.quotechar, '\n', '\r') + tuple(d.lineterminator):
+                if c is None or ord(c) in replacements or chars.find(c) < 0:
+                    continue
+                if d.quoting == QUOTE_NONE:
+                    want_escape = True
+                elif c == d.quotechar:
+                    want_escape = not d.doublequote
+                    if d.doublequote:
+                        quoted = True
+                elif c == d.escapechar:
+                    want_escape = True
+                else:
+                    want_escape = False
+                    quoted = True
+                if want_escape:
+                    if d.escapechar is None:
+                        raise Error('need to escape, but no escapechar set')
+                    replacements[ord(c)] = d.escapechar + c
+                elif c == d.quotechar and d.doublequote:
+                    replacements[ord(c)] = c + c
+                else:
+                    replacements[ord(c)] = c
+            if self._num_fields:
+                self._rec.append(d.delimiter)
+            if quoted:
+                self._rec.append(d.quotechar)
+            self._rec.append(chars.translate(replacements) if replacements else chars)
+            if quoted:
+                self._rec.append(d.quotechar)
+            self._num_fields += 1
+            return
         for c in chars:
             if c == d.delimiter or c == d.escapechar or c == d.quotechar or \
                     c == '\n' or c == '\r' or c in d.lineterminator:
