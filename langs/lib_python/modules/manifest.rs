@@ -131,9 +131,17 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("unittest", include_str!("unittest.py"), "unittest/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("_markupbase", include_str!("_markupbase.py"), "_markupbase.py"),
+    ("html", include_str!("html/__init__.py"), "html/__init__.py"),
+    ("html.entities", include_str!("html/entities.py"), "html/entities.py"),
+    ("html.parser", include_str!("html/parser.py"), "html/parser.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.
 pub static MODULE_ALIASES: &[(&str, &str)] = &[
     ("os.path", "path"),
+    ("_markupbase", include_str!("_markupbase.py"), "_markupbase.py"),
+    ("html", include_str!("html/__init__.py"), "html/__init__.py"),
+    ("html.entities", include_str!("html/entities.py"), "html/entities.py"),
+    ("html.parser", include_str!("html/parser.py"), "html/parser.py"),
 ];
