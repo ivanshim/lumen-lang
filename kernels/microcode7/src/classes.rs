@@ -2644,7 +2644,7 @@ impl<'a> Machine<'a> {
         if let Value::Backtrace(link) = &value {
             let names = self.table.strings("ext.builtin.exceptions.traceback");
             if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location as i64)); }
-            if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.clone()); }
+            if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.borrow().clone()); }
             if names.get(3).map_or(false, |n| n == key) { return Ok(Value::Thing(link.activation.clone())); }
             if names.get(26).map_or(false, |n| n == key) { return Ok(Value::Small(link.instruction)); }
             for (index, offset) in [(16, link.extent.map_or(Some(link.location), |x| Some(x.2))), (17, link.extent.map(|x| x.1)), (18, link.extent.map(|x| x.3))] {
@@ -3399,6 +3399,21 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if let Value::Backtrace(link) = &subject {
+            if self.table.strings("ext.builtin.exceptions.traceback").get(2).map_or(false, |n| n == key) {
+                return match replacement {
+                    None => Err(format!("TypeError: can't delete {key} attribute").into()),
+                    Some(Value::Nil) => { *link.following.borrow_mut() = Value::Nil; Ok(Value::Nil) }
+                    Some(fresh @ Value::Backtrace(_)) => {
+                        if Self::trace_reaches(&fresh, link) { return Err("ValueError: traceback loop detected".to_owned().into()); }
+                        *link.following.borrow_mut() = fresh;
+                        Ok(Value::Nil)
+                    }
+                    Some(other) => Err(format!("TypeError: expected traceback object, got '{}'", other.settled().kind_word()).into()),
+                };
+            }
+            return Err(format!("AttributeError: 'traceback' object attribute '{key}' is read-only").into());
+        }
         if let Value::Thing(object) = &subject {
             if let Some(kind) = Self::native_word(&object.blueprint()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if key == "__name__" || kind == "ParamSpec" && key == "__bound__" { return Err(String::from("AttributeError: readonly attribute").into()); }

@@ -109,6 +109,9 @@ pub struct Engine<'a> {
     class_maker: Option<Rc<Class>>,
     /// The class of properties, once a program has asked for one.
     property_class: Option<Rc<Class>>,
+    /// The class standing for a running traceback, made once, so that
+    /// `type(tb)` answers the selfsame class on every asking.
+    traceback_class: Option<Rc<Class>>,
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
@@ -1220,6 +1223,16 @@ impl<'a> Engine<'a> {
     fn prepare_raised(&mut self, value: Value) -> Flow<Value> {
         if let Value::Class(class) = value {
             if self.exception_class(&class) {
+                // A class that writes its own making is made through it, the
+                // way the reference makes any class, and what it hands back
+                // must still be an exception: a stand-in is refused.
+                if let Some(new) = self.class_value(&class, self.class_word("allocate")) {
+                    let made = self.class_apply(new, vec![Value::Class(class.clone())])?;
+                    if matches!(&made, Value::Object(object) if self.exception_class(&object.class_now())) {
+                        return Ok(made);
+                    }
+                    return Err(format!("TypeError: calling <class '{}'> should have returned an instance of BaseException, not <class '{}'>", class.name, made.core_kind()).into());
+                }
                 self.data.push(Value::Class(class));
                 self.perform(&Action::Make, 1)?;
                 return self.drop_top().map_err(Fault::from);
@@ -1262,7 +1275,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: None, class_maker: None, property_class: None, traceback_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             kind_directory_cache: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
@@ -5052,7 +5065,7 @@ impl<'a> Engine<'a> {
         if matches!(prior, Value::Null) {
             crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
         }
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame, next: prior }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame, next: RefCell::new(prior) }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -10807,7 +10820,7 @@ impl<'a> Engine<'a> {
                 Value::Trace(trace) => {
                     match self.lang.trace_fields.iter().position(|field| field == name.as_ref()) {
                         Some(1) => Value::Small(trace.line as i64),
-                        Some(2) => trace.next.clone(),
+                        Some(2) => trace.next.borrow().clone(),
                         Some(3) => Value::Object(trace.frame.clone()),
                         Some(26) => Value::Small(trace.instruction),
                         Some(16) => Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64),
@@ -11432,11 +11445,16 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let (Value::Object(object), Some(cause)) = (&value, cause) {
-                    // A cause of nothing is allowed, and hushes the context.
-                    let cause = if matches!(cause, Value::Null) { cause } else { self.prepare_raised(cause)? };
-                    if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class_now())) {
-                        return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
-                    }
+                    // A cause of nothing is allowed, and hushes the context;
+                    // a cause that is anything else must itself be an
+                    // exception, and the reference says so in its own words.
+                    let cause = if matches!(cause, Value::Null) { cause } else {
+                        match &cause {
+                            Value::Object(o) if self.exception_class(&o.class_now()) => cause,
+                            Value::Class(c) if self.exception_class(c) => self.prepare_raised(cause)?,
+                            _ => return Err("TypeError: exception causes must derive from BaseException".into()),
+                        }
+                    };
                     // A stated cause, nothing included, hides the context
                     // without forgetting it.
                     let mut fields = object.fields.borrow_mut();
@@ -11448,7 +11466,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }
@@ -19675,12 +19693,16 @@ impl<'a> Engine<'a> {
                 if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
                 // A trace is of no kind the core knows either; a language
                 // that names one for it is answered with a class so named.
-                if let (Value::Trace(_), Some(word)) = (&args[0], &self.lang.exception_traceback) {
-                    return Ok(Value::Class(Rc::new(Class {
-                        lineage: Vec::new(), direct: Vec::new(), outline: None, name: word.clone(), base: None,
-                        answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                        constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
-                    })));
+                if let Value::Trace(_) = &args[0] {
+                    if let Some(word) = self.lang.exception_traceback.clone() {
+                        if let Some(known) = &self.traceback_class { return Ok(Value::Class(known.clone())); }
+                        // The traceback kind is one the definition spells no
+                        // builtin word for, so the class of that kind serves,
+                        // made once and kept that `isinstance` finds it.
+                        let class = self.kind_class(&word);
+                        self.traceback_class = Some(class.clone());
+                        return Ok(Value::Class(class));
+                    }
                 }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.

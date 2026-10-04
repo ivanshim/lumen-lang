@@ -800,6 +800,49 @@ impl<'a> Engine<'a> {
         }
         Value::Null
     }
+    /// Whether a traceback, or the chain it leads, comes back around to
+    /// another: assigning such a chain would make a loop the reference
+    /// refuses.
+    fn traceback_reaches(from: &Value, target: &Rc<crate::value::Traceback>) -> bool {
+        let mut here = from.clone();
+        loop {
+            let Value::Trace(trace) = here else { return false };
+            if Rc::ptr_eq(&trace, target) { return true; }
+            here = trace.next.borrow().clone();
+        }
+    }
+    /// A traceback built by hand, as `types.TracebackType` builds one:
+    /// what it follows, the frame it stands in, and where in that frame.
+    fn traceback_from_parts(&mut self, args: Vec<Value>) -> Flow<Value> {
+        let given = self.call_items(args)?;
+        if given.iter().any(|(key, _)| key.is_some()) {
+            return Err("TypeError: traceback() takes no keyword arguments".into());
+        }
+        let plain: Vec<Value> = given.into_iter().map(|(_, value)| value).collect();
+        let [next, frame, lasti, lineno] = plain.as_slice() else {
+            return Err(format!("TypeError: traceback() takes exactly 4 arguments ({} given)", plain.len()).into());
+        };
+        let link = match next.contents() {
+            Value::Null => Value::Null,
+            Value::Trace(_) => next.clone(),
+            other => return Err(format!("TypeError: expected traceback object or None, got '{}'", other.core_kind()).into()),
+        };
+        let Value::Object(holder) = frame.contents() else {
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(frame)).into());
+        };
+        if self.frame_class.as_ref().map_or(false, |kind| !Rc::ptr_eq(&holder.class_now(), kind)) {
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(frame)).into());
+        }
+        let instruction = match lasti.contents() {
+            Value::Small(n) => n,
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
+        };
+        let line = match lineno.contents() {
+            Value::Small(n) => n as u32,
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
+        };
+        Ok(Value::Trace(Rc::new(crate::value::Traceback { instruction, location: None, line, frame: holder.clone(), next: RefCell::new(link) })))
+    }
     /// The hook a class member answers the protocol with, where the
     /// member is a thing whose class furnishes one.
     fn descriptor_hook(&self, member: &Value, part: &str) -> Option<Value> {
@@ -1546,6 +1589,7 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if self.traceback_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &c)) { return self.traceback_from_parts(args); }
         let allocation = self.class_value(&c,self.class_word("allocate")).filter(|value| {
             !matches!(value, Value::Adapter(entry) if entry.0 == 14)
                 || Self::own_class_value(&c, self.class_word("allocate")).is_some()
@@ -2050,7 +2094,7 @@ impl<'a> Engine<'a> {
         if let Value::Trace(trace) = &subject {
             return match self.lang.trace_fields.iter().position(|key| key == name) {
                 Some(1) => Ok(Value::Small(trace.line as i64)),
-                Some(2) => Ok(trace.next.clone()),
+                Some(2) => Ok(trace.next.borrow().clone()),
                 Some(3) => Ok(Value::Object(trace.frame.clone())),
                 Some(26) => Ok(Value::Small(trace.instruction)),
                 Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64)),
@@ -3039,6 +3083,21 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if let Value::Trace(trace) = &subject {
+            if self.lang.trace_fields.get(2).map(String::as_str) == Some(name) {
+                return match value {
+                    None => Err(format!("TypeError: can't delete {name} attribute").into()),
+                    Some(Value::Null) => { *trace.next.borrow_mut() = Value::Null; Ok(Value::Null) }
+                    Some(fresh @ Value::Trace(_)) => {
+                        if Self::traceback_reaches(&fresh, trace) { return Err("ValueError: traceback loop detected".into()); }
+                        *trace.next.borrow_mut() = fresh;
+                        Ok(Value::Null)
+                    }
+                    Some(other) => Err(format!("TypeError: expected traceback object, got '{}'", other.core_kind()).into()),
+                };
+            }
+            return Err("AttributeError: readonly attribute".into());
+        }
         if let Value::Object(instance) = &subject {
             if let Some(kind) = Self::own_kind(&instance.class_now()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if name == "__name__" || (kind == "ParamSpec" && name == "__bound__") { return Err("AttributeError: readonly attribute".into()); }

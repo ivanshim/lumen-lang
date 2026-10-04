@@ -518,6 +518,9 @@ pub struct Machine<'a> {
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
     property_kind: Option<Rc<Blueprint>>,
+    /// The blueprint standing for a running traceback, made once, so
+    /// that `type(tb)` answers the selfsame class on every asking.
+    trace_kind: Option<Rc<Blueprint>>,
     /// The blueprint every metaclass is built on, made when first asked for.
     builder_kind: Option<Rc<Blueprint>>,
     /// The blueprints standing for native kinds, one for each word a class has stood on.
@@ -1473,6 +1476,18 @@ impl<'a> Machine<'a> {
     fn raise_class(&mut self, value: Value, frame: &Rc<Env>) -> Res {
         match value {
             Value::Blueprint(kind) if self.is_fault_kind(&kind) => {
+                // A kind that writes its own making is made through it, the
+                // way the reference makes any class, and what it hands back
+                // must still be a fault: a stand-in is refused.
+                if self.allocation_changed(&kind) {
+                    let key = self.detail("allocate");
+                    let Some(new) = self.inherited_entry(&kind, &key) else { unreachable!() };
+                    let made = self.apply_class_member(new, vec![Value::Blueprint(kind.clone())])?;
+                    if matches!(made.settled(), Value::Thing(object) if self.is_fault_kind(&object.blueprint())) {
+                        return Ok(made);
+                    }
+                    return Err(format!("TypeError: calling <class '{}'> should have returned an instance of BaseException, not <class '{}'>", kind.name, made.settled().kind_word()).into());
+                }
                 let call = Form::Apply(Callee::Prim(Prim::Spawn, Rc::from("")), vec![Form::Const(Value::Blueprint(kind))]);
                 self.value_of(&call, frame)
             }
@@ -1619,7 +1634,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, trace_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()),
             descriptor_files: std::collections::BTreeMap::new(),
@@ -5176,7 +5191,7 @@ impl<'a> Machine<'a> {
         if matches!(following, Value::Nil) {
             crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(raised)));
         }
-        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation), extent: self.extent, location: self.row, activation, following };
+        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation), extent: self.extent, location: self.row, activation, following: RefCell::new(following) };
         let mut fields = raised.holds.borrow_mut();
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
@@ -6477,8 +6492,16 @@ impl<'a> Machine<'a> {
                         }
                     }
                     if let Some(cause) = values.next() {
-                        // A cause of nil is allowed, and hushes the context.
-                        let cause = if matches!(cause, Value::Nil) { cause } else { self.raise_class(cause, frame)? };
+                        // A cause of nil is allowed, and hushes the context;
+                        // a cause that is anything else must itself be a
+                        // fault, and the reference says so in its own words.
+                        let cause = if matches!(cause, Value::Nil) { cause } else {
+                            match &cause {
+                                Value::Thing(object) if self.is_fault_kind(&object.blueprint()) => cause,
+                                Value::Blueprint(kind) if self.is_fault_kind(kind) => self.raise_class(cause, frame)?,
+                                _ => return Err("TypeError: exception causes must derive from BaseException".to_owned().into()),
+                            }
+                        };
                         match &cause {
                             Value::Nil => {},
                             Value::Thing(object) if self.is_fault_kind(&object.blueprint()) => {},
@@ -8371,6 +8394,7 @@ impl<'a> Machine<'a> {
     }
 
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if self.trace_kind.as_ref().map_or(false, |known| Rc::ptr_eq(known, &class)) { return self.traceback_from_parts(args); }
         if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", class.name).into());
         }
@@ -8402,6 +8426,43 @@ impl<'a> Machine<'a> {
         Ok(Value::Thing(object))
     }
 
+    /// Whether a traceback, or the chain it leads, comes back around to
+    /// another: assigning such a chain would make a loop the reference
+    /// refuses.
+    fn trace_reaches(from: &Value, target: &Rc<crate::data::TraceLink>) -> bool {
+        let mut here = from.clone();
+        loop {
+            let Value::Backtrace(link) = here else { return false };
+            if Rc::ptr_eq(&link, target) { return true; }
+            here = link.following.borrow().clone();
+        }
+    }
+    /// A traceback built by hand, as `types.TracebackType` builds one:
+    /// what it follows, the frame it stands in, and where in that frame.
+    fn traceback_from_parts(&mut self, args: Vec<Value>) -> Res<Value> {
+        let (plain, named) = self.open_arguments(args)?;
+        if !named.is_empty() { return Err("TypeError: traceback() takes no keyword arguments".to_owned().into()); }
+        let [next, frame, lasti, lineno] = plain.as_slice() else {
+            return Err(format!("TypeError: traceback() takes exactly 4 arguments ({} given)", plain.len()).into());
+        };
+        let following = match next.settled() {
+            Value::Nil => Value::Nil,
+            Value::Backtrace(_) => next.clone(),
+            other => return Err(format!("TypeError: expected traceback object or None, got '{}'", other.kind_word()).into()),
+        };
+        let Value::Thing(holder) = frame.settled() else {
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", frame.settled().kind_word()).into());
+        };
+        let instruction = match lasti.settled() {
+            Value::Small(n) => n,
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word()).into()),
+        };
+        let location = match lineno.settled() {
+            Value::Small(n) => n as u32,
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word()).into()),
+        };
+        Ok(Value::Backtrace(Rc::new(crate::data::TraceLink { instruction, extent: None, location, activation: holder.clone(), following: RefCell::new(following) })))
+    }
     fn paired_call(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
         if !self.spelled_stands {
             return None;
@@ -14505,7 +14566,7 @@ impl<'a> Machine<'a> {
                 if let Some(hook) = hook { return Ok(Some(hook)); }
                 return match at {
                     Some(1) => Ok(Some(Value::Small(link.location as i64))),
-                    Some(2) => Ok(Some(link.following.clone())),
+                    Some(2) => Ok(Some(link.following.borrow().clone())),
                     Some(3) => Ok(Some(Value::Thing(link.activation.clone()))),
                     Some(26) => Ok(Some(Value::Small(link.instruction))),
                     Some(16) => Ok(Some(Value::Small(link.extent.map_or(link.location, |x| x.2) as i64))),
@@ -20218,12 +20279,16 @@ impl<'a> Machine<'a> {
                 if let Value::Octets { changeable, .. } = &v[0] { return Ok(self.octet_type(*changeable)); }
                 // A trace is of no kind the core knows either; where the
                 // table names one, a blueprint of that name is the answer.
-                if let (Value::Backtrace(_), Some(word)) = (&v[0], self.table.single("ext.builtin.exceptions.traceback")) {
-                    return Ok(Value::Blueprint(Rc::new(Blueprint {
-                        ancestry: vec![], parents: vec![], presentation: None, name: word.to_string(),
-                        fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
-                        shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-                    })));
+                if matches!(&v[0], Value::Backtrace(_)) {
+                    if let Some(word) = self.table.single("ext.builtin.exceptions.traceback").map(str::to_owned) {
+                        if let Some(known) = &self.trace_kind { return Ok(Value::Blueprint(known.clone())); }
+                        // The traceback kind is one the table spells no
+                        // intrinsic word for, so the blueprint of that kind
+                        // serves, made once that `isinstance` finds it.
+                        let kind = self.native_kind(&word);
+                        self.trace_kind = Some(kind.clone());
+                        return Ok(Value::Blueprint(kind));
+                    }
                 }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.

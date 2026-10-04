@@ -295,7 +295,7 @@ pub struct Traceback {
     pub location: Option<(u32, u32, u32, u32)>,
     pub line: u32,
     pub frame: Rc<Instance>,
-    pub next: Value,
+    pub next: RefCell<Value>,
 }
 
 #[derive(Debug)]
