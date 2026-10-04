@@ -3733,21 +3733,20 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                if let Value::Object(thing) = &one {
-                    let class = thing.class_now();
-                    if Self::kind_beneath(&class).as_deref() == Some("module") {
-                        if let Some(value) = Self::own_class_value(&class, self.class_word("namespace")) {
-                            if !matches!(value.contents(), Value::Map(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".into()); }
-                        }
-                    }
-                }
                 if let Value::Object(module) = &one {
                     let class=module.class_now();
                     let module_kind=Self::kind_beneath(&class).as_deref() == Some("module");
                     let class_directory=self.lang.class_special.get(75)
                         .and_then(|word| self.class_value(&class,word)).is_some();
                     if (module_kind || self.module_holding(&one).is_some()) && !class_directory {
-                        let entries=self.fields_entries(module);
+                        let namespace_name = self.class_word("namespace").to_string();
+                        let namespace = self.class_get(one.clone(), &namespace_name, false)?;
+                        let stored = Self::worth_of(&namespace).unwrap_or_else(|| namespace.clone()).contents();
+                        let entries = match stored {
+                            Value::Map(rows) => rows.iter().cloned().collect::<Vec<_>>(),
+                            Value::Fields(owner) => self.fields_entries(&owner),
+                            _ => return Err("TypeError: <module>.__dict__ is not a dictionary".into()),
+                        };
                         if let Some(word)=self.lang.class_special.get(75) {
                             if let Some((_,method))=entries.iter().find(|(key,_)| key.plain()==*word) {
                                 let answer=self.class_apply(method.clone(),Vec::new())?;
@@ -3756,10 +3755,9 @@ impl<'a> Engine<'a> {
                                 return Ok(Value::array(ordered));
                             }
                         }
-                        let mut names: Vec<_> = entries.into_iter()
-                            .map(|(key, _)| key.plain()).collect();
-                        names.sort();
-                        return Ok(Value::array(names.iter().map(|name| Value::text(name)).collect()));
+                        let names = entries.into_iter().map(|(key, _)| key).collect();
+                        let ordered = self.steady_order(names, &Value::Null, false).map_err(Fault::Note)?;
+                        return Ok(Value::array(ordered));
                     }
                 }
                 // A thing with a directory method of its own answers with

@@ -4022,21 +4022,20 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            if let Value::Thing(object) = &values[0] {
-                let blueprint = object.blueprint();
-                if Self::native_beneath(&blueprint).as_deref() == Some("module") {
-                    if let Some(dict) = Self::own_entry(&blueprint, self.detail("namespace")) {
-                        if !matches!(dict.settled(), Value::Dict(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()); }
-                    }
-                }
-            }
             if let Value::Thing(module) = &values[0] {
                 let blueprint=module.blueprint();
                 let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module");
                 let class_directory=self.table.strings("ext.stmt.class.special").get(75)
                     .and_then(|word| self.inherited_entry(&blueprint,word)).is_some();
                 if (module_kind || self.namespace_holding(&values[0]).is_some()) && !class_directory {
-                    let entries=self.attribute_entries(module);
+                    let namespace_key = self.detail("namespace").to_owned();
+                    let dictionary = self.read_class_member(values[0].clone(), &namespace_key, false)?;
+                    let map = Self::underlying(&dictionary).unwrap_or(dictionary).settled();
+                    let entries = match map {
+                        Value::Attributes(owner) => self.attribute_entries(&owner),
+                        Value::Dict(pairs) => pairs.iter().map(|entry| (entry.0.clone(), entry.1.clone())).collect(),
+                        _ => return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()),
+                    };
                     if let Some(word)=self.table.strings("ext.stmt.class.special").get(75) {
                         if let Some((_,method))=entries.iter().find(|(key,_)| key.bare()==*word) {
                             let answer=self.apply_class_member(method.clone(),Vec::new())?;
@@ -4045,10 +4044,9 @@ impl<'a> Machine<'a> {
                             return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                         }
                     }
-                    let mut names: Vec<_> = entries.into_iter()
-                        .map(|(key, _)| key.bare()).collect();
-                    names.sort();
-                    return Ok(Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|name| Value::text(name)).collect())));
+                    let keys = entries.into_iter().map(|entry| entry.0).collect();
+                    let ordered = self.arranged(keys, &Value::Nil, false).map_err(Escape::from)?;
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                 }
             }
             // A thing with a directory method of its own answers with it,
