@@ -26,6 +26,10 @@ series is retained, in a window of two series; only 3.14 is registered today.
 The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. The embedded runtime support
 modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
+The suite also holds `test_ordered_dict.py` and `test_defaultdict.py`,
+copied byte for byte from `v3.14.8`; the support they import
+(`test/mapping_tests.py` and `test/support/import_helper.py`) was already
+present unchanged at that commit.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
