@@ -518,15 +518,28 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
         suites.push((start, stop, class.lexeme.as_str()));
     }
     for (begin, end, owner) in suites {
+        let mut in_pattern = false;
         for offset in begin..end {
-            if input[offset].shape == Shape::Bare {
+            let shape = input[offset].shape;
+            // A case opens a pattern, whose keyword names are not names of
+            // the class and so are never mangled; the guard or the opening
+            // of the case's body closes it.
+            if shape == Shape::Bare && table.spells("ext.stmt.match.case", &input[offset].lexeme) {
+                in_pattern = true;
+            } else if in_pattern && shape == Shape::Bare && table.spells("ext.stmt.match.guard", &input[offset].lexeme) {
+                in_pattern = false;
+            } else if in_pattern && shape == Shape::Sign && table.spells("block.intro", &input[offset].lexeme) {
+                in_pattern = false;
+            }
+            if shape == Shape::Bare {
                 // A name the table spells for a builtin is that builtin
                 // in a class body as out of one: the private-name
                 // mangling does not reach it.
                 let word = &input[offset].lexeme;
                 let named = word.starts_with("__") && !word.ends_with("__")
                     && crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
-                if !named {
+                let keyword = in_pattern && input.get(offset + 1).map_or(false, |next| next.shape == Shape::Sign && table.spells("stmt.assign", &next.lexeme));
+                if !named && !keyword {
                     output[offset].lexeme = member_spelling(owner, word);
                 }
             }

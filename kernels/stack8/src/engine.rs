@@ -9271,8 +9271,19 @@ impl<'a> Engine<'a> {
     }
 
     fn key_seen(&mut self, seen: &[Value], key: &Value) -> Res<bool> {
+        // The same keying a map uses decides whether two pattern keys are
+        // one: both sides are put through the hashing, so a program's own
+        // `__hash__` and `__eq__` speak, and an unhashable key is refused.
+        let keyed = self.special_key(key)?;
+        if !matches!(keyed, Value::Hashed(_)) {
+            // A key the keying left as it stands was never asked for a
+            // hash; ask it now, so that an unhashable key is refused as a
+            // set would refuse it rather than compared as a row.
+            self.builtin_call(Builtin::Hash, "hash", vec![(None, key.clone())])?;
+        }
         for old in seen {
-            if self.special_keys_equal(old, key)? { return Ok(true); }
+            let old = self.special_key(old)?;
+            if self.special_keys_equal(&old, &keyed)? { return Ok(true); }
         }
         Ok(false)
     }
@@ -9290,7 +9301,13 @@ impl<'a> Engine<'a> {
                 bound.push((name.clone(), subject.clone()));
                 Ok(true)
             }
-            Pattern::Value(at) => Ok(given[*at].equals(subject)),
+            Pattern::Value(at) => {
+                // A value pattern asks the subject and the value as `==`
+                // does, so a kind answering for its own equality, an
+                // int-derived enum among them, is heard.
+                let told = self.special_dyad(&Action::Eq, &given[*at], subject)?;
+                Ok(self.special_truth(&told)?)
+            }
             Pattern::Alternatives(choices) => {
                 for choice in choices {
                     let mut attempt = Vec::new();
@@ -9373,8 +9390,21 @@ impl<'a> Engine<'a> {
                 // A builtin kind comes as the native value or as the plain
                 // reading of its word; either stands for the whole subject
                 // with a single positional sub-pattern.
-                let builtin_kind = matches!(&kind, Value::Native(..)) || matches!(&kind, Value::Adapter(w) if w.0 == 8)
-                    || matches!(&kind, Value::Class(c) if Self::kind_beneath(c).is_some());
+                // Only the builtin kinds the reference marks as self-matching
+                // take a single positional sub-pattern as the subject itself;
+                // every other class takes none. A class standing on such a
+                // kind keeps the mark, as a subclass does in the reference.
+                let self_kind = {
+                    let word = match &kind {
+                        Value::Native(_, word) => Some(word.to_string()),
+                        Value::Adapter(w) if w.0 == 8 => match &w.1[0] { Value::Text(word) => Some(word.to_string()), _ => None },
+                        Value::ByteKind(mutable, _) => Some(if *mutable { "bytearray".to_string() } else { "bytes".to_string() }),
+                        Value::Class(c) => Self::kind_beneath(c),
+                        _ => None,
+                    };
+                    word.is_some_and(|word| matches!(self.lang.builtins.get(word.as_str()),
+                        Some(Builtin::Bool | Builtin::Bytes(_) | Builtin::Dict | Builtin::AsReal | Builtin::Frozen | Builtin::ToInt | Builtin::List | Builtin::Set | Builtin::ToText | Builtin::Tuple)))
+                };
                 let title = match &kind {
                     Value::Class(c) => c.name.clone(),
                     Value::Native(_, word) => word.to_string(),
@@ -9415,7 +9445,7 @@ impl<'a> Engine<'a> {
                                 if !self.fit_pattern(part, &member, bound, false, given)? { return Ok(false); }
                             }
                         }
-                        None if positional.len() == 1 && builtin_kind => {
+                        None if positional.len() == 1 && self_kind => {
                             if !self.fit_pattern(&positional[0], subject, bound, false, given)? { return Ok(false); }
                         }
                         None => return Err(format!("TypeError: {title}() accepts 0 positional sub-patterns ({} given)", positional.len()).into()),
@@ -9434,8 +9464,13 @@ impl<'a> Engine<'a> {
     /// A member of a class pattern's subject: nothing where the subject
     /// has no such member, which fails the pattern rather than the run.
     fn member_for_pattern(&mut self, subject: &Value, word: &str) -> Flow<Option<Value>> {
-        match self.class_get(subject.clone(), word, false) {
-            Ok(member) => Ok(Some(member)),
+        // A class pattern reads a member as any attribute read does,
+        // through the same road `name.member` takes, so a builtin kind's
+        // own fields -- a number's `real` and `imag` among them -- are
+        // found as well and not only the members a class carries.
+        self.data.push(subject.clone());
+        match self.perform(&Action::Grab(Rc::from(word)), 1) {
+            Ok(()) => Ok(Some(self.drop_top()?)),
             Err(fault) if self.attribute_fault(&fault) => Ok(None),
             Err(fault) => Err(fault),
         }

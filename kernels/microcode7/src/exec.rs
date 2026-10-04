@@ -13740,7 +13740,13 @@ impl<'a> Machine<'a> {
                 };
                 if !equal { return Ok(None); }
             }
-            CaseTest::Worth(place) => { if !given[*place].equals(value) { return Ok(None); } }
+            CaseTest::Worth(place) => {
+                // A value pattern asks the subject and the value as `==`
+                // does, so a kind answering for its own equality, an
+                // int-derived enum among them, is heard.
+                let said = self.prim(Prim::Eq, "", &[given[*place].clone(), value.clone()])?;
+                if !self.object_truth(&said)? { return Ok(None); }
+            }
             CaseTest::AnyOf(choices) => {
                 for next in choices {
                     let answer = self.fit_case(next, value, tuple, given)?;
@@ -13838,7 +13844,21 @@ impl<'a> Machine<'a> {
                 // A native kind arrives as the intrinsic or as the plain
                 // reading of its word; either stands for the whole subject
                 // with one positional test.
-                let native_kind = matches!(class, Value::Intrinsic(..) | Value::Wrapped(8, _));
+                // Only the builtin kinds the reference marks as self-matching
+                // take a single positional test as the subject itself; every
+                // other class takes none. A class standing on such a kind
+                // keeps the mark, as a subclass does in the reference.
+                let self_kind = {
+                    let word = match &class {
+                        Value::Intrinsic(_, word) => Some(word.to_string()),
+                        Value::Wrapped(8, parts) => match &parts[0] { Value::Text(word) => Some(word.to_string()), _ => None },
+                        Value::OctetKind { changeable, .. } => Some(if *changeable { "bytearray".to_string() } else { "bytes".to_string() }),
+                        Value::Blueprint(b) => Self::native_beneath(b),
+                        _ => None,
+                    };
+                    word.is_some_and(|word| matches!(self.table.prims.get(word.as_str()).copied(),
+                        Some(Prim::Truthful | Prim::Octets(0 | 1) | Prim::Dictionary | Prim::AsReal | Prim::Unchanging | Prim::AsInt | Prim::Listed | Prim::Uniques | Prim::AsText | Prim::Tupling)))
+                };
                 let title = match &class {
                     Value::Blueprint(b) => b.name.clone(),
                     Value::Intrinsic(_, word) => word.to_string(),
@@ -13883,7 +13903,7 @@ impl<'a> Machine<'a> {
                                 }
                             }
                         }
-                        None if positional.len() == 1 && native_kind => {
+                        None if positional.len() == 1 && self_kind => {
                             match self.fit_case(&positional[0], value, false, given)? {
                                 None => return Ok(None),
                                 Some(found) => gathered.extend(found),
@@ -13910,7 +13930,18 @@ impl<'a> Machine<'a> {
     fn member_for_case(&mut self, subject: &Value, word: &str) -> Result<Option<Value>, String> {
         match self.read_class_member(subject.clone(), word, false) {
             Ok(found) => Ok(Some(found)),
-            Err(escape) if self.missing_member_escape(&escape) => Ok(None),
+            // A class pattern reads a member as any attribute read does, so
+            // a builtin kind's own fields -- a number's `real` and `imag`
+            // among them -- are found and not only a class's members.
+            Err(escape) if self.missing_member_escape(&escape) => {
+                if crate::members::answers_to(subject, word) {
+                    let says = |kind: &str| self.method_fault(kind);
+                    let unanswered = |value: &Value, name: &str| self.member_missing(value, &self.member_spelling(name));
+                    let found = crate::members::Request { target: subject, operation: word, given: Vec::new(), named: &[], names: self.wording(), complaint: &says, unanswered: &unanswered }.answer()?;
+                    return Ok(Some(found));
+                }
+                Ok(self.attribute(subject, word))
+            }
             Err(Escape::Error(message)) => Err(message),
             Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
         }

@@ -508,16 +508,25 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
         while source.get(begin).map_or(false, |t| t.shape == Shape::LineEnd) { begin += 1; }
         let indented = source.get(begin).map_or(false, |t| t.shape == Shape::Open);
         let mut depth = 0usize;
+        let mut in_pattern = false;
         for i in begin..source.len() {
             match source[i].shape {
                 Shape::Open => depth += 1,
                 Shape::Close => { depth = depth.saturating_sub(1); if depth == 0 { break; } }
                 Shape::LineEnd if !indented => break,
                 Shape::Finish => break,
+                // A case begins a pattern, whose keyword names are not
+                // names of the class and so are never mangled.
+                Shape::Instr if lang.match_cases.contains(&source[i].lexeme) => in_pattern = true,
+                Shape::Instr if in_pattern && lang.match_guards.contains(&source[i].lexeme) => in_pattern = false,
+                Shape::Sign if in_pattern && lang.block_intros.contains(&source[i].lexeme) => in_pattern = false,
                 // A private builtin's spelling is no class's private
                 // name: it keeps its own spelling wherever it is written.
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
-                Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
+                Shape::Instr => {
+                    let keyword = in_pattern && source.get(i + 1).map_or(false, |next| lang.assign_words.contains(&next.lexeme));
+                    if !keyword { result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme); }
+                }
                 _ => {}
             }
         }

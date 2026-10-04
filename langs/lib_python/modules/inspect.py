@@ -111,6 +111,39 @@ def getcoroutinestate(coroutine):
     return CORO_CREATED
 
 
+_static_missing = object()
+
+
+def getattr_static(obj, attr, default=_static_missing):
+    """Read an attribute without letting a property or a descriptor run.
+
+    A protocol's instance check asks whether a thing carries a name, not
+    what making that name would do, so names are read from the thing's own
+    namespace and its class line before a plain read is tried.
+    """
+    found = _static_missing
+    try:
+        held = object.__getattribute__(obj, '__dict__')
+    except (AttributeError, TypeError):
+        held = None
+    if isinstance(held, dict) and attr in held:
+        found = held[attr]
+    if found is _static_missing:
+        for klass in type(obj).__mro__:
+            line = getattr(klass, '__dict__', None)
+            if isinstance(line, dict) and attr in line:
+                found = line[attr]
+                break
+    if found is _static_missing:
+        try:
+            return getattr(obj, attr)
+        except AttributeError:
+            if default is _static_missing:
+                raise
+            return default
+    return found
+
+
 def __getattr__(name):
     if name.startswith('__'):
         raise AttributeError("module 'inspect' has no attribute '" + name + "'")
