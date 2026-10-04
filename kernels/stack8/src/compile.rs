@@ -11526,6 +11526,7 @@ impl<'a> Compiler<'a> {
             let instruction_start = self.mark();
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
+                if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
             } else {
                 self.expr(1)?;

@@ -3609,6 +3609,10 @@ only. The extension labels so far, all from PHP:
   pieces of a complaint, surrounding the absent module or member name.
   `ext.stmt.import.relative.unready` gives the words for a relative path
   where the run has no package context to resolve it against.
+- `ext.builtin.random.words`: a switch enabling the Python Mersenne Twister
+  state-word primitive through the real-math dispatcher. It twists a complete
+  624-word state and tempers words, assembling random floats or requested
+  bit strings while preserving state round trips.
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
@@ -3950,7 +3954,10 @@ only. The extension labels so far, all from PHP:
   `ext.op.rem.format.star.big` gives the argument number and whether its
   starred count was a width or precision.
   `ext.op.rem.format.code` has two pieces around the unknown letter and
-  before the position of its percent mark within the format string.
+  before the position of its percent mark within the format string. With
+  three pieces it includes the hexadecimal code point and the conversion
+  letter position, using a question mark for nonprintable or non-ASCII
+  characters in text formats.
 - `ext.op.rem.format.byte`: the two pieces enclosing the kind of a value
   handed to a mark which shows a row of bytes. A row of bytes on the left
   of the remainder sign fills its marks byte for byte: the marks that
@@ -4600,8 +4607,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BrokenPipeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4635,7 +4641,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
-| `ext.builtin.file.stat` | - | - | `__file_stat` | - | - | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
@@ -4815,6 +4820,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
+| `ext.builtin.random.words` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
 | `ext.builtin.range.members` | - | - | `start` `stop` `step` | - | - | - | - | - | - | - |
@@ -4824,7 +4830,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
-| `ext.builtin.re.shortcut` | - | - | `__re_shortcut` | - | - | - | - | - | - | - |
 | `ext.builtin.rebuild_native` | - | - | `__rebuild_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.reduce_native` | - | - | `__reduce_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
@@ -5495,6 +5500,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.exit` | - | - | `GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.input` | - | - | `.0` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.running` | - | - | `gi_running` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
@@ -5997,3 +6003,8 @@ return no result and retain the adapter's existing Unicode and object paths.
 `ext.builtin.file.stat` supplies Python filesystem metadata from the platform,
 including nanosecond times and symbolic-link selection. The os adapter exposes
 these fields to unchanged source modules such as linecache.
+The Python floating math adapter also supplies compensated `fsum`, consuming its iterable lazily and preserving overflow and infinity errors.
+
+`ext.stmt.yield.input` names the iterator argument of a generator expression.
+It exposes that argument in the frame namespace and requires an iterator when
+the expression starts, including when its code is made into a new function.

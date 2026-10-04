@@ -118,17 +118,15 @@ pub struct Progression {
 }
 
 impl Progression {
-    /// Where the three bounds each sit inside a machine word, the size
-    /// of the walk and every member of it can be reckoned in the wider
-    /// word, sparing the great numbers. A stride of nought is refused
-    /// here and left to the older road, which answers as it always did.
+    /// Use wide integers when the bounds, their difference and a
+    /// nonzero step fit. Other progressions retain the big integer path.
     fn plain_bounds(&self) -> Option<(i128, i128, i128)> {
-        let stride = i128::from(self.stride.to_i64()?);
-        if stride == 0 { return None; }
-        let first = i128::from(self.first.to_i64()?);
-        let limit = i128::from(self.limit.to_i64()?);
-        let span = if stride < 0 { first - limit } else { limit - first };
-        let size = if span > 0 { (span - 1) / stride.abs() + 1 } else { 0 };
+        let first=self.first.to_i128()?;
+        let limit=self.limit.to_i128()?;
+        let stride=self.stride.to_i128()?;
+        let magnitude=stride.checked_abs().filter(|step|*step!=0)?;
+        let span=if stride<0 {first.checked_sub(limit)?} else {limit.checked_sub(first)?};
+        let size=if span<=0 {0} else {(span-1)/magnitude+1};
         Some((first, stride, size))
     }
 
@@ -145,11 +143,12 @@ impl Progression {
         // A loop over a progression asks this at every turn, so the
         // plain answer is given without a great number being made.
         if let Some((first, stride, size)) = self.plain_bounds() {
-            if let Some(asked) = position.to_i64() {
-                let mut offset = i128::from(asked);
-                if offset < 0 { offset += size; }
-                if offset < 0 || offset >= size { return None; }
-                return Some(Value::Small((first + stride * offset) as i64));
+            if let Some(asked)=position.to_i128() {
+                let offset=if asked<0 {asked+size} else {asked};
+                if !(0..size).contains(&offset) {return None;}
+                if let Some(member)=stride.checked_mul(offset).and_then(|jump|first.checked_add(jump)) {
+                    return Some(if let Ok(word)=i64::try_from(member) {Value::Small(word)} else {Value::from_big(BigInt::from(member))});
+                }
             }
         }
         let count = self.count();
@@ -469,6 +468,12 @@ impl MapStore {
     /// names does not move for this.
     pub fn overwrite_at(&mut self, at: usize, value: Value) {
         self.pairs[at].1 = value;
+    }
+
+    /// The pairs themselves, read only: a blueprint that spells its
+    /// slots as a mapping reads each name off a key.
+    pub fn pairs(&self) -> &[(Value, Value)] {
+        &self.pairs
     }
 
     /// Add a key already proven absent and already known by its own
@@ -1542,6 +1547,7 @@ impl Value {
     /// attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
         match kind {
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),

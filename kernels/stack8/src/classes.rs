@@ -164,6 +164,14 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(Self::own_kind)
     }
+
+    /// Whether a class stands on the builtin kind named, through any of
+    /// its line: a class written with several builtin bases stands on
+    /// each of them, and answers to any of them asked after.
+    pub(super) fn kind_among(c: &Class, word: &str) -> bool {
+        std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref))
+            .any(|held| Self::own_kind(held).as_deref() == Some(word))
+    }
     /// Whether the class was sealed against change: a sealed class
     /// refuses writes and removals among its members and cannot stand
     /// as a base. Only the library's own sealing builtin sets the mark,
@@ -575,7 +583,13 @@ impl<'a> Engine<'a> {
         if self.class_word("descriptor.get").is_empty() { return Ok(()); }
         c.weak_storage.set(Some(self.weak_layout(c)));
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else { return Ok(()) };
-        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), single => vec![single] };
+        let named: Vec<Value> = match slots.contents() {
+            Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
+            // A mapping names a slot at each key; what the key holds is
+            // the slot's documentation, which no layout needs.
+            Value::Map(pairs) => pairs.rows().iter().map(|(key, _)| key.clone()).collect(),
+            single => vec![single],
+        };
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
@@ -856,6 +870,10 @@ impl<'a> Engine<'a> {
         } else { self.class_apply(callable, args) }
     }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
+        let callable = match callable {
+            held @ (Value::Bond(_) | Value::Binding(_)) => self.what_it_spells(held),
+            held => held,
+        };
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             Value::Native(operation, name) => { let items = self.call_items(args)?; Ok(self.builtin_call(operation, &name, items)?) }
@@ -968,6 +986,21 @@ impl<'a> Engine<'a> {
                     self.made += 1;
                     Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
                 }
+                2 if !w.1.is_empty() => {
+                    let word=w.1[0].plain();
+                    let Some(Value::Object(object))=args.first().cloned() else { return Err(self.class_refusal()); };
+                    args.remove(0);
+                    let op=*self.lang.builtins.get(&word).ok_or_else(||self.class_refusal())?;
+                    if op == Builtin::List && self.class_value(&object.class_now(),self.class_word("allocate")).is_some_and(|maker| !matches!(maker,Value::Adapter(_))) {
+                        args=self.call_items(args)?.into_iter().filter_map(|(key,value)|key.is_none().then_some(value)).collect();
+                    }
+                    let initialized=self.descriptor_apply(Value::Native(op,Rc::from(word)),args)?;
+                    let mut fields=object.fields.borrow_mut();
+                    let slot=fields.iter_mut().find(|(name,_)|name=="\0worth").ok_or_else(||self.class_refusal())?;
+                    if let Value::Collection(cell,_)|Value::Bond(cell)=&slot.1 { *cell.borrow_mut()=initialized.contents(); }
+                    else { slot.1=initialized.held(false); }
+                    Ok(Value::Null)
+                }
                 2 if matches!(args.first(), Some(Value::Object(o)) if self.exception_class(&o.class_now())) => {
                     let Value::Object(o) = args.remove(0) else { unreachable!() };
                     let name = self.lang.constructor.clone().unwrap_or_default();
@@ -1065,7 +1098,7 @@ impl<'a> Engine<'a> {
                     match result { Ok(value) => Ok(value), Err(message) => Err(self.carried.take().unwrap_or_else(|| message.into())) }
                 }
                 43 => {
-                    if let Some(first) = args.first() { self.iterator(first.clone())?; }
+
                     self.class_apply(w.1[0].clone(), args)
                 }
                 42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
@@ -1105,7 +1138,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                     let Value::Class(c) = kind else { return Err(self.class_refusal()); };
-                    let given = if self.lang.builtins.get(&word) == Some(&Builtin::Set) { Vec::new() } else { args };
+                    let given = if matches!(self.lang.builtins.get(&word), Some(Builtin::Set | Builtin::List | Builtin::Dict)) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
                 }
                 119 if args.len() == 1 => {
@@ -2059,6 +2092,12 @@ impl<'a> Engine<'a> {
                 else { None };
             if let Some(tag) = tag { return Ok(Self::adapter(tag, vec![])); }
         }
+        if matches!(&subject, Value::ByteKind(..)) {
+            if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
+        }
+        if matches!(&subject,Value::Native(op,_) if !Self::kind_builtin(op)) {
+            if let Some(member)=self.builtin_member(&subject,name)? { return Ok(member); }
+        }
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
             Value::Native(op, word) if Self::kind_builtin(op) => {
@@ -2636,13 +2675,6 @@ impl<'a> Engine<'a> {
     pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
         self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| Value::Native(op, Rc::from(word)))
     }
-    fn public_kind(&self, class: Rc<Class>) -> Value {
-        Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
-    }
-    /// The row of type parameters a routine was declared with: for each
-    /// name written between the brackets, a holder made by the hinting
-    /// module's own maker, in the order the names were written. No
-    /// names written, an empty row.
     fn routine_type_values(&mut self, f: &Routine) -> Flow<Value> {
         let mut items = Vec::new();
         if !f.type_params.is_empty() {
@@ -2810,7 +2842,7 @@ impl<'a> Engine<'a> {
     /// A namespace handed to a routine: a dictionary it keeps from then
     /// on, the very one handed over; anything else, or taking it away,
     /// is refused as CPython refuses it.
-    fn routine_namespace_write(&mut self, at: usize, value: Option<Value>) -> Flow<Value> {
+    pub(super) fn routine_namespace_write(&mut self, at: usize, value: Option<Value>) -> Flow<Value> {
         let Some(book)=value else {return Err(self.class_word("namespace.kept").to_string().into())};
         if !matches!(book.contents(),Value::Map(_)) {
             let pieces=self.lang.class_details.get("namespace.amiss").cloned().unwrap_or_default();
@@ -2850,7 +2882,7 @@ impl<'a> Engine<'a> {
         self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
         fresh
     }
-    fn function_storage(&mut self, function: &Value) -> usize {
+    pub(super) fn function_storage(&mut self, function: &Value) -> usize {
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
         let class = self.root_class();
         self.made += 1;
@@ -3438,6 +3470,7 @@ impl<'a> Engine<'a> {
             // reference knows it by the one word for every module
             // rather than by the name that module goes by.
             [Value::Object(_)] if self.module_holding(&args[0]).is_some()=>Ok(self.named_kind(&args[0])),
+            [Value::Object(o)] if self.property_class.as_ref().is_some_and(|kind|Rc::ptr_eq(kind,&o.class_now()))=>Ok(Value::Native(Builtin::ClassTool(11),Rc::from(o.class_now().name.as_str()))),
             [Value::Object(o)]=>Ok(Value::Class(o.class_now().clone())),
             [Value::Generator(_)] if self.is_async_generator(&args[0]) => Ok(Value::Class(self.kind_class("async_generator"))),
             // A class is of the kind that made it: the metaclass named
@@ -3637,12 +3670,16 @@ impl<'a> Engine<'a> {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()).copied().filter(Self::kind_builtin) else{return Err(self.unclassed(amiss));};
                 if subclass{
-                    if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
+                    if let Value::Class(c)=value{
+                        if builtin==Builtin::SortOf { return Ok(self.is_metaclass_root(c)||c.lineage.iter().any(|base|self.is_metaclass_root(base))); }
+                        return Ok(Self::kind_among(c,word));
+                    }
                     let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
                     return Ok(self.kinds_beneath(&under,word));
                 }
-                // A thing of a class standing on the kind is of the kind.
-                if let Value::Object(o)=value{return Ok(Self::kind_beneath(&o.class_now()).as_deref()==Some(word.as_ref()));}
+                // A thing of a class standing on the kind is of the
+                // kind, and a class standing on several is of each.
+                if let Value::Object(o)=value{return Ok(Self::kind_among(&o.class_now(),word));}
                 return Ok(self.kind_holds(&builtin,word,value));
             }}
         }

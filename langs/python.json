@@ -1107,6 +1107,7 @@
   ],
   "ext.stmt.class.parent.bind": true,
   "ext.builtin.math.sumprod": true,
+  "ext.builtin.random.words": true,
   "ext.system.module.path": ["__path__"],
   "ext.system.module.package": ["__package__"],
   "ext.builtin.max": [
@@ -3482,6 +3483,7 @@
   "ext.stmt.yield.send": [
     "send"
   ],
+  "ext.stmt.yield.input": [".0"],
   "ext.stmt.yield.suspends": true,
   "ext.stmt.yield.throw": [
     "throw"

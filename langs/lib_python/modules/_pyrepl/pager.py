@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 Lib/_pyrepl/pager.py; PSF License.
 from __future__ import annotations
 
 import io

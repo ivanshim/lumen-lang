@@ -542,7 +542,13 @@ impl Writer<'_> {
     /// and a character mark holds one byte alone.
     pub fn percent(&self, text: &str, argument: &Value, asked: &mut Ask<'_>, of_bytes: bool) -> Result<String> {
         let settled = argument.contents();
-        let argument = &settled;
+        let tuple_worth = match &settled {
+            Value::Object(instance) => instance.fields.borrow().iter()
+                .find(|(name, _)| name == "\0worth")
+                .map(|(_, held)| held.contents()).filter(|held| matches!(held, Value::Tuple(_))),
+            _ => None,
+        };
+        let argument = tuple_worth.as_ref().unwrap_or(&settled);
         let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
         let mut used = 0;
         let mut at = 0;

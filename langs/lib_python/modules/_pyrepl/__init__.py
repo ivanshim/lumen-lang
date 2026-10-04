@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 Lib/_pyrepl/__init__.py; PSF License.
 #   Copyright 2000-2008 Michael Hudson-Doyle <micahel@gmail.com>
 #                       Armin Rigo
 #

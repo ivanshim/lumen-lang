@@ -415,6 +415,7 @@ pub enum Prim {
     /// its stead answers with that one, and so on until one does not; a
     /// thing that is its own walk is wound back and answers with itself;
     /// anything else answers with itself.
+    IteratorInput,
     Walked,
     AwaitResult,
     AsyncGathered,

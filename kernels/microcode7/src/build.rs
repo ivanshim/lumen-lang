@@ -10867,7 +10867,12 @@ impl<'a> Builder<'a> {
         let walks = self.table.flag("ext.stmt.yield.suspends");
         let beginning = self.pos;
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
-            Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
+            Some((_, end, parameter)) => {
+                self.pos = end;
+                let supplied = self.read(&parameter);
+                if asynchronous || !self.table.has_any("ext.stmt.yield.input") { supplied }
+                else { prim_call(Prim::IteratorInput, vec![supplied]) }
+            }
             None => {
                 let value = self.expr(1)?;
                 prim_call(if asynchronous { Prim::AsyncWalked } else if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
