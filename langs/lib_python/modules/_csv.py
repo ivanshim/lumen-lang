@@ -553,7 +553,7 @@ class Writer:
                 self._join_append(None, quoted)
             else:
                 self._join_append(str(field), quoted)
-        if self._num_fields > 0 and not self._rec:
+        if self._num_fields > 0 and not any(self._rec):
             if d.quoting == QUOTE_NONE or \
                     (null_field and d.quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
                 raise Error('single empty field record must be quoted')
