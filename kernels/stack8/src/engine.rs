@@ -16892,7 +16892,13 @@ impl<'a> Engine<'a> {
                     let s = s.clone();
                     return Ok(Value::text(&self.mapping_format(&s, &normalized[1], 0)?));
                 }
-                crate::strings::run(op, name, &normalized, self.lang, &sp)?
+                let answer = crate::strings::run(op, name, &normalized, self.lang, &sp)?;
+                if self.lang.bind_names {
+                    if let Value::Words(words, false) = &answer {
+                        return Ok(Value::array(words.iter().map(|word| Value::text(word)).collect()).held(true));
+                    }
+                }
+                answer
             },
             Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {

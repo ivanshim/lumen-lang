@@ -16245,7 +16245,14 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                crate::text::apply(self.table, work, name, &values, self.wording())?
+                let output = crate::text::apply(self.table, work, name, &values, self.wording())?;
+                match (&output, self.names_in_calls) {
+                    (Value::TextRow(lines, false), true) => {
+                        let row = lines.iter().map(|line| Value::text(line)).collect();
+                        Value::Vector(crate::tuples::Sequence::plain(row)).keep(true)
+                    }
+                    _ => output,
+                }
             },
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(crate::tuples::Sequence::plain(v.to_vec())),
