@@ -13576,20 +13576,128 @@ impl<'a> Machine<'a> {
     /// how many places it holds. Text, bytes and a map are not rows, and
     /// neither is a thing answering `keys`; a row too long for a machine
     /// word answers nothing.
+    /// The first protocol mark a class or its forebears carries: the
+    /// reference keeps two bits on a type, the mapping mark (64) and the
+    /// sequence mark (32). A native mapping or sequence kind carries its
+    /// own mark even when it is a forebear of the program's own class.
+    fn match_protocol(class: &Rc<crate::data::Blueprint>) -> i64 {
+        let mark = |base: &crate::data::Blueprint| -> Option<i64> {
+            let direct = base.shared.borrow().iter().chain(base.constants.iter())
+                .find(|(key, _)| key == "__abc_tpflags__").map(|(_, flags)| flags.clone());
+            match direct.map(|flags| flags.settled()) {
+                Some(Value::Small(n)) if n != 0 => Some(n),
+                _ => None,
+            }
+        };
+        for base in std::iter::once(class).chain(class.ancestry.iter()) {
+            if let Some(n) = mark(base) { return n; }
+            match Self::native_word(base).as_deref() {
+                Some("dict") => return 64,
+                Some("list" | "tuple" | "range") => return 32,
+                _ => {}
+            }
+        }
+        0
+    }
+
+    fn pattern_is_mapping(&self, subject: &Value) -> bool {
+        match subject.settled() {
+            Value::Dict(_) | Value::Attributes(_) => true,
+            Value::Thing(thing) => Self::match_protocol(&thing.blueprint()) & 64 != 0,
+            _ => false,
+        }
+    }
+
+    fn pattern_is_sequence(&self, subject: &Value) -> bool {
+        match subject.settled() {
+            Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Progression(_) => true,
+            Value::Text(_) | Value::TextRow(..) | Value::Octets { .. } => false,
+            Value::Thing(thing) => Self::match_protocol(&thing.blueprint()) & 32 != 0,
+            _ => false,
+        }
+    }
+
     fn case_row_length(&mut self, subject: &Value) -> Result<Option<usize>, String> {
         match subject {
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) => Ok(Some(items.len())),
+            Value::Dict(entries) => Ok(Some(entries.iter().count())),
             Value::Progression(walk) => Ok(walk.count().to_usize()),
-            Value::Text(_) | Value::Octets { .. } | Value::Dict(_) | Value::Set(_) => Ok(None),
             Value::Thing(_) => {
-                if self.read_class_member(subject.clone(), "keys", false).is_ok() { return Ok(None); }
-                match self.ask_special(subject, 10, &[])? {
-                    Some(count) => Ok(match count.settled() { Value::Small(n) if n >= 0 => Some(n as usize), _ => None }),
-                    None => Ok(None),
+                // A thing standing on a native map keeps that map's own
+                // length; a mapping of the program's own answers `__len__`.
+                if let Some(Value::Dict(entries)) = self.underlying_unless(subject, &[]).map(|worth| worth.settled()) {
+                    return Ok(Some(entries.iter().count()));
                 }
+                Ok(match self.prim(Prim::Length, "len", &[subject.clone()])?.settled() {
+                    Value::Small(n) if n >= 0 => Some(n as usize),
+                    _ => None,
+                })
             }
             _ => Ok(None),
         }
+    }
+
+    /// A member read by name, its fault turned into the words a caller
+    /// keeps.
+    fn member_text(&mut self, value: Value, key: &str) -> Result<Value, String> {
+        match self.read_class_member(value, key, false) {
+            Ok(found) => Ok(found),
+            Err(Escape::Error(message)) => Err(message),
+            Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+        }
+    }
+
+    fn apply_text(&mut self, member: Value, args: Vec<Value>) -> Result<Value, String> {
+        match self.apply_class_member(member, args) {
+            Ok(answer) => Ok(answer),
+            Err(Escape::Error(message)) => Err(message),
+            Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+        }
+    }
+
+    /// The value a mapping keeps for a key, or the sentinel where it
+    /// keeps none. A native map is read directly; a mapping of the
+    /// program's own is asked through its own two-place `get`, so a key
+    /// it does not hold is never made and a fault it raises is handed on.
+    fn mapping_lookup(&mut self, subject: &Value, key: &Value, sentinel: &Value) -> Result<Value, String> {
+        let bare = subject.settled();
+        if let Value::Dict(entries) = &bare {
+            let Some(at) = self.dict_place(entries, key)? else { return Ok(sentinel.clone()); };
+            return Ok(entries[at].1.clone());
+        }
+        let method = self.member_text(bare.clone(), "get")?;
+        self.apply_text(method, vec![key.clone(), sentinel.clone()])
+    }
+
+    /// The entries a mapping keeps that no pattern key takes: the whole
+    /// of it, read for its keys and their values, with the keys the
+    /// pattern named left out.
+    fn mapping_remainder(&mut self, subject: &Value, seen: &[Value]) -> Result<Value, String> {
+        let bare = subject.settled();
+        let mut left: Vec<(Value, Value)> = Vec::new();
+        if let Value::Dict(entries) = &bare {
+            for (key, value) in entries.iter() {
+                if !self.key_seen(seen, key)? { left.push((key.clone(), value.clone())); }
+            }
+            return Ok(Value::Dict(Rc::new(left.into())));
+        }
+        let method = self.member_text(bare.clone(), "keys")?;
+        let keys_walk = self.apply_text(method, Vec::new())?;
+        for key in self.gathered_members(&keys_walk)? {
+            if self.key_seen(seen, &key)? { continue; }
+            let value = self.ask_special(&bare, 11, std::slice::from_ref(&key))?.unwrap_or(Value::Nil);
+            left.push((key, value.settled()));
+        }
+        Ok(Value::Dict(Rc::new(left.into())))
+    }
+
+    fn key_seen(&mut self, seen: &[Value], key: &Value) -> Result<bool, String> {
+        let key = self.hash_key(key)?;
+        for old in seen {
+            let old = self.hash_key(old)?;
+            if self.keys_agree(&old, &key)? { return Ok(true); }
+        }
+        Ok(false)
     }
 
     /// The value at one place of a row a pattern is taking apart.
@@ -13614,34 +13722,6 @@ impl<'a> Machine<'a> {
                 Ok(Value::Vector(crate::tuples::Sequence::plain(items)))
             }
         }
-    }
-
-    /// The entries of a map, or of a mapping of the program's own that
-    /// answers `keys`; every other subject is no mapping. A mapping of
-    /// the program's own has its keys matched the way a map's are.
-    fn case_mapping_store(&mut self, subject: &Value) -> Result<Option<Rc<crate::data::MapStore>>, String> {
-        let bare = subject.settled();
-        // A thing standing on a native map keeps that map as its worth;
-        // the entries of that map are what the pattern reads, through
-        // whatever member the thing has chosen to answer for them.
-        let under = self.underlying_unless(&bare, &[]).unwrap_or_else(|| bare.clone());
-        if let Value::Dict(entries) = &under { return Ok(Some(entries.clone())); }
-        if !matches!(bare, Value::Thing(_)) { return Ok(None); }
-        // A mapping of the program's own answers `keys`; one standing on
-        // a map of the builtin kind may answer it off the map itself.
-        let keys = match self.read_class_member(bare.clone(), "keys", false)
-            .ok().and_then(|method| self.apply_class_member(method, Vec::new()).ok())
-            .and_then(|walk| self.gathered_members(&walk).ok())
-        {
-            Some(keys) => keys,
-            None => match self.gathered_members(&bare) { Ok(keys) => keys, Err(_) => return Ok(None) },
-        };
-        let mut pairs = Vec::with_capacity(keys.len());
-        for key in keys {
-            let Some(value) = self.ask_special(&bare, 11, std::slice::from_ref(&key))? else { return Ok(None) };
-            pairs.push((self.hash_key(&key)?, value.settled()));
-        }
-        Ok(Some(Rc::new(crate::data::MapStore::from(pairs))))
     }
 
     fn fit_case(&mut self, test: &crate::form::CaseTest, value: &Value, tuple: bool, given: &[Value]) -> Result<Option<HashMap<String, Value>>, String> {
@@ -13683,6 +13763,11 @@ impl<'a> Machine<'a> {
                 // are not. A row is read a place at a time, so one too long
                 // to hold is still only looked at where the pattern asks.
                 let bare = value.settled();
+                if !self.pattern_is_sequence(&bare) { return Ok(None); }
+                // A single starred wildcard covers every row and reads
+                // nothing of it, so a row of the program's own need not
+                // even answer for its length.
+                if members.len() == 1 && *spread == Some(0) && matches!(members[0], CaseTest::Ignore) { return Ok(Some(HashMap::new())); }
                 let Some(count) = self.case_row_length(&bare)? else { return Ok(None); };
                 let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
                 if count < minimum { return Ok(None); }
@@ -13711,26 +13796,37 @@ impl<'a> Machine<'a> {
                     let inner = cell.borrow().clone();
                     return self.fit_case(test, &inner, tuple, given);
                 }
-                let Some(entries) = self.case_mapping_store(value)? else { return Ok(None); };
-                let mut taken = Vec::new();
+                let bare = value.settled();
+                if !self.pattern_is_mapping(&bare) { return Ok(None); }
+                if !pairs.is_empty() {
+                    match self.case_row_length(&bare)? {
+                        Some(count) if count >= pairs.len() => {}
+                        _ => return Ok(None),
+                    }
+                }
+                // A key a key already written down equals is the same key,
+                // which the reference refuses; a missing key is seen by the
+                // very sentinel handed to `get`.
+                let sentinel = Value::Dict(Rc::new(crate::data::MapStore::from(Vec::new())));
+                let mut seen: Vec<Value> = Vec::new();
                 for (key, member) in pairs {
                     let wanted = match key {
                         CaseTest::Equal(literal) => literal.clone(),
                         CaseTest::Worth(place) => given[*place].clone(),
                         _ => return Err(unready),
                     };
-                    let Some(at) = self.dict_place(&entries, &wanted)? else { return Ok(None); };
-                    if taken.contains(&at) { return Err("ValueError: mapping pattern checks duplicate key".to_owned()); }
-                    let held = entries[at].1.clone();
+                    if self.key_seen(&seen, &wanted)? { return Err("ValueError: mapping pattern checks duplicate key".to_owned()); }
+                    seen.push(wanted.clone());
+                    let held = self.mapping_lookup(&bare, &wanted, &sentinel)?;
+                    if held.one_place(&sentinel) { return Ok(None); }
                     match self.fit_case(member, &held, false, given)? {
                         None => return Ok(None),
                         Some(found) => gathered.extend(found),
                     }
-                    taken.push(at);
                 }
                 if let Some(name) = rest {
-                    let left: Vec<(Value, Value)> = entries.iter().enumerate().filter(|(at, _)| !taken.contains(at)).map(|(_, pair)| pair.clone()).collect();
-                    gathered.insert(name.clone(), Value::Dict(Rc::new(left.into())));
+                    let left = self.mapping_remainder(&bare, &seen)?;
+                    gathered.insert(name.clone(), left);
                 }
             }
             CaseTest::Shape { kind, positional, named } => {

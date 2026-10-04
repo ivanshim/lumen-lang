@@ -6227,6 +6227,18 @@ impl<'a> Builder<'a> {
         Ok((turned, imaginary))
     }
 
+    /// The imaginary part of a complex literal: a numeral with no sign
+    /// of its own, the sign before it being the one that joins it to the
+    /// real part. `case 1 + -2j` is no pattern at all.
+    fn pattern_imaginary(&mut self) -> Res<Value> {
+        let table = self.table;
+        if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+        let text = self.advance().lexeme;
+        let letters = table.letters("ext.lexical.number.imaginary");
+        if !text.chars().next_back().map_or(false, |c| letters.contains(&c)) { return Err(self.bad_case()); }
+        numeral(&text, table)
+    }
+
     fn pattern_single(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let table = self.table;
@@ -6238,8 +6250,7 @@ impl<'a> Builder<'a> {
                 if imaginary { return Err(self.bad_case()); }
                 let below = self.on_any("op.sub");
                 self.advance();
-                let (part, part_imaginary) = self.pattern_number()?;
-                if !part_imaginary { return Err(self.bad_case()); }
+                let part = self.pattern_imaginary()?;
                 let (real, _) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
                 let (_, sole) = crate::complex::coordinates(&part).ok_or_else(|| self.bad_case())?;
                 number = crate::complex::pair(table, real, if below { -sole } else { sole });

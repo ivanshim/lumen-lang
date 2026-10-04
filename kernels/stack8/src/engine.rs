@@ -9152,19 +9152,61 @@ impl<'a> Engine<'a> {
     /// and how many places it holds. Text, bytes and a bytearray are
     /// not, and neither is a map nor a set nor a thing that answers
     /// `keys`; a row too long for a machine word answers nothing.
+    /// The first protocol mark a class or its forebears carries: the
+    /// reference keeps two bits on a type, the mapping mark (64) and the
+    /// sequence mark (32). A native mapping or sequence kind carries its
+    /// own mark even when it is a forebear of the program's own class.
+    fn match_protocol(&self, c: &Rc<crate::value::Class>) -> i64 {
+        let mark = |base: &crate::value::Class| -> Option<i64> {
+            let direct = base.shared.borrow().iter().chain(base.constants.iter())
+                .find(|(key, _)| key == "__abc_tpflags__").map(|(_, flags)| flags.clone());
+            match direct.map(|flags| flags.contents()) {
+                Some(Value::Small(n)) if n != 0 => Some(n),
+                _ => None,
+            }
+        };
+        for base in std::iter::once(c).chain(c.lineage.iter()) {
+            if let Some(n) = mark(base) { return n; }
+            match Self::own_kind(base).as_deref() {
+                Some("dict") => return 64,
+                Some("list" | "tuple" | "range") => return 32,
+                _ => {}
+            }
+        }
+        0
+    }
+
+    /// Whether a subject may be read by a mapping pattern: a native map,
+    /// or a thing whose kind is marked as a mapping.
+    fn pattern_is_mapping(&self, subject: &Value) -> bool {
+        match subject.contents() {
+            Value::Map(_) | Value::Fields(_) => true,
+            Value::Object(o) => self.match_protocol(&o.class_now()) & 64 != 0,
+            _ => false,
+        }
+    }
+
+    /// Whether a subject may be read by a sequence pattern: a native
+    /// row, or a thing whose kind is marked as a sequence. Text, bytes
+    /// and a bytearray carry the sequence mark but are never read so.
+    fn pattern_is_sequence(&self, subject: &Value) -> bool {
+        match subject.contents() {
+            Value::Array(_) | Value::Tuple(_) | Value::Counted(_) => true,
+            Value::Text(_) | Value::Codepoints(_) | Value::Bytes(..) => false,
+            Value::Object(o) => self.match_protocol(&o.class_now()) & 32 != 0,
+            _ => false,
+        }
+    }
+
     fn pattern_row_length(&mut self, subject: &Value) -> Res<Option<usize>> {
         match subject {
             Value::Array(items) | Value::Tuple(items) => Ok(Some(items.len())),
+            Value::Map(items) => Ok(Some(items.len())),
             Value::Counted(span) => Ok(span.length().to_usize()),
-            Value::Text(_) | Value::Bytes(..) | Value::Map(_) | Value::Set(_) => Ok(None),
-            Value::Object(_) => {
-                if self.class_get(subject.clone(), "keys", false).is_ok() { return Ok(None); }
-                if self.special_method(subject, 10).is_none() { return Ok(None); }
-                match self.special_call(subject, 10, Vec::new())? {
-                    Some(count) => Ok(match count.contents() { Value::Small(n) if n >= 0 => Some(n as usize), _ => None }),
-                    None => Ok(None),
-                }
-            }
+            Value::Object(_) => Ok(match self.builtin_call(Builtin::Length, "len", vec![(None, subject.clone())])? {
+                Value::Small(n) if n >= 0 => Some(n as usize),
+                _ => None,
+            }),
             _ => Ok(None),
         }
     }
@@ -9193,31 +9235,46 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The entries of a map, of a thing keeping a map of a builtin kind
-    /// as its worth, or of a mapping of the program's own answering
-    /// `keys`; every other subject is no mapping.
-    fn pattern_mapping_pairs(&mut self, subject: &Value) -> Res<Option<Vec<(Value, Value)>>> {
-        let base = subject.contents();
-        // A thing standing on a native map keeps that map as its worth;
-        // a thing standing on some other kind keeps that kind's worth,
-        // which is no map, and is read through `keys` as any mapping is.
-        let bare = match Self::worth_of(&base) {
-            Some(worth) if matches!(worth.contents(), Value::Map(_)) => worth.contents(),
-            _ => base,
-        };
-        if let Value::Map(pairs) = &bare {
-            return Ok(Some(pairs.iter().map(|(key, value)| (key.clone(), value.clone())).collect()));
+    /// The value a mapping keeps for a key, or the sentinel where it
+    /// keeps none. A native map is read directly; a mapping of the
+    /// program's own is asked through its own two-place `get`, so a key
+    /// it does not hold is never made and a fault it raises is handed on.
+    fn mapping_lookup(&mut self, subject: &Value, key: &Value, sentinel: &Value) -> Res<Value> {
+        if let Value::Map(store) = subject.contents() {
+            let (found, _) = self.map_locate(&store, Some(&store), key)?;
+            return Ok(match found { Some(at) => store[at].1.clone(), None => sentinel.clone() });
         }
-        if !matches!(bare, Value::Object(_)) { return Ok(None); }
-        let Ok(keys_method) = self.class_get(bare.clone(), "keys", false) else { return Ok(None) };
-        let Ok(keys) = self.class_apply(keys_method, Vec::new()) else { return Ok(None) };
-        let Ok(keys) = self.special_items(&keys) else { return Ok(None) };
-        let mut pairs = Vec::with_capacity(keys.len());
+        let method = self.class_get(subject.clone(), "get", false).map_err(|fault| fault.told(&self.wording()))?;
+        self.class_apply(method, vec![key.clone(), sentinel.clone()]).map_err(|fault| fault.told(&self.wording()))
+    }
+
+    /// The entries a mapping keeps that no pattern key takes: the whole
+    /// of it, read for its keys and their values, with the keys the
+    /// pattern named left out.
+    fn mapping_remainder(&mut self, subject: &Value, seen: &[Value]) -> Res<Value> {
+        let mut left: Vec<(Value, Value)> = Vec::new();
+        if let Value::Map(store) = subject.contents() {
+            for (key, value) in store.iter() {
+                if !self.key_seen(seen, key)? { left.push((key.clone(), value.clone())); }
+            }
+            return Ok(Value::Map(Rc::new(left.into())));
+        }
+        let method = self.class_get(subject.clone(), "keys", false).map_err(|fault| fault.told(&self.wording()))?;
+        let keys = self.class_apply(method, Vec::new()).map_err(|fault| fault.told(&self.wording()))?;
+        let keys = self.special_items(&keys)?;
         for key in keys {
-            let Some(value) = self.special_call(&bare, 11, vec![key.clone()])? else { return Ok(None) };
-            pairs.push((key, value.contents()));
+            if self.key_seen(seen, &key)? { continue; }
+            let value = self.special_call(subject, 11, vec![key.clone()])?.unwrap_or(Value::Null);
+            left.push((key, value.contents()));
         }
-        Ok(Some(pairs))
+        Ok(Value::Map(Rc::new(left.into())))
+    }
+
+    fn key_seen(&mut self, seen: &[Value], key: &Value) -> Res<bool> {
+        for old in seen {
+            if self.special_keys_equal(old, key)? { return Ok(true); }
+        }
+        Ok(false)
     }
 
     fn fit_pattern(&mut self, pattern: &crate::code::Pattern, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool, given: &[Value]) -> Flow<bool> {
@@ -9250,6 +9307,11 @@ impl<'a> Engine<'a> {
                 // that a row too long to hold is still only looked at
                 // where the pattern asks.
                 let bare = subject.contents();
+                if !self.pattern_is_sequence(&bare) { return Ok(false); }
+                // A single starred wildcard covers every row and reads
+                // nothing of it, so a row of the program's own need not
+                // even answer for its length.
+                if parts.len() == 1 && *star == Some(0) && matches!(parts[0], Pattern::Any) { return Ok(true); }
                 let Some(count) = self.pattern_row_length(&bare)? else { return Ok(false); };
                 let fixed = parts.len() - usize::from(star.is_some());
                 if count < fixed || (star.is_none() && count != fixed) { return Ok(false); }
@@ -9271,24 +9333,34 @@ impl<'a> Engine<'a> {
             }
             Pattern::Mapping(pairs, rest) => {
                 if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
-                let Some(store) = self.pattern_mapping_pairs(subject)? else { return Ok(false) };
-                let mut taken = Vec::new();
+                let bare = subject.contents();
+                if !self.pattern_is_mapping(&bare) { return Ok(false); }
+                if !pairs.is_empty() {
+                    match self.pattern_row_length(&bare)? {
+                        Some(count) if count >= pairs.len() => {}
+                        _ => return Ok(false),
+                    }
+                }
+                // A key a key already written down equals is the same
+                // key, which the reference refuses; a missing key is
+                // seen by the very sentinel handed to `get`.
+                let sentinel = Value::Map(Rc::new(Vec::new().into()));
+                let mut seen: Vec<Value> = Vec::new();
                 for (key, part) in pairs {
                     let wanted = match key {
                         Pattern::Literal(value) => value.clone(),
                         Pattern::Value(at) => given[*at].clone(),
                         _ => return Err(unready.into()),
                     };
-                    let (found, _) = self.map_locate(&store, None, &wanted)?;
-                    let Some(at) = found else { return Ok(false) };
-                    if taken.contains(&at) { return Err("ValueError: mapping pattern checks duplicate key".into()); }
-                    let entry = store[at].1.clone();
-                    if !self.fit_pattern(part, &entry, bound, false, given)? { return Ok(false); }
-                    taken.push(at);
+                    if self.key_seen(&seen, &wanted)? { return Err("ValueError: mapping pattern checks duplicate key".into()); }
+                    seen.push(wanted.clone());
+                    let value = self.mapping_lookup(&bare, &wanted, &sentinel)?;
+                    if value.same_place(&sentinel) { return Ok(false); }
+                    if !self.fit_pattern(part, &value, bound, false, given)? { return Ok(false); }
                 }
                 if let Some(name) = rest {
-                    let left: Vec<(Value, Value)> = store.iter().enumerate().filter(|(at, _)| !taken.contains(at)).map(|(_, pair)| pair.clone()).collect();
-                    bound.push((name.clone(), Value::Map(Rc::new(left.into()))));
+                    let left = self.mapping_remainder(&bare, &seen)?;
+                    bound.push((name.clone(), left));
                 }
                 Ok(true)
             }

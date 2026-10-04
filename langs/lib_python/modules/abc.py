@@ -96,6 +96,15 @@ class ABCMeta(type):
                 return subclass
         claimed.append(subclass)
         _cache_token += 1
+        # A kind that carries one of the two protocol marks leaves that
+        # mark on whatever it claims, the way the reference keeps the
+        # mark on the type itself rather than only in the registry.
+        flags = getattr(cls, '__abc_tpflags__', 0)
+        if flags:
+            try:
+                subclass.__abc_tpflags__ = flags
+            except (AttributeError, TypeError):
+                pass
         return subclass
 
     def __instancecheck__(cls, instance):

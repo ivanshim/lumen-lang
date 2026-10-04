@@ -4544,6 +4544,19 @@ impl<'a> Compiler<'a> {
         Ok((turned, imaginary))
     }
 
+    /// The imaginary part of a complex literal: a numeral with no sign
+    /// of its own, the sign before it being the one that joins it to the
+    /// real part. `case 1 + -2j` is no pattern at all.
+    fn pattern_imaginary(&mut self) -> Res<Value> {
+        let lang = self.lang;
+        if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
+        let token = self.take();
+        if !token.lexeme.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c)) {
+            return Err(self.pattern_fault());
+        }
+        parse_number(&token.lexeme, lang)
+    }
+
     fn pattern_atom(&mut self) -> Res<crate::code::Pattern> {
         use crate::code::Pattern;
         let lang = self.lang;
@@ -4556,8 +4569,7 @@ impl<'a> Compiler<'a> {
                 if imaginary { return Err(self.pattern_fault()); }
                 let below = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Sub));
                 self.take();
-                let (part, part_imaginary) = self.pattern_numeral()?;
-                if !part_imaginary { return Err(self.pattern_fault()); }
+                let part = self.pattern_imaginary()?;
                 let (real, _) = crate::complex::parts(&number).ok_or_else(|| self.pattern_fault())?;
                 let (_, sole) = crate::complex::parts(&part).ok_or_else(|| self.pattern_fault())?;
                 number = crate::complex::made(lang, real, if below { -sole } else { sole });

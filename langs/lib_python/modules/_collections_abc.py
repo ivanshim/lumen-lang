@@ -1170,3 +1170,5 @@ class MutableSequence(Sequence):
 
 MutableSequence.register(list)
 MutableSequence.register(bytearray)
+# A dict is a mapping by its own kind, as the reference marks it.
+Mapping.register(dict)
