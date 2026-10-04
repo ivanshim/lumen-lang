@@ -3268,6 +3268,17 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
+                if !plain && !self.class_word("name").is_empty() {
+                    let operation = if value.is_some() { "set" } else { "remove" };
+                    if let Some(metaclass) = Self::maker_beneath(c) {
+                        if let Some(writer) = self.class_value(&metaclass, self.class_word(operation)) {
+                            let bound = self.bind_class_value(writer, Some(subject.clone()), metaclass)?;
+                            let mut given = vec![Value::text(name)];
+                            given.extend(value);
+                            return self.class_apply(bound, given);
+                        }
+                    }
+                }
                 if !self.class_word("name").is_empty() && !Self::class_sealed(c) {
                     if let Some(maker) = Self::maker_beneath(c) {
                         if let Some(member) = self.class_value(&maker, name).filter(|member| self.takes_writes(member)) {
