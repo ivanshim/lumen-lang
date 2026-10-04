@@ -589,12 +589,12 @@ impl Layout<'_> {
                                 .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                             NumberAnswer::CharacterType(name) => {
                                 let required = if of_bytes { "an integer in range(256) or a single byte" }
-                                    else { "an integer or a unicode character" };
-                                return Err(self.complain("ext.op.rem.format.character", &[&location, required, &name]));
+                                    else { "an int or a unicode character" };
+                                return Err(self.complain("ext.op.rem.format.character", &["", required, &name]));
                             },
                             NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
                                 let expected = if of_bytes { "an integer in range(256) or a single byte" }
-                                    else { "an integer or a unicode character" };
+                                    else { "an int or a unicode character" };
                                 let given = if !name.is_empty() {
                                     name
                                 } else {
@@ -604,7 +604,7 @@ impl Layout<'_> {
                                         _ => item.kind_word(),
                                     }
                                 };
-                                return Err(self.complain("ext.op.rem.format.character", &[&location, expected, &given]));
+                                return Err(self.complain("ext.op.rem.format.character", &["", expected, &given]));
                             },
                         },
                     };
@@ -631,7 +631,7 @@ impl Layout<'_> {
                             }
                             NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
                                 let named = if name.is_empty() { item.kind_word() } else { name };
-                                return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
+                                return Err(self.complain(key, &["", &conversion.to_string(), &named]));
                             }
                             NumberAnswer::CharacterType(_) => unreachable!(),
                         }
@@ -647,7 +647,7 @@ impl Layout<'_> {
                     if !accepted {
                         let key = if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
                         let named = item.kind_word();
-                        return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
+                        return Err(self.complain(key, &["", &conversion.to_string(), &named]));
                     }
                     let number = match &held { Some(whole) => whole.as_big()?, None => item.as_big()? };
                     let radix = match conversion { 'x' | 'X' => 16, 'o' => 8, _ => 10 };
@@ -693,7 +693,7 @@ impl Layout<'_> {
             return format!("ValueError: unsupported format character '{letter}' (0x{number:x}) at index {at}");
         }
         if letter.is_ascii_alphanumeric() {
-            return self.complain("ext.op.rem.format.code", &[&letter.to_string(), &start.to_string()]);
+            return self.complain("ext.op.rem.format.code", &[&letter.to_string(), &format!("{:x}", u32::from(letter)), &at.to_string()]);
         }
         let described = if letter == '\'' { "\"'\"".to_owned() }
             else if is_bytes && !letter.is_ascii_graphic() && letter != ' ' { format!("with code 0x{:02x}", u32::from(letter)) }

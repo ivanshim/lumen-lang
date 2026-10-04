@@ -67,6 +67,7 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
+            Value::ValueMethod(method) if method.1 == "__next__" => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -91,6 +92,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 31 => "cell",
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
+            Value::Adapter(w) if w.0 == 143 => "function",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => {
                 let class = o.class_now();

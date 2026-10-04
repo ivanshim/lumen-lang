@@ -233,7 +233,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 308] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 310] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -246,6 +246,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 308] = [
             ("ext.builtin.method.__truediv__", Prim::ValueMethod),
             ("ext.builtin.method.fromhex", Prim::ValueMethod),
             ("ext.builtin.method.from_number", Prim::ValueMethod),
+            ("ext.builtin.method.getformat", Prim::ValueMethod),
             ("ext.builtin.slice", Prim::SpanOf),
             ("ext.builtin.method.indices", Prim::ValueMethod),
             ("ext.builtin.method.slice_hash", Prim::ValueMethod),
@@ -472,7 +473,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 308] = [
     ("ext.builtin.room.used", Prim::RoomHeld), ("ext.builtin.room.most", Prim::RoomHighest),
     ("ext.builtin.room.most.forget", Prim::RoomAnew), ("ext.builtin.room.limit", Prim::RoomMark),
     ("ext.builtin.file.read", Prim::Slurp), ("ext.builtin.file.write", Prim::Spill),
-    ("ext.builtin.file.exists", Prim::There), ("ext.builtin.file.kind", Prim::PathSort), ("ext.system.fault.current", Prim::FaultHeld), ("ext.system.fault.held", Prim::FaultWhole), ("ext.builtin.weak.make", Prim::WeakMake), ("ext.builtin.weak.get", Prim::WeakGet), ("ext.builtin.gc.collect", Prim::Collect), ("ext.builtin.host.info", Prim::HostRow), ("ext.builtin.file.remove", Prim::Gone),
+    ("ext.builtin.file.exists", Prim::There), ("ext.builtin.file.kind", Prim::PathSort), ("ext.builtin.file.stat", Prim::PathSort), ("ext.system.fault.current", Prim::FaultHeld), ("ext.system.fault.held", Prim::FaultWhole), ("ext.builtin.weak.make", Prim::WeakMake), ("ext.builtin.weak.get", Prim::WeakGet), ("ext.builtin.gc.collect", Prim::Collect), ("ext.builtin.host.info", Prim::HostRow), ("ext.builtin.file.remove", Prim::Gone),
     ("ext.builtin.dir.list", Prim::DirEntries), ("ext.builtin.dir.make", Prim::DirFresh), ("ext.builtin.dir.remove_tree", Prim::DirWhole),
     ("ext.builtin.dir.make_one", Prim::DirOne), ("ext.builtin.dir.change", Prim::DirStep),
     ("ext.builtin.shell", Prim::Shelled), ("ext.builtin.net.ask", Prim::Reached), ("ext.builtin.wait", Prim::Bided),

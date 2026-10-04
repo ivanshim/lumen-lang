@@ -450,7 +450,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
 /// wanted is only which names the text as a whole has ever declared
 /// `global`, not where, so a walk that never enters or leaves a scope
 /// answers it well enough.
-fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
+pub(crate) fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
     let sep = table.single("syntax.call.separator");
     let mut names = Vec::new();
     let mut i = 0;
@@ -5144,9 +5144,34 @@ impl<'a> Builder<'a> {
         // a write through either as the body's first statement finds
         // somewhere of its own already standing, not made as part of
         // the write.
-        if self.class_body_names_locals(self.pos, on_one_line) {
-            let made = self.class_book();
-            setup.push(made);
+        if table.has_any("ext.stmt.class.detail.prepare") && (parent.is_some() || !other_parents.is_empty()
+            || handed_words.iter().any(|(key, _)| key == "\0metaclass" || key == "\0header")) {
+            let mut bases = Vec::new();
+            bases.extend(parent.iter().cloned().map(Form::Read));
+            bases.extend(other_parents.iter().cloned().map(Form::Read));
+            let factory = handed_words.iter().find(|(key, _)| key == "\0metaclass").map(|(_, value)| value.clone()).unwrap_or_else(|| constant(Value::Nil));
+            let options: Vec<Form> = handed_words.iter().filter_map(|(key, read)| {
+                key.strip_prefix("\0handed:").map(|word| prim_call(Prim::MakeTuple, vec![constant(Value::text(word)), read.clone()]))
+            }).collect();
+            let header = handed_words.iter().find(|(key, _)| key == "\0header").map(|(_, form)| form.clone()).unwrap_or_else(|| constant(Value::Nil));
+            let prepared = prim_call(Prim::ClassWork(13), vec![constant(Value::text(&class_title)), prim_call(Prim::MakeTuple, bases), factory, prim_call(Prim::MakeTuple, options), header]);
+            let place = self.gensym("prepared_body");
+            self.parts().book = Some(place.clone());
+            setup.push(Form::Write(place, Box::new(prepared)));
+            if let Some(name) = table.single("ext.stmt.class.detail.module") {
+                let source_module = self.read("__name__");
+                let address = self.gensym("module_name");
+                setup.push(Form::Write(address.clone(), Box::new(source_module)));
+                if let Some(write) = self.mirror_member(name, &address) { setup.push(write); }
+            }
+        } else {
+            if self.class_body_names_locals(self.pos, on_one_line) { setup.push(self.class_book()); }
+            if let Some(module_key) = table.single("ext.stmt.class.detail.module") {
+                let module = self.read("__name__");
+                self.member_ranked(module_key);
+                self.parts().attributes.push(module_key.to_string());
+                self.parts().held.push(module);
+            }
         }
         if table.has_any("ext.stmt.class.special") {
             if let Some(module_key) = table.single("ext.stmt.class.detail.module") {
@@ -5166,6 +5191,14 @@ impl<'a> Builder<'a> {
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
+        }
+        if self.parts().book.is_some() {
+            let initial: Vec<_> = { let parts = self.parts(); parts.attributes.iter().cloned().zip(parts.held.clone()).collect() };
+            for (key, value) in initial {
+                let slot = self.gensym("initial_member");
+                setup.push(Form::Write(slot.clone(), Box::new(value)));
+                if let Some(write) = self.mirror_member(&key, &slot) { setup.push(write); }
+            }
         }
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
@@ -5815,6 +5848,11 @@ impl<'a> Builder<'a> {
                     };
                     r.pos = after;
                     items.push(write);
+                }
+                if place.is_none() && r.in_class_body() && !item.starts_with('#') && !r.declared_outside_class(&item) {
+                    let slot = r.address_to_write(&item);
+                    r.class_bindings.last_mut().expect("class loop target").1.insert(item.clone(), slot.clone());
+                    if let Some(stored) = r.mirror_member(&item, &slot) { items.push(stored); }
                 }
                 items.push(r.body()?);
                 let pass = sequence(items);
@@ -8284,9 +8322,9 @@ impl<'a> Builder<'a> {
         };
         // The live class book can supply an object with no writable name.
         // Keep the evaluated object and key, then perform its actual write.
-        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+        if self.table.has_any("ext.stmt.class.builder") {
             if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
-                if operands.len() == 2 {
+                if operands.len() == 2 && (self.in_class_body() || matches!(&operands[0], Form::Apply(Callee::Code(_), _))) {
                     let object = self.gensym("target_object");
                     let key = self.gensym("target_key");
                     let put = self.gensym("target_value");
@@ -10599,10 +10637,10 @@ impl<'a> Builder<'a> {
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
-        let parameter = self.gather_name("first_source");
+        let parameter = String::from(".0");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
         let mut async_result = false;
-        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter.clone()], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();
@@ -10613,6 +10651,12 @@ impl<'a> Builder<'a> {
             r.reject_gathering_assignment("generator expression")?;
             async_result = r.layers.last().unwrap().async_walk_seen;
             r.generator_seen = true;
+            if r.table.has_any("ext.stmt.class.builder") && !r.table.spells("ext.op.comprehension.async", &r.tokens[clause].lexeme) {
+                let input = r.read(&parameter);
+                let checked = prim_call(Prim::ClassWork(21), vec![input]);
+                let binding = r.write(&parameter, checked);
+                return Ok(sequence(vec![binding, body]));
+            }
             Ok(body)
         })?;
         self.source_before = previous;

@@ -2286,6 +2286,8 @@ only. The extension labels so far, all from PHP:
   own, called on its first argument. `ext.builtin.method.error.hex` and
   `.hex_overflow` give the complaints for a spelling that is no
   hexadecimal real and for one too large to hold.
+- `ext.builtin.method.getformat` spells the Python float class method that
+  reports the native IEEE floating-point byte order and checks its argument.
 - `ext.builtin.method.from_number` spells `float.from_number`; it takes a
   number or the float/index protocols, omits text conversion, and makes
   an instance of a float subclass when read through that subclass.
@@ -4633,6 +4635,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
+| `ext.builtin.file.stat` | - | - | `__file_stat` | - | - | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
@@ -4729,6 +4732,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.method.getformat` | - | - | `float.__getformat__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
@@ -5192,20 +5196,20 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.byte` | - | - | `TypeError: format argument` `: %b requires a bytes-like object, or an object that implements __bytes__, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character` | - | - | `TypeError: ` `%c requires ` `, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format %` ` at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string (got ` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.incomplete` | - | - | `ValueError: stray % at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.integer` | - | - | `TypeError: format argument` `: %` ` requires an integer, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.integer` | - | - | `TypeError: ` `%` ` format: an integer is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.key.incomplete` | - | - | `ValueError: stray % or incomplete format key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during ` ` formatting (required ` `, got ` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping.key` | - | - | `ValueError: format requires a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping.star` | - | - | `ValueError: * cannot be used with a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.number` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.number` | - | - | `TypeError: ` `%` ` format: a real number is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.precision.big` | - | - | `ValueError: precision too big at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.real` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.star` | - | - | `TypeError: format argument ` `: * requires int, not ` | - | - | - | - | - | - | - |
@@ -5751,6 +5755,8 @@ and ordinary multiplication/addition for other numeric types.
 The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
 from tag `v3.14.8`, commit `8e6e75d9102e` (the suite source recorded in `tests/README.md`),
 under the PSF license in `tests/python-3.14.8/LICENSE`. It supplies the original
+from tag `v3.14.8` (the suite source recorded in `tests/README.md`),
+under the PSF license in `tests/python/LICENSE`. It supplies the original
 module for imports by the unchanged math tests.
 
 `ext.stmt.import.nonpackage` gives the two suffix pieces for a Python
@@ -5988,3 +5994,6 @@ matching rules when the scan reaches a non-ASCII character.
 `ext.builtin.re.shortcut` computes the existing regular-expression adapter's
 ASCII atom sets and capture endpoints/groups. Unsupported input shapes
 return no result and retain the adapter's existing Unicode and object paths.
+`ext.builtin.file.stat` supplies Python filesystem metadata from the platform,
+including nanosecond times and symbolic-link selection. The os adapter exposes
+these fields to unchanged source modules such as linecache.

@@ -719,6 +719,12 @@ impl Value {
             Value::OctetKind { changeable, .. } => Ok(format!("octetkind/{changeable}")),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
+            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut address = format!("native/{tag}");
+                for item in items.iter() { address.push_str(&format!("/{:?}", item.hash_address()?)); }
+                Ok(address)
+            }
+            Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
 

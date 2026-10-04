@@ -124,6 +124,9 @@
   "ext.builtin.method.fromhex": [
     "float.fromhex"
   ],
+  "ext.builtin.method.getformat": [
+    "float.__getformat__"
+  ],
   "ext.builtin.method.from_number": [
     "float.from_number"
   ],
@@ -160,7 +163,43 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
-  "ext.lexical.identifier.reserved": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"],
+  "ext.lexical.identifier.reserved": [
+    "False",
+    "None",
+    "True",
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "class",
+    "continue",
+    "def",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "try",
+    "while",
+    "with",
+    "yield"
+  ],
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -814,7 +853,9 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
-  "ext.builtin.heap_native": ["__heap_native__"],
+  "ext.builtin.heap_native": [
+    "__heap_native__"
+  ],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -971,7 +1012,16 @@
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
   ],
-  "ext.builtin.exceptions.syntax": ["msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line"],
+  "ext.builtin.exceptions.syntax": [
+    "msg",
+    "filename",
+    "lineno",
+    "offset",
+    "text",
+    "end_lineno",
+    "end_offset",
+    "print_file_and_line"
+  ],
   "ext.builtin.exceptions.unicode": [
     "encoding",
     "object",
@@ -1595,7 +1645,9 @@
     "center",
     "str.center"
   ],
-  "ext.builtin.uncaught": ["__uncaught"],
+  "ext.builtin.uncaught": [
+    "__uncaught"
+  ],
   "ext.builtin.text.complaint": [
     "TypeError:",
     "ValueError:",
@@ -1826,7 +1878,10 @@
     "split",
     "str.split"
   ],
-  "ext.builtin.text.getnewargs": ["__getnewargs__", "str.__getnewargs__"],
+  "ext.builtin.text.getnewargs": [
+    "__getnewargs__",
+    "str.__getnewargs__"
+  ],
   "ext.builtin.text.splitlines": [
     "splitlines",
     "str.splitlines"
@@ -1860,7 +1915,10 @@
     "str.zfill"
   ],
   "ext.builtin.to_int.digits": 4300,
-  "ext.builtin.to_int.digits.state": ["sys", "_int_max_str_digits"],
+  "ext.builtin.to_int.digits.state": [
+    "sys",
+    "_int_max_str_digits"
+  ],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
     " digits) for integer string conversion"
@@ -2423,8 +2481,8 @@
     ": %b requires a bytes-like object, or an object that implements __bytes__, not "
   ],
   "ext.op.rem.format.character": [
-    "TypeError: format argument",
-    ": %c requires ",
+    "TypeError: ",
+    "%c requires ",
     ", not "
   ],
   "ext.op.rem.format.character.range": [
@@ -2433,8 +2491,9 @@
     ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format %",
-    " at position "
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index "
   ],
   "ext.op.rem.format.few": [
     "TypeError: not enough arguments for format string (got ",
@@ -2455,9 +2514,9 @@
     "OverflowError: cannot convert float infinity to integer"
   ],
   "ext.op.rem.format.integer": [
-    "TypeError: format argument",
-    ": %",
-    " requires an integer, not "
+    "TypeError: ",
+    "%",
+    " format: an integer is required, not "
   ],
   "ext.op.rem.format.many": [
     "TypeError: not all arguments converted during ",
@@ -2484,9 +2543,9 @@
     "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
-    "TypeError: format argument",
-    ": %",
-    " requires a real number, not "
+    "TypeError: ",
+    "%",
+    " format: a real number is required, not "
   ],
   "ext.op.rem.format.real": [
     "TypeError: format argument",
@@ -2677,8 +2736,23 @@
   "ext.stmt.class.detail.allocate": [
     "__new__"
   ],
-  "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__"],
-  "ext.stmt.class.detail.code.replace": ["replace", "co_linetable"],
+  "ext.stmt.class.detail.code.fields": [
+    "co_name",
+    "co_qualname",
+    "co_posonlyargcount",
+    "co_kwonlyargcount",
+    "co_nlocals",
+    "co_names",
+    "co_consts",
+    "co_flags",
+    "co_filename",
+    "co_firstlineno",
+    "__annotate__"
+  ],
+  "ext.stmt.class.detail.code.replace": [
+    "replace",
+    "co_linetable"
+  ],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
   ],
@@ -2966,7 +3040,9 @@
     "() requires a code object with ",
     " free vars, not "
   ],
-  "ext.stmt.class.detail.classcell": ["__classcell__"],
+  "ext.stmt.class.detail.classcell": [
+    "__classcell__"
+  ],
   "ext.stmt.class.detail.cell.contents": [
     "cell_contents"
   ],
@@ -2997,7 +3073,13 @@
     ".__new__() takes exactly one argument (the type to instantiate)"
   ],
   "ext.stmt.class.detail.integer.layout": [
-    "__basicsize__", "__itemsize__", "__sizeof__", "24", "4", "30", "32"
+    "__basicsize__",
+    "__itemsize__",
+    "__sizeof__",
+    "24",
+    "4",
+    "30",
+    "32"
   ],
   "ext.stmt.class.detail.root.members": [
     "__eq__",
@@ -3238,7 +3320,10 @@
     "' from '",
     "'"
   ],
-  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
+  "ext.stmt.import.nonpackage": [
+    "; '",
+    "' is not a package"
+  ],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
@@ -3691,13 +3776,24 @@
     "RecursionError: maximum recursion depth exceeded"
   ],
   "ext.system.recursion.limit": 1000,
-  "ext.system.recursion.variable": ["sys", "_recursion_limit"],
+  "ext.system.recursion.variable": [
+    "sys",
+    "_recursion_limit"
+  ],
   "ext.system.module.doc": [
     "__doc__"
   ],
-  "ext.builtin.build_class": ["__build_class__"],
-  "ext.stmt.class.builder": ["__build_class__", "NameError: __build_class__ not found"],
-  "ext.system.module.kind": ["types", "ModuleType"],
+  "ext.builtin.build_class": [
+    "__build_class__"
+  ],
+  "ext.stmt.class.builder": [
+    "__build_class__",
+    "NameError: __build_class__ not found"
+  ],
+  "ext.system.module.kind": [
+    "types",
+    "ModuleType"
+  ],
   "ext.system.module.builtins": [
     "__builtins__"
   ],

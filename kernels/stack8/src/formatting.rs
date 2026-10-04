@@ -650,12 +650,12 @@ impl Writer<'_> {
                             .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                         Answer::CharacterType(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
-                                else { "an integer or a unicode character" };
-                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &name]));
+                                else { "an int or a unicode character" };
+                            return Err(self.fault("ext.op.rem.format.character", &["", required, &name]));
                         },
                         Answer::Missing(name) | Answer::BadMethod(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
-                                else { "an integer or a unicode character" };
+                                else { "an int or a unicode character" };
                             let subject = if !name.is_empty() {
                                 name
                             } else {
@@ -665,7 +665,7 @@ impl Writer<'_> {
                                     _ => value.core_kind(),
                                 }
                             };
-                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &subject]));
+                            return Err(self.fault("ext.op.rem.format.character", &["", required, &subject]));
                         },
                         _ => unreachable!(),
                     },
@@ -692,7 +692,7 @@ impl Writer<'_> {
                         }
                         Answer::Missing(name) | Answer::BadMethod(name) => {
                             let named = if name.is_empty() { value.core_kind() } else { name };
-                            return Err(self.fault(key, &[&location, &code.to_string(), &named]));
+                            return Err(self.fault(key, &["", &code.to_string(), &named]));
                         }
                         _ => unreachable!(),
                     }
@@ -700,7 +700,7 @@ impl Writer<'_> {
                 if !accepted {
                     let key = if decimal { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
                     let named = value.core_kind();
-                    return Err(self.fault(key, &[&location, &code.to_string(), &named]));
+                    return Err(self.fault(key, &["", &code.to_string(), &named]));
                 }
                 let n = match &held { Some(whole) => whole.as_big()?, None => value.as_big()? };
                 let mut digits = n.abs().to_str_radix(if decimal { 10 } else if code == 'o' { 8 } else { 16 });
@@ -750,7 +750,7 @@ impl Writer<'_> {
             return format!("ValueError: unsupported format character '{}' (0x{:x}) at index {}", code, code as u32, character);
         }
         if code.is_ascii_alphanumeric() {
-            return self.fault("ext.op.rem.format.code", &[&code.to_string(), &mark.to_string()]);
+            return self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &character.to_string()]);
         }
         let name = if bytes {
             if (code.is_ascii_graphic() || code == ' ') && code != '\'' { format!("'{code}'") }

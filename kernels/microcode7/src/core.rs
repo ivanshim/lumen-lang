@@ -69,6 +69,7 @@ impl Value {
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
+            Self::Member(_, operation) if operation == "__next__" => "method-wrapper",
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
@@ -82,6 +83,7 @@ impl Value {
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
+            Self::Wrapped(143, _) => "function",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             Self::Wrapped(3, _) => "method-wrapper",
@@ -198,6 +200,12 @@ impl Value {
             Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
+            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut total = i64::from(*tag);
+                for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
+                total
+            }
+            Self::Wrapped(4..=7, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by

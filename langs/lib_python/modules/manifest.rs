@@ -187,6 +187,19 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("colorsys", include_str!("colorsys.py"), "colorsys.py"),
     ("graphlib", include_str!("graphlib.py"), "graphlib.py"),
     ("quopri", include_str!("quopri.py"), "quopri.py"),
+    ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("_ordering", include_str!("_ordering.py"), "_ordering.py"),
+    ("_pyrepl", include_str!("_pyrepl/__init__.py"), "_pyrepl/__init__.py"),
+    ("_pyrepl.pager", include_str!("_pyrepl/pager.py"), "_pyrepl/pager.py"),
+    ("_tokenize", include_str!("_tokenize.py"), "_tokenize.py"),
+    ("linecache", include_str!("linecache.py"), "linecache.py"),
+    ("pkgutil", include_str!("pkgutil.py"), "pkgutil.py"),
+    ("pydoc", include_str!("pydoc.py"), "pydoc.py"),
+    ("sysconfig", include_str!("sysconfig.py"), "sysconfig.py"),
+    ("test.test_import.data.syntax_warnings", include_str!("test/test_import/data/syntax_warnings.py"), "test/test_import/data/syntax_warnings.py"),
+    ("token", include_str!("token.py"), "token.py"),
+    ("tokenize", include_str!("tokenize.py"), "tokenize.py"),
+    ("unittest.util", include_str!("unittest/util.py"), "unittest/util.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.

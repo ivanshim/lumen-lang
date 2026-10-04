@@ -441,7 +441,7 @@ pub fn compile_within(
 /// wanted is only which names the text as a whole has ever declared
 /// `global`, not where, so a walk that never enters or leaves a scope
 /// answers it well enough.
-fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
+pub(crate) fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
     let sep = lang.calling.as_ref().and_then(|c| c.between.clone());
     let mut names = Vec::new();
     let mut i = 0;
@@ -6449,8 +6449,44 @@ impl<'a> Compiler<'a> {
         // a write through either as the body's first statement finds
         // somewhere of its own already standing, not made as part of
         // the write.
-        if self.class_body_names_locals(self.pos, inline) {
-            self.class_book();
+        if lang.class_details.get("prepare").map_or(false, |names| !names.is_empty())
+            && (base.is_some() || !further.is_empty() || self.gathering().shared.iter().any(|(key, _)| key == MAKER_MEMBER || key == "\0header")) {
+            self.constant(Value::text(&original_name));
+            let ancestors: Vec<String> = base.iter().chain(further.iter()).cloned().collect();
+            for place in &ancestors { self.read(place); }
+            self.act(Action::MakeTuple, ancestors.len());
+            let asked = self.gathering().shared.iter().find(|(key, _)| key == MAKER_MEMBER).map(|(_, place)| place.clone());
+            if let Some(place) = asked { self.read(&place); } else { self.constant(Value::Null); }
+            let keywords: Vec<_> = self.gathering().shared.iter().filter_map(|(key, place)| key.strip_prefix("\0keyword:").map(|word| (word.to_string(), place.clone()))).collect();
+            for (word, place) in &keywords {
+                self.constant(Value::text(word)); self.read(place); self.act(Action::MakeTuple, 2);
+            }
+            self.act(Action::MakeTuple, keywords.len());
+            let expanded = self.gathering().shared.iter().find(|(key, _)| key == "\0header").map(|(_, place)| place.clone());
+            if let Some(place) = expanded { self.read(&place); } else { self.constant(Value::Null); }
+            self.act(Action::Builtin(Builtin::ClassTool(13), Rc::from("")), 5);
+            let book = self.gensym("prepared");
+            self.write(&book);
+            self.gathering().book = Some(book.clone());
+            if let Some(module_word) = lang.class_details.get("module").and_then(|words| words.first()) {
+                self.read("__name__");
+                let module_place = self.gensym("class_module"); self.write(&module_place);
+                self.mirror_member(module_word, &module_place)?;
+            }
+            let initial = self.gathering().shared.clone();
+            for (key, place) in initial {
+                if !key.starts_with('\0') { self.mirror_member(&key, &place)?; }
+            }
+        } else {
+            if self.class_body_names_locals(self.pos, inline) { self.class_book(); }
+            if let Some(word) = lang.class_details.get("module").and_then(|names| names.first()) {
+                self.read("__name__");
+                let slot = self.gensym("module_of_class");
+                self.write(&slot);
+                self.gathering().shared.push((word.clone(), slot.clone()));
+                self.gathering().order.push(word.clone());
+                self.mirror_member(word, &slot)?;
+            }
         }
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
@@ -8474,7 +8510,8 @@ impl<'a> Compiler<'a> {
         }
         // Python composite stores mutate the evaluated object. They do not
         // assign the object expression back into the class namespace.
-        if !self.lang.class_builder.is_empty() && self.in_class_body()
+        if !self.lang.class_builder.is_empty()
+            && (self.in_class_body() || target.iter().any(|word| matches!(word, Instr::Act(Action::Invoke(_), _))))
             && matches!(target.last(), Some(Instr::Act(Action::At, 2))) {
             let value = self.gensym("target_value");
             if compound.is_none() { self.value_written(keep)?; self.write(&value); }
@@ -11273,12 +11310,17 @@ impl<'a> Compiler<'a> {
         let source_end = self.pos;
         let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
         self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
-        let seed = self.gensym("generator_source");
+        let seed = ".0".to_string();
         let name = "<genexpr>".to_string();
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
-        let program = self.routine(&name, vec![seed], 1, true, |r| {
+        let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
+            if !first_async && !r.lang.class_builder.is_empty() {
+                r.read(&seed);
+                r.act(Action::Builtin(Builtin::ClassTool(21), Rc::from("")), 1);
+                r.write(&seed);
+            }
             r.pos = clause;
             let names = r.comprehension_names.len();
             r.reserve_comprehension(clause)?;
