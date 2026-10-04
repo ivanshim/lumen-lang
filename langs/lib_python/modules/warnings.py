@@ -86,26 +86,31 @@ def _location(stacklevel):
     return [frame['file'], frame['line']]
 
 
-def _outside(prefixes):
-    # The frame the warning is laid at is the first one standing outside
-    # the files the prefixes name: the deprecation is the caller's, not
-    # the library's own.
+def _outside(prefixes, stacklevel):
+    # Begin at warn's caller, then count the requested external callers.
+    # Prefix matches do not consume any of the requested depth.
     calls = __warning_calls()
-    for at in range(1, len(calls)):
+    remaining = max(2, stacklevel) - 1
+    for at in range(2, len(calls)):
         frame = calls[at]
         file = frame['file']
-        outside = True
-        for prefix in prefixes:
-            if file.startswith(prefix):
-                outside = False
-                break
-        if outside:
+        if any(file.startswith(prefix) for prefix in prefixes):
+            continue
+        remaining -= 1
+        if remaining == 0:
             return [file, frame['line']]
-    raise NotImplementedError('warning stack level lies outside the known calls')
+    return ['<sys>', 0]
 
-def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=None):
-    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0 and stacklevel != 1:
-        raise ValueError('skip_file_prefixes cannot be used with stacklevel')
+def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=()):
+    if not isinstance(stacklevel, int) and not hasattr(type(stacklevel), '__index__'):
+        raise TypeError("'" + type(stacklevel).__name__ + "' object cannot be interpreted as an integer")
+    import operator
+    stacklevel = operator.index(stacklevel)
+    if not isinstance(skip_file_prefixes, tuple):
+        raise TypeError('skip_file_prefixes must be a tuple of strs.')
+    for prefix in skip_file_prefixes:
+        if not isinstance(prefix, str):
+            raise TypeError("Found non-str '" + type(prefix).__name__ + "' in skip_file_prefixes.")
     if isinstance(message, Warning):
         category = type(message)
     elif category is None:
@@ -115,7 +120,7 @@ def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixe
     if not isinstance(message, Warning):
         message = category(message)
     if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
-        place = _outside(skip_file_prefixes)
+        place = _outside(skip_file_prefixes, stacklevel)
     else:
         place = _location(stacklevel)
     filename = place[0]

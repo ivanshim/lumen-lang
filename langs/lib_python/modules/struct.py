@@ -3,10 +3,6 @@ class error(Exception):
     pass
 
 def pack(format, *values):
-    if format == '<q' or format == '>q' or format == '!q':
-        if len(values) != 1:
-            raise error('pack expected 1 items for packing (got ' + str(len(values)) + ')')
-        return int(values[0]).to_bytes(8, 'little' if format == '<q' else 'big', signed=True)
     if format == '<d' or format == '>d' or format == '!d':
         if len(values) != 1:
             raise error('pack expected 1 items for packing (got ' + str(len(values)) + ')')
@@ -150,20 +146,23 @@ def _int_layout(format):
     return (endian, pieces, at)
 
 def _whole(value):
-    # The integer index protocol: a whole number, or an object
-    # answering __index__ with a whole number; anything else, a float or
-    # text included, is refused the way the reference refuses it.
-    if type(value) == type(1) or type(value) == type(True):
-        return int(value)
-    ask = getattr(value, '__index__', None)
-    if ask is not None:
-        result = ask()
-        if type(result) == type(1):
-            return int(result)
-        if type(result) == type(True):
-            raise TypeError('__index__ returned non-int (type bool)')
+    # PyNumber_Index accepts integers directly and looks up other hooks
+    # on the type, ignoring instance attributes and __getattr__.
+    if isinstance(value, int):
+        return int.__index__(value)
+    ask = getattr(type(value), '__index__', None)
+    if ask is None:
+        raise error('required argument is not an integer')
+    result = ask(value)
+    if not isinstance(result, int):
         raise TypeError('__index__ returned non-int (type ' + type(result).__name__ + ')')
-    raise error('required argument is not an integer')
+    if type(result) is not int:
+        import warnings
+        warnings.warn('__index__ returned non-int (type ' + type(result).__name__ + ').  '
+                      'The ability to return an instance of a strict subclass of int '
+                      'is deprecated, and may be removed in a future version of Python.',
+                      DeprecationWarning, stacklevel=2)
+    return int.__index__(result)
 
 def _int_range(code, size, signed):
     if code in _INT_WORDS:
