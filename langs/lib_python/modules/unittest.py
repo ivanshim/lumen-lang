@@ -48,6 +48,10 @@ class TestResult:
     def wasSuccessful(self):
         return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
 
+class TextTestResult(TestResult):
+    def __repr__(self):
+        return '<unittest.runner.TextTestResult run=%d errors=%d failures=%d>' % (self.testsRun, len(self.errors), len(self.failures))
+
 class TestCase:
     _test_case = True
     failureException = AssertionError
@@ -333,12 +337,43 @@ class TestCase:
     def assertEndsWith(self, text, suffix, msg=None):
         self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
+    def _tail_type_check(self, text, tails, msg):
+        # A prefix or suffix handed a kind it cannot compare fails with
+        # the kind named, the way CPython's own tail check does.
+        if not isinstance(tails, tuple):
+            tails = (tails,)
+        for tail in tails:
+            if isinstance(tail, str):
+                if not isinstance(text, str):
+                    self._check(False, 'Expected str, not ' + _class_name(text), msg)
+            elif isinstance(tail, (bytes, bytearray)):
+                if not isinstance(text, (bytes, bytearray)):
+                    self._check(False, 'Expected bytes, not ' + _class_name(text), msg)
+
+    def assertNotEndsWith(self, text, suffix, msg=None):
+        try:
+            if not text.endswith(suffix):
+                return
+        except (AttributeError, TypeError):
+            self._tail_type_check(text, suffix, msg)
+            raise
+        if isinstance(suffix, tuple):
+            for part in suffix:
+                if text.endswith(part):
+                    suffix = part
+                    break
+        self._check(False, _representation(text) + ' ends with ' + _representation(suffix), msg)
+
     def _run_test(self):
         if getattr(self, '__unittest_skip__', False):
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
-            getattr(self, self._method)()
+            outcome = _host_call_outcome(getattr(self, self._method))
+            if not outcome[0]:
+                if isinstance(outcome[1], BaseException):
+                    raise outcome[1]
+                raise RuntimeError(outcome[2])
         finally:
             self.tearDown()
 
@@ -919,7 +954,7 @@ class TextTestRunner:
 
     def run(self, test):
         self._progress = ""
-        result = TestResult()
+        result = TextTestResult()
         if self.resultclass is not None:
             result = self.resultclass()
         started = _host_clock()

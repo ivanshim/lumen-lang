@@ -570,3 +570,20 @@ fn fill_mapping(table:&Table, pattern:&str, mapping:&Value, names:Names, level:u
     }
     Ok(output)
 }
+
+
+pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
+    type LengthEntry = (std::rc::Weak<str>, usize);
+    thread_local! {
+        static EXTENTS: std::cell::RefCell<std::collections::BTreeMap<usize, LengthEntry>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    }
+    let identity = subject.as_ptr() as usize;
+    EXTENTS.with(|known| {
+        if let Some((_, measured)) = known.borrow().get(&identity) { return *measured; }
+        let measured = subject.chars().count();
+        let mut lengths = known.borrow_mut();
+        if lengths.len() > 1000 { lengths.retain(|_, entry| entry.0.strong_count() > 0); }
+        lengths.insert(identity, (Rc::downgrade(subject), measured));
+        measured
+    })
+}

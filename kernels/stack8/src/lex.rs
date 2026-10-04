@@ -16,6 +16,7 @@ pub enum Shape {
     StringBegin,
     StringEnd,
     StringField,
+    StringExpression,
     StringFault,
     Codepoints,
     EscapeWarning,
@@ -895,6 +896,7 @@ impl<'a> Cursor<'a> {
             return Err(self.field_error(if conversion.is_empty() || debug { 9 } else { 10 }));
         }
         self.push(Shape::StringField, conversion, 0, line, col);
+        self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
         let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
@@ -905,7 +907,7 @@ impl<'a> Cursor<'a> {
         }
         self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
-        self.push(Shape::StringBegin, self.template.map(|c| c.to_string()).unwrap_or_default(), 0, line, col);
+        self.push(Shape::StringBegin, String::new(), 0, line, col);
         let (mut text, mut fault) = (String::new(), false);
         let mut warned = false;
         if self.look(0) == Some(':') {
