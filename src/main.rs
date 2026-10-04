@@ -108,6 +108,20 @@ fn without_shebang(source: String) -> String {
     }
 }
 
+/// A reference test module that does not run its own tests is run the
+/// way the reference's own test runner runs it: the module keeps its own
+/// name, so a `__main__` guard in it stays shut, and the test cases it
+/// defines are gathered and run. A file that already calls
+/// `unittest.main`, or runs its tests through the suite's own helper, is
+/// left as it is.
+fn with_test_runner(source: String, file: &str) -> String {
+    let name = Path::new(file).file_stem().and_then(|stem| stem.to_str()).unwrap_or("");
+    if !name.starts_with("test_") || source.contains("unittest.main") || source.contains("run_unittest") || !source.contains("TestCase") {
+        return source;
+    }
+    format!("__name__ = {:?}\n{}\nimport unittest as _lumen_test_runner\n_lumen_test_runner.main()\n", name, source)
+}
+
 fn with_library(kernel: &str, language: &str, source: String) -> String {
     if env::var_os("LUMEN_BARE").is_some() {
         return source;
@@ -563,6 +577,7 @@ fn run_all() {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };
     let source = without_shebang(source);
+    let source = if inv.language.name() == "python" { with_test_runner(source, &inv.file) } else { source };
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();
