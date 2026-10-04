@@ -6179,8 +6179,11 @@ impl<'a> Compiler<'a> {
             self.arguments(&pair)?
         } else { 0 };
         if generic {
+            let names = std::mem::take(&mut self.generic_class_parameters);
+            for name in &names { self.read(name); }
+            self.act(Action::MakeTuple, names.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
-            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            self.act(Action::Invoke(Rc::from("generic base")), 2);
             count += 1;
         }
         self.act(Action::MakeTuple, count);
@@ -6281,7 +6284,13 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text(crate::code::ANNOTATE_WORD));
             let count = parts.annotated.len() * 2;
             for (key, location) in &parts.annotated { self.constant(key.clone()); self.glance(location); let address = self.cell_to_write(location); self.put(Instr::Forget(address)); }
-            self.act(Action::MakeArray, count); self.read(parts.book.as_ref().expect("class namespace"));
+            self.act(Action::MakeArray, count);
+            let rows = self.gensym("annotation_rows"); self.write(&rows); self.read(&rows);
+            self.read(parts.book.as_ref().expect("class namespace"));
+            self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            self.constant(Value::text(if self.future_annotations { "__annotations__" } else { "__annotate_func__" }));
+            self.read(&rows); self.act(Action::Builtin(Builtin::ClassTool(if self.future_annotations { 25 } else { 24 }), Rc::from("")), 1);
+            self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
             self.constant(Value::text("\0annotation_strings")); self.constant(Value::Flag(self.future_annotations)); self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
@@ -6400,8 +6409,11 @@ impl<'a> Compiler<'a> {
             }
         }
         if inside_wrapper {
+            let names = std::mem::take(&mut self.generic_class_parameters);
+            for name in &names { self.read(name); }
+            self.act(Action::MakeTuple, names.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
-            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            self.act(Action::Invoke(Rc::from("generic base")), 2);
             let generic = self.gensym("generic_base");
             self.write(&generic);
             if base.is_none() { base = Some(generic); } else { further.push(generic); }

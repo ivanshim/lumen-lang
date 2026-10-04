@@ -5002,6 +5002,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
+| `ext.builtin.type_descriptors.clear` | - | - | `__clear_type_descriptors` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | `__uncaught` | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
@@ -5312,7 +5313,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
-| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
@@ -5868,6 +5869,9 @@ other definitions keep their existing native inventory and call behavior.
 
 `ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
 
+`ext.builtin.type_descriptors.clear` binds the private type-dictionary cleanup used by `sys._clear_type_descriptors`: it removes the dictionary and weak-reference descriptors from mutable types and rejects immutable types. Both kernels register it through their builtin label maps.
+
+The `co_freevars` entry in `ext.stmt.class.detail.code.fields` exposes the sorted lexical closure names alongside the corresponding function closure cells.
 ## Python release selection
 
 [`python/versions.json`](python/versions.json) is metadata, kept below a
@@ -6011,3 +6015,32 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 `ext.stmt.yield.input` names the iterator argument of a generator expression.
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
+
+The Python-only type-parameter labels also expose `_typing` primitives to the
+unchanged CPython v3.14.8 `typing.py`. Generic subscription and subclass
+initialization call its `_generic_class_getitem` and `_generic_init_subclass`;
+implicit generic bases retain their actual type parameters. Native TypeVar,
+ParamSpec and TypeVarTuple substitution hooks call the corresponding upstream
+helpers. TypeVar defaults are prepared before specialization. `_idfunc` returns
+its one argument unchanged. Union subscription uses the native union type,
+normalizes None through `_type_check`, flattens members and removes duplicates.
+Variance validation and representations follow `Objects/typevarobject.c`.
+The other four kernels do not expose these Python extensions.
+
+This remains a partial `_typing` port: variadic annotation syntax, TypeVarTuple
+iteration/unpacking, generic union and type-alias substitution, direct
+ParamSpecArgs/ParamSpecKwargs construction and their complete comparison,
+immutable-type/descriptor details, weak-reference ownership and serialization
+still need work. The complete `test_typing.py` stops at its starred parameter
+annotation syntax. Annotationlib's type representation adapter follows the
+upstream ordinary-object branches; template AST rendering remains unavailable.
+
+Prepared Python class namespaces expose the actual deferred annotation evaluator
+as `__annotate_func__`, or the annotation string dictionary under future
+annotations. Annotationlib's namespace lookup is the unchanged CPython helper.
+This lets the upstream NamedTuple metaclass discover its fields. Ordinary Python
+classes also expose their real weak-reference list through a read-only descriptor;
+class descriptor cycles are candidates for the existing cycle collector.
+Reassigning `__bases__` to the identical direct bases is allowed; changing bases
+still raises the existing unsupported-operation exception. The pure-Python
+`__future__.py` is also carried unchanged from v3.14.8.

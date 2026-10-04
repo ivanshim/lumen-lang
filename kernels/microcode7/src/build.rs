@@ -4905,7 +4905,10 @@ impl<'a> Builder<'a> {
         } else { Vec::new() };
         if generic {
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            args.push(Form::Apply(Callee::Code(Box::new(maker)), Vec::new()));
+            let names = std::mem::take(&mut self.generic_class_parameters);
+            let types = names.iter().map(|name| self.read(name)).collect();
+            let parameters = prim_call(Prim::MakeTuple, types);
+            args.push(Form::Apply(Callee::Code(Box::new(maker)), vec![parameters]));
         }
         let header = self.gensym("class_header");
         setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
@@ -5007,7 +5010,13 @@ impl<'a> Builder<'a> {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
             let book = parts.book.as_ref().expect("class namespace");
             let target = self.read_to_write(book.ident.as_ref());
-            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), prim_call(Prim::MakeArray, row)]));
+            let metadata = self.gensym("annotation_values");
+            setup.push(Form::Write(metadata.clone(), Box::new(prim_call(Prim::MakeArray, row))));
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), self.read(&metadata.ident)]));
+            let (key, action) = if self.annotations_as_strings { ("__annotations__", 25) } else { ("__annotate_func__", 24) };
+            let target = self.read_to_write(book.ident.as_ref());
+            let evaluate = prim_call(Prim::ClassWork(action), vec![self.read(&metadata.ident)]);
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(key)), evaluate]));
             let target = self.read_to_write(book.ident.as_ref());
             setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text("\0string_annotations")), constant(Value::Flag(self.annotations_as_strings))]));
             for (_, routine) in &parts.annotated_names { if let Form::Glance(address) = routine { setup.push(Form::Forget(address.clone())); } }
@@ -5123,7 +5132,9 @@ impl<'a> Builder<'a> {
         if nested {
             let generic = self.gensym("generic_parent");
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            let value = Form::Apply(Callee::Code(Box::new(maker)), Vec::new());
+            let parameters = std::mem::take(&mut self.generic_class_parameters);
+            let members = parameters.iter().map(|item| self.read(item)).collect();
+            let value = Form::Apply(Callee::Code(Box::new(maker)), vec![prim_call(Prim::MakeTuple, members)]);
             setup.push(Form::Write(generic.clone(), Box::new(value)));
             if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
         }

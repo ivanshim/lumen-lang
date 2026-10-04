@@ -2934,6 +2934,7 @@
   ],
   "ext.builtin.namespace_type": ["__namespace_type"],
   "ext.builtin.inline_values": ["_has_inline_values"],
+  "ext.builtin.type_descriptors.clear": ["__clear_type_descriptors"],
   "ext.stmt.class.detail.flags": ["__flags__"],
   "ext.stmt.class.detail.prepare": ["__prepare__"],
   "ext.stmt.class.detail.unready": [

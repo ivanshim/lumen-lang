@@ -7394,6 +7394,7 @@ impl<'a> Machine<'a> {
         };
         let op = match stands {
             Value::Intrinsic(Prim::ValueMethod, spelling) if spelling.contains('.') => Prim::ValueMethod,
+            Value::Intrinsic(operation, _) => *operation,
             _ => self.table.prims.get(word.as_ref()).copied()?,
         };
         let name = word.to_string();
@@ -7406,6 +7407,7 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
                 values = positions;
             }
+            if op == Prim::SortOf && self.has_class_order() { return self.class_from_type(values); }
             let made = self.prim(op, &name, &values);
             if let Some(away) = self.got_away.take() {
                 return Err(away);
@@ -8043,6 +8045,10 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
             _ => return None,
         };
+        let hash_slot = self.table.strings("ext.stmt.class.special").get(8);
+        if hash_slot.is_some_and(|slot| slot == name) {
+            match word.as_str() { "bytearray" | "list" | "dict" | "set" => return Some(Value::Nil), _ => {} }
+        }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));
         }
@@ -10618,9 +10624,9 @@ impl<'a> Machine<'a> {
     fn keyword_twice(&self, program: &Routine, key: &str) -> String {
         let words = self.table.strings("ext.syntax.call.amiss.keyword");
         if words.len() < 3 { return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)); }
-        let called = match self.namespace_named() {
-            Some(space) if !program.qualification.is_empty() => format!("{}.{}", space, program.qualification),
-            _ => program.qualification.clone(),
+        let called = match (self.namespace_named(), self.routine_called(program)) {
+            (Some(space), title) if !title.is_empty() => space + "." + &title,
+            (_, title) => title,
         };
         self.whole_complaint([words[0].as_str(), &called, &words[1], key, &words[2]].concat())
     }
@@ -10635,7 +10641,22 @@ impl<'a> Machine<'a> {
     }
 
     /// What a routine is called in the words about a call made to it.
-    fn routine_called(program: &Routine) -> String {
+    fn routine_called(&self, program: &Routine) -> String {
+        if self.rules.has_any_ext_stmt_class_special {
+            for (callable, attributes) in &self.routine_members {
+                let Some(value) = callable.revive() else { continue; };
+                let code = match &value {
+                    Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => code,
+                    _ => continue,
+                };
+                if !std::ptr::eq(program, code.as_ref()) { continue; }
+                let qualified_key = self.detail("qualified").to_owned() + "\0";
+                let entries = attributes.holds.borrow();
+                if let Some(entry) = entries.iter().find(|entry| entry.0 == qualified_key) {
+                    return entry.1.bare();
+                }
+            }
+        }
         match program.qualification.as_str() {
             "" => program.ident.clone(),
             full => full.to_string(),
@@ -10664,7 +10685,7 @@ impl<'a> Machine<'a> {
         }
         let manner = &pieces[if only_named { 6 } else { 5 }];
         let noun = &pieces[if unfilled.len() > 1 { 4 } else { 3 }];
-        self.whole_complaint(format!("{}{}{}{}{}{manner}{noun}{listing}", pieces[0], Self::routine_called(program), pieces[1], unfilled.len(), pieces[2]))
+        self.whole_complaint(format!("{}{}{}{}{}{manner}{noun}{listing}", pieces[0], self.routine_called(program), pieces[1], unfilled.len(), pieces[2]))
     }
 
     /// Too many worths handed over in order: how many the routine takes
@@ -10693,7 +10714,7 @@ impl<'a> Machine<'a> {
             _ => format!("{}{}{}{}", plural(handed, 4), pieces[9], beside, plural(beside, 10)),
         };
         let verb = if handed == 1 && beside == 0 { &pieces[7] } else { &pieces[8] };
-        self.whole_complaint(format!("{}{}{}{span}{takes}{taken}{}{handed}{aside}{verb}", pieces[0], Self::routine_called(program), pieces[1], pieces[6]))
+        self.whole_complaint(format!("{}{}{}{span}{takes}{taken}{}{handed}{aside}{verb}", pieces[0], self.routine_called(program), pieces[1], pieces[6]))
     }
 
     /// A keyword that meets no place. If the call named any place the
@@ -10704,7 +10725,7 @@ impl<'a> Machine<'a> {
         for (at, how) in manners.iter().enumerate() {
             if *how == 'p' && keys.iter().any(|given| *given == program.formals[at]) { in_order_only.push(program.formals[at].clone()); }
         }
-        let routine = Self::routine_called(program);
+        let routine = self.routine_called(program);
         let ordered = self.table.strings("ext.syntax.call.amiss.ordered");
         if ordered.len() == 4 && !in_order_only.is_empty() {
             return self.whole_complaint(ordered[0].clone() + &routine + &ordered[1] + &in_order_only.join(&ordered[2]) + &ordered[3]);
@@ -10756,7 +10777,7 @@ impl<'a> Machine<'a> {
             // is worded with the routine the call was meant for, under
             // the name it goes by where it was written.
             let duplicate = || match self.table.strings("ext.syntax.call.amiss.positional") {
-                [opening, between, closing] => self.whole_complaint(opening.clone() + &Self::routine_called(program) + between + &key + closing),
+                [opening, between, closing] => self.whole_complaint(opening.clone() + &self.routine_called(program) + between + &key + closing),
                 _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)),
             };
             if !already.insert(key.clone()) { return Err(self.keyword_twice(program, &key).into()); }
@@ -12683,7 +12704,8 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_hash(held: &Value) -> Option<Value> {
-        let name = match held {
+        let constructor = held.settled();
+        let name = match &constructor {
             Value::OctetKind { changeable: true, .. } => "bytearray",
             Value::OctetKind { changeable: false, .. } => "bytes",
             Value::Wrapped(9, parts) if parts.is_empty() => "super",
@@ -14459,6 +14481,11 @@ impl<'a> Machine<'a> {
                 return Err(self.operands_refused(&sign, left, right));
             }
         }
+        if matches!(operation, Prim::Eq | Prim::Ne) {
+            if let Some(equal) = self.native_sequence_equal(operation, operands)? {
+                return Ok(Some(Value::Flag(equal != (operation == Prim::Ne))));
+            }
+        }
         // A thing over a native worth is written into through that
         // worth, answers an absent key through the method the table
         // names for it, and for whatever its blueprint did not answer
@@ -15231,6 +15258,41 @@ impl<'a> Machine<'a> {
             [before, between, and, after] => format!("{before}{sign}{between}{}{and}{}{after}", one.kind_word(), two.kind_word()),
             _ => String::new(),
         }
+    }
+
+    // Native sequence members use rich equality, even when nested in a
+    // subclass. The reference checks list lengths first, but walks tuples
+    // before comparing their lengths; identity avoids a member callback.
+    fn native_sequence_equal(&mut self, operation: Prim, pair: &[Value]) -> Result<Option<bool>, String> {
+        if !self.table.spells("ext.stmt.class.builtin", "tuple") { return Ok(None); }
+        let [left, right] = pair else { return Ok(None); };
+        let slot = if operation == Prim::Ne { 3 } else { 2 };
+        let a = self.underlying_unless(left, &[slot]).unwrap_or_else(|| left.clone()).settled();
+        let b = self.underlying_unless(right, &[slot]).unwrap_or_else(|| right.clone()).settled();
+        let (a, b) = match (a, b) {
+            (Value::Tuple(x), Value::Tuple(y)) => (x, y),
+            (Value::Vector(x), Value::Vector(y)) => {
+                if x.len() != y.len() { return Ok(Some(false)); }
+                (x, y)
+            }
+            _ => return Ok(None),
+        };
+        if self.recursion_ceiling().is_some_and(|ceiling| self.standing >= ceiling) {
+            if let Some(message) = self.table.single("ext.system.recursion.exceeded") {
+                return Err(format!("\0{message}"));
+            }
+        }
+        self.standing += 1;
+        let compared = (|| -> Result<bool, String> {
+            for (x, y) in a.iter().zip(b.iter()) {
+                if x.one_place(y) { continue; }
+                let result = self.prim(Prim::Eq, "", &[x.clone(), y.clone()])?;
+                if !self.object_truth(&result)? { return Ok(false); }
+            }
+            Ok(a.len() == b.len())
+        })();
+        self.standing -= 1;
+        compared.map(Some)
     }
 
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
@@ -19558,7 +19620,10 @@ impl<'a> Machine<'a> {
             Prim::Eq | Prim::Ne if self.rules.unordered_maps => {
                 let alike = match (&v[0], &v[1]) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
-                    _ => self.equal_contents(&v[0], &v[1]),
+                    _ => match self.native_sequence_equal(op, v)? {
+                        Some(equal) => equal,
+                        None => self.equal_contents(&v[0], &v[1]),
+                    },
                 };
                 Value::Flag(alike != (op == Prim::Ne))
             }
@@ -22702,7 +22767,7 @@ impl Machine<'_> {
         Ok(prefix)
     }
 
-    fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+    pub(super) fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         let path_group_needs_os = (path == "posixpath" || path == "genericpath")
             && self.table.single("ext.builtin.posix").is_some()
             && !self.imported.contains_key("os") && !self.importing.contains("os");
@@ -25019,6 +25084,13 @@ impl Machine<'_> {
         }
         if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
         if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
+        // Native Python bases supply their iterator before the sequence
+        // fallback. An explicit iteration slot on the subclass still wins.
+        if !self.table.strings("ext.stmt.class.detail.native.protocols").is_empty() {
+            if let Some(storage) = self.underlying_unless(source, &[15]).filter(|value| Self::walk_named(value).is_some()) {
+                return self.iterated_value(&storage);
+            }
+        }
         match source {
             // A walk is its own walk, and so is a suspended program: a
             // walk taken of either is the very one, not a copy of what
@@ -25865,7 +25937,8 @@ impl Machine<'_> {
                 for entry in entries {
                     // An entry of a native kind with no hash of its own is
                     // refused by its kind, as the table has it.
-                    if !matches!(entry, Value::Thing(_) | Value::Tuple(_) | Value::Keyed(..)) && entry.hash_number().is_none() {
+                    let native_type_key = self.rules.has_any_ext_stmt_class_special && Self::constructor_hash(&entry).is_some();
+                    if !native_type_key && !matches!(entry, Value::Thing(_) | Value::Tuple(_) | Value::Keyed(..)) && entry.hash_number().is_none() {
                         return Err(self.core_complaint("core.unhashable", &entry.kind_word()));
                     }
                     self.set_include(&store, entry)?;
