@@ -112,6 +112,8 @@ def getcoroutinestate(coroutine):
 
 
 def __getattr__(name):
+    if name.startswith('__'):
+        raise AttributeError("module 'inspect' has no attribute '" + name + "'")
     raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
 
 

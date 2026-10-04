@@ -1,0 +1,14 @@
+{
+  "window": 2,
+  "versions": {
+    "3.14": {
+      "release": "3.14.8",
+      "tag": "v3.14.8",
+      "commit": "8e6e75d9102e",
+      "release_date": "2026-09-30",
+      "tests": "tests/python-3.14.8",
+      "library_overlay": "langs/python/3.14/modules",
+      "label_overlay": "langs/python/3.14/labels.json"
+    }
+  }
+}

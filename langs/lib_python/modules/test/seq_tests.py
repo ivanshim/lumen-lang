@@ -1,4 +1,4 @@
-# Source: CPython Lib/test/seq_tests.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/seq_tests.py; PSF License.
 """
 Tests common to tuple, list and UserList.UserList
 """

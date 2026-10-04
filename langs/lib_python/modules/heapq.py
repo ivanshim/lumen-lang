@@ -1,4 +1,4 @@
-# Source: CPython Lib/heapq.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/heapq.py; PSF License.
 """Heap queue algorithm (a.k.a. priority queue).
 
 Heaps are arrays for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for

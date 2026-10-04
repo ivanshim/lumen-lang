@@ -478,6 +478,11 @@ only. The extension labels so far, all from PHP:
   defers the making of the class to the class piece.
 - `ext.stmt.class.unready`: the complaint when a class can be read but
   its making cannot yet be honoured by the run.
+- `ext.stmt.class.parent.bind`: a switch; the parent word may be spelled
+  with a class and the thing it is for, `super(C, x)`, and answers with
+  the stand-in whose member reads walk the forebears of that class after
+  it, their members bound to that thing. Python's two-argument `super()`
+  is written on it.
 - `ext.op.member.pipes`: a member mark may also spell the old pipe to a
   builtin. Those builtins keep their old calling path; other names are
   read as members. Full dispatch belongs to the class piece.
@@ -1170,7 +1175,48 @@ only. The extension labels so far, all from PHP:
   the worth no number answers to, and dividing by nought answers with
   what lies past every number. PHP's `sqrt`, `log`, `sin`, `atan2`,
   `hypot`, `fdiv` and the rest of them are written on it, and so are its
+  `NAN` and `INF`. The unary `frexp` working returns a tuple of the
+  signed binary mantissa and its integer exponent; zero and non-finite
+  inputs keep their value with exponent zero. It reads the binary fields
+  directly, including subnormals, for Python's float decomposition.
+  `frexp_plain` also handles native whole numbers through 2**53 in magnitude;
+  `ldexp_plain` handles native floats and whole numbers with a whole exponent.
+  They use the same arithmetic directly; other inputs return null so Python
+  retains its existing conversion and validation paths.
+  `fsum_partial` merges one binary float with an ordered list of summation
+  partials, returning the new partial list and carried term. It performs
+  every compensated addition in order; inputs needing language protocols
+  return null so the library retains its ordinary arithmetic path.
+  `fsum_finite` has the same accumulation but declines a non-finite first
+  term as well, leaving the library to record NaN and infinity inputs.
+  `dist_float` subtracts equally sized vectors of native binary floats,
+  returning their differences and an infinity/NaN classification. Other
+  coordinates return null, preserving conversion protocols in the library.
+
   `NAN` and `INF`.
+  The `method` working supplies native call entries for the C-only math
+  functions, retaining their library readers for conversion and edge cases.
+
+- `ext.builtin._random`: a builtin lending the Mersenne Twister stream
+  the Python library's `random` draws its chance from, and the system's
+  own disorder as raw bytes. The first thing it is given is the name of
+  the working and the rest are what the working takes: `begin` opens a
+  stream and answers with the mark it answers to; `seed` plants a stream
+  from a whole number split into words from its low end; `entropy`
+  plants one from the system's own disorder and says whether it could;
+  `next` draws a real of the width's 53 bits; `bits` draws a run of
+  whole bits as long as asked; `state` answers with the 624 kept words
+  and the place among them; `restore` lays them back; `bytes` answers
+  with so many bytes of the system's own disorder; `pid` supplies the
+  current process identifier for clock-based fallback seeding. One
+  label covers them
+  all because the one stream kept is the kernel's own, and a definition
+  has no way of spelling a generator whose words must number their
+  period. Python's `_random` module and its `os.urandom` are written on
+  it.
+  Its `method` operation binds the C-only draw methods as native
+  descriptors, with the library readers retained for argument protocols.
+
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and
@@ -3524,7 +3570,11 @@ only. The extension labels so far, all from PHP:
   the reference object bearing the hold and a routine to call with that
   object once the value goes, and refuses any other kind in the words of
   `.refused` around the kind's name; the second answers the held value
-  while it is still there and nothing afterwards; the last finds the
+  while it is still there and nothing afterwards. Given a reference class,
+  `.make` allocates and interns native weak references; `.get` also exposes
+  their callback state, cached hash, referent equality, reference list,
+  proxy dereference and conditional dead-reference dictionary removal.
+  The last finds the
   rounds of values holding one another that nothing else reaches, runs
   their finalisers, breaks them so that counting frees them, and answers
   how many it found. A value's finaliser and the routines waiting on its
@@ -3551,6 +3601,9 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+  This Python-only switch also enables the `frexp`, `frexp_plain`,
+  `ldexp_plain`, `fsum_partial`, `fsum_finite` and `dist_float` workings.
+  Without it these names retain the unknown-working path and its arity.
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.
@@ -4402,6 +4455,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | Label | lumen | rplumen | python | rust | php (extra) | c (extra) | javascript (extra) | pascal (extra) | ruby (extra) | swift (extra) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
+| `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
@@ -4416,11 +4470,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
-| `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.at_end` | - | - | `__at_end` | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
+| `ext.builtin.build_class` | - | - | `__build_class__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
@@ -4435,6 +4490,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.maketrans` | - | - | `bytes.maketrans` `bytearray.maketrans` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.resize` | - | - | `resize` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.split` | - | - | `split` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
@@ -4531,7 +4587,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4606,6 +4662,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.short` | - | - | `ValueError: map() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.math.frexp` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.math.fsum` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.math.sumprod` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
@@ -4701,6 +4759,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.swapcase` | - | - | `swapcase` | - | - | - | - | - | - | - |
+| `ext.builtin.method.take_bytes` | - | - | `take_bytes` `bytearray.take_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |
 | `ext.builtin.method.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
@@ -4709,6 +4768,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.oct` | - | - | `oct` | - | - | - | - | - | - | - |
@@ -4717,6 +4777,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.exp` | - | - | `exp` | - | - | - | - | - | - | - |
@@ -4805,6 +4866,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.sre` | - | - | `__sre_native` | - | - | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
@@ -5196,7 +5258,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.annotations` | - | - | `__annotations__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
+| `ext.stmt.class.bases.resolve` | - | - | `__mro_entries__` `__orig_bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.binary.amiss` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.builder` | - | - | `__build_class__` `NameError: __build_class__ not found` | - | - | - | - | - | - | - |
 | `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` `frozenset` `bytes` `bytearray` `complex` `enumerate` `zip` `map` `filter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
@@ -5210,10 +5274,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.arguments.none` | - | - | `TypeError: ` `() takes no arguments` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.base` | - | - | `__base__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.contents` | - | - | `cell_contents` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.empty` | - | - | `ValueError: Cell is empty` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.classcell` | - | - | `__classcell__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
@@ -5251,6 +5317,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.native.protocols` | - | - | `str` `__add__ __contains__ __eq__ __format__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __sizeof__ __str__` `int` `__abs__ __add__ __and__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __index__ __int__ __invert__ __le__ __lshift__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __or__ __pos__ __pow__ __radd__ __rand__ __rdivmod__ __repr__ __rfloordiv__ __rlshift__ __rmod__ __rmul__ __ror__ __round__ __rpow__ __rrshift__ __rshift__ __rsub__ __rtruediv__ __rxor__ __sizeof__ __sub__ __truediv__ __trunc__ __xor__` `bool` `__and__ __invert__ __new__ __or__ __rand__ __repr__ __ror__ __rxor__ __xor__` `float` `__abs__ __add__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getformat__ __getnewargs__ __gt__ __hash__ __int__ __le__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __rdivmod__ __repr__ __rfloordiv__ __rmod__ __rmul__ __round__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__ __trunc__` `complex` `__abs__ __add__ __bool__ __complex__ __eq__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __le__ __lt__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __repr__ __rmul__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__` `list` `__add__ __class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __reversed__ __rmul__ __setitem__ __sizeof__` `tuple` `__add__ __class_getitem__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __rmul__` `dict` `__class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __init__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __setitem__ __sizeof__` `set` `__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iand__ __init__ __ior__ __isub__ __iter__ __ixor__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__` `frozenset` `__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__` `bytes` `__add__ __buffer__ __bytes__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __str__` `bytearray` `__add__ __alloc__ __buffer__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __reduce__ __reduce_ex__ __release_buffer__ __repr__ __rmod__ __rmul__ __setitem__ __sizeof__ __str__` `range` `__bool__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __reduce__ __repr__ __reversed__` `slice` `__eq__ __ge__ __gt__ __hash__ __le__ __lt__ __ne__ __new__ __reduce__ __repr__` `enumerate` `__class_getitem__ __iter__ __new__ __next__ __reduce__` `zip` `__iter__ __new__ __next__ __reduce__ __setstate__` `map` `__iter__ __new__ __next__ __reduce__ __setstate__` `filter` `__iter__ __new__ __next__ __reduce__` `reversed` `__iter__ __length_hint__ __new__ __next__ __reduce__ __setstate__` `list_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `list_reverseiterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `tuple_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `str_ascii_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `str_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `range_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `longrange_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `set_iterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_keyiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_valueiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_itemiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reversekeyiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reversevalueiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reverseitemiterator` `__iter__ __length_hint__ __next__ __reduce__` `bytes_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `bytearray_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `callable_iterator` `__iter__ __next__ __reduce__` `dict_keys` `__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__` `dict_values` `__iter__ __len__ __repr__ __reversed__` `dict_items` `__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__` `mappingproxy` `__class_getitem__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __str__` `generator` `__class_getitem__ __del__ __iter__ __next__ __repr__ __sizeof__` `iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.prepare` | - | - | `__prepare__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
@@ -5289,8 +5356,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.metaclass` | - | - | `metaclass` | - | - | - | - | - | - | - |
 | `ext.stmt.class.missing` | - | - | `__missing__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
+| `ext.stmt.class.native.name` | - | - | `__native_type_name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
+| `ext.stmt.class.parent.bind` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.stmt.class.property.setter` | - | - | `setter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
@@ -5318,6 +5387,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.del.unrun` | - | - | `This deletion cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
+| `ext.stmt.fn.defaults.enclosing` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.for.target.unready` | - | - | `NotImplementedError: unpacking loop targets are not supported` | - | - | - | - | - | - | - |
@@ -5511,7 +5581,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.module.cache` | - | - | `sys` `modules` | - | - | - | - | - | - | - |
 | `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
+| `ext.system.module.kind` | - | - | `types` `ModuleType` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.module.package` | - | - | `__package__` | - | - | - | - | - | - | - |
 | `ext.system.module.path` | - | - | `__path__` | - | - | - | - | - | - | - |
 | `ext.system.names.module` | - | - | `builtins` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
@@ -5657,7 +5729,7 @@ and ordinary multiplication/addition for other numeric types.
 
 The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
 from tag `v3.14.8`, commit `8e6e75d9102e` (the suite source recorded in `tests/README.md`),
-under the PSF license in `tests/python/LICENSE`. It supplies the original
+under the PSF license in `tests/python-3.14.8/LICENSE`. It supplies the original
 module for imports by the unchanged math tests.
 
 `ext.stmt.import.nonpackage` gives the two suffix pieces for a Python
@@ -5716,3 +5788,136 @@ were introduced after 3.14. Integer math arguments use the index protocol,
 including int subclasses and objects implementing __index__.
 Percent-format type errors follow the release wording; successful ordered
 unittest assertions do not stringify their operands.
+
+`ext.stmt.class.detail.base` names the read-only primary layout parent of a
+Python class (`__base__`), selected from its actual direct bases. The root
+class has no such parent. This is separate from the ordered `__bases__`
+sequence and C3 `__mro__`. Native payload layout takes precedence over an
+ordinary namespace-only mixin; unrelated layouts cannot share an instance.
+
+Class layout selection and dynamic type argument validation share the class
+construction functions with class documentation handling. This change does
+not import the parallel class-documentation or held type-metadata work;
+documentation values retain the existing implementation.
+
+Instance slot storage is fixed when a class is constructed; later namespace
+edits to `__slots__` do not change base selection or layout conflicts.
+Metaclass descriptors take precedence when reading or writing `__base__`.
+Python special-method lookup follows C3 order, separately from the primary
+allocation parent, so native layout does not bypass namespace mixins.
+
+Native protocol descriptors occupy their native class position in C3 lookup;
+a namespace mixin overrides them only when it precedes that native class.
+Native unhashability remains an explicit `__hash__ = None` entry. These lookup
+changes retain the metaclass descriptor precedence above. The parallel
+class-doc-name work also touches these lookup functions, so integration must
+reconcile these paths; this branch does not merge or copy that work.
+
+`ext.stmt.class.detail.native.protocols` lists pairs of native kind words and
+space-separated protocol names owned by each native type. These namespace
+facts were checked against CPython 3.14.7's built-in type `__dict__` values;
+slot availability alone also includes inherited object methods and cannot
+establish ownership. No CPython support file is added. C3 lookup uses ownership
+to place a descriptor at its actual declaring class, and native iterator
+reduction retains the receiver's actual subclass constructor.
+
+Native descriptor calls open positional and keyword argument spreads through
+the ordinary call machinery, preserve raised callback exceptions, and retain
+the original receiver for reduction, identity hashing, and empty formatting.
+The native ownership label activates these rules only for Python definitions;
+other definitions keep their existing native inventory and call behavior.
+
+`ext.system.module.kind` names the library module and class used for the builtin namespace module.
+`ext.builtin.build_class` names the class body builder; `ext.stmt.class.builder` supplies its lookup name and missing-builtin error for class statements.
+
+`ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
+
+## Python release selection
+
+[`python/versions.json`](python/versions.json) is metadata, kept below a
+subdirectory because top-level JSON files are language definitions. `window`
+is exactly 2; `versions` maps each supported two-number series to one full
+`release`, `tag`, `commit`, `release_date`, `tests`, `library_overlay`, and
+`label_overlay`. Registration currently contains only 3.14 → 3.14.8. The host
+and suite tools choose the highest series by default, never JSON entry order.
+
+Python programs can have a small language configuration beside their source:
+for `app.py`, write `app.py.lumen.json` containing
+`{"python": {"version": "3.14"}}`. This is read only for the Python language.
+`--python <version>` overrides `LUMEN_PYTHON`, which overrides `python.version`,
+which overrides the default. The host accepts `--python` before the source or
+directly after it, as it accepts `--lang`. Child interpreters inherit the
+resolved full pin through `LUMEN_PYTHON`.
+
+A series selects its exact pin silently. The exact full pin is also silent.
+Another micro release in a supported series warns on stderr, naming requested
+and actual releases and the CPython suite. Malformed or unsupported values
+fail before the source runs, with the supported releases listed. Runtime
+`sys.version`, `sys.version_info`, `sys.hexversion` and
+`platform.python_version()` report the resolved full pin.
+
+The host merges the selected `label_overlay` object over `python.json` before
+passing it to each kernel. Overlay keys add or replace `ext.*` labels, validated by the kernels;
+the 3.14 overlay is empty. `python/3.15/labels.json` restores explicit
+`lazy import`, already implemented by both full kernels. That directory is
+an unregistered demonstration: it enables nothing until a 3.15 suite and
+release pin are added to the table. It does not advertise 3.15 support.
+
+`build.rs` embeds each registered overlay's `.py` files with `include_str!`
+in a generated module manifest. Module names shadow shared
+`lib_python/modules` entries before import; other modules fall through to
+the shared 3.14 library. Overlays may carry the same `manifest-layout.json`
+`files`, `aliases` and `adapters` fields as the shared manifest. Selected
+sources retain logical shared-library locations so package `__path__` and
+embedded child lookup continue to work even without files on disk. The host
+sets release identity after loading sys/platform and gives doctest the suite
+path from the table. The shared library sources remain the 3.14 ones.
+
+Adding 3.15 requires the copied full-release suite, library/label overlay
+files, a provenance table in tests/README.md and one table entry; no Rust or
+suite-tool change. A third series replaces the oldest entry. Refresh a micro
+pin using `git mv` for the suite and update the single table entry. Rebuild
+after either kind of registration; Cargo tracks the table and overlay files.
+
+`ext.builtin.bytes.resize` names the Python bytearray resizing method: shrink or zero-fill storage, refusing size changes while a buffer is exported. The existing `ext.builtin.bytes._export` primitive accepts an optional second argument to query outstanding exports without acquiring one.
+
+The in-memory `io` port keeps `io.py`, `_pyio.py`, `_collections_abc.py`, and
+`stat.py` from CPython v3.14.8 (8e6e75d9102e), unchanged below their PSF
+provenance headers. `_io.py` supplies the runtime counterpart: memory storage
+follows `Modules/_io/bytesio.c` and `stringio.c`, while buffered streams and
+text decoding dispatch to the original `_pyio` algorithms. The embedded
+`codecs` adapter provides incremental UTF and single-byte codecs, and the two
+Python kernels provide bytearray resizing, export leases, and buffer writes.
+Real file descriptors remain outside this port; `FileIO` refuses them, and
+`io.open` retains the existing host file adapter. Unsupported codecs still
+raise `LookupError`. The upstream memory tests retain their failures for
+collector behavior that cannot yet reclaim a cycle containing a memoryview.
+The review regressions and buffer-protocol comparisons live in
+`scratch/io-memory/`, with expected output produced by Python 3.14.
+
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+
+Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
+
+`ext.builtin.namespace_type` provides the native namespace class used by `sys.implementation` and discovered by the pure Python `types` fallback.
+
+The `ext.builtin.host.info` helper also accepts the `build` query, exposing
+the Rust compiler flags for support-library sanitizer detection.
+
+Python `ext.builtin.at_end` registers the atexit dispatcher for interpreter shutdown.
+
+`ext.stmt.class.native.name` names an optional class-body declaration consumed by
+the full Python kernels. Source implementations of C-only types use it to supply
+the native type name used in exception messages and an immutable type namespace.
+This metadata belongs to the
+class itself and is not inherited by Python subclasses.
+
+`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
+
+`ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
+
+`ext.stmt.fn.defaults.enclosing` hides formal parameter names while the full kernels compile default expressions, so Python defaults resolve names in the enclosing scope. Tables without this flag retain their parameter bindings during default lookup.
+
+`ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.
+
+`ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.

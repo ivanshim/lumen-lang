@@ -63,6 +63,11 @@ def cpython_only(test):
 # with the rest of its internals.
 refcount_test = cpython_only
 
+# Nothing stands behind os.fork in this library yet; a test that needs
+# a forked process says so by stepping aside.
+def requires_fork():
+    return unittest.skipUnless(hasattr(os, 'fork'), 'requires working os.fork()')
+
 # The memory-exhaustion tests turn off that implementation's allocator
 # through its own C test module, so they are its internals too.
 nomemtest = cpython_only
@@ -74,8 +79,6 @@ requires_IEEE_754 = _identity
 # Only Cygwin's newlib C library fails these, and the host is not it.
 skip_on_newlib = _identity
 
-def requires_subprocess():
-    return unittest.skip('subprocesses are not supported')
 
 # Nothing here colours its output, so a class asking for plain output
 # already has it and runs unchanged.
@@ -98,71 +101,6 @@ def bigmemtest(size, memuse, dry_run=True):
 def requires_mac_ver(*version):
     return _identity
 
-def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
-    single_param = False
-    if isinstance(arg_names, str):
-        arg_names = arg_names.replace(',', ' ').split()
-        if len(arg_names) == 1:
-            single_param = True
-    arg_values = tuple(arg_values)
-    def decorator(func):
-        if isinstance(func, type):
-            raise TypeError('subTests() can only decorate methods, not classes')
-        def iter_subtest_kwargs():
-            for values in arg_values:
-                yield dict(zip(arg_names, (values,) if single_param else values))
-        # A synchronous wrapper would discard the coroutine without awaiting
-        # it, so an asynchronous test would not run at all.
-        import inspect
-        import functools
-        if inspect.iscoroutinefunction(func):
-            @functools.wraps(func)
-            async def wrapper(self, /, *args, **kwargs):
-                for subtest_kwargs in iter_subtest_kwargs():
-                    with self.subTest(**subtest_kwargs):
-                        await func(self, *args, **kwargs, **subtest_kwargs)
-                    if _do_cleanups:
-                        self.doCleanups()
-        else:
-            @functools.wraps(func)
-            def wrapper(self, /, *args, **kwargs):
-                for subtest_kwargs in iter_subtest_kwargs():
-                    with self.subTest(**subtest_kwargs):
-                        func(self, *args, **kwargs, **subtest_kwargs)
-                    if _do_cleanups:
-                        self.doCleanups()
-        return wrapper
-    return decorator
-
-# Setting the zone the clock runs in asks the host for tzset. A host
-# without one makes the reference itself skip, and this host is one.
-def run_with_tz(tz):
-    def decorator(func):
-        def inner(*args, **kwds):
-            import os, time
-            try:
-                tzset = time.tzset
-            except AttributeError:
-                raise unittest.SkipTest("tzset required")
-            if 'TZ' in os.environ:
-                orig_tz = os.environ['TZ']
-            else:
-                orig_tz = None
-            os.environ['TZ'] = tz
-            tzset()
-            try:
-                return func(*args, **kwds)
-            finally:
-                if orig_tz is None:
-                    del os.environ['TZ']
-                else:
-                    os.environ['TZ'] = orig_tz
-                tzset()
-        return inner
-    return decorator
-
-def run_with_locale(*locales):
-    return _identity
 
 def run_with_limited_c_stack(*args, **kwargs):
     return _identity
@@ -201,21 +139,6 @@ def check_syntax_error(testcase, statement, errtext='', lineno=None, offset=None
         testcase.assertEqual(caught.exception.lineno, lineno)
     if offset is not None:
         testcase.assertEqual(caught.exception.offset, offset)
-
-class swap_attr:
-    def __init__(self, obj, attr, new_val):
-        self.obj = obj
-        self.attr = attr
-        self.new_val = new_val
-
-    def __enter__(self):
-        self.old = getattr(self.obj, self.attr)
-        setattr(self.obj, self.attr, self.new_val)
-        return self.old
-
-    def __exit__(self, kind, value, traceback):
-        setattr(self.obj, self.attr, self.old)
-        return False
 
 # The digit limit is set for the block and put back after it, whatever
 # the block did.
@@ -929,3 +852,726 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
+
+# CPython v3.14.8 Lib/test/support/__init__.py; PSF License.
+@contextlib.contextmanager
+def swap_attr(obj, attr, new_val):
+    """Temporary swap out an attribute with a new object.
+
+    Usage:
+        with swap_attr(obj, "attr", 5):
+            ...
+
+        This will set obj.attr to 5 for the duration of the with: block,
+        restoring the old value at the end of the block. If `attr` doesn't
+        exist on `obj`, it will be created and then deleted at the end of the
+        block.
+
+        The old value (or None if it doesn't exist) will be assigned to the
+        target of the "as" clause, if there is one.
+    """
+    if hasattr(obj, attr):
+        real_val = getattr(obj, attr)
+        setattr(obj, attr, new_val)
+        try:
+            yield real_val
+        finally:
+            setattr(obj, attr, real_val)
+    else:
+        setattr(obj, attr, new_val)
+        try:
+            yield
+        finally:
+            if hasattr(obj, attr):
+                delattr(obj, attr)
+# Derived from CPython v3.14.8 Lib/test/support; PSF License.
+import os
+import re
+import textwrap
+import types
+import time
+
+# Embedded modules use the test archive's package root for discovery.
+SHORT_TIMEOUT = 30.0
+STDLIB_DIR = TEST_HOME_DIR
+TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
+is_android = False
+is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
+has_socket_support = False
+has_fork_support = False
+has_subprocess_support = True
+can_start_thread = False
+_TPFLAGS_STATIC_BUILTIN = 1 << 1
+_TPFLAGS_HEAPTYPE = 1 << 9
+_vheader = _header + 'n'
+
+def load_package_tests(pkg_dir, loader, standard_tests, pattern):
+    """Generic load_tests implementation for simple test packages.
+
+    Most packages can implement load_tests using this function as follows:
+
+       def load_tests(*args):
+           return load_package_tests(os.path.dirname(__file__), *args)
+    """
+    if pattern is None:
+        pattern = "test*"
+    top_dir = STDLIB_DIR
+    try:
+        package_tests = loader.discover(start_dir=pkg_dir,
+                                        top_level_dir=top_dir,
+                                        pattern=pattern)
+    except NotImplementedError:
+        package_tests = _discover_package_tests(pkg_dir, loader, top_dir, pattern)
+    standard_tests.addTests(package_tests)
+    return standard_tests
+
+
+def requires_zlib(reason='requires zlib'):
+    try:
+        import zlib
+    except ImportError:
+        zlib = None
+    return unittest.skipUnless(zlib, reason)
+
+
+def requires_fork():
+    return unittest.skipUnless(has_fork_support, "requires working os.fork()")
+
+
+def requires_subprocess():
+    """Used for subprocess, os.spawn calls, fd inheritance"""
+    return unittest.skipUnless(has_subprocess_support, "requires subprocess support")
+
+
+def requires_working_socket(*, module=False):
+    """Skip tests or modules that require working sockets
+
+    Can be used as a function/class decorator or to skip an entire module.
+    """
+    msg = "requires socket support"
+    if module:
+        if not has_socket_support:
+            raise unittest.SkipTest(msg)
+    else:
+        return unittest.skipUnless(has_socket_support, msg)
+
+
+def run_code(code: str, extra_names: dict[str, object] | None = None) -> dict[str, object]:
+    """Run a piece of code after dedenting it, and return its global namespace."""
+    ns = {}
+    if extra_names:
+        ns.update(extra_names)
+    exec(textwrap.dedent(code), ns)
+    return ns
+
+
+def captured_stdin():
+    """Capture the input to sys.stdin:
+
+       with captured_stdin() as stdin:
+           stdin.write('hello\\n')
+           stdin.seek(0)
+           # call test code that consumes from sys.stdin
+           captured = input()
+       self.assertEqual(captured, "hello")
+    """
+    return captured_output("stdin")
+
+
+def calcvobjsize(fmt):
+    import struct
+    return struct.calcsize(_vheader + fmt + _align)
+
+
+def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
+    """Run multiple subtests with different parameters.
+    """
+    single_param = False
+    if isinstance(arg_names, str):
+        arg_names = arg_names.replace(',',' ').split()
+        if len(arg_names) == 1:
+            single_param = True
+    arg_values = tuple(arg_values)
+    def decorator(func):
+        if isinstance(func, type):
+            raise TypeError('subTests() can only decorate methods, not classes')
+
+        def iter_subtest_kwargs():
+            for values in arg_values:
+                yield dict(zip(arg_names, (values,) if single_param else values))
+
+        # A synchronous wrapper would discard the coroutine without awaiting
+        # it, so an asynchronous test would not run at all.
+        import inspect
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def wrapper(self, /, *args, **kwargs):
+                for subtest_kwargs in iter_subtest_kwargs():
+                    with self.subTest(**subtest_kwargs):
+                        await func(self, *args, **kwargs, **subtest_kwargs)
+                    if _do_cleanups:
+                        self.doCleanups()
+        else:
+            @functools.wraps(func)
+            def wrapper(self, /, *args, **kwargs):
+                for subtest_kwargs in iter_subtest_kwargs():
+                    with self.subTest(**subtest_kwargs):
+                        func(self, *args, **kwargs, **subtest_kwargs)
+                    if _do_cleanups:
+                        self.doCleanups()
+        return wrapper
+    return decorator
+
+
+def run_with_locales(catstr, *locales):
+    def deco(func):
+        @functools.wraps(func)
+        def wrapper(self, /, *args, **kwargs):
+            dry_run = '' in locales
+            try:
+                import locale
+                category = getattr(locale, catstr)
+                orig_locale = locale.setlocale(category)
+            except AttributeError:
+                # if the test author gives us an invalid category string
+                raise
+            except Exception:
+                # cannot retrieve original locale, so do nothing
+                pass
+            else:
+                try:
+                    for loc in locales:
+                        with self.subTest(locale=loc):
+                            try:
+                                locale.setlocale(category, loc)
+                            except (getattr(locale, "Error", ValueError), NotImplementedError):
+                                self.skipTest(f'no locale {loc!r}')
+                            else:
+                                dry_run = False
+                                func(self, *args, **kwargs)
+                finally:
+                    locale.setlocale(category, orig_locale)
+            if dry_run:
+                # no locales available, so just run the test
+                # with the current locale
+                with self.subTest(locale=None):
+                    func(self, *args, **kwargs)
+        return wrapper
+    return deco
+
+
+def run_with_tz(tz):
+    def decorator(func):
+        def inner(*args, **kwds):
+            try:
+                tzset = time.tzset
+            except AttributeError:
+                raise unittest.SkipTest("tzset required")
+            if 'TZ' in os.environ:
+                orig_tz = os.environ['TZ']
+            else:
+                orig_tz = None
+            os.environ['TZ'] = tz
+            tzset()
+
+            # now run the function, resetting the tz on exceptions
+            try:
+                return func(*args, **kwds)
+            finally:
+                if orig_tz is None:
+                    del os.environ['TZ']
+                else:
+                    os.environ['TZ'] = orig_tz
+                time.tzset()
+
+        inner.__name__ = func.__name__
+        inner.__doc__ = func.__doc__
+        return inner
+    return decorator
+
+
+class Matcher(object):
+
+    _partial_matches = ('msg', 'message')
+
+    def matches(self, d, **kwargs):
+        """
+        Try to match a single dict with the supplied arguments.
+
+        Keys whose values are strings and which are in self._partial_matches
+        will be checked for partial (i.e. substring) matches. You can extend
+        this scheme to (for example) do regular expression matching, etc.
+        """
+        result = True
+        for k in kwargs:
+            v = kwargs[k]
+            dv = d.get(k)
+            if not self.match_value(k, dv, v):
+                result = False
+                break
+        return result
+
+    def match_value(self, k, dv, v):
+        """
+        Try to match a single stored value (dv) with a supplied value (v).
+        """
+        if type(v) != type(dv):
+            result = False
+        elif type(dv) is not str or k not in self._partial_matches:
+            result = (v == dv)
+        else:
+            result = dv.find(v) >= 0
+        return result
+
+
+@functools.total_ordering
+class _LARGEST:
+    """
+    Object that is greater than anything (except itself).
+    """
+    def __eq__(self, other):
+        return isinstance(other, _LARGEST)
+    def __lt__(self, other):
+        return False
+
+
+@functools.total_ordering
+class _SMALLEST:
+    """
+    Object that is less than anything (except itself).
+    """
+    def __eq__(self, other):
+        return isinstance(other, _SMALLEST)
+    def __gt__(self, other):
+        return False
+
+
+def check_disallow_instantiation(testcase, tp, *args, **kwds):
+    """
+    Check that given type cannot be instantiated using *args and **kwds.
+
+    See bpo-43916: Add Py_TPFLAGS_DISALLOW_INSTANTIATION type flag.
+    """
+    mod = tp.__module__
+    name = tp.__name__
+    if mod != 'builtins':
+        qualname = f"{mod}.{name}"
+    else:
+        qualname = f"{name}"
+    msg = f"cannot create '{re.escape(qualname)}' instances"
+    testcase.assertRaisesRegex(TypeError, msg, tp, *args, **kwds)
+    testcase.assertRaisesRegex(TypeError, msg, tp.__new__, tp, *args, **kwds)
+
+
+def get_recursion_depth():
+    """Get the recursion depth of the caller function.
+
+    In the __main__ module, at the module level, it should be 1.
+    """
+    try:
+        import _testinternalcapi
+        depth = _testinternalcapi.get_recursion_depth()
+    except (ImportError, RecursionError, NotImplementedError) as exc:
+        # sys._getframe() + frame.f_back implementation.
+        try:
+            depth = 0
+            frame = sys._getframe()
+            while frame is not None:
+                depth += 1
+                frame = frame.f_back
+        finally:
+            # Break any reference cycles.
+            frame = None
+
+    # Ignore get_recursion_depth() frame.
+    return max(depth - 1, 1)
+
+
+def get_recursion_available():
+    """Get the number of available frames before RecursionError.
+
+    It depends on the current recursion depth of the caller function and
+    sys.getrecursionlimit().
+    """
+    limit = sys.getrecursionlimit()
+    depth = get_recursion_depth()
+    return limit - depth
+
+
+@contextlib.contextmanager
+def set_recursion_limit(limit):
+    """Temporarily change the recursion limit."""
+    original_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(limit)
+        yield
+    finally:
+        sys.setrecursionlimit(original_limit)
+
+
+def infinite_recursion(max_depth=None):
+    if max_depth is None:
+        # Pick a number large enough to cause problems
+        # but not take too long for code that can handle
+        # very deep recursion.
+        max_depth = 20_000
+    elif max_depth < 3:
+        raise ValueError(f"max_depth must be at least 3, got {max_depth}")
+    depth = get_recursion_depth()
+    depth = max(depth - 1, 1)  # Ignore infinite_recursion() frame.
+    limit = depth + max_depth
+    return set_recursion_limit(limit)
+
+
+def walk_class_hierarchy(top, *, topdown=True):
+    # This is based on the logic in os.walk().
+    assert isinstance(top, type), repr(top)
+    stack = [top]
+    while stack:
+        top = stack.pop()
+        if isinstance(top, tuple):
+            yield top
+            continue
+
+        subs = type(top).__subclasses__(top)
+        if topdown:
+            # Yield before subclass traversal if going top down.
+            yield top, subs
+            # Traverse into subclasses.
+            for sub in reversed(subs):
+                stack.append(sub)
+        else:
+            # Yield after subclass traversal if going bottom up.
+            stack.append((top, subs))
+            # Traverse into subclasses.
+            for sub in reversed(subs):
+                stack.append(sub)
+
+
+def iter_builtin_types():
+    # First try the explicit route.
+    try:
+        import _testinternalcapi
+    except ImportError:
+        _testinternalcapi = None
+    if _testinternalcapi is not None:
+        try:
+            builtin_types = _testinternalcapi.get_static_builtin_types()
+        except (AttributeError, NotImplementedError):
+            pass
+        else:
+            yield from builtin_types
+            return
+
+    # Fall back to making a best-effort guess.
+    if hasattr(object, '__flags__') and hasattr(type, '__subclasses__'):
+        # Look for any type object with the Py_TPFLAGS_STATIC_BUILTIN flag set.
+        import datetime
+        seen = set()
+        for cls, subs in walk_class_hierarchy(object):
+            if cls in seen:
+                continue
+            seen.add(cls)
+            if not (cls.__flags__ & _TPFLAGS_STATIC_BUILTIN):
+                # Do not walk its subclasses.
+                subs[:] = []
+                continue
+            yield cls
+    else:
+        # Fall back to a naive approach.
+        seen = set()
+        import builtins
+        for obj in vars(builtins).values():
+            if not isinstance(obj, type):
+                continue
+            cls = obj
+            # XXX?
+            if getattr(cls, '__module__', 'builtins') != 'builtins':
+                continue
+            if cls == ExceptionGroup:
+                # It's a heap type.
+                continue
+            if cls in seen:
+                continue
+            seen.add(cls)
+            yield cls
+
+
+def identify_type_slot_wrappers():
+    try:
+        import _testinternalcapi
+    except ImportError:
+        _testinternalcapi = None
+    if _testinternalcapi is not None:
+        try:
+            names = {n: None for n in _testinternalcapi.identify_type_slot_wrappers()}
+        except (AttributeError, NotImplementedError):
+            pass
+        else:
+            return list(names)
+    raise NotImplementedError
+
+
+def iter_slot_wrappers(cls):
+    def is_slot_wrapper(name, value):
+        if not isinstance(value, types.WrapperDescriptorType):
+            assert not repr(value).startswith('<slot wrapper '), (cls, name, value)
+            return False
+        assert repr(value).startswith('<slot wrapper '), (cls, name, value)
+        assert callable(value), (cls, name, value)
+        assert name.startswith('__') and name.endswith('__'), (cls, name, value)
+        return True
+
+    try:
+        attrs = identify_type_slot_wrappers()
+    except NotImplementedError:
+        attrs = None
+    if attrs is not None:
+        for attr in sorted(attrs):
+            obj, base = find_name_in_mro(cls, attr, None)
+            if obj is not None and is_slot_wrapper(attr, obj):
+                yield attr, base is cls
+        return
+
+    # Fall back to a naive best-effort approach.
+
+    try:
+        ns = vars(cls)
+    except TypeError:
+        if not isinstance(cls, type):
+            raise
+        # Native kinds expose no namespace or wrapper descriptors yet.
+        return
+    unused = set(ns)
+    for name in dir(cls):
+        if name in ns:
+            unused.remove(name)
+
+        try:
+            value = getattr(cls, name)
+        except AttributeError:
+            # It's as though it weren't in __dir__.
+            assert name in ('__annotate__', '__annotations__', '__abstractmethods__'), (cls, name)
+            if name in ns and is_slot_wrapper(name, ns[name]):
+                unused.add(name)
+            continue
+
+        if not name.startswith('__') or not name.endswith('__'):
+            assert not is_slot_wrapper(name, value), (cls, name, value)
+        if not is_slot_wrapper(name, value):
+            if name in ns:
+                assert not is_slot_wrapper(name, ns[name]), (cls, name, value, ns[name])
+        else:
+            if name in ns:
+                assert ns[name] is value, (cls, name, value, ns[name])
+                yield name, True
+            else:
+                yield name, False
+
+    for name in unused:
+        value = ns[name]
+        if is_slot_wrapper(cls, name, value):
+            yield name, True
+
+
+def run_no_yield_async_fn(async_fn, /, *args, **kwargs):
+    coro = async_fn(*args, **kwargs)
+    try:
+        coro.send(None)
+    except StopIteration as e:
+        return e.value
+    else:
+        raise AssertionError("coroutine did not complete")
+    finally:
+        coro.close()
+
+
+# TestLoader.discover is not implemented by the unittest stand-in yet.
+class _PackageImportFailure(unittest.TestCase):
+    def __init__(self, error):
+        super().__init__('runTest')
+        self.error = error
+
+    def runTest(self):
+        raise self.error
+
+
+def _discover_package_tests(pkg_dir, loader, top_dir, pattern):
+    import fnmatch
+    from test.support.import_helper import DirsOnSysPath
+    suite = unittest.TestSuite()
+    top_dir = os.path.abspath(top_dir)
+    prefix = top_dir.rstrip('/') + '/'
+
+    def visit(directory):
+        for filename in sorted(os.listdir(directory)):
+            path = os.path.join(directory, filename)
+            package = os.path.isdir(path)
+            if package:
+                if not os.path.isfile(os.path.join(path, '__init__.py')):
+                    continue
+            else:
+                if (not filename.endswith('.py')
+                        or not filename[:-3].isidentifier()
+                        or not fnmatch.fnmatch(filename, pattern)):
+                    continue
+            absolute = os.path.abspath(path)
+            if not absolute.startswith(prefix):
+                raise ImportError('test package is outside the top level directory')
+            name = absolute[len(prefix):].replace('/', '.')
+            if not package:
+                name = name[:-3]
+            try:
+                module = __import__(name, fromlist=['*'])
+                # The stand-in loader cannot read a module namespace through
+                # its host hook. Use Python's namespace and class predicates.
+                tests = unittest.TestSuite()
+                for class_name in dir(module):
+                    candidate = getattr(module, class_name)
+                    if (isinstance(candidate, type)
+                            and issubclass(candidate, unittest.TestCase)
+                            and candidate is not unittest.TestCase):
+                        class_tests = loader.loadTestsFromTestCase(candidate)
+                        for test in class_tests:
+                            test._test_module = module.__name__
+                        tests.addTests(class_tests)
+                hook = getattr(module, 'load_tests', None)
+                if hook is not None:
+                    tests = hook(loader, tests, pattern)
+                suite.addTests(tests)
+                if package and hook is None:
+                    visit(path)
+            except Exception as error:
+                suite.addTest(_PackageImportFailure(error))
+
+    with DirsOnSysPath(top_dir):
+        visit(pkg_dir)
+    return suite
+
+def iter_name_in_mro(cls, name):
+    for base in cls.__mro__:
+        ns = vars(base)
+        if name in ns:
+            yield ns[name], base
+
+_mro_missing = object()
+def find_name_in_mro(cls, name, default=_mro_missing):
+    for res in iter_name_in_mro(cls, name):
+        return res
+    if default is not _mro_missing:
+        return default, None
+    raise AttributeError(name)
+
+# The subprocess stand-in does not expose CPython's private flag helpers.
+def optim_args_from_interpreter_flags():
+    return ['-' + 'O' * sys.flags.optimize] if sys.flags.optimize else []
+
+def args_from_interpreter_flags():
+    import subprocess
+    helper = getattr(subprocess, '_args_from_interpreter_flags', None)
+    if helper is None:
+        raise NotImplementedError('interpreter startup flags are not supported')
+    return helper()
+
+@contextlib.contextmanager
+def check_no_resource_warning(testcase):
+    from test.support.warnings_helper import check_no_warnings
+    with check_no_warnings(testcase, category=ResourceWarning, force_gc=True):
+        yield
+
+LARGEST = _LARGEST()
+SMALLEST = _SMALLEST()
+
+@contextlib.contextmanager
+def _run_with_locale(catstr, *locales):
+    try:
+        import locale
+        category = getattr(locale, catstr)
+        orig_locale = locale.setlocale(category)
+    except AttributeError:
+        # if the test author gives us an invalid category string
+        raise
+    except Exception:
+        # cannot retrieve original locale, so do nothing
+        locale = orig_locale = None
+        if '' not in locales:
+            raise unittest.SkipTest('no locales')
+    else:
+        for loc in locales:
+            try:
+                locale.setlocale(category, loc)
+                break
+            except (getattr(locale, "Error", ValueError), NotImplementedError):
+                pass
+        else:
+            if '' not in locales:
+                raise unittest.SkipTest(f'no locales {locales}')
+
+    try:
+        yield
+    finally:
+        if locale and orig_locale:
+            locale.setlocale(category, orig_locale)
+
+
+class _LocaleContextDecorator:
+    # The embedded contextlib lacks ContextDecorator's recreation protocol.
+    def __init__(self, catstr, locales):
+        self.catstr = catstr
+        self.locales = locales
+        self.context = _run_with_locale(catstr, *locales)
+
+    def __enter__(self):
+        return self.context.__enter__()
+
+    def __exit__(self, *exc):
+        return self.context.__exit__(*exc)
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def inner(*args, **kwargs):
+            with _run_with_locale(self.catstr, *self.locales):
+                return func(*args, **kwargs)
+        return inner
+
+
+def run_with_locale(catstr, *locales):
+    return _LocaleContextDecorator(catstr, locales)
+
+
+def no_rerun(reason):
+    """Skip rerunning for a particular test.
+
+    WARNING: Use this decorator with care; skipping rerunning makes it
+    impossible to find reference leaks. Provide a clear reason for skipping the
+    test using the 'reason' parameter.
+    """
+    import functools
+    def deco(func):
+        assert not isinstance(func, type), func
+        _has_run = False
+        @functools.wraps(func)
+        def wrapper(self):
+            nonlocal _has_run
+            if _has_run:
+                self.skipTest(reason)
+            func(self)
+            _has_run = True
+        return wrapper
+    return deco
+
+# Build sanitizer detection for the runtime Rust compiler flags.
+_build_flags = __host_info
+
+def check_sanitizer(*, address=False, memory=False, ub=False, thread=False,
+                    function=True):
+    if not (address or memory or ub or thread):
+        raise ValueError('At least one of address, memory, ub or thread must be True')
+    flags = _build_flags('build')
+    requested = ((address, 'address'), (memory, 'memory'),
+                 (ub, 'undefined'), (thread, 'thread'), (function, 'function'))
+    return any(enabled and ('sanitizer=' + name in flags or
+                            '-fsanitize=' + name in flags)
+               for enabled, name in requested)

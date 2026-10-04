@@ -1,4 +1,4 @@
-# Source: CPython Lib/test/test_iter.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/test_iter.py; PSF License.
 # Test iterators.
 
 import sys

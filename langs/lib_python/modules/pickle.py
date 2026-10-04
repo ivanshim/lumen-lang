@@ -41,7 +41,11 @@ def _new_builtin(cls, value):
 def _global(module, name):
     if module == '__main__':
         parts = name.split('.')
-        owner = __program_namespace()[parts[0]]
+        import __main__
+        try:
+            owner = getattr(__main__, parts[0])
+        except AttributeError:
+            owner = __program_namespace()[parts[0]]
         for part in parts[1:]:
             owner = getattr(owner, part)
         return owner
@@ -488,6 +492,16 @@ def _read_protocol(data, encoding='ASCII'):
             _apply_state(stack[-1], state)
         elif op == 148:
             memo[len(memo)] = stack[-1]
+        elif op in (112, 103):
+            end = data.index(b'\n', at)
+            index = int(data[at:end])
+            at = end + 1
+            if op == 112:
+                memo[index] = stack[-1]
+            else:
+                stack.append(memo[index])
+        elif op == 78:
+            stack.append(None)
         elif op in (113, 104):
             index = data[at]
             at += 1

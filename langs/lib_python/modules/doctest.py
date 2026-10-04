@@ -19,6 +19,7 @@ _host_call_outcome = __call_outcome
 
 import sys
 import unittest
+import types
 
 
 # Option flags. The numbers are CPython's, so a file that adds two of them
@@ -359,6 +360,8 @@ class DocTestFinder:
             if key[:1] == '#' or key == '__test__':
                 continue
             value = names[key]
+            if not isinstance(value, (type, types.FunctionType, types.BuiltinFunctionType, types.MethodType)):
+                continue
             if getattr(value, '__module__', None) != module_name:
                 continue
             label = module_name + '.' + key
@@ -803,44 +806,32 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
-    """A unittest suite of the examples found in the named files.
-
-    Each path is read from disk; one that is not absolute is sought
-    beside the module that asks, the way the reference reads its own
-    module-relative paths.
-    """
-    names = __program_namespace()
-    globs = options.get('globs')
-    if globs is None:
-        globs = _copy_dict(names)
     suite = unittest.TestSuite()
-    optionflags = options.get('optionflags', 0)
-    setUp = options.get('setUp')
-    tearDown = options.get('tearDown')
-    checker = options.get('checker')
-    parser = options.get('parser')
-    if parser is None:
-        parser = DocTestParser()
-    relative = options.get('module_relative', True)
-    import os
-    home = names.get('__file__', '')
-    if home:
-        home = os.path.dirname(home)
     for path in paths:
-        text_of = str(path)
-        if relative and home and not text_of.startswith('/'):
-            text_of = os.path.join(home, text_of)
-        with open(text_of) as fileobj:
-            text = fileobj.read()
-        test = parser.get_doctest(text, globs, str(path), text_of, 0)
-        if len(test.examples) == 0:
-            continue
-        suite.addTest(DocTestCase(test, optionflags, setUp, tearDown, checker))
+        suite.addTest(DocFileTest(path, **options))
     return suite
 
 
 def DocFileTest(path, **options):
-    return DocFileSuite(path, **options)
+    import os
+    package = options.get('package')
+    relative = options.get('module_relative', True)
+    if package is not None and not relative:
+        raise ValueError('Package may only be specified for module-relative paths.')
+    if relative:
+        if path.startswith('/'):
+            raise ValueError('Module-relative files may not have absolute paths')
+        namespace = _namespace_of(package)
+        path = os.path.join(os.path.dirname(namespace.get('__file__', '')), path)
+    with open(path, encoding=options.get('encoding', 'utf-8')) as source:
+        text = source.read()
+    globs = _copy_dict(options.get('globs') or {})
+    globs.update(options.get('extraglobs') or {})
+    globs.setdefault('__name__', '__main__')
+    parser = options.get('parser') or DocTestParser()
+    test = parser.get_doctest(text, globs, os.path.basename(path), path, 0)
+    return DocTestCase(test, options.get('optionflags', 0), options.get('setUp'),
+                       options.get('tearDown'), options.get('checker'))
 
 
 def testfile(filename, module_relative=True, name=None, package=None,

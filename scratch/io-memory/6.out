@@ -1,0 +1,12 @@
+'utf-8\x00' lookup ValueError embedded null character
+'utf-8\x00' construct ValueError embedded null character
+'utf-8\x00' reconfigure OK
+'locale\x00' lookup ValueError embedded null character
+'locale\x00' construct ValueError embedded null character
+'locale\x00' reconfigure LookupError unknown encoding: locale
+'\udcfe' lookup UnicodeEncodeError 'utf-8' codec can't encode character '\udcfe' in position 0: surrogates not allowed
+'\udcfe' construct UnicodeEncodeError 'utf-8' codec can't encode character '\udcfe' in position 0: surrogates not allowed
+'\udcfe' reconfigure UnicodeEncodeError 'utf-8' codec can't encode character '\udcfe' in position 0: surrogates not allowed
+True
+'utf-8\x00suffix' 1
+b'\xc3\xa9'

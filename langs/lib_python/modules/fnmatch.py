@@ -1,4 +1,4 @@
-# Source: CPython Lib/fnmatch.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/fnmatch.py; PSF License.
 """Filename matching with shell patterns.
 
 fnmatch(FILENAME, PATTERN) matches according to the local convention.
