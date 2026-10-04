@@ -552,6 +552,7 @@ class deque:
 
 
 class defaultdict(dict):
+    __module__ = 'collections'
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
 
@@ -580,7 +581,7 @@ class defaultdict(dict):
         return self.copy()
 
     def __reduce__(self):
-        args = (self.default_factory,)
+        args = () if self.default_factory is None else (self.default_factory,)
         return type(self), args, None, None, iter(self.items())
 
 

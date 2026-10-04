@@ -585,6 +585,7 @@
   ],
   "ext.builtin.bytes.resize": ["resize"],
   "ext.builtin.bytes._export": ["_export"],
+  "ext.builtin.bytes.escape_decode": ["__escape_decode_native__"],
   "ext.builtin.bytes.join": [
     "join"
   ],
@@ -812,7 +813,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
-  "ext.builtin.struct_native": ["__struct_native__"],
+  "ext.builtin.struct_native": ["__struct_native"],
   "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"

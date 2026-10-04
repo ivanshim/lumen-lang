@@ -429,13 +429,13 @@ class memoryview:
         if isinstance(object, memoryview):
             object._check()
             self._source = object._source
-            self._offsets = object._offsets[:]
+            self._offsets = object._offsets
             self._format = object._format
             self._itemsize = object._itemsize
             self._readonly = object._readonly
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
-            self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
+            self._offsets = range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
@@ -504,8 +504,10 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
-        if not self._offsets:
+        if len(self._offsets) < 2:
             return True
+        if isinstance(self._offsets, range):
+            return self._offsets.step == self._itemsize
         return all(at == self._offsets[0] + i * self._itemsize for i, at in enumerate(self._offsets))
 
     @property
@@ -549,10 +551,14 @@ class memoryview:
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
             if self._format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
-            values = list(value)
-            if len(places) != len(values):
+            raw = value.tobytes() if isinstance(value, memoryview) else bytes(value)
+            if len(places) != len(raw):
                 raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
-            for at, item in zip(places, values):
+            if isinstance(self._source, bytearray) and isinstance(places, range) and (len(places) < 2 or places.step == 1):
+                start = places[0] if places else 0
+                bytearray.__setitem__(self._source, slice(start, start + len(raw)), raw)
+                return
+            for at, item in zip(places, raw):
                 self._put_byte(at, item % 256)
         else:
             try:
@@ -574,6 +580,12 @@ class memoryview:
 
     def tobytes(self):
         self._check()
+        if isinstance(self._source, (bytes, bytearray)) and self.c_contiguous:
+            start = self._offsets[0] if self._offsets else 0
+            span = slice(start, start + self.nbytes)
+            if isinstance(self._source, bytes):
+                return bytes.__getitem__(self._source, span)
+            return bytes(bytearray.__getitem__(self._source, span))
         return bytes([self._byte(at + i) for at in self._offsets for i in range(self._itemsize)])
 
     def __bytes__(self):
@@ -601,9 +613,8 @@ class memoryview:
             raise TypeError('memoryview: destination format must be a native single character format')
         if self._offsets:
             start = self._offsets[0]
-            for index, offset in enumerate(self._offsets):
-                if offset != start + index * self._itemsize:
-                    raise TypeError('memoryview: casts are restricted to C-contiguous views')
+            if not self.c_contiguous:
+                raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
         width = 4 if format in ('i', 'I') else 1
@@ -614,7 +625,7 @@ class memoryview:
         result = memoryview(self)
         result._format = format
         result._itemsize = width
-        result._offsets = list(range(start, start + self.nbytes, width))
+        result._offsets = range(start, start + self.nbytes, width)
         return result
 
     def __del__(self):

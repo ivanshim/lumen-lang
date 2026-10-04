@@ -92,6 +92,17 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if word == "bytearray" {
+            if let Some(operation) = self.lang.builtins.get("bytearray.maketrans") {
+                c.shared.borrow_mut().push((String::from("maketrans"), Self::adapter(4, vec![Value::Native(*operation, Rc::from("bytearray.maketrans"))])));
+            }
+        }
+        if word == "dict" {
+            let descriptor = Self::adapter(29, vec![Value::text("dict"), Value::text("fromkeys"), Value::Flag(true)]);
+            let mut shared = c.shared.borrow_mut();
+            if let Some((_, member)) = shared.iter_mut().find(|(name, _)| name == "fromkeys") { *member = descriptor; }
+            else { shared.push((String::from("fromkeys"), descriptor)); }
+        }
         c
     }
     /// The class every metaclass stands on: the kind builtin read as a
@@ -388,7 +399,7 @@ impl<'a> Engine<'a> {
         if title.contains('\0') { return Err("ValueError: type name must not contain null characters".into()); }
         Ok(title.to_string())
     }
-    fn type_utf8(&mut self, value: &Value) -> Flow<()> {
+    pub(super) fn type_utf8(&mut self, value: &Value) -> Flow<()> {
         if let Value::Codepoints(row) = value.contents() {
             if let Some(start) = row.iter().position(|n| (0xd800..=0xdfff).contains(n)) {
                 let end = row[start..].iter().take_while(|n| (0xd800..=0xdfff).contains(*n)).count() + start;
@@ -1503,6 +1514,14 @@ impl<'a> Engine<'a> {
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting. Given the class of a thing, the hooks come bare, to
     /// be bound to the thing.
+    fn root_initialiser(&self) -> Value {
+        let name = self.lang.constructor.as_deref().unwrap_or_default();
+        let mut entries = self.kind_descriptors.borrow_mut();
+        if let Some((_, _, callable)) = entries.iter().find(|(kind, member, _)| kind == "object" && member == name) { return callable.clone(); }
+        let callable = Self::adapter(2, Vec::new());
+        entries.push((String::from("object"), name.to_string(), callable.clone()));
+        callable
+    }
     fn root_member(&self, name: &str, of: Option<&Rc<Class>>) -> Option<Value> {
         if name.is_empty() { return None; }
         if self.lang.class_details.get("root.members").map_or(false,|names| names.iter().any(|n| n==name)) {
@@ -1515,7 +1534,7 @@ impl<'a> Engine<'a> {
             else if name==self.class_word("remove") {12}
             else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
             else {return None};
-        Some(Self::adapter(hook,vec![]))
+        Some(if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else { Self::adapter(hook,vec![]) })
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
@@ -1725,7 +1744,19 @@ impl<'a> Engine<'a> {
         told.into()
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
+        if let (Value::Native(Builtin::Text(_), word), Some(receiver)) = (&value, &subject) {
+            if let Some((_, member)) = word.rsplit_once('.') { return Ok(Value::ValueMethod(Rc::new((receiver.clone(), member.to_owned())))); }
+        }
         if let Value::Adapter(w) = &value {
+            if w.0 == 29 && w.1.len() == 3 {
+                let class = match &subject { Some(Value::Object(object)) => object.class_now(), Some(Value::Class(owner)) => owner.clone(), _ => class };
+                let name = w.1[1].plain();
+                if Self::own_kind(&class).as_deref() == Some("dict") {
+                    let qualified = format!("dict.{name}");
+                    if let Some(operation) = self.lang.builtins.get(&qualified) { return Ok(Value::Native(*operation, Rc::from(qualified))); }
+                }
+                return Ok(Value::ValueMethod(Rc::new((Value::Class(class), name))));
+            }
             if w.0 == 29 && w.1[0].plain() == "int" {
                 let receiver = subject.clone().unwrap_or_else(|| Value::Class(class.clone()));
                 if let Some(method) = self.integer_member(&receiver, &w.1[1].plain()) { return Ok(method); }
@@ -1874,9 +1905,40 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if matches!(&subject, Value::Adapter(parts) if parts.0 == 4 || parts.0 == 5 || parts.0 == 29 && parts.1.len() == 3) {
+            if let Some(index) = self.lang.class_special.iter().position(|word| word == name).filter(|index| *index == 79 || *index == 81) {
+                let operation = if index == 81 { "descriptor_reduce_ex" } else { "descriptor_reduce" };
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), operation.to_owned()))));
+            }
+        }
+        if self.lang.constructor.as_deref() == Some(name) && matches!(&subject, Value::Class(class) if self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, class))) { return Ok(self.root_initialiser()); }
+        if name == "__getformat__" {
+            let owner = match subject.contents() {
+                Value::Native(Builtin::AsReal, _) => Some(subject.clone()),
+                Value::Real(_) => self.spelled_kind("float"),
+                Value::Class(class) if Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref() == Some("float") => Some(subject.clone()),
+                Value::Object(instance) if Self::kind_beneath(&instance.class_now()).as_deref() == Some("float") => Some(Value::Class(instance.class_now())),
+                _ => None,
+            };
+            if let Some(owner) = owner { return Ok(Value::ValueMethod(Rc::new((owner, String::from("float_getformat"))))); }
+        }
         if let Value::Native(op, word) = &subject {
             if !Self::kind_builtin(op) && !self.class_word("name").is_empty() {
-                if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(Value::text(word)); }
+                if let Some((family, method)) = word.rsplit_once('.') {
+                    if let Some(owner) = self.spelled_kind(family) {
+                        let classmethod = matches!(method, "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__");
+                        let staticmethod = method == "maketrans";
+                        if name == self.class_word("receiver") && (classmethod || staticmethod) { return Ok(if staticmethod { Value::Null } else { owner.clone() }); }
+                        if name == "__objclass__" && !classmethod && !staticmethod { return Ok(owner.clone()); }
+                        if name == self.class_word("module") && (classmethod || staticmethod) { return Ok(Value::Null); }
+                        if self.lang.class_special.get(79).is_some_and(|label| label == name) {
+                            let getter = Value::Native(Builtin::GetAttr, Rc::from("getattr"));
+                            return Ok(Self::adapter(132, vec![Value::tuple(vec![getter, Value::tuple(vec![owner, Value::text(method)])])]));
+                        }
+                    }
+                }
+                if name == self.class_word("name") { return Ok(Value::text(word.rsplit('.').next().unwrap_or(word))); }
+                if name == self.class_word("qualified") { return Ok(Value::text(word)); }
                 if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if self.lang.class_special.get(79).is_some_and(|label| label == name) {
                     return Ok(Self::adapter(132, vec![Value::text(word)]));
@@ -1980,6 +2042,42 @@ impl<'a> Engine<'a> {
         }
         // The kind's word, or the kind read as a class, answers for its
         // type flags from the class the kind stands for.
+        let bound = match &subject {
+            Value::ValueMethod(method) => Some((method.0.clone(), if method.1 == "float_getformat" { String::from("__getformat__") } else { method.1.clone() })),
+            Value::TextMethod(text, _, word) => Some((Value::Text(text.clone()), word.to_string())),
+            Value::Adapter(binding) if binding.0 == 3 => {
+                if let Some(Value::Adapter(descriptor)) = binding.1.first() {
+                    if descriptor.0 == 29 { Some((binding.1[1].clone(), descriptor.1[1].plain())) } else { None }
+                } else { None }
+            }
+            _ => None,
+        };
+        if let Some((owner, member)) = bound {
+            if name == self.class_word("receiver") { return Ok(owner); }
+            if name == self.class_word("name") { return Ok(Value::text(&member)); }
+            if name == self.class_word("qualified") {
+                let title = match &owner { Value::Class(class) => class.name.clone(), Value::Native(_, spelling) => spelling.to_string(), _ => owner.core_kind() };
+                return Ok(Value::text(&format!("{title}.{member}")));
+            }
+            if name == self.class_word("module") { return Ok(Value::Null); }
+            if self.lang.class_special.get(79).is_some_and(|word| word == name) {
+                let getter = Value::Native(Builtin::GetAttr, Rc::from("getattr"));
+                let reduction = Value::tuple(vec![getter, Value::tuple(vec![owner, Value::text(&member)])]);
+                return Ok(Self::adapter(132, vec![reduction]));
+            }
+        }
+        if let Value::Adapter(allocator) = &subject {
+            if allocator.0 == 14 && name == self.class_word("receiver") {
+                if let Some(class) = self.spelled_kind(&allocator.1[0].plain()) { return Ok(class); }
+            }
+        }
+        if let Value::Adapter(descriptor) = &subject {
+            if descriptor.0 == 29 && self.lang.class_special.get(79).is_some_and(|word| word == name) {
+                let owner = self.spelled_kind(&descriptor.1[0].plain()).ok_or_else(|| self.class_refusal())?;
+                let getter = Value::Native(Builtin::GetAttr, Rc::from("getattr"));
+                return Ok(Self::adapter(132, vec![Value::tuple(vec![getter, Value::tuple(vec![owner, descriptor.1[1].clone()])])]));
+            }
+        }
         if name==self.class_word("flags") && !name.is_empty() {
             let held=subject.contents();
             let builtin=match &held {
@@ -2009,7 +2107,10 @@ impl<'a> Engine<'a> {
                 let mut listed = self.kind_sample(&word).map_or_else(Vec::new, |sample| self.kind_member_names(&sample));
                 if word.as_ref() == "type" { listed.extend([8, 17].iter().filter_map(|at| self.lang.class_special.get(*at).cloned())); }
                 if word.as_ref() == "dict" { listed.extend(self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == "fromkeys").map(|(key, _)| key.clone())); }
-                let pairs: Vec<(Value, Value)> = listed.iter().filter_map(|key| self.loose_kind_member(&subject, key).map(|held| (Value::text(key), held))).collect();
+                let pairs: Vec<(Value, Value)> = listed.iter().filter_map(|key| self.loose_kind_member(&subject, key).map(|held| {
+                    let raw = if word.as_ref() == "dict" && key == "fromkeys" { Self::adapter(29, vec![Value::text("dict"), Value::text(key), Value::Flag(true)]) } else { held };
+                    (Value::text(key), raw)
+                })).collect();
                 return Ok(Value::View(Rc::new((Value::Map(Rc::new(pairs.into())),"mapping".to_string()))));
             }
         }
@@ -2067,9 +2168,6 @@ impl<'a> Engine<'a> {
                 if *op == Builtin::Complex && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "complex_from_number".to_string()))));
                 }
-                if *op == Builtin::AsReal && name == "__getformat__" {
-                    return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
-                }
                 if name == self.class_word("bases") && !name.is_empty() {
                     let parent = if *op == Builtin::Bool { self.spelled_kind("int").unwrap_or(Value::Class(self.root_class())) }
                         else { Value::Class(self.root_class()) };
@@ -2105,7 +2203,7 @@ impl<'a> Engine<'a> {
                 // the kind itself, standing loose: the value it works
                 // upon is the first it is called with.
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
-                if self.lang.constructor.as_deref() == Some(name) { return Ok(Self::adapter(2, Vec::new())); }
+                if self.lang.constructor.as_deref() == Some(name) { return Ok(self.root_initialiser()); }
             }
             Value::Class(c) => {
                 if !self.class_word("name").is_empty() {
@@ -2128,9 +2226,6 @@ impl<'a> Engine<'a> {
                     }
                     if name==self.class_word("module") { return Ok(Value::text(match word.as_str() { "SimpleNamespace" | "GenericAlias" => "types", "Union" => "typing", _ => self.home_module_word() })); }
                     if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
-                    if name == "__getformat__" && word == "float" {
-                        return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
-                    }
                 }
                 if name == self.class_word("flags") {
                     return Ok(Value::Small(self.flags_of(c)));
@@ -2380,7 +2475,7 @@ impl<'a> Engine<'a> {
                             let getter = Self::adapter(29, vec![Value::text("dict"), Value::text(name)]);
                             return Ok(Self::adapter(3, vec![getter, subject.clone()]));
                         }
-                        return Ok(Value::ValueMethod(Rc::new((worth, name.to_string()))));
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
                     }
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
                         // The parts of a complex number are read rather
@@ -2396,7 +2491,7 @@ impl<'a> Engine<'a> {
                         if op == "fromkeys" {
                             return Ok(Value::ValueMethod(Rc::new((subject.clone(), op))));
                         }
-                        return Ok(Value::ValueMethod(Rc::new((worth,op))));
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(),op))));
                     }
                     // A row of bytes answers to the methods its kind
                     // keeps, which the worth beneath the thing works.

@@ -20,6 +20,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_sre", include_str!("_sre.py"), "_sre.py"),
     ("_sre_validation", include_str!("_sre_validation.py"), "_sre_validation.py"),
     ("_string", include_str!("_string.py"), "_string.py"),
+    ("_struct", include_str!("_struct.py"), "_struct.py"),
     ("_testcapi", include_str!("_testcapi.py"), "_testcapi.py"),
     ("_testinternalcapi", include_str!("_testinternalcapi.py"), "_testinternalcapi.py"),
     ("_testlimitedcapi", include_str!("_testlimitedcapi.py"), "_testlimitedcapi.py"),

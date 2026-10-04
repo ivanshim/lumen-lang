@@ -115,7 +115,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     names.contains(&operation)
 }
 
-pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String) -> Answer {
+pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String, allow_cycles: bool) -> Answer {
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
         let slots: &[&str] = match op { "split" | "rsplit" => &["sep", "maxsplit"], _ => &[] };
@@ -130,7 +130,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     let arity = |lo, hi| if a.len() >= lo && a.len() <= hi { Ok(()) } else { Err(fault("arguments")) };
     let held = receiver.contents();
     let store = |v: Value| -> Answer {
-        if let Value::Collection(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
+        if let Value::Collection(cell, _) = receiver { if !allow_cycles && reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
     // A map keyed by the members of whatever it was asked of, each key
     // holding the one value given, or nothing where none was.

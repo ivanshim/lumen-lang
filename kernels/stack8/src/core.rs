@@ -72,6 +72,7 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
+            Value::Adapter(w) if w.0 == 29 && w.1.len() == 3 => "classmethod_descriptor",
             Value::Adapter(w) if w.0 == 29 => return match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
                 _ => "object".to_string(),

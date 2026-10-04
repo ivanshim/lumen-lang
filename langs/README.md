@@ -4482,6 +4482,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |
@@ -4873,7 +4874,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
-| `ext.builtin.struct_native` | - | - | `__struct_native__` | - | - | - | - | - | - | - |
+| `ext.builtin.struct_native` | - | - | `__struct_native` | - | - | - | - | - | - | - |
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
@@ -5923,4 +5924,6 @@ class itself and is not inherited by Python subclasses.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
 
-`ext.builtin.struct_native` supplies fixed-width integer byte packing and unpacking to the Python struct module. It uses the integer range and byte order rules from CPython v3.14.8 Modules/_struct.c.
+`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols.
+
+`ext.builtin.bytes.escape_decode` names the Python-only byte escape decoder, following CPython v3.14.8 Objects/bytesobject.c and Modules/_codecsmodule.c. It preserves consumed buffer length and reports invalid escapes for the warning adapter.
