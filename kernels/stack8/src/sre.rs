@@ -307,6 +307,42 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         }).ok_or_else(|| "TypeError: SRE argument must be an integer".into())
     };
     let op = number(0)?;
+    if op == 10 {
+        if args.len() != 6 { return Err("TypeError: invalid SRE capture argument count".into()); }
+        let Value::Tuple(selectors) = args[5].contents() else { return Err("TypeError: SRE groups must be a tuple".into()); };
+        if selectors.iter().any(|group| !matches!(group, Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
+            return Ok(Value::Null);
+        }
+        let Value::Array(state) = args[2].contents() else { return Err("TypeError: invalid SRE match state".into()); };
+        if state.len() < 3 { return Err("TypeError: invalid SRE match state".into()); }
+        let Value::Array(marks) = state[2].contents() else { return Err("TypeError: invalid SRE capture marks".into()); };
+        let Value::Map(names) = args[4].contents() else { return Err("TypeError: invalid SRE group names".into()); };
+        let subject = subject_codes(&args[1])?;
+        let limit = number(3)?;
+        if limit < 0 || limit as u64 > (marks.len() / 2) as u64 {
+            return Err("TypeError: invalid SRE capture marks".into());
+        }
+        let mut found = Vec::with_capacity(selectors.len());
+        for requested in selectors.iter() {
+            let resolved = if let Value::Text(name) = requested {
+                names.iter().find_map(|(key, value)| match key {
+                    Value::Text(label) if label == name => Some(value),
+                    _ => None,
+                }).ok_or("IndexError: no such group")?
+            } else { requested };
+            let group = resolved.as_big()?.to_i64().ok_or("IndexError: no such group")?;
+            if group < 0 || group > limit { return Err("IndexError: no such group".into()); }
+            let (first, last) = if group == 0 { (&state[0], &state[1]) }
+                else { (&marks[group as usize * 2 - 2], &marks[group as usize * 2 - 1]) };
+            let start = first.as_big()?.to_i64().ok_or("TypeError: invalid SRE capture position")?;
+            let end = last.as_big()?.to_i64().ok_or("TypeError: invalid SRE capture position")?;
+            found.push(if start < 0 || end < start { Value::Null }
+                else { Value::from_codes(subject.get(start as usize..end as usize)
+                    .ok_or("TypeError: invalid SRE capture position")?.to_vec()) });
+        }
+        let value = if found.len() == 1 { found.pop().unwrap() } else { Value::tuple(found) };
+        return Ok(Value::tuple(vec![value]));
+    }
     if op == 9 {
         if args.len() != 4 { return Err("TypeError: invalid SRE bounds argument count".into()); }
         let length = subject_codes(&args[1])?.len() as i64;

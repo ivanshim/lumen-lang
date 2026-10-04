@@ -281,6 +281,10 @@ class Match:
             groups = (0,)
         result = []
         source = self._string
+        if type(source) is str:
+            captures = _native(10, source, self._state, self._re._groups, self._re._groupindex, groups)
+            if captures is not None:
+                return captures[0]
         for group in groups:
             a, b = self.span(group)
             value = None if a < 0 else (source if type(source) is str else _buffer(source))[a:b]

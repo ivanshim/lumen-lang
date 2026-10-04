@@ -306,6 +306,52 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         }
     }
     let action = input.first().map(integer).transpose()?.unwrap_or(-1);
+    if action == 10 {
+        let [_, text, snapshot, count, directory, selection] = input else {
+            return Err(String::from("TypeError: invalid SRE capture argument count"));
+        };
+        let Value::Tuple(choices) = selection.settled() else { return Err(String::from("TypeError: SRE groups must be a tuple")); };
+        for choice in choices.iter() {
+            match choice {
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Text(_) => (),
+                _ => return Ok(Value::Nil),
+            }
+        }
+        let Value::Vector(saved) = snapshot.settled() else { return Err(String::from("TypeError: invalid SRE match state")); };
+        if saved.get(2).is_none() { return Err(String::from("TypeError: invalid SRE match state")); }
+        let Value::Vector(offsets) = saved[2].settled() else { return Err(String::from("TypeError: invalid SRE capture marks")); };
+        let Value::Dict(labels) = directory.settled() else { return Err(String::from("TypeError: invalid SRE group names")); };
+        let characters = characters_for_regex(text)?;
+        let maximum = integer(count)?;
+        if usize::try_from(maximum).map_or(true, |size| size > offsets.len() / 2) {
+            return Err(String::from("TypeError: invalid SRE capture marks"));
+        }
+        let mut values = Vec::new();
+        let mut cursor = 0;
+        while cursor < choices.len() {
+            let chosen = &choices[cursor];
+            let number = match chosen {
+                Value::Text(word) => {
+                    let position = labels.pairs().iter().position(|pair| matches!(&pair.0, Value::Text(key) if key == word))
+                        .ok_or_else(|| String::from("IndexError: no such group"))?;
+                    integer(&labels.pairs()[position].1)
+                }
+                other => integer(other),
+            }.map_err(|_| String::from("IndexError: no such group"))?;
+            if !(0..=maximum).contains(&number) { return Err(String::from("IndexError: no such group")); }
+            let range = if number == 0 { (integer(&saved[0])?, integer(&saved[1])?) }
+                else { let at = number as usize * 2; (integer(&offsets[at-2])?, integer(&offsets[at-1])?) };
+            values.push(if range.0 == -1 || range.1 < range.0 { Value::Nil }
+                else {
+                    let letters = characters.get(range.0 as usize..range.1 as usize)
+                        .ok_or_else(|| String::from("TypeError: invalid SRE capture position"))?;
+                    Value::characters(letters.to_vec())
+                });
+            cursor += 1;
+        }
+        let answer = match values.len() { 1 => values.remove(0), _ => Value::tuple(values) };
+        return Ok(Value::tuple(vec![answer]));
+    }
     if action == 9 {
         let [_, source, first, last] = input else {
             return Err(String::from("TypeError: invalid SRE bounds argument count"));
