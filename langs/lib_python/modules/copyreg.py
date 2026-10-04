@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/copyreg.py; PSF License.
 """Helper to provide extensibility for pickle.
 
 This is only useful to add pickle support for extension types defined in

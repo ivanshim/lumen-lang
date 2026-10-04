@@ -212,6 +212,8 @@ pub enum Action {
     Join,
     /// A field rendered with its specification and conversion.
     StringRender,
+    Interpolation,
+    TemplateMake,
     BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,
@@ -293,6 +295,7 @@ pub enum Action {
     /// What a walk walks. A thing that hands another over to be walked
     /// in its stead answers with that one; a thing that is its own walk
     /// is wound back and answers with itself; anything else is itself.
+    IteratorSeed,
     WalkFrom,
     Awaited,
     AsyncGenerator,
@@ -398,6 +401,7 @@ pub enum Action {
     HasMember(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
+    RestoreMember(Rc<str>),
     /// Take that property off the object above, as though it had never
     /// been written.
     Uproot(Rc<str>),
@@ -636,6 +640,9 @@ pub enum Builtin {
     /// word that is told which step it is on. Only a language spelling
     /// this may run a second interpreter beside itself and read its
     /// writing back.
+
+    AsciiSpan,
+    JsonString,
     Subprocess,
     Posix,
     /// The host's own signals, one word told which step it is on

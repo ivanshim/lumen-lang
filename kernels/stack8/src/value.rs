@@ -109,18 +109,18 @@ pub struct Counted {
 }
 
 impl Counted {
-    /// The three bounds as machine words where they all fit in one,
-    /// and nothing where any of them does not. A stride of nought is
-    /// left to the great-number road, which complains of it as before.
+    /// Bounds whose distance and stride fit checked wide arithmetic.
+    /// Larger bounds and a zero stride use arbitrary precision.
     fn narrow(&self) -> Option<(i128, i128, i128)> {
-        let step = i128::from(self.step.to_i64()?);
-        if step == 0 { return None; }
-        Some((i128::from(self.start.to_i64()?), i128::from(self.stop.to_i64()?), step))
+        let step=self.step.to_i128()?;
+        if step==0 || step.checked_abs().is_none() { return None; }
+        let start=self.start.to_i128()?;
+        let stop=self.stop.to_i128()?;
+        if step>0 { stop.checked_sub(start)?; } else { start.checked_sub(stop)?; }
+        Some((start,stop,step))
     }
 
-    /// How many places a walk of those bounds holds. Wide words are
-    /// roomy enough: the two ends lie within one word each, so their
-    /// distance lies within two.
+    /// Count a walk after the bounds have passed the overflow checks.
     fn places(start: i128, stop: i128, step: i128) -> i128 {
         let distance = if step > 0 { stop - start } else { start - stop };
         if distance <= 0 { 0 } else { (distance - 1) / step.abs() + 1 }
@@ -139,12 +139,13 @@ impl Counted {
         // A walk within the machine's words is counted in words. This
         // is the road a loop over a counted row takes at every step,
         // and the great numbers cost more than the walk itself.
-        if let (Some((start, stop, step)), Some(wanted)) = (self.narrow(), index.to_i64()) {
-            let length = Self::places(start, stop, step);
-            let mut place = i128::from(wanted);
-            if place < 0 { place += length; }
-            if place < 0 || place >= length { return None; }
-            return Some(Value::Small((start + place * step) as i64));
+        if let (Some((start, stop, step)), Some(mut place)) = (self.narrow(), index.to_i128()) {
+            let length=Self::places(start,stop,step);
+            if place<0 { place+=length; }
+            if place<0 || place>=length { return None; }
+            if let Some(member)=place.checked_mul(step).and_then(|delta|start.checked_add(delta)) {
+                return Some(match i64::try_from(member) {Ok(small)=>Value::Small(small),Err(_)=>Value::of_big(BigInt::from(member))});
+            }
         }
         let length = self.length();
         if index.is_negative() { index += &length; }
@@ -650,6 +651,12 @@ impl KeyedPairs {
         self.rows[at].1 = value;
     }
 
+    /// The rows themselves, for reading only: a class that names its
+    /// slots with a mapping takes each name from a key.
+    pub fn rows(&self) -> &[(Value, Value)] {
+        &self.rows
+    }
+
     /// Add a key already proven absent and already known by its own
     /// text, growing the rows and the lookup together so a map built
     /// one key at a time never has its lookup thrown away and walked
@@ -1065,6 +1072,12 @@ impl Value {
 
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
+            // A builtin word, a kind marker and the two bytes kinds take
+            // an address from what makes them equal: the work beneath
+            // the word and the word both, the sort a marker stands for,
+            // and which of the two bytes kinds it is.
+            Value::SortOf(sort) => Ok(format!("sortof:{}", sort.tag())),
+            Value::Adapter(parts) if parts.0 == 9 => Ok(format!("parent-kind:{:p}", Rc::as_ptr(parts))),
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
             // A set that cannot be changed is addressed by what it
@@ -1073,6 +1086,10 @@ impl Value {
                 Ok(held) if held.fixed => Ok(held.address()),
                 _ => Err("set"),
             },
+            // A loose member descriptor is addressed by the descriptor it
+            // is kept as: two readings of the same member, and of the
+            // same member on the same kind, are the one key.
+            Value::Adapter(held) => Ok(format!("descriptor:{:p}", Rc::as_ptr(held))),
             Value::Bond(cell) => cell.borrow().member_key(),
             _ => Err(""),
         }
@@ -1258,6 +1275,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Declined(a), Value::Declined(b)) => a == b,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -1615,6 +1633,7 @@ impl Value {
     /// an attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
         match kind {
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),

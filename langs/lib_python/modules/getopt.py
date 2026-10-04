@@ -1,4 +1,3 @@
-# Source: CPython Lib/getopt.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Parser for command line options.
 
 This module helps scripts to parse the command line arguments in

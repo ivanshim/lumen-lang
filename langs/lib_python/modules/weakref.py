@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/weakref.py; PSF License.
 """Weak reference support for Python.
 
 This module is an implementation of PEP 205:
