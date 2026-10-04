@@ -857,6 +857,7 @@
   "ext.builtin.struct_native": ["__struct_native"],
   "ext.builtin.buffer.hooks": ["__buffer__", "__release_buffer__"],
   "ext.builtin.binascii_native": ["__binascii_native__"],
+  "ext.builtin.zlib_native": ["__zlib_native__"],
   "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"

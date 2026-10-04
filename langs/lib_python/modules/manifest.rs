@@ -10,6 +10,9 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_collections_abc", include_str!("_collections_abc.py"), "_collections_abc.py"),
     ("_colorize", include_str!("_colorize.py"), "_colorize.py"),
     ("_contextvars", include_str!("_contextvars.py"), "_contextvars.py"),
+    ("_collections", include_str!("_collections.py"), "_collections.py"),
+    ("_collections_abc", include_str!("_collections_abc.py"), "_collections_abc.py"),
+    ("_colorize", include_str!("_colorize.py"), "_colorize.py"),
     ("_decimal", include_str!("_decimal.py"), "_decimal.py"),
     ("_encoding_aliases", include_str!("_encoding_aliases.py"), "_encoding_aliases.py"),
     ("_heapq", include_str!("_heapq.py"), "_heapq.py"),
@@ -60,6 +63,9 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("collections.abc", include_str!("collections/abc.py"), "collections/abc.py"),
     ("collections", include_str!("collections.py"), "collections/__init__.py"),
     ("colorsys", include_str!("colorsys.py"), "colorsys.py"),
+    ("compression", include_str!("compression/__init__.py"), "compression/__init__.py"),
+    ("compression._common", include_str!("compression/_common/__init__.py"), "compression/_common/__init__.py"),
+    ("compression._common._streams", include_str!("compression/_common/_streams.py"), "compression/_common/_streams.py"),
     ("contextlib", include_str!("contextlib.py"), "contextlib.py"),
     ("contextvars", include_str!("contextvars.py"), "contextvars.py"),
     ("copy", concat!(include_str!("copy.py"), "\n", include_str!("runtime_adapters/copy.py")), "copy.py"),
@@ -94,6 +100,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("importlib._bootstrap_external", include_str!("importlib/_bootstrap_external.py"), "importlib/_bootstrap_external.py"),
     ("importlib.machinery", include_str!("importlib/machinery.py"), "importlib/machinery.py"),
     ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
+    ("gzip", include_str!("gzip.py"), "gzip.py"),
     ("inspect", include_str!("inspect.py"), "inspect.py"),
     ("io", include_str!("io.py"), "io.py"),
     ("ipaddress", include_str!("ipaddress.py"), "ipaddress.py"),
@@ -194,6 +201,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("urllib", include_str!("urllib.py"), "urllib/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.

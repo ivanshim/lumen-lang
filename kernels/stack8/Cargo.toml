@@ -5,6 +5,7 @@ edition = "2021"
 description = "Stack kernel, third design: eight words, three of them fused for speed"
 
 [dependencies]
+lumen-zlib = { path = "../../native/zlib" }
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"

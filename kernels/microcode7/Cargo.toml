@@ -8,6 +8,7 @@ description = "Microcode kernel, fourth design: seven forms, three of them for s
 path = "src/lib.rs"
 
 [dependencies]
+lumen-zlib = { path = "../../native/zlib" }
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
