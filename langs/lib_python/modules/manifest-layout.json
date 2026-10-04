@@ -16,6 +16,8 @@
     "json": "runtime_adapters/json.py",
     "statistics": "runtime_adapters/statistics.py",
     "inspect": "runtime_adapters/inspect.py",
-    "annotationlib": "runtime_adapters/annotationlib.py"
+    "annotationlib": "runtime_adapters/annotationlib.py",
+    "_collections_abc": "runtime_adapters/_collections_abc.py",
+    "importlib": "runtime_adapters/importlib.py"
   }
 }

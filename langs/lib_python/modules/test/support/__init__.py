@@ -1610,3 +1610,9 @@ def darwin_malloc_err_warning(test_name):
     print(detail)
     print('-' * padding)
 
+
+
+def open_urlresource(url, *args, **kwargs):
+    if not is_resource_enabled('urlfetch'):
+        raise unittest.SkipTest('resource urlfetch is not enabled')
+    raise NotImplementedError('HTTP resource retrieval is not supported')

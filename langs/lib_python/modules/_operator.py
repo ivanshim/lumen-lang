@@ -31,6 +31,8 @@ class _DigestComparison:
 
     def __call__(self, a, b, /):
         if isinstance(a, str) and isinstance(b, str):
+            a = str.__getitem__(a, slice(None))
+            b = str.__getitem__(b, slice(None))
             if not a.isascii() or not b.isascii():
                 raise TypeError('comparing strings with non-ASCII characters is not supported')
             a, b = a.encode('ascii'), b.encode('ascii')

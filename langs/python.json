@@ -2849,7 +2849,8 @@
     "co_flags",
     "co_filename",
     "co_firstlineno",
-    "__annotate__"
+    "__annotate__",
+    "co_freevars"
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",

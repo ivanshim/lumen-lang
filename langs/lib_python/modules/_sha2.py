@@ -26,3 +26,6 @@ __crypto(4, sha224)
 __crypto(4, sha256)
 __crypto(4, sha384)
 __crypto(4, sha512)
+
+# Buffer threshold exported by CPython sha2module.c.
+_GIL_MINSIZE = 2048

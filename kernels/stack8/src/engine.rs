@@ -7979,6 +7979,23 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.or_maps && matches!(op, Action::BitEither | Action::SetWrite(0)) {
+            fn mapping(value: &Value) -> Option<Value> {
+                match value {
+                    Value::View(view) if view.1 == "mapping" => Some(view.0.proxy_dictionary()),
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => mapping(&cell.borrow()),
+                    _ => None,
+                }
+            }
+            let left = mapping(a);
+            let right = mapping(b);
+            if left.is_some() && matches!(op, Action::SetWrite(0)) {
+                return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into());
+            }
+            if left.is_some() || right.is_some() {
+                return self.special_dyad(op, &left.unwrap_or_else(|| a.clone()), &right.unwrap_or_else(|| b.clone()));
+            }
+        }
         if matches!(op, Action::Same | Action::Unsame) && !self.lang.identity_not.is_empty() {
             fn view(value: &Value) -> Option<Rc<(Value, String)>> {
                 match value {

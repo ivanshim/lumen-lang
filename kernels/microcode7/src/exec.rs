@@ -3971,45 +3971,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// The pairs a value offers a map: its own where it is a map, else
-    /// one for each two-item member. Those before an ill-shaped member
-    /// come back beside the words about it, to be written first.
-    fn pairs_offered(&self, source: &Value) -> (Vec<(Value, Value)>, Option<String>) {
-        let mut pairs = Vec::new();
-        // A thing over a native worth offers the pairs that worth
-        // offers, standing for it as it does everywhere its blueprint
-        // appointed nothing of its own.
-        let source = Self::underlying(&source.settled()).unwrap_or_else(|| source.clone());
-        let stopped = match source.settled() {
-            Value::Dict(entries) => { pairs.extend(entries.iter().cloned()); None }
-            Value::Text(text) if text.is_empty() => None,
-            Value::Text(_) => {
-                let wording = self.table.strings("ext.builtin.core.dict.pair");
-                Some(format!("{}0{}1{}", wording[0], wording[1], wording[2]))
-            }
-            Value::Nil => Some("TypeError: 'NoneType' object is not iterable".to_owned()),
-            Value::Vector(items) | Value::Tuple(items) => {
-                let mut fault = None;
-                for (at, item) in items.iter().enumerate() {
-                    match item.settled() {
-                        Value::Vector(pair) | Value::Tuple(pair) | Value::Row(pair) if pair.len() == 2 => pairs.push((pair[0].clone(), pair[1].clone())),
-                        other => {
-                            let width = match other { Value::Vector(p) | Value::Tuple(p) | Value::Row(p) => p.len(), _ => 0 };
-                            fault = Some(match self.table.strings("ext.builtin.core.dict.pair") {
-                                [head, middle, tail] => format!("{head}{at}{middle}{width}{tail}"),
-                                _ => self.table.single("ext.system.fault.operands").unwrap_or_default().to_string(),
-                            });
-                            break;
-                        }
-                    }
-                }
-                fault
-            }
-            _ => Some(self.table.single("ext.system.fault.operands").unwrap_or_default().to_string()),
-        };
-        (pairs, stopped)
-    }
-
     fn end_generator(&mut self, generator: &Rc<RefCell<Suspension>>) -> Res<()> {
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
         if let Some(walk) = state.inner.take() { self.end_delegate(&walk)?; }
@@ -15859,6 +15820,25 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.rules.map_union && matches!(op, Prim::BitsEither | Prim::SetAssign(0)) {
+            fn mapping(value: &Value) -> Option<Value> {
+                match value {
+                    Value::Window(owner, 'm') => Some(owner.proxy_pairs()),
+                    Value::Shared(cell) | Value::Mutable(cell, _) => mapping(&cell.borrow()),
+                    _ => None,
+                }
+            }
+            if let [a, b] = v {
+                let left = mapping(a);
+                let right = mapping(b);
+                if left.is_some() && op == Prim::SetAssign(0) {
+                    return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into());
+                }
+                if left.is_some() || right.is_some() {
+                    return self.prim(op, name, &[left.unwrap_or_else(|| a.clone()), right.unwrap_or_else(|| b.clone())]);
+                }
+            }
+        }
         if self.rules.has_any_ext_stmt_class_special && matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             let native_order = match v {
                 [Value::Text(a), Value::Text(b)] => Some(a.cmp(b)),
@@ -16202,17 +16182,9 @@ impl<'a> Machine<'a> {
         // it took; a map or any row of pairs may stand on the right, and
         // the pairs before an ill-shaped one are written before it stops.
         if let (Prim::SetAssign(0), [left, right]) = (op, v) {
-            if let Some(cell) = Self::dict_cell(left).filter(|_| self.rules.map_union) {
-                let (pairs, stopped) = self.pairs_offered(right);
-                let mut entries = match &*cell.borrow() { Value::Dict(held) => held.to_vec(), _ => Vec::new() };
-                for (key, value) in pairs {
-                    match entries.iter_mut().find(|entry| self.keys_match(&entry.0, &key)) {
-                        Some(entry) => entry.1 = value,
-                        None => entries.push((key, value)),
-                    }
-                }
-                cell.replace(Value::Dict(Rc::new(entries.into())));
-                return match stopped { Some(words) => Err(words), None => Ok(left.clone()) };
+            if Self::dict_cell(left).filter(|_| self.rules.map_union).is_some() {
+                self.dict_update(left, vec![right.clone()], &[])?;
+                return Ok(left.clone());
             }
         }
         // A key taken out of a map held in a cell is taken out of the
@@ -16358,7 +16330,9 @@ impl<'a> Machine<'a> {
         let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
-            && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()) {
+            && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
+                || (matches!(op, Prim::SetAssign(0)) || matches!(op, Prim::Landing(place) if matches!(self.table.landing_working(place), Prim::SetAssign(0))))
+                    && v.first().is_some_and(|value| Self::dict_cell(value).is_some())) {
             let settled: Vec<Value> = v.iter().map(|value| {
                 if view_kept && matches!(value, Value::Window(..)) { value.clone() } else { value.settled() }
             }).collect();
@@ -16760,12 +16734,10 @@ impl<'a> Machine<'a> {
             Prim::SetAssign(operation) => {
                 n(2)?;
                 if operation == 0 && self.rules.map_union {
-                    if let Value::Dict(original) = v[0].settled() {
-                        let (offered, stopped) = self.pairs_offered(&v[1]);
-                        let mut joined = original.to_vec();
-                        for (key, value) in offered { self.map_enter(&mut joined, key, value)?; }
-                        if let Some(words) = stopped { return Err(words); }
-                        return Ok(Value::Dict(Rc::new(joined.into())));
+                    if matches!(v[0].settled(), Value::Dict(_)) {
+                        let receiver = v[0].settled().keep(true);
+                        self.dict_update(&receiver, vec![v[1].clone()], &[])?;
+                        return Ok(receiver.settled());
                     }
                 }
                 let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
