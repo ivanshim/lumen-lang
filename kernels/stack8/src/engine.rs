@@ -5929,7 +5929,13 @@ impl<'a> Engine<'a> {
             // A class saying how its things are equal, in its methods or
             // its namespace, and nothing of their hash, has unhashable things.
             if place == 8 && self.lang.class_special.get(2).map_or(false, |eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
-            class = current.base.as_ref();
+            // A builtin kind answers the member natively, which ends the
+            // walk: no later base's own method may override the kind's.
+            if let Some(word) = Self::own_kind(current) {
+                if let Some(sample) = self.kind_sample(&word) {
+                    if self.native_special(&sample, named) { return None; }
+                }
+            }
         }
         None
     }
@@ -8606,7 +8612,10 @@ impl<'a> Engine<'a> {
                     answer
                 }
                 else if let Some(places) = self.indexed_walk(&args[0]) { places }
-                else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
+                // A plain container walked keeps the word of its kind,
+                // whatever its members are: a tuple of things is still a
+                // tuple iterator, and so on.
+                else { self.core_iterator(&args[0])? }
             }
             Builtin::Iter if args.len() == 2 => return Ok(None),
             // A thing with a method for walking backwards is asked for
@@ -11771,6 +11780,16 @@ impl<'a> Engine<'a> {
     /// Text on the left of the remainder sign, filled mark by mark. A
     /// thing of the program's own gives the marks that show a value its
     /// own words, as its show and its representation.
+    /// The right operand of a remainder: a thing standing on the tuple
+    /// kind answers with the tuple it keeps, so its items fill the marks
+    /// one by one; anything else fills a single mark as itself.
+    fn rem_argument(&self, arguments: &Value) -> Value {
+        if let Some(worth) = Self::worth_of(arguments) {
+            if matches!(worth.contents(), Value::Tuple(_)) { return worth; }
+        }
+        arguments.clone()
+    }
+
     fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
         if self.lang.format_builtin.is_empty() { return self.rem_text(template, arguments); }
         let native_tuple = Self::worth_of(arguments).filter(|held| matches!(held.contents(), Value::Tuple(_)));
@@ -11812,14 +11831,15 @@ impl<'a> Engine<'a> {
                 }
             } else { Answer::Missing(self.format_kind(value, code)) })
         };
-        writer.percent(template, arguments, &mut asked, false)
+        writer.percent(template, &arguments, &mut asked, false)
     }
 
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         if !self.lang.format_builtin.is_empty() {
-            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _, numbering| Ok(if numbering { crate::formatting::Answer::Missing(String::new()) } else { crate::formatting::Answer::Unsaid }), false);
+            let arguments = self.rem_argument(arguments);
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, &arguments, &mut |_, _, numbering| Ok(if numbering { crate::formatting::Answer::Missing(String::new()) } else { crate::formatting::Answer::Unsaid }), false);
         }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
@@ -15057,6 +15077,15 @@ impl<'a> Engine<'a> {
         if operation == "extend" && args.len() == 1 && matches!(receiver.contents(), Value::Array(_))
             && !matches!(args[0].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
             args[0] = Value::array(self.comprehension_items(&args[0])?);
+        }
+        // A mapping subclass whose subscript member was read off the
+        // thing itself reaches its `__missing__` through the subscript
+        // working, key for key, exactly as `[]` does.
+        if self.lang.class_special.get(11).map_or(false, |word| word == operation)
+            && matches!(receiver.contents(), Value::Object(_))
+            && matches!(Self::worth_of(receiver).map(|w| w.contents()), Some(Value::Map(_))) {
+            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            return self.special_dyad(&Action::At, receiver, &args[0]);
         }
         // A special member asked for by name on a value of a builtin
         // kind. Each hands its work to the builtin or the sign that
@@ -20683,6 +20712,13 @@ impl Engine<'_> {
                 Ok(value) => Ok(value),
                 Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
             },
+            // A member wrapper (a bound class or static method, or a
+            // kind's loose member) stands for the call it wraps, and is
+            // applied the way a direct call applies it.
+            Value::Adapter(w) => match self.class_apply(Value::Adapter(w.clone()), args) {
+                Ok(value) => Ok(value),
+                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            },
             Value::Routine(p) => {
                 if let Err(f) = self.invoke(p, args) {
                     self.carried = Some(f);
@@ -20751,7 +20787,15 @@ impl Engine<'_> {
                     });
                 }
             }
-            return Ok(matches!(value, Value::Object(o) if o.class_now().named(&class.name, false)));
+            // Python lays its class order out in `lineage`, so a
+            // multiply-inheriting class answers for every base it stands
+            // on, not only the first; the shared `named` keeps the
+            // first-base chain and the interfaces a language files under
+            // `answers`.
+            return Ok(matches!(value, Value::Object(o) if {
+                let held = &o.class_now();
+                held.named(&class.name, false) || held.lineage.iter().any(|b| b.named(&class.name, false))
+            }));
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
