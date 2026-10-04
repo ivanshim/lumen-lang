@@ -6743,36 +6743,40 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Missing(*at));
             let past = self.skip();
             self.pos = *from;
-            // What a parameter falls back on is read where the routine
-            // is written, never out of the routine's own parameters:
-            // they stand aside while the expression is read, so a name
-            // spelled like one of them still means the one outside.
-            let mut shadowed = Vec::new();
-            {
-                let unit = self.pieces.last_mut().expect("a unit");
-                for (slot, name) in unit.idents.iter().enumerate() {
-                    if formals.contains(name) && !unit.declared[slot] {
-                        unit.declared[slot] = true;
-                        shadowed.push(slot);
+            if self.lang.bind_names {
+                // What a parameter falls back on is read where the routine
+                // is written, never out of the routine's own parameters:
+                // they stand aside while the expression is read, so a name
+                // spelled like one of them still means the one outside.
+                let mut shadowed = Vec::new();
+                {
+                    let unit = self.pieces.last_mut().expect("a unit");
+                    for (slot, name) in unit.idents.iter().enumerate() {
+                        if formals.contains(name) && !unit.declared[slot] {
+                            unit.declared[slot] = true;
+                            shadowed.push(slot);
+                        }
                     }
                 }
+                // Being read where the method is written, the expression
+                // sees the names a class body around the method keeps, as
+                // the reference reading it there sees them.
+                let outside = self.default_depth.replace(self.pieces.len() - 1);
+                let idents_before = self.pieces.last().expect("a unit").idents.len();
+                let read = self.expr(0);
+                {
+                    let unit = self.pieces.last_mut().expect("a unit");
+                    for slot in shadowed { unit.declared[slot] = false; }
+                    // A name the default's reading reached for outside stands
+                    // in a place of its own now; the routine's own later reads
+                    // mean the parameter again, not that place.
+                    for slot in idents_before..unit.idents.len() { unit.declared[slot] = true; }
+                }
+                self.default_depth = outside;
+                read?;
+            } else {
+                self.expr(0)?;
             }
-            // Being read where the method is written, the expression
-            // sees the names a class body around the method keeps, as
-            // the reference reading it there sees them.
-            let outside = self.default_depth.replace(self.pieces.len() - 1);
-            let idents_before = self.pieces.last().expect("a unit").idents.len();
-            let read = self.expr(0);
-            {
-                let unit = self.pieces.last_mut().expect("a unit");
-                for slot in shadowed { unit.declared[slot] = false; }
-                // A name the default's reading reached for outside stands
-                // in a place of its own now; the routine's own later reads
-                // mean the parameter again, not that place.
-                for slot in idents_before..unit.idents.len() { unit.declared[slot] = true; }
-            }
-            self.default_depth = outside;
-            read?;
             self.write(&formals[*at]);
             self.land(past);
         }

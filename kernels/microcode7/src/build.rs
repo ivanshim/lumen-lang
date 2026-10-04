@@ -6668,30 +6668,34 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            // What a parameter falls back on belongs to the scope the
-            // routine is written in, so the routine's own parameters
-            // answer to another spelling while it is read: a name
-            // spelled like one of them still reaches outside.
-            let mut renamed = Vec::new();
-            {
-                let layer = self.layers.last_mut().expect("a layer");
-                for (index, name) in layer.idents.iter_mut().enumerate() {
-                    if formals.contains(name) {
-                        renamed.push((index, std::mem::replace(name, format!("\0spare/{index}"))));
+            let value = if self.table.flag("ext.syntax.call.bind_names") {
+                // What a parameter falls back on belongs to the scope the
+                // routine is written in, so the routine's own parameters
+                // answer to another spelling while it is read: a name
+                // spelled like one of them still reaches outside.
+                let mut renamed = Vec::new();
+                {
+                    let layer = self.layers.last_mut().expect("a layer");
+                    for (index, name) in layer.idents.iter_mut().enumerate() {
+                        if formals.contains(name) {
+                            renamed.push((index, std::mem::replace(name, format!("\0spare/{index}"))));
+                        }
                     }
                 }
-            }
-            // Being read where the method is written, the expression
-            // sees the names a class body around the method keeps, as
-            // the reference reading it there sees them.
-            let outside = self.default_depth.replace(self.layers.len() - 1);
-            let read = self.expr(0);
-            {
-                let layer = self.layers.last_mut().expect("a layer");
-                for (index, name) in renamed { layer.idents[index] = name; }
-            }
-            self.default_depth = outside;
-            let value = read?;
+                // Being read where the method is written, the expression
+                // sees the names a class body around the method keeps, as
+                // the reference reading it there sees them.
+                let outside = self.default_depth.replace(self.layers.len() - 1);
+                let read = self.expr(0);
+                {
+                    let layer = self.layers.last_mut().expect("a layer");
+                    for (index, name) in renamed { layer.idents[index] = name; }
+                }
+                self.default_depth = outside;
+                read?
+            } else {
+                self.expr(0)?
+            };
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
             let test = Form::Missing(slot);
