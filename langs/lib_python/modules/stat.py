@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/stat.py; PSF License.
 """Constants/functions for interpreting results of os.stat() and os.lstat().
 
 Suggested usage: from stat import *

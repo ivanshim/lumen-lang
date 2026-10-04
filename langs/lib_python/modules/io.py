@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/io.py; PSF License.
 """The io module provides the Python interfaces to stream handling. The
 builtin open function is defined in this module.
 
