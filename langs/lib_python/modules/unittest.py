@@ -356,18 +356,16 @@ class TestCase:
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
-            returned = getattr(self, self._method)()
-            if type(returned).__name__ == 'coroutine':
-                # An async test body is driven to its end, the way the
-                # reference's async runner awaits it: the assertions it
-                # holds are made, not discarded with the coroutine.
-                while True:
-                    try:
-                        returned.send(None)
-                    except StopIteration:
-                        break
+            self._callTestMethod(getattr(self, self._method))
         finally:
             self.tearDown()
+
+    def _callTestMethod(self, method):
+        returned = method()
+        if returned is not None:
+            import warnings
+            warnings.warn('It is deprecated to return a value that is not None from a test case',
+                          DeprecationWarning, stacklevel=2)
 
     def run(self, result=None):
         if result is None:
@@ -391,6 +389,48 @@ class TestCase:
         else:
             result.errors = [*result.errors, entry]
         return result
+
+class IsolatedAsyncioTestCase(TestCase):
+    # The host can drive a coroutine which completes without suspension.
+    # Suspended I/O requires an event loop and is refused explicitly.
+    def asyncSetUp(self):
+        pass
+
+    def asyncTearDown(self):
+        pass
+
+    def _callMaybeAsync(self, function, *args, **kwargs):
+        import inspect
+        if not inspect.iscoroutinefunction(function):
+            return function(*args, **kwargs)
+        pending = function(*args, **kwargs)
+        try:
+            try:
+                pending.send(None)
+            except StopIteration as stopped:
+                return stopped.value
+            raise NotImplementedError('asynchronous suspension requires an event loop')
+        finally:
+            pending.close()
+
+    def _callTestMethod(self, method):
+        returned = self._callMaybeAsync(method)
+        if returned is not None:
+            import warnings
+            warnings.warn('It is deprecated to return a value that is not None from a test case',
+                          DeprecationWarning, stacklevel=2)
+
+    def _run_test(self):
+        if getattr(self, '__unittest_skip__', False):
+            self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
+        self.setUp()
+        self._callMaybeAsync(self.asyncSetUp)
+        try:
+            self._callTestMethod(getattr(self, self._method))
+        finally:
+            self._callMaybeAsync(self.asyncTearDown)
+            self.tearDown()
+
 
 class _Skip:
     def __init__(self, reason):
