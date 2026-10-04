@@ -341,7 +341,8 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         return Ok(Value::array(matches));
     }
     for p in start..=if mode == 2 { end } else { start } {
-        if !machine.possible_start(p) { continue; }
+        // INFO prefix/charset acceleration belongs to SRE search, not match.
+        if mode == 2 && !machine.possible_start(p) { continue; }
         let initial = State { pc: 0, pos: p, marks: vec![-1; groups*2], last: -1, loops: Vec::new() };
         if let Some(result) = machine.run(initial, None, mode == 1, if advance && p == start { Some(start) } else { None }, 0)? {
             let marks = Value::array(result.marks.into_iter().map(Value::Small).collect());

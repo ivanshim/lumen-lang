@@ -337,8 +337,8 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     let mut position = begin;
     while position <= limit {
-        if !regex.viable(position) {
-            if mode != 2 { break; }
+        // Anchored operations enter the matcher without search's INFO filter.
+        if mode == 2 && !regex.viable(position) {
             position += 1;
             continue;
         }
