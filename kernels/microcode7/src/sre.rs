@@ -51,6 +51,25 @@ struct Cycle { entry: usize, exit: usize, low: usize, high: usize, taken: usize,
 struct Cursor { instruction: usize, offset: usize, captures: Vec<i64>, recent: i64, cycles: Vec<Cycle> }
 struct Regex<'a> { program: &'a [u32], subject: &'a [u32], limit: usize }
 impl Regex<'_> {
+    fn viable(&self, offset: usize) -> bool {
+        let words = self.program;
+        let header = words.get(..5);
+        let Some(header) = header.filter(|entry| entry[0] == 14) else { return true };
+        let after = header[1] as usize + 1;
+        if after < 5 || after >= words.len() { return true; }
+        let required = header[3] as usize;
+        if required > self.limit.saturating_sub(offset) { return false; }
+        if required == 0 { return true; }
+        match header[2] {
+            bits if bits & 1 != 0 && after >= 7 => {
+                let count = words[5] as usize;
+                let Some(prefix) = words.get(7..7usize.saturating_add(count)).filter(|_| count <= after - 7) else { return true };
+                prefix.iter().enumerate().all(|(index, number)| self.subject.get(offset.saturating_add(index)) == Some(number))
+            }
+            bits if bits & 4 != 0 => self.subject.get(offset).is_some_and(|&number| self.contains(5, number, number)),
+            _ => true,
+        }
+    }
     fn instruction(&self, at: usize) -> u32 { self.program.get(at).copied().unwrap_or(0) }
     fn boundary(&self, tag: u32, at: usize) -> bool {
         if tag < 3 { return at == 0 || tag == 1 && self.subject.get(at.wrapping_sub(1)) == Some(&10); }
@@ -281,6 +300,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             let origin = scan;
             let mut matched = None;
             while scan <= limit {
+                if !regex.viable(scan) { scan += 1; continue; }
                 let state = Cursor { instruction: 0, offset: scan, captures: vec![-1; groups * 2], recent: -1, cycles: vec![] };
                 let avoid = (omit && scan == origin).then_some(origin);
                 if let Some(result) = regex.follow(state, None, false, avoid, 0)? {
@@ -317,6 +337,11 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     let mut position = begin;
     while position <= limit {
+        if !regex.viable(position) {
+            if mode != 2 { break; }
+            position += 1;
+            continue;
+        }
         let cursor = Cursor { instruction: 0, offset: position, captures: vec![-1; groups*2], recent: -1, cycles: vec![] };
         let forbid = if skip_empty && position == begin { Some(begin) } else { None };
         if let Some(m) = regex.follow(cursor, None, mode == 1, forbid, 0)? {

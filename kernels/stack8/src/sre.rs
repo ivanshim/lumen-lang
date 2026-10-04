@@ -52,6 +52,26 @@ fn category(kind: u32, n: u32) -> bool {
     yes != (kind & 1 != 0)
 }
 impl Machine<'_> {
+    // INFO describes necessary conditions only; a surviving position still
+    // runs the complete matcher, including captures and backtracking.
+    fn possible_start(&self, position: usize) -> bool {
+        if self.code.len() < 5 || self.code[0] != 14 { return true; }
+        let info_end = self.code[1] as usize + 1;
+        if info_end >= self.code.len() || info_end < 5 { return true; }
+        let minimum = self.code[3] as usize;
+        if self.end.saturating_sub(position) < minimum { return false; }
+        if minimum == 0 { return true; }
+        let flags = self.code[2];
+        if flags & 1 != 0 && info_end >= 7 {
+            let width = self.code[5] as usize;
+            if width > info_end - 7 { return true; }
+            return self.text.get(position..position.saturating_add(width)) == Some(&self.code[7..7 + width]);
+        }
+        if flags & 4 != 0 {
+            return self.text.get(position).is_some_and(|&character| self.charset(5, character, character));
+        }
+        true
+    }
     fn at(&self, kind: u32, p: usize) -> bool {
         let preceding = p.checked_sub(1).and_then(|i| self.text.get(i)).copied();
         let following = if p < self.end { self.text.get(p).copied() } else { None };
@@ -289,6 +309,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         while next <= end && (limit == 0 || substitutions < limit) {
             let mut found = None;
             for at in next..=end {
+                if !machine.possible_start(at) { continue; }
                 let state = State { pc: 0, pos: at, marks: vec![-1; groups * 2], last: -1, loops: Vec::new() };
                 if let Some(done) = machine.run(state, None, false, if must_advance && at == next { Some(next) } else { None }, 0)? {
                     found = Some((at, done));
@@ -320,6 +341,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         return Ok(Value::array(matches));
     }
     for p in start..=if mode == 2 { end } else { start } {
+        if !machine.possible_start(p) { continue; }
         let initial = State { pc: 0, pos: p, marks: vec![-1; groups*2], last: -1, loops: Vec::new() };
         if let Some(result) = machine.run(initial, None, mode == 1, if advance && p == start { Some(start) } else { None }, 0)? {
             let marks = Value::array(result.marks.into_iter().map(Value::Small).collect());
