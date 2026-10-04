@@ -1,23 +1,58 @@
 # Stub: hints carry no checks at run time and keep no supplied parameters.
-# The container hints still answer isinstance/issubclass through the class
-# they stand for, and join with `|` into a hint of their own, since the
-# reference tests ask them so.
+# The container hints answer isinstance/issubclass through the class they
+# stand for and join with `|` into a hint of their own. A parameterized
+# alias, a special form that runs no check, and a special form used as a
+# union all answer as the reference answers them: the first is refused
+# outright, the second is refused by name, the third is left to the
+# kernel as any other operand of `|`.
+_hint_cache = {}
+
+
 class _Hint:
-    def __init__(self, name="", target=None, members=None):
+    def __init__(self, name="", target=None, members=None, subscripted=False):
         self._name = name
         self._target = target
         self._members = members
+        self._subscripted = subscripted
 
     def __getitem__(self, parameters):
-        return self
+        if self._name == "Optional":
+            return _union_of((parameters, None))
+        if self._name == "Union":
+            return _union_of(parameters)
+        # The reference keeps one alias for one origin and one set of
+        # arguments, so `typing.Tuple[int, int]` twice is the one hint
+        # and annotations built apart compare as the same.
+        key = (self._name, parameters)
+        try:
+            found = _hint_cache.get(key)
+        except TypeError:
+            found = None
+        if found is not None:
+            return found
+        made = _Hint(self._name, None, None, True)
+        try:
+            _hint_cache[key] = made
+        except TypeError:
+            pass
+        return made
 
     def __or__(self, other):
-        return _Hint("Union", None, _hint_members(self) + _hint_members(other))
+        return _union_of((self, other))
 
     def __ror__(self, other):
-        return _Hint("Union", None, _hint_members(other) + _hint_members(self))
+        return _union_of((other, self))
+
+    def _refuse(self, asked):
+        if self._subscripted:
+            raise TypeError("Subscripted generics cannot be used with class and instance checks")
+        if self._name == "Optional":
+            raise TypeError("typing.Optional cannot be used with " + asked + "()")
 
     def __instancecheck__(self, instance):
+        self._refuse("isinstance")
+        if self._name == "Any":
+            raise TypeError("typing.Any cannot be used with isinstance()")
         if self._target is not None:
             return isinstance(instance, self._target)
         if self._members is not None:
@@ -25,6 +60,9 @@ class _Hint:
         return False
 
     def __subclasscheck__(self, cls):
+        self._refuse("issubclass")
+        if self._name == "Any":
+            return False
         if cls is self:
             return True
         if self._target is not None:
@@ -34,12 +72,30 @@ class _Hint:
         return False
 
 
-def _hint_members(hint):
-    if isinstance(hint, _Hint):
-        if hint._members is not None:
-            return list(hint._members)
-        return [hint]
-    return [hint]
+def _union_of(parameters):
+    members = []
+    for member in _flatten(parameters):
+        if member is None:
+            member = type(None)
+        if isinstance(member, _Hint) and member._members is not None:
+            additions = member._members
+        else:
+            additions = [member]
+        for addition in additions:
+            if addition not in members:
+                members.append(addition)
+    if len(members) == 1:
+        return members[0]
+    return _Hint("Union", None, members)
+
+
+def _flatten(parameters):
+    if not isinstance(parameters, tuple):
+        return [parameters]
+    gathered = []
+    for parameter in parameters:
+        gathered.extend(_flatten(parameter))
+    return gathered
 
 
 Any = _Hint("Any")

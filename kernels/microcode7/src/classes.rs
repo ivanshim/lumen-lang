@@ -3837,10 +3837,17 @@ impl<'a> Machine<'a> {
                 if b.map_or(false,|b|Self::fault_descends(b,c)||Self::ancestry_includes(b,c)){return Ok(true);}
                 // A thing not of the kind may still name a class beneath
                 // it through its own `__class__`, which is read here and
-                // may raise, as the reference asks it.
+                // may raise, as the reference asks it. It is the class the
+                // thing was made by that this second look must differ
+                // from, so a proxy naming the very kind asked after is of
+                // it.
                 if !class_only {
-                    if let Some(Value::Blueprint(held))=self.value_class_named(subject)? {
-                        if !Rc::ptr_eq(&held,c) { return Ok(Self::fault_descends(&held,c)||Self::ancestry_includes(&held,c)); }
+                    if let Value::Thing(thing) = subject {
+                        if let Some(Value::Blueprint(held))=self.value_class_named(subject)? {
+                            if !Rc::ptr_eq(&held,&thing.blueprint()) {
+                                return Ok(Self::fault_descends(&held,c)||Self::ancestry_includes(&held,c));
+                            }
+                        }
                     }
                 }
                 Ok(false)

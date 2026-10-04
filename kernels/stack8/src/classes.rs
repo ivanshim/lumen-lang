@@ -3576,10 +3576,16 @@ impl<'a> Engine<'a> {
             if kind.is_some_and(|k|Self::exception_beneath(k,c)||Self::contains_class(k,c)){return Ok(true);}
             // A value not of the kind may still name a class beneath it
             // through its own `__class__`, which is read here and may
-            // raise, as the reference asks it.
+            // raise, as the reference asks it. It is the class the value
+            // was made by that this second look must differ from, so a
+            // proxy naming the very kind asked after is of it.
             if !subclass {
-                if let Some(Value::Class(held))=self.named_class_of(value)? {
-                    if !Rc::ptr_eq(&held,c) { return Ok(Self::exception_beneath(&held,c)||Self::contains_class(&held,c)); }
+                if let Value::Object(thing) = value {
+                    if let Some(Value::Class(held))=self.named_class_of(value)? {
+                        if !Rc::ptr_eq(&held, &thing.class_now()) {
+                            return Ok(Self::exception_beneath(&held,c)||Self::contains_class(&held,c));
+                        }
+                    }
                 }
             }
             return Ok(false);
