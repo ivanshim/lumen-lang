@@ -279,6 +279,13 @@ def getsizeof(value, default=None):
         return 28
     if isinstance(value, float):
         return 24
+    # A type of the program's own may say how it is measured; the
+    # reference asks the very method the object carries for that.
+    for kind in type(value).__mro__:
+        if kind is object:
+            break
+        if '__sizeof__' in kind.__dict__:
+            return value.__sizeof__()
     return 16
 
 class UnraisableHookArgs:

@@ -551,6 +551,10 @@ class deque:
         return GenericAlias(cls, item)
 
 
+
+_repr_factories = set()
+
+
 class defaultdict(dict):
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
@@ -558,29 +562,73 @@ class defaultdict(dict):
     def __init__(self, default_factory=None, *args, **kwargs):
         if default_factory is not None and not callable(default_factory):
             raise TypeError('first argument must be callable or None')
-        self.default_factory = default_factory
+        self._factory = default_factory
         super().__init__(*args, **kwargs)
+
+    @property
+    def default_factory(self):
+        return self._factory
+
+    @default_factory.setter
+    def default_factory(self, factory):
+        self._factory = factory
+
+    @default_factory.deleter
+    def default_factory(self):
+        self._factory = None
 
     def __getitem__(self, key):
         return dict.__getitem__(self, key)
 
     def __missing__(self, key):
-        if self.default_factory is None:
+        factory = self._factory
+        if factory is None:
             raise KeyError(key)
-        self[key] = value = self.default_factory()
-        return value
+        value = factory()
+        return dict.setdefault(self, key, value)
 
     def __repr__(self):
-        return 'defaultdict(' + repr(self.default_factory) + ', ' + dict.__repr__(self) + ')'
+        inside = dict.__repr__(self)
+        factory = self._factory
+        if factory is None:
+            shown = 'None'
+        else:
+            marker = id(factory)
+            if marker in _repr_factories:
+                shown = '...'
+            else:
+                _repr_factories.add(marker)
+                try:
+                    shown = repr(factory)
+                finally:
+                    _repr_factories.discard(marker)
+        return '%s(%s, %s)' % (type(self).__name__, shown, inside)
 
     def copy(self):
-        return type(self)(self.default_factory, self)
+        return type(self)(self._factory, self)
 
     def __copy__(self):
         return self.copy()
 
+    def __or__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        new = type(self)(self._factory, self)
+        dict.update(new, other)
+        return new
+
+    def __ror__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        new = type(self)(self._factory, other)
+        dict.update(new, self)
+        return new
+
     def __reduce__(self):
-        args = (self.default_factory,)
+        if self._factory is None:
+            args = ()
+        else:
+            args = (self._factory,)
         return type(self), args, None, None, iter(self.items())
 
 
