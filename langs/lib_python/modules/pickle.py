@@ -155,6 +155,10 @@ def _reduce(value, protocol):
         return (slice, (value.start, value.stop, value.step))
     if type(value) is bytearray:
         return (bytearray, (bytes(value),))
+    from copyreg import dispatch_table
+    reductor = dispatch_table.get(type(value))
+    if reductor is not None:
+        return reductor(value)
     forwarded = __reduce_native__(value)
     if forwarded is not None and forwarded[0] == 'handed':
         return _reduce(forwarded[1], protocol)

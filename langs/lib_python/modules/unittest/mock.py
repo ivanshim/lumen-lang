@@ -235,9 +235,15 @@ class _Patch:
         self.held = DEFAULT
 
     def start(self):
+        create = self.create
+        if not create:
+            import builtins as _builtins_mod
+            import types as _types_mod
+            if self.attribute in vars(_builtins_mod) and isinstance(self.target, _types_mod.ModuleType):
+                create = True
         if hasattr(self.target, self.attribute):
             self.held = getattr(self.target, self.attribute)
-        elif not self.create:
+        elif not create:
             raise AttributeError('the target has no attribute ' + repr(self.attribute))
         else:
             self.held = DEFAULT
