@@ -77,12 +77,7 @@ class Pattern:
             raise TypeError('cannot use a bytes pattern on a string-like object')
         if self._isbytes is False and not isinstance(string, str):
             raise TypeError('cannot use a string pattern on a bytes-like object')
-        pos = _index(pos)
-        endpos = _index(endpos)
-        if not -9223372036854775808 <= pos <= 9223372036854775807 or not -9223372036854775808 <= endpos <= 9223372036854775807:
-            raise OverflowError('Python int too large to convert to C ssize_t')
-        pos = min(max(pos, 0), len(text))
-        endpos = min(max(endpos, 0), len(text))
+        pos, endpos = _native(9, text, _index(pos), _index(endpos))
         return text, pos, endpos
     def _run(self, string, text, pos, endpos, mode, must_advance=0):
         state = _native(0, self._code, text, pos, endpos, self.groups, mode, must_advance)

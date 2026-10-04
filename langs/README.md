@@ -5929,11 +5929,11 @@ raise `LookupError`. The upstream memory tests retain their failures for
 collector behavior that cannot yet reclaim a cycle containing a memoryview.
 The review regressions and buffer-protocol comparisons live in
 `scratch/io-memory/`, with expected output produced by Python 3.14.
-`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation. SRE operation 9 converts indexed bounds to host ssize_t and clamps them to the subject length before matching.
 
 Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
 
-`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation. SRE operation 9 converts indexed bounds to host ssize_t and clamps them to the subject length before matching.
 
 Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
 

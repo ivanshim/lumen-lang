@@ -306,6 +306,17 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         }
     }
     let action = input.first().map(integer).transpose()?.unwrap_or(-1);
+    if action == 9 {
+        let [_, source, first, last] = input else {
+            return Err(String::from("TypeError: invalid SRE bounds argument count"));
+        };
+        let maximum = characters_for_regex(source)?.len() as i64;
+        let position = |number: &Value| -> Result<Value, String> {
+            let whole = integer(number).map_err(|_| String::from("OverflowError: Python int too large to convert to C ssize_t"))?;
+            Ok(Value::Small(whole.max(0).min(maximum)))
+        };
+        return Ok(Value::tuple(vec![position(first)?, position(last)?]));
+    }
     if action == 6 { return Ok(Value::text(character_category(integer(&input[1])? as u32))); }
     if action == 5 {
         return match input.get(1) {

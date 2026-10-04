@@ -307,6 +307,19 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         }).ok_or_else(|| "TypeError: SRE argument must be an integer".into())
     };
     let op = number(0)?;
+    if op == 9 {
+        if args.len() != 4 { return Err("TypeError: invalid SRE bounds argument count".into()); }
+        let length = subject_codes(&args[1])?.len() as i64;
+        let mut bounds = Vec::with_capacity(2);
+        for value in &args[2..] {
+            let signed = match value {
+                Value::Small(integer) => Some(*integer),
+                _ => value.as_big()?.to_i64(),
+            }.ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+            bounds.push(Value::Small(signed.clamp(0, length)));
+        }
+        return Ok(Value::tuple(bounds));
+    }
     if op == 6 {
         return Ok(Value::text(general_category(number(1)? as u32)));
     }
