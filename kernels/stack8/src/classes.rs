@@ -72,6 +72,13 @@ impl<'a> Engine<'a> {
                 c.shared.borrow_mut().push((init.clone(), Self::adapter(2, vec![Value::text("module")])));
             }
         }
+        if word == "module" && !self.class_word("kind").is_empty() {
+            c.shared.borrow_mut().push((self.class_word("namespace").to_string(), Self::adapter(16,
+                vec![Value::text(self.class_word("namespace")), Value::Class(c.clone()), Value::text("\0module-namespace")])));
+            if let Some(repr) = self.lang.class_special.get(1) {
+                c.shared.borrow_mut().push((repr.clone(), Self::adapter(29, vec![Value::text(word), Value::text(repr)])));
+            }
+        }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for name in self.lang.class_special.iter().enumerate().filter(|(at, _)| *at == 8 || *at == 17 && word != "NoneType").map(|(_, name)| name) {
@@ -205,14 +212,6 @@ impl<'a> Engine<'a> {
             if matches!(args[1], Value::Null) { return Err("TypeError: instance must not be None".into()); }
             return Ok(Self::adapter(131, args));
         }
-        if word == "module" {
-            if args.is_empty() || args.len() > 2 { return Err("TypeError: module() takes at most 2 arguments".into()); }
-            if !matches!(args[0].contents(), Value::Text(_)) { return Err(format!("TypeError: module() argument 'name' must be str, not {}", args[0].core_kind()).into()); }
-            self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c,
-                fields: RefCell::new(vec![("__name__".into(), args[0].clone()), ("__doc__".into(), args.get(1).cloned().unwrap_or(Value::Null)),
-                    ("__package__".into(), Value::Null), ("__loader__".into(), Value::Null), ("__spec__".into(), Value::Null)]), mark: self.made })));
-        }
         if word == "mappingproxy" {
             let entries = self.call_items(args)?;
             if entries.len() != 1 || entries[0].0.is_some() { return Err("TypeError: mappingproxy() takes exactly one argument".into()); }
@@ -270,6 +269,68 @@ impl<'a> Engine<'a> {
         };
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: c, fields: RefCell::new(vec![("\0worth".to_string(), kept)]), mark: self.made })))
+    }
+    fn module_member_or(&mut self, module: &Value, name: &str, fallback: Value) -> Flow<Value> {
+        match self.class_get(module.clone(), name, false) {
+            Ok(value) => Ok(value.contents()),
+            Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; Ok(fallback) },
+            Err(fault) => Err(fault),
+        }
+    }
+    fn module_rendered(&mut self, value: &Value, quoted: bool) -> Flow<String> {
+        self.special_text(value, quoted).map_err(|message| self.carried.take().unwrap_or(Fault::Note(message)))
+    }
+    fn module_namespace_paths(&mut self, loader: &Value) -> Flow<Option<Value>> {
+        let external = self.modules.get("_frozen_importlib_external").or_else(|| self.modules.get("importlib._bootstrap_external")).cloned();
+        let Some(external) = external else { return Ok(None); };
+        let category = self.module_member_or(&external, "NamespaceLoader", Value::Null)?;
+        if matches!(category, Value::Null) { return Ok(None); }
+        if !self.class_work(0, vec![loader.clone(), category])?.is_true() { return Ok(None); }
+        let path = self.class_get(loader.clone(), "_path", false)?;
+        Ok(Some(Value::Array(Rc::new(self.comprehension_items(&path)?).into())))
+    }
+    pub(super) fn module_repr_value(&mut self, module: Value) -> Flow<Value> {
+        if self.module_holding(&module).is_none() && !matches!(&module, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("module")) {
+            return Err(format!("TypeError: descriptor '__repr__' requires a 'module' object but received a '{}'", Self::type_argument_kind(&module)).into());
+        }
+        let loader = self.module_member_or(&module, "__loader__", Value::Null)?;
+        let spec = self.module_member_or(&module, "__spec__", Value::Null)?;
+        let mut check = vec![spec.clone()];
+        let has_spec = self.builtin(Builtin::Bool, "bool", &mut check)?.is_true();
+        let text = if has_spec {
+            let raw_name = self.class_get(spec.clone(), "name", false)?.contents();
+            let name = if matches!(raw_name, Value::Null) { Value::text("?") } else { raw_name.clone() };
+            let origin = self.class_get(spec.clone(), "origin", false)?.contents();
+            if matches!(origin, Value::Null) {
+                let provider = self.class_get(spec, "loader", false)?.contents();
+                let title = self.module_rendered(&name, true)?;
+                if matches!(provider, Value::Null) { format!("<module {title}>") }
+                else if let Some(paths) = self.module_namespace_paths(&provider)? {
+                    format!("<module {title} (namespace) from {}>", self.module_rendered(&paths, true)?)
+                } else { format!("<module {title} ({})>", self.module_rendered(&provider, true)?) }
+            } else {
+                let location = self.class_get(spec, "has_location", false)?;
+                let mut check = vec![location];
+                if self.builtin(Builtin::Bool, "bool", &mut check)?.is_true() {
+                    format!("<module {} from {}>", self.module_rendered(&name, true)?, self.module_rendered(&origin, true)?)
+                } else {
+                    format!("<module {} ({})>", self.module_rendered(&raw_name, true)?, self.module_rendered(&origin, false)?)
+                }
+            }
+        } else {
+            let name = self.module_member_or(&module, "__name__", Value::text("?"))?;
+            let title = self.module_rendered(&name, true)?;
+            match self.class_get(module, "__file__", false) {
+                Ok(file) => format!("<module {title} from {}>", self.module_rendered(&file, true)?),
+                Err(fault) if self.attribute_fault(&fault) => {
+                    self.absent_member = None;
+                    if matches!(loader, Value::Null) { format!("<module {title}>") }
+                    else { format!("<module {title} ({})>", self.module_rendered(&loader, true)?) }
+                }
+                Err(fault) => return Err(fault),
+            }
+        };
+        Ok(Value::text(&text))
     }
     fn initialise_module(&mut self, receiver: Value, args: Vec<Value>) -> Flow<Value> {
         let valid = matches!(&receiver, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("module"))
@@ -658,12 +719,23 @@ impl<'a> Engine<'a> {
         Ok(format!("\0slot:{word}:{:p}", Rc::as_ptr(owner)))
     }
     fn slot_read(&self, thing: &Value, parts: &[Value]) -> Flow<Value> {
+        if parts.get(2).is_some_and(|part| part.plain() == "\0module-namespace") {
+            let valid = self.module_holding(thing).is_some() || matches!(thing, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("module"));
+            if !valid { return Err(format!("TypeError: descriptor '__dict__' for 'module' objects doesn't apply to a '{}' object", Self::type_argument_kind(thing)).into()); }
+            let Value::Object(module) = thing else { unreachable!() };
+            return Ok(module.fields.borrow().iter().find(|(key, _)| key == "\0namespace")
+                .map_or_else(|| Value::Fields(module.clone()), |(_, book)| book.clone()));
+        }
         let place = self.slot_place(thing, parts)?;
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         let kept = o.fields.borrow().iter().find(|(n, _)| *n == place).map(|(_, v)| v.clone());
         kept.ok_or_else(|| self.missing_member(thing, &parts[0].plain()))
     }
     fn slot_write(&self, thing: &Value, parts: &[Value], value: Option<Value>) -> Flow<Value> {
+        if parts.get(2).is_some_and(|part| part.plain() == "\0module-namespace") {
+            self.slot_read(thing, parts)?;
+            return Err(self.class_word("property.readonly").to_string().into());
+        }
         let place = self.slot_place(thing, parts)?;
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         Self::write_members(&mut o.fields.borrow_mut(), &place, value, false).map_err(|_| self.missing_member(thing, &parts[0].plain()))?;
@@ -803,7 +875,7 @@ impl<'a> Engine<'a> {
     pub(super) fn reads_descriptor(&self, subject: &Value, name: &str) -> bool {
         let Value::Object(instance) = subject else { return false };
         self.class_value(&instance.class_now(), name).is_some_and(|entry| {
-            matches!(&entry, Value::Adapter(parts) if matches!(parts.0, 6 | 28))
+            matches!(&entry, Value::Adapter(parts) if matches!(parts.0, 6 | 28) || parts.0 == 16 && parts.1.get(2).is_some_and(|v| v.plain() == "\0module-namespace"))
                 || self.descriptor_hook(&entry, "descriptor.get").is_some()
         })
     }
@@ -1128,6 +1200,9 @@ impl<'a> Engine<'a> {
                     let member = w.1[1].plain();
                     let word = w.1[0].plain();
                     if args.is_empty() {
+                        if word == "module" && self.lang.class_special.get(1).is_some_and(|name| name == &member) {
+                            return Err("TypeError: descriptor '__repr__' of 'module' object needs an argument".into());
+                        }
                         let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
                         return if pieces.len() == 3 {
                             Err(format!("{}{word}{}{member}{}", pieces[0], pieces[1], pieces[2]).into())
@@ -1142,6 +1217,10 @@ impl<'a> Engine<'a> {
                     // loose member is the kind's own and not the
                     // class's: `set.union(s, ...)` for `s` a subclass of
                     // `set` works upon what `s` keeps of a set.
+                    if word == "module" && self.lang.class_special.get(1).is_some_and(|key| key == &member) {
+                        if !args.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", args.len()).into()); }
+                        return self.module_repr_value(subject);
+                    }
                     let receiver = match &subject {
                         // The worth is kept as it stands, cell and all,
                         // where it is one that a method writes into (a
@@ -1665,7 +1744,11 @@ impl<'a> Engine<'a> {
         if !named.is_empty() { return named.into(); }
         // A thing and a class are named by their own name; anything
         // else by the name its kind goes under.
-        let class = match subject { Value::Object(o)=>o.class_now().name.clone(), Value::Class(c)=>c.name.clone(), other=>other.contents().core_kind() };
+        let class = match subject { Value::Object(o) => {
+            let kind = o.class_now();
+            Self::own_kind(&kind).and_then(|_| kind.outline.as_deref().and_then(|title| title.strip_prefix("<class '")?.strip_suffix("'>")).map(str::to_owned))
+                .unwrap_or_else(|| kind.name.clone())
+        }, Value::Class(c)=>c.name.clone(), other=>other.contents().core_kind() };
         let pieces = self.lang.class_details.get("attribute.amiss").cloned().unwrap_or_default();
         if pieces.len()!=3 { return self.class_refusal(); }
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
@@ -2269,6 +2352,9 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("namespace") {
                     if let Some(descriptor)=self.class_value(&o.class_now(),name) {
+                        if Self::kind_beneath(&o.class_now()).as_deref() == Some("module") && !self.takes_writes(&descriptor) {
+                            if let Some(held) = o.fields.borrow().iter().find(|(key, _)| key == name).map(|(_, v)| v.clone()) { return Ok(held); }
+                        }
                         return self.bind_class_value(descriptor,Some(subject.clone()),o.class_now().clone());
                     }
                     // A class that names its slots and leaves the namespace out of them has things without one.
@@ -2970,6 +3056,15 @@ impl<'a> Engine<'a> {
                         self.call_descriptor(&member,hook,args)?;
                         return Ok(Value::Null);
                     }
+                }
+                if name == self.class_word("namespace") && self.module_holding(&subject).is_some()
+                    && self.class_value(&o.class_now(), name).is_none() {
+                    return Err(self.class_word("property.readonly").to_string().into());
+                }
+                if name == self.class_word("namespace") && Self::kind_beneath(&o.class_now()).as_deref() == Some("module")
+                    && self.class_value(&o.class_now(), name).is_some() {
+                    Self::write_members(&mut o.fields.borrow_mut(), name, value, true).map_err(|_| absent)?;
+                    return Ok(Value::Null);
                 }
                 // A thing's own namespace, written back to it after an
                 // entry was put in, is where it was: nothing to do.
@@ -3815,6 +3910,7 @@ impl<'a> Engine<'a> {
             // through the worth the thing keeps.
             if let Some(word)=Self::own_kind(c) {
                 if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
+                if word == "module" && self.lang.class_special.get(1).is_some_and(|key| key == name) { return self.module_repr_value(subject); }
                 if self.lang.constructor.as_deref()==Some(name){
                     if word == "module" { return self.initialise_module(subject, args); }
                     if let Some(worth) = Self::worth_of(&subject).filter(|held| matches!(held.contents(), Value::Set(_) | Value::Array(_) | Value::Map(_))) {

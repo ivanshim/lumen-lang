@@ -12,13 +12,6 @@ def rmtree(path):
     except FileNotFoundError:
         pass
 
-def create_empty_file(filename):
-    """Create an empty file. If the file already exists, truncate it."""
-    problem = __file_create(filename)
-    if problem is not None:
-        number, message = problem
-        raise OSError(number, message, filename)
-
 @contextmanager
 def temp_dir(path=None, quiet=False):
     """Return a context manager that creates a temporary directory.
@@ -201,9 +194,11 @@ def temp_umask(umask):
             os.umask(oldmask)
 
 def create_empty_file(filename):
-    # File descriptors are not exposed; open has the same truncation behavior.
-    with open(filename, 'wb'):
-        pass
+    """Create an empty file. If the file already exists, truncate it."""
+    problem = __file_create(filename)
+    if problem is not None:
+        number, message = problem
+        raise OSError(number, message, filename)
 
 def rmdir(dirname):
     try:

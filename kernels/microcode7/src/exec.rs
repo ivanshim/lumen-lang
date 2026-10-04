@@ -12894,16 +12894,13 @@ impl<'a> Machine<'a> {
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
                     None => {
-                        if let Some(name) = self.namespace_holding(subject) {
-                            return Ok(match self.namespace_file_path(&name) {
-                                Some(file) => format!("<module '{name}' from '{file}'>"),
-                                None => format!("<module '{name}' (built-in)>"),
-                            });
-                        }
-                        // A module made by hand shows by the name it keeps.
-                        if Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
-                            let name = t.holds.borrow().iter().find(|(n, _)| n == "__name__").map(|(_, v)| v.settled().bare()).unwrap_or_default();
-                            return Ok(format!("<module '{name}'>"));
+                        let imported = self.namespace_holding(subject).is_some();
+                        if imported || Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
+                            match self.describe_module(subject.clone()) {
+                                Ok(text) => return Ok(text.bare()),
+                                Err(Escape::Error(error)) => return Err(error),
+                                Err(escape) => { self.got_away = Some(escape); return Err(String::new()); },
+                            }
                         }
                         let module = self.rules.detail_main;
                         Ok(if t.blueprint().under.is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_owned() }

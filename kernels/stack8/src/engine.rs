@@ -6992,14 +6992,12 @@ impl<'a> Engine<'a> {
                     _ => Err(format!("TypeError: {} returned non-string (type {})", if place == 0 { "__str__" } else { "__repr__" }, answer.core_kind())),
                 },
                 None => {
-                    if let Some(path) = self.module_holding(value) {
-                        let origin = self.module_file_path(&path).map_or_else(|| " (built-in)".to_owned(), |file| format!(" from '{file}'"));
-                        return Ok(format!("<module '{path}'{origin}>"));
-                    }
-                    // A module made by hand shows by the name it keeps.
-                    if Self::kind_beneath(&object.class_now()).as_deref() == Some("module") {
-                        let name = object.fields.borrow().iter().find(|(n, _)| n == "__name__").map(|(_, v)| v.contents().plain()).unwrap_or_default();
-                        return Ok(format!("<module '{name}'>"));
+                    if self.module_holding(value).is_some() || Self::kind_beneath(&object.class_now()).as_deref() == Some("module") {
+                        return match self.module_repr_value(value.clone()) {
+                            Ok(text) => Ok(text.plain()),
+                            Err(Fault::Note(message)) => Err(message),
+                            Err(raised) => { self.carried = Some(raised); Err(String::new()) },
+                        };
                     }
                     let module = self.class_word("main");
                     Ok(if object.class_now().base.is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
