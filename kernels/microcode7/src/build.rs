@@ -4458,7 +4458,7 @@ impl<'a> Builder<'a> {
                 self.skip_line_ends();
                 return Ok(false);
             }
-            let body = self.method(&title)?;
+            let (body, defaults) = self.method(&title)?;
             self.parts().methods.retain(|(old, _)| old != &method_name);
             if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
                 self.parts().attributes.remove(at);
@@ -4467,6 +4467,11 @@ impl<'a> Builder<'a> {
             let slot = self.member_address(&method_name, "method_body");
             let decorated=!wrappers.is_empty();
             let mut expression=constant(Value::Routine(body.clone()));
+            if !defaults.is_empty() {
+                let mut given = vec![expression];
+                given.extend(defaults);
+                expression=prim_call(Prim::Carry, given);
+            }
             while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
             setup.push(Form::Write(slot.clone(),Box::new(expression)));
             // A method of a class standing in a function climbs through
@@ -4870,7 +4875,13 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             word = self.need_word("as the method name")?;
-            decorated = constant(Value::Routine(self.method(&word)?));
+            let (body, defaults) = self.method(&word)?;
+            decorated = constant(Value::Routine(body));
+            if !defaults.is_empty() {
+                let mut given = vec![decorated];
+                given.extend(defaults);
+                decorated = prim_call(Prim::Carry, given);
+            }
         }
         while let Some((manner, slot)) = waiting.pop() {
             decorated = match manner {
@@ -5411,7 +5422,7 @@ impl<'a> Builder<'a> {
                 let gives_cell = self.skip_reference();
                 let member = self.need_word("as the method name")?;
                 self.giving_cells.push(gives_cell);
-                let program = self.method(&member);
+                let program = self.method(&member).map(|(code, _)| code);
                 self.giving_cells.pop();
                 held.methods.push((member, program?));
                 // A parameter of the maker that names a property makes
@@ -5464,7 +5475,7 @@ impl<'a> Builder<'a> {
 
     /// A method: a program whose first parameter is the thing it is for,
     /// under the name the definition gives it (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, Vec<Form>)> {
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
@@ -5483,6 +5494,19 @@ impl<'a> Builder<'a> {
         let least = params.len() - spares.len();
         let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + usize::from(!explicit), from)).collect();
         let formals = params.clone();
+        // A parameter whose default belongs to the names around the
+        // routine has that default read where the routine stands, once,
+        // and carried with the routine to every call.
+        let keep_defaults = self.table.flag("ext.syntax.call.bind_names");
+        let mut default_values = Vec::new();
+        if keep_defaults {
+            let resume = self.pos;
+            for (_, start) in &spares {
+                self.pos = *start;
+                default_values.push(self.expr(0)?);
+            }
+            self.pos = resume;
+        }
         if self.look().shape == Shape::Sign
             && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme))
         {
@@ -5499,9 +5523,12 @@ impl<'a> Builder<'a> {
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.
         if self.on_stmt_end() && !self.block_opens_ahead() {
-            let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
+            let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
+                if keep_defaults { for (place, _) in &spares { r.carrying.push(*place); } }
+                Ok(constant(Value::Nil))
+            })?;
             return match named {
-                Form::Const(Value::Routine(p)) => Ok(p),
+                Form::Const(Value::Routine(p)) => Ok((p, default_values)),
                 _ => Err("A method must be a program".to_string()),
             };
         }
@@ -5514,7 +5541,12 @@ impl<'a> Builder<'a> {
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             r.layers.last_mut().unwrap().permits_async = deferred;
             r.generator_seen = deferred;
-            let mut items = r.spare_values(spares, &formals)?;
+            let mut items = if keep_defaults {
+                for (place, _) in &spares { r.carrying.push(*place); }
+                Vec::new()
+            } else {
+                r.spare_values(spares, &formals)?
+            };
             // What a parameter that names a property was handed is put
             // into the thing before the body runs.
             for member in &named {
@@ -5539,7 +5571,7 @@ impl<'a> Builder<'a> {
         match program? {
             Form::Const(Value::Routine(mut p)) => {
                 Rc::get_mut(&mut p).unwrap().local_defaults = local_defaults;
-                Ok(p)
+                Ok((p, default_values))
             },
             _ => Err("A method must be a program".to_string()),
         }

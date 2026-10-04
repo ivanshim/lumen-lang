@@ -5561,8 +5561,9 @@ impl<'a> Compiler<'a> {
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.take();
             named = self.want_name("as the method name")?;
-            let body = self.method(&named)?;
+            let (body, defaults) = self.method(&named)?;
             self.constant(Value::Routine(body));
+            if defaults != 0 { self.act(Action::Close, defaults + 1); }
         }
         for (kind, held) in saved.into_iter().rev() {
             if kind == 0 {
@@ -5838,11 +5839,12 @@ impl<'a> Compiler<'a> {
                 self.skip_seps();
                 return Ok(false);
             }
-            let method = self.method(&original)?;
+            let (method, defaults) = self.method(&original)?;
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
             self.constant(Value::Routine(method.clone()));
+            if defaults != 0 { self.act(Action::Close, defaults + 1); }
             let wrapped=!decorators.is_empty();
             for place in decorators.into_iter().rev() {self.read(&place);self.act(Action::Invoke(Rc::from("")),2);}
             self.write(&slot);
@@ -6710,7 +6712,7 @@ impl<'a> Compiler<'a> {
                 let gives_cell = self.skip_reference();
                 let member = self.want_name("as the method name")?;
                 self.giving_cells.push(gives_cell);
-                let built = self.method(&member);
+                let built = self.method(&member).map(|(code, _)| code);
                 self.giving_cells.pop();
                 held.methods.push((member.clone(), built?));
                 // A parameter of the maker that names a property makes
@@ -6765,7 +6767,7 @@ impl<'a> Compiler<'a> {
 
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, usize)> {
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -6795,15 +6797,23 @@ impl<'a> Compiler<'a> {
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.
         if self.on_sep() && !self.block_ahead() {
-            return self.routine(name, formals, least, true, |a| {
-            a.piece().python_fallthrough = true;
-            a.piece().asynchronous = asynchronous;
-            a.piece().generator = asynchronous;
+            let program = self.routine(name, formals, least, true, |a| {
+                a.piece().python_fallthrough = true;
+                a.piece().asynchronous = asynchronous;
+                a.piece().generator = asynchronous;
+                if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
                 a.constant(Value::Null);
                 a.piece().result_touched = true;
                 a.write(RESULT_CELL);
                 Ok(())
-            });
+            })?;
+            let after = self.pos;
+            let mut count = 0;
+            if lang.bind_names {
+                for (_, from) in &spares { self.pos = *from; self.expr(0)?; count += 1; }
+            }
+            self.pos = after;
+            return Ok((program, count));
         }
         let named = promoted.clone();
         self.promoted = promoted;
@@ -6818,7 +6828,7 @@ impl<'a> Compiler<'a> {
             // whatever its last bare statement came to.
             a.piece().python_fallthrough = true;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
-            a.spare_values(&spares, &given)?;
+            else { a.spare_values(&spares, &given)?; }
             // What a parameter that names a property was given is
             // written into the object before anything else runs.
             for member in &named {
@@ -6833,9 +6843,15 @@ impl<'a> Compiler<'a> {
             // the mark that ends a statement holds all of them, not
             // only the first.
             a.body()
-        });
+        })?;
         self.method_self = previous;
-        built
+        let after = self.pos;
+        let mut count = 0;
+        if lang.bind_names {
+            for (_, from) in &spares { self.pos = *from; self.expr(0)?; count += 1; }
+        }
+        self.pos = after;
+        Ok((built, count))
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
