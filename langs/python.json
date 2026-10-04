@@ -956,7 +956,17 @@
     "BrokenPipeError",
     "FloatingPointError",
     "EnvironmentError",
-    "IOError"
+    "IOError",
+    "ChildProcessError",
+    "ConnectionError",
+    "ConnectionAbortedError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "InterruptedError",
+    "ProcessLookupError",
+    "TimeoutError",
+    "PythonFinalizationError",
+    "_IncompleteInputError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -4025,5 +4035,11 @@
   ],
   "ext.builtin.struct_native": [
     "__struct_native"
+  ],
+  "ext.builtin.pickle_buffer": [
+    "__pickle_buffer_native__"
+  ],
+  "ext.builtin.text.intern": [
+    "__intern_native__"
   ]
 }

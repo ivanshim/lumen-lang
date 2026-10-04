@@ -293,6 +293,9 @@ def open(path, flags, mode=511, *, dir_fd=None):
     from operator import index
     return _posix_call('open', path, index(flags), index(mode))
 
+def isatty(fd):
+    return __file_kind(fd, 'isatty')
+
 def close(fd):
     from operator import index
     return _posix_call('close', index(fd))

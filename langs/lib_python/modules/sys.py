@@ -291,10 +291,10 @@ float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111
 
-def intern(string):
+def intern(string, /):
     if not isinstance(string, str):
-        raise 'TypeError: intern() argument must be str'
-    return string
+        raise TypeError('intern() argument must be str, not ' + type(string).__name__)
+    return __intern_native__(string)
 
 def getsizeof(value, default=None):
     # A rough count of the value's payload and its enclosing record.

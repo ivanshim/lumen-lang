@@ -1,4 +1,7 @@
 thread_local! {
+    static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+thread_local! {
     static BYTE_EXPORTS: std::cell::RefCell<std::collections::HashMap<usize, usize>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -530,9 +533,13 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(20), Some(2), Some(20), Some(20)];
-        let mut classes: Vec<Rc<Class>> = Vec::new();
-        for (at, name) in names.iter().enumerate() {
+        let mut parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(20), Some(2), Some(20), Some(20), Some(20), Some(20), Some(62), Some(62), Some(62), Some(20), Some(20), Some(20), Some(13), Some(22)];
+        if parents.len() > 62 { parents[57] = Some(62); }
+        let mut classes: Vec<Option<Rc<Class>>> = vec![None; names.len()];
+        let mut order: Vec<_> = (0..names.len()).collect();
+        if names.len() > 62 { let moved = order.remove(62); order.insert(57, moved); }
+        for at in order {
+            let name = &names[at];
             let mut fields = Vec::new();
             if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
             if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
@@ -542,20 +549,20 @@ impl<'a> Engine<'a> {
             if at == 19 { fields.push(("\0import-error".into(), Value::Flag(true))); }
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
             if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
-            if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
+            if at == 38 { if let Some(ordinary) = classes.get(1).and_then(Option::as_ref) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
             // The three Unicode codec faults carry an encoding, the
             // object worked on, a start and end index and a reason,
             // and show themselves by those rather than by their args.
             if at == 43 { fields.push(("\0unicode-encode".into(), Value::Flag(true))); }
             if at == 44 { fields.push(("\0unicode-decode".into(), Value::Flag(true))); }
             if at == 45 { fields.push(("\0unicode-translate".into(), Value::Flag(true))); }
-            classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
-                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
+            classes[at] = Some(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).and_then(Clone::clone)),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
-        let mut result: HashMap<String, Value> = classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect();
+        let mut result: HashMap<String, Value> = classes.into_iter().flatten().map(|class| (class.name.clone(), Value::Class(class))).collect();
         if let Some(os_error) = result.get("OSError").cloned() {
             for alias in ["EnvironmentError", "IOError"] { if names.iter().any(|name| name == alias) { result.insert(alias.into(), os_error.clone()); } }
         }
@@ -3078,6 +3085,7 @@ impl<'a> Engine<'a> {
                             if let Some(fled) = self.carried.take() { return Err(fled); }
                             items.extend(members?.into_iter().map(|value| (None, value)));
                         }
+                        _ if !self.lang.class_builder.is_empty()=>return Err(format!("TypeError: Value after * must be an iterable, not {}",pair.1.core_kind()).into()),
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
                     },
                     Value::Flag(true) => {
@@ -3318,7 +3326,7 @@ impl<'a> Engine<'a> {
         let stack_point = 0u8;
         // Debug execution uses native frames as well as Python frames.
         // Reserve stack space for exception construction and unwinding.
-        if fallback.is_some() && self.native_stack_start.abs_diff(&stack_point as *const u8 as usize) > 256 * 1024 * 1024 {
+        if fallback.is_some() && self.native_stack_start.abs_diff(&stack_point as *const u8 as usize) > 512 * 1024 * 1024 {
             return Some(0);
         }
         let [module, binding] = self.lang.recursion_variable.as_slice() else { return fallback };
@@ -6236,6 +6244,17 @@ impl<'a> Engine<'a> {
                 Err(fault) => error(fault),
             }));
         }
+        if matches!(args, [_, Value::Text(action)] if action.as_ref() == "isatty") {
+            let given = &args[0];
+            let integer = match given.contents() {
+                value @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => Ok(value),
+                _ => self.special_index(given).and_then(|value| value.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", given.core_kind()))),
+            };
+            return Some(integer.and_then(|whole| {
+                let fd = whole.as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?;
+                Ok(Value::Flag(unsafe { isatty(fd) } != 0))
+            }));
+        }
         let Value::Small(number) = args.first()?.contents() else { return None };
         let Ok(fd) = i32::try_from(number) else { return Some(Err("OverflowError: Python int too large to convert to C int".into())) };
         if args.get(1).is_some_and(|value| matches!(value.contents(), Value::Null)) {
@@ -6466,7 +6485,18 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if name==self.class_word("allocate") && matches!(value.contents(),Value::Small(_)|Value::Huge(_)|Value::Real(_)|Value::Complex(_)|Value::Text(_)|Value::Codepoints(_)|Value::Array(_)|Value::Tuple(_)|Value::Map(_)|Value::Bytes(..)|Value::Set(_)) {
+            let result=self.class_get(value.clone(),name,true).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+            return Ok(Some(result));
+        }
         let held = value.contents();
+        if matches!(held, Value::Codepoints(_)) && self.lang.text_words.get(&format!("ext.builtin.text.{name}")).is_some_and(|words| !words.is_empty()) {
+            return Ok(Some(Value::ValueMethod(Rc::new((held.clone(), name.to_owned())))));
+        }
+
+        if matches!(held, Value::Ellipsis | Value::Declined(_)) && ["__reduce__", "__reduce_ex__"].contains(&name) {
+            return Ok(Some(Value::ValueMethod(Rc::new((held, name.to_string())))));
+        }
         if !self.lang.class_special.is_empty() && name == self.class_word("receiver") {
             if let Value::ValueMethod(method) = &held { return Ok(Some(method.0.clone())); }
         }
@@ -9298,7 +9328,13 @@ impl<'a> Engine<'a> {
     /// The entries a thing's own dictionary shows: the names it holds
     /// as text, in order, and then the keys of any other kind kept
     /// beside them under the hidden name `\0keys`.
-    fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
+    fn interned_text(value: Value) -> Value {
+        let key = match &value { Value::Text(text) => text.chars().map(u32::from).collect(), Value::Codepoints(points) => points.to_vec(), _ => unreachable!() };
+        PY_ATTRIBUTE_TEXT.with(|cache| cache.borrow_mut().entry(key).or_insert(value).clone())
+    }
+    fn attribute_name(word: &str) -> Value { Self::interned_text(Value::text(word)) }
+
+    pub(super) fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let fields = o.fields.borrow();
         let mut entries: Vec<(Value, Value)> = fields.iter()
@@ -9308,7 +9344,7 @@ impl<'a> Engine<'a> {
                     Value::Bond(cell) if module => cell.borrow().clone(),
                     _ => held.clone(),
                 };
-                (Value::text(key), value)
+                (Self::attribute_name(key), value)
             }).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -9319,7 +9355,7 @@ impl<'a> Engine<'a> {
     /// Write entries back into a thing's dictionary: names written as
     /// text go in among the thing's own fields, keys of any other kind
     /// are kept beside them under `\0keys`.
-    fn fields_restore(&self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
+    pub(super) fn fields_restore(&self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let mut fields = o.fields.borrow_mut();
         if module {
@@ -9451,7 +9487,7 @@ impl<'a> Engine<'a> {
                     let module = self.drop_top()?;
                     Some(self.class_get(module, name, false)?)
                 },
-                Action::Grab(name) if name.as_ref() == self.class_word("allocate") && self.data.last().is_some_and(|v| matches!(v.contents(), Value::Null | Value::Ellipsis | Value::Declined(_))) => {
+                Action::Grab(name) if name.as_ref() == self.class_word("allocate") && self.data.last().is_some_and(|v| matches!(v.contents(),Value::Null|Value::Ellipsis|Value::Declined(_)|Value::Native(..)|Value::Small(_)|Value::Huge(_)|Value::Real(_)|Value::Complex(_)|Value::Text(_)|Value::Codepoints(_)|Value::Bytes(..)|Value::Array(_)|Value::Map(_)|Value::Tuple(_)|Value::Set(_))) => {
                     let singleton = self.drop_top()?.contents();
                     Some(self.class_get(singleton, name, false)?)
                 },
@@ -10483,7 +10519,7 @@ impl<'a> Engine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Class(c)) if Self::class_sealed(&c) => {
-                            let title = if !self.lang.weak_refused.is_empty() && matches!(c.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", c.name) } else { c.name.clone() };
+                            let title = if c.shared.borrow().iter().any(|(key, flag)| key == "\0buffer_allocator" && flag.is_true()) { c.python_title().unwrap_or_else(|| c.name.clone()) } else if !self.lang.weak_refused.is_empty() && matches!(c.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", c.name) } else { c.name.clone() };
                             return Err(format!("TypeError: type '{title}' is not an acceptable base type").into());
                         },
                         Some(Value::Class(c)) => Some(c),
@@ -10711,8 +10747,9 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() && name.as_ref() == self.class_word("kind") {
                     self.data.push(Value::Flag(true)); return Ok(());
                 }
-                if self.fuller_classes() && name.as_ref() == self.class_word("allocate") && matches!(held, Value::Null | Value::Ellipsis | Value::Declined(_)) {
-                    self.data.push(Value::Flag(true)); return Ok(());
+                if self.fuller_classes() && name.as_ref()==self.class_word("allocate") {
+                    let found=self.class_get(held.clone(),name,false);
+                    match found {Ok(_)=>{self.data.push(Value::Flag(true));return Ok(())},Err(fault) if self.attribute_fault(&fault)=>{self.data.push(Value::Flag(false));return Ok(())},Err(fault)=>return Err(fault)}
                 }
                 let class = match &held {
                     Value::Object(o) => Some(&o.class_now()),
@@ -11257,6 +11294,10 @@ impl<'a> Engine<'a> {
                         self.data.push(Value::text(&filled));
                         return Ok(());
                     }
+                }
+                if self.fuller_classes() && name.as_ref()==self.class_word("allocate") {
+                    let method=self.class_get(subject.contents(),name,false)?;
+                    let result=self.class_apply(method,args)?;self.data.push(result);return Ok(());
                 }
                 if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     let class = subject.contents();
@@ -13002,6 +13043,7 @@ impl<'a> Engine<'a> {
                     (Value::Complex(x), Value::Complex(y)) => Rc::ptr_eq(x, y),
                     (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
                     (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
+                    (Value::Codepoints(x), Value::Codepoints(y)) => Rc::ptr_eq(x, y),
                     (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
                     (Value::Slice(x), Value::Slice(y)) => Rc::ptr_eq(x, y),
                     (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
@@ -15281,6 +15323,13 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "callable_reduce_ex" {
+            if !named.is_empty() || args.len() != 1 { return Err(String::from("TypeError: __reduce_ex__() takes exactly one argument")); }
+            let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());
+            number.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
+            let answer = self.class_get(receiver.clone(), "__reduce__", false).and_then(|method| self.class_apply(method, Vec::new()));
+            return match answer { Ok(result) => Ok(result), Err(Fault::Note(message)) => Err(message), Err(raised) => { self.carried = Some(raised); Err(String::new()) } };
+        }
         if matches!(operation, "descriptor_reduce" | "descriptor_reduce_ex") {
             let expected = usize::from(operation.ends_with("_ex"));
             if !named.is_empty() || args.len() != expected { return Err(String::from("TypeError: invalid reduction arguments")); }
@@ -15616,6 +15665,14 @@ impl<'a> Engine<'a> {
         let native_receiver = Self::worth_of(receiver);
         let receiver = native_receiver.as_ref().unwrap_or(receiver);
         let contents = receiver.contents();
+        if matches!(&contents, Value::Ellipsis | Value::Declined(_)) && matches!(operation, "__reduce__" | "__reduce_ex__") {
+            if !named.is_empty() || args.len() != usize::from(operation == "__reduce_ex__") { return Err(String::from("TypeError: invalid reduction arguments")); }
+            return Ok(Value::text(if matches!(contents, Value::Ellipsis) { "Ellipsis" } else { "NotImplemented" }));
+        }
+        if operation == "__getnewargs__" && matches!(&contents, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Tuple(_) | Value::Bytes(_, false, _)) {
+            if !named.is_empty() || !args.is_empty() { return Err(format!("TypeError: {}.__getnewargs__() takes no arguments", contents.core_kind())); }
+            return Ok(Value::tuple(vec![contents]));
+        }
         if operation == "__getnewargs__" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let owner = newargs_owner.as_deref().unwrap_or("str");
             if !named.is_empty() { return Err(format!("TypeError: {owner}.__getnewargs__() takes no keyword arguments")); }
@@ -15648,7 +15705,8 @@ impl<'a> Engine<'a> {
         if let Value::Slice(bounds) = &contents {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             match (operation, args.len()) {
-                ("slice_reduce", 0) | ("slice_reduce_ex", 1) => {
+                ("slice_reduce" | "__reduce__", 0) | ("slice_reduce_ex" | "__reduce_ex__", 1) => {
+                    if args.len() == 1 { self.reduction_protocol(&args[0])?; }
                     let maker = self.lang.builtins.iter().find(|(_, op)| **op == Builtin::MakeSlice).map(|(word, _)| Value::Native(Builtin::MakeSlice, Rc::from(word.as_str()))).ok_or_else(|| self.special_fault())?;
                     return Ok(Value::tuple(vec![maker, Value::tuple(bounds.to_vec())]));
                 }
@@ -15735,7 +15793,7 @@ impl<'a> Engine<'a> {
             supplied.extend(named.into_iter().map(|(key, argument)| (Some(key), argument)));
             return self.builtin_call(Builtin::Text(crate::strings::TextOp::Getnewargs), operation, supplied);
         }
-        if matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
                 let working = crate::strings::operation(operation);
@@ -16878,7 +16936,86 @@ impl<'a> Engine<'a> {
         self.byte_work(task, args, false)
     }
 
+    fn pickle_buffer_work(&mut self, args: &[Value]) -> Flow<Value> {
+        let Some(action) = args.first().and_then(|v| v.as_big().ok()).and_then(|v| v.to_u8()) else { return Err("TypeError: invalid buffer operation".into()); };
+        if action == 5 {
+            let [_, Value::Class(class)] = args else { return Err("TypeError: buffer registration requires a type".into()); };
+            class.shared.borrow_mut().push(("\0buffer_allocator".into(), Value::Flag(true)));
+            class.sealed.set(true);
+            return Ok(Value::Null);
+        }
+        if action == 4 {
+            let [_, kind, source] = args else { return Err("TypeError: buffer allocation requires a type and exporter".into()); };
+            let Value::Class(class) = kind else {
+                if self.stands_for_kind(kind) {
+                    let title = self.class_get(kind.clone(), "__name__", false)?.plain();
+                    return Err(format!("TypeError: pickle.PickleBuffer.__new__({title}): {title} is not a subtype of pickle.PickleBuffer").into());
+                }
+                return Err(format!("TypeError: pickle.PickleBuffer.__new__(X): X is not a type object ({})", kind.core_kind()).into());
+            };
+            if !class.shared.borrow().iter().any(|(key, flag)| key == "\0buffer_allocator" && flag.is_true()) { return Err(format!("TypeError: pickle.PickleBuffer.__new__({}): {} is not a subtype of pickle.PickleBuffer", class.name, class.name).into()); }
+            let handle = self.pickle_buffer_work(&[Value::Small(0), source.clone()])?;
+            self.made += 1;
+            let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(Vec::new()), mark: self.made }));
+            self.class_write(object.clone(), "_handle", Some(handle), true)?;
+            return Ok(object);
+        }
+        if action == 0 {
+            if args.len() != 2 { return Err("TypeError: buffer acquisition takes one object".into()); }
+            let module = self.import_module("builtins")?;
+            let acquire = self.class_get(module, "_buffer_view", false)?;
+            let view = self.class_apply(acquire, vec![args[1].clone(), Value::Small(284), Value::text("")])?;
+            return Ok(Self::adapter(230, vec![Value::Bond(Rc::new(RefCell::new(view)))]));
+        }
+        let Some(Value::Adapter(handle)) = args.get(1) else { return Err("TypeError: invalid buffer handle".into()); };
+        if handle.0 != 230 { return Err("TypeError: invalid buffer handle".into()); }
+        let Value::Bond(cell) = &handle.1[0] else { unreachable!() };
+        let view = cell.borrow().clone();
+        if action == 2 {
+            if !matches!(view, Value::Null) {
+                let release = self.class_get(view, "release", false)?;
+                self.class_apply(release, Vec::new())?;
+                *cell.borrow_mut() = Value::Null;
+            }
+            return Ok(Value::Null);
+        }
+        if matches!(view, Value::Null) { return Err("ValueError: operation forbidden on released PickleBuffer object".into()); }
+        let result = if action == 1 {
+            let c = self.class_get(view.clone(), "c_contiguous", false)?.is_true();
+            let f = self.class_get(view.clone(), "f_contiguous", false)?.is_true();
+            if !c && !f { return Err("BufferError: cannot extract raw buffer from non-contiguous buffer".into()); }
+            let cast = self.class_get(view, "cast", false)?;
+            self.class_apply(cast, vec![Value::text("B")])?
+        } else if action == 3 {
+            let module = self.import_module("_buffer")?;
+            let getter = self.class_get(module, "getbuffer", false)?;
+            self.class_apply(getter, vec![view, args.get(3).cloned().unwrap_or(Value::Small(284))])?
+        } else { return Err("ValueError: invalid buffer operation".into()); };
+        if action == 3 {
+            let owner = self.class_get(result.clone(), "obj", false)?;
+            if let Value::Object(view) = &result {
+                let mut fields = view.fields.borrow_mut();
+                if let Some((_, value)) = fields.iter_mut().find(|(word, _)| word == "_native_export_owner") { *value = owner; }
+                else { fields.push(("_native_export_owner".to_owned(), owner)); }
+            }
+        }
+        Ok(result)
+    }
+
     fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task == 64 {
+            let [text] = args else { return Err("TypeError: intern() takes exactly one argument".into()); };
+            return match text {
+                Value::Text(_) | Value::Codepoints(_) => Ok(Self::interned_text(text.clone())),
+                other => Err(format!("TypeError: can't intern {}", other.core_kind())),
+            };
+        }
+        if task == 63 {
+            return match self.pickle_buffer_work(args) {
+                Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
+                Err(exception) => { self.carried = Some(exception); Err(String::new()) },
+            };
+        }
         if task == 61 {
             if args.len() != 2 { return Err("TypeError: escape_decode requires a buffer and an error policy".into()); }
             let input = Self::worth_of(&args[0]).filter(|value| matches!(value.contents(), Value::Text(_) | Value::Codepoints(_))).unwrap_or_else(|| args[0].contents());
@@ -16947,6 +17084,23 @@ impl<'a> Engine<'a> {
                 }
             }
             return Ok(Value::tuple(vec![self.byte_make(output, false), Value::Small(data.len() as i64), warning.map(|text| Value::text(&text)).unwrap_or(Value::Null)]));
+        }
+        if task <= 1 && args.len()==1 {
+            if let Value::Object(object)=args[0].contents() {
+                if self.class_value(&object.class_now(),"__buffer__").is_some() {
+                    let result=(|| -> Flow<Value> {
+                        let module=self.import_module("builtins")?;
+                        let acquire=self.class_get(module,"_buffer_view",false)?;
+                        let view=self.class_apply(acquire,vec![args[0].clone(),Value::Small(284),Value::text("")])?;
+                        let copier=self.class_get(view.clone(),"tobytes",false)?;
+                        let copied=self.class_apply(copier,Vec::new());
+                        let release=self.class_get(view,"release",false)?;self.class_apply(release,Vec::new())?;
+                        copied
+                    })();
+                    let result=result.map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+                    return Ok(self.byte_make(self.byte_row(&result,false)?,task==1));
+                }
+            }
         }
         if task == 0 && args.len() == 1 && matches!(args[0], Value::Object(_)) {
             if let Some(bytes) = self.bytes_argument(&args[0])? { return Ok(self.byte_make(bytes, false)); }
@@ -18753,6 +18907,30 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                if self.lang.clock_parts {
+                    if let Some(Value::Text(task))=args.first() {
+                        if task.as_ref()=="struct_time" && args.len()==1 {return Ok(Value::Class(self.calendar_kind()))}
+                        if matches!(task.as_ref(),"localtime"|"gmtime") && args.len()==2 {
+                            let value=Self::worth_of(&args[1]).unwrap_or_else(||args[1].contents());
+                            let seconds=match &value {
+                                Value::Null=>std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|since|since.as_secs() as i64),
+                                Value::Real(real)=>{let number=crate::value::as_binary(&real.p,&real.q);if number.is_nan(){return Err("ValueError: Invalid value NaN (not a number)".into())}if !number.is_finite()||number< i64::MIN as f64||number>=9223372036854775808.0{return Err("OverflowError: timestamp out of range for platform time_t".into())}number.floor() as i64},
+                                _=>value.as_big()?.to_i64().ok_or_else(||"OverflowError: timestamp out of range for platform time_t".to_string())?,
+                            };
+                            #[repr(C)]
+                            struct BrokenDown { second:i32,minute:i32,hour:i32,day:i32,month:i32,year:i32,weekday:i32,yearday:i32,summer:i32,east:i64,abbreviation:*const std::ffi::c_char }
+                            extern "C" { fn localtime_r(time:*const i64,into:*mut BrokenDown)->*mut BrokenDown;fn gmtime_r(time:*const i64,into:*mut BrokenDown)->*mut BrokenDown; }
+                            let mut row:BrokenDown=unsafe{std::mem::zeroed()};
+                            let answer=unsafe{if task.as_ref()=="localtime" {localtime_r(&seconds,&mut row)}else{gmtime_r(&seconds,&mut row)}};
+                            if answer.is_null(){return Err("OverflowError: timestamp out of range for platform time_t".into())}
+                            let mut fields=Vec::new();
+                            for number in [row.year as i64+1900,row.month as i64+1,row.day as i64,row.hour as i64,row.minute as i64,row.second as i64,(row.weekday as i64+6)%7,row.yearday as i64+1,row.summer as i64] {fields.push(Value::Small(number));}
+                            fields.push(if row.abbreviation.is_null(){Value::Null}else{Value::text(&unsafe{std::ffi::CStr::from_ptr(row.abbreviation)}.to_string_lossy())});fields.push(Value::Small(row.east));
+                            let class=Value::Class(self.calendar_kind());
+                            return self.calendar_sequence(class,vec![Value::tuple(fields)]).map_err(|fault|{self.carried=Some(fault);self.special_fault()});
+                        }
+                    }
+                }
                 #[cfg(target_os = "linux")]
                 if self.lang.clock_parts && args.len() == 2 {
                     let [Value::Flag(steady), Value::Flag(true)] = args.as_slice() else {
@@ -21841,6 +22019,7 @@ impl Engine<'_> {
                     Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
+                    Value::Codepoints(a) => a.as_ptr() as usize as u64,
                     Value::Object(a) | Value::Fields(a) => Rc::as_ptr(a) as usize as u64,
                     Value::ValueMethod(a) => Rc::as_ptr(a) as usize as u64,
                     Value::TextMethod(_, _, member) => member.as_ptr() as usize as u64,
@@ -22507,7 +22686,7 @@ impl Engine<'_> {
                 else if self.lang.module_names.contains(name) { Value::text(path) }
                 else if file_word.as_ref() == Some(name) { own_file.as_deref().map_or(Value::Null, Value::text) }
                 else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
-                else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) { Self::adapter(9, Vec::new()) }
+                else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) { self.loose_members.borrow_mut().entry("super constructor".to_owned()).or_insert_with(|| Self::adapter(9, Vec::new())).clone() }
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
@@ -23718,6 +23897,16 @@ impl Engine<'_> {
                     Some(other) => return Err(format!("TypeError: __import__() argument 5 must be int, not {}", other.core_kind()).into()),
                 };
                 if level < 0 { return Err("ValueError: level must be >= 0".to_string()); }
+                if let Some(given) = args.first() {
+                    let base=Self::worth_of(given).unwrap_or_else(||given.contents());
+                    if matches!(&base,Value::Codepoints(_)) {
+                        if let Some(system)=self.modules.get("sys").cloned() {
+                            let cache=self.class_get(system,"modules",false).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+                            if let Value::Map(entries)=cache.contents() {if let Some((_,module))=entries.iter().find(|(key,_)|key.equals(&base)){return Ok(module.clone())}}
+                        }
+                        self.type_utf8(&base).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+                    }
+                }
                 let name = match args.first().map(Value::contents) {
                     Some(Value::Text(path)) => path,
                     Some(other) => match Self::worth_of(&other).map(|w| w.contents()) {

@@ -13,6 +13,7 @@
     "heapq": "runtime_adapters/heapq.py",
     "operator": "runtime_adapters/operator.py",
     "json": "runtime_adapters/json.py",
-    "statistics": "runtime_adapters/statistics.py"
+    "statistics": "runtime_adapters/statistics.py",
+    "pickle": "runtime_adapters/pickle.py"
   }
 }

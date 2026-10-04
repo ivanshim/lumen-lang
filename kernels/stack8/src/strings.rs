@@ -265,7 +265,46 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         if args.len() != 1 { return Err(fault(lang,"arguments")); }
         return Ok(Value::text(&repr(&args[0],words)));
     }
-    if let Some(Value::Codepoints(codes)) = args.first() {
+    if args.iter().any(|value|matches!(value,Value::Codepoints(_))) {
+        let codes=match args.first(){Some(Value::Codepoints(row))=>row.clone(),Some(Value::Text(word))=>Rc::new(word.chars().map(u32::from).collect()),_=>return Err(fault(lang,"receiver"))};
+        let code_row=|value:&Value| -> Result<Vec<u32>,String> {match value {Value::Text(text)=>Ok(text.chars().map(u32::from).collect()),Value::Codepoints(row)=>Ok(row.to_vec()),_=>Err(format!("TypeError: must be str, not {}",value.core_kind()))}};
+        if op==Length && args.len()==1{return Ok(Value::Small(codes.len() as i64))}
+        if op==Replace {
+            if !(3..=4).contains(&args.len()){return Err(fault(lang,"arguments"))}
+            let old=code_row(&args[1])?;let new=code_row(&args[2])?;
+            let limit=if args.len()==4{integer(&args[3],lang)?}else{-1};
+            let mut output=Vec::new();let mut cursor=0;let mut replaced=0i64;
+            loop {
+                let allowed=limit<0||replaced<limit;
+                if allowed && cursor+old.len()<=codes.len() && codes[cursor..].starts_with(&old) {
+                    output.extend_from_slice(&new);replaced+=1;
+                    if !old.is_empty(){cursor+=old.len();continue}
+                }
+                if cursor==codes.len(){break}
+                output.push(codes[cursor]);cursor+=1;
+            }
+            return Ok(Value::from_codes(output));
+        }
+        if matches!(op,Split|Rsplit) && args.len()<=3 {
+            let separator=match args.get(1){None|Some(Value::Null)=>None,Some(value)=>Some(code_row(value)?)};
+            if separator.as_ref().is_some_and(Vec::is_empty){return Err("ValueError: empty separator".into())}
+            let limit=args.get(2).map_or(Ok(-1),|value|integer(value,lang))?;
+            let reversed=op==Rsplit;let mut source=codes.to_vec();let mut separator=separator;
+            if reversed {source.reverse();if let Some(row)=separator.as_mut(){row.reverse();}}
+            let whitespace=|number:u32|char::from_u32(number).is_some_and(char::is_whitespace);
+            let mut at=0;let mut begin=0;let mut cuts=0i64;let mut rows=Vec::new();
+            if separator.is_none(){while at<source.len()&&whitespace(source[at]){at+=1;}begin=at;}
+            while at<source.len() && (limit<0||cuts<limit) {
+                let size=match &separator{Some(row) if source[at..].starts_with(row)=>row.len(),None if whitespace(source[at])=>1,_=>0};
+                if size==0{at+=1;continue}
+                rows.push(source[begin..at].to_vec());at+=size;
+                if separator.is_none(){while at<source.len()&&whitespace(source[at]){at+=1;}}
+                begin=at;cuts+=1;
+            }
+            if separator.is_some()||begin<source.len(){rows.push(source[begin..].to_vec());}
+            if reversed {for row in &mut rows{row.reverse();}rows.reverse();}
+            return Ok(Value::array(rows.into_iter().map(Value::from_codes).collect()));
+        }
         if op == Getnewargs {
             if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }
             return Ok(Value::tuple(vec![Value::from_codes(codes.to_vec())]));

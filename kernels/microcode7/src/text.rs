@@ -244,7 +244,42 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
-    if let Some(Value::Unpaired(numbers)) = input.first() {
+    if input.iter().any(|operand|matches!(operand,Value::Unpaired(_))) {
+        let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
+        let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
+        let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
+        if work==LENGTH && input.len()==1 {return Ok(Value::Small(numbers.len() as i64))}
+        if work==REPLACE {
+            if input.len()<3||input.len()>4{return Err(complaint(table,"arguments"))}
+            let pattern=unpack(&input[1])?;let replacement=unpack(&input[2])?;
+            let maximum=input.get(3).map_or(Ok(-1),count)?;
+            let mut result=Vec::new();let mut matches=0;let mut offset=0;
+            while offset<=numbers.len(){
+                let found=(maximum<0||matches<maximum)&&numbers[offset..].starts_with(&pattern);
+                if found {result.extend(replacement.iter().copied());matches+=1;if pattern.len()>0 {offset+=pattern.len();continue}}
+                match numbers.get(offset){Some(number)=>{result.push(*number);offset+=1},None=>break}
+            }
+            return Ok(Value::characters(result));
+        }
+        if matches!(work,SPLIT|RSPLIT) && input.len()<4 {
+            let delimiter=match input.get(1){Some(item) if !matches!(item,Value::Nil)=>Some(unpack(item)?),_=>None};
+            if matches!(&delimiter,Some(row) if row.len()==0){return Err(String::from("ValueError: empty separator"))}
+            let maximum=input.get(2).map_or(Ok(-1),count)?;
+            let from_right=work==RSPLIT;let mut subject=numbers.to_vec();let mut delimiter=delimiter;
+            if from_right {subject.reverse();delimiter.iter_mut().for_each(|row|row.reverse());}
+            let blank=|n:u32|char::from_u32(n).map_or(false,char::is_whitespace);
+            let mut cursor=0;
+            if delimiter.is_none(){while subject.get(cursor).is_some_and(|n|blank(*n)){cursor+=1;}}
+            let mut beginning=cursor;let mut pieces=Vec::new();let mut splits=0;
+            while cursor<subject.len(){
+                if maximum>=0 && splits>=maximum {break}
+                let width=delimiter.as_ref().map_or_else(||usize::from(blank(subject[cursor])),|row|if subject[cursor..].starts_with(row){row.len()}else{0});
+                if width>0 {pieces.push(subject[beginning..cursor].to_vec());splits+=1;cursor+=width;if delimiter.is_none(){while subject.get(cursor).is_some_and(|n|blank(*n)){cursor+=1;}}beginning=cursor;}else{cursor+=1;}
+            }
+            if delimiter.is_some()||beginning<subject.len(){pieces.push(subject[beginning..].to_vec());}
+            if from_right {pieces.iter_mut().for_each(|row|row.reverse());pieces.reverse();}
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect())));
+        }
         if work == NEWARGS {
             if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
             return Ok(Value::tuple(vec![Value::characters(numbers.to_vec())]));

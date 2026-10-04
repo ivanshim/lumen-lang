@@ -32,3 +32,11 @@ def get_clock_info(name):
     if name == 'time':
         return _ClockInfo(False)
     raise ValueError('unknown clock')
+
+struct_time = _host_clock('struct_time')
+
+def localtime(seconds=None):
+    return _host_clock('localtime', seconds)
+
+def gmtime(seconds=None):
+    return _host_clock('gmtime', seconds)

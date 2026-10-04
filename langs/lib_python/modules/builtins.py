@@ -70,6 +70,38 @@ SyntaxWarning = SyntaxWarning
 UnicodeWarning = UnicodeWarning
 UserWarning = UserWarning
 
+GeneratorExit = GeneratorExit
+IndentationError = IndentationError
+TabError = TabError
+ReferenceError = ReferenceError
+MemoryError = MemoryError
+BufferError = BufferError
+StopAsyncIteration = StopAsyncIteration
+SystemError = SystemError
+BlockingIOError = BlockingIOError
+PermissionError = PermissionError
+FileExistsError = FileExistsError
+NotADirectoryError = NotADirectoryError
+BrokenPipeError = BrokenPipeError
+FloatingPointError = FloatingPointError
+ChildProcessError = ChildProcessError
+ConnectionError = ConnectionError
+ConnectionAbortedError = ConnectionAbortedError
+ConnectionRefusedError = ConnectionRefusedError
+ConnectionResetError = ConnectionResetError
+InterruptedError = InterruptedError
+ProcessLookupError = ProcessLookupError
+TimeoutError = TimeoutError
+PythonFinalizationError = PythonFinalizationError
+_IncompleteInputError = _IncompleteInputError
+EnvironmentError = OSError
+IOError = OSError
+
+__file_exists = _host_file_exists
+__file_kind = _host_file_kind
+__file_read = _host_file_read
+__file_write = _host_file_write
+
 bool = bool
 classmethod = classmethod
 complex = complex
@@ -163,11 +195,7 @@ setattr(__load_module('builtins'), 'Ellipsis', ...)
 setattr(__load_module('builtins'), 'bytes', bytes)
 setattr(__load_module('builtins'), 'bytearray', bytearray)
 
-# NotImplemented is the one word of that kind this module cannot carry.
-# The reader keeps the name for the answer an operation gives when it
-# declines a pair of operands, and refuses to let a module hold anything
-# under it, so builtins.NotImplemented is absent here. The value itself
-# is reachable: a program writes NotImplemented and gets it.
+setattr(__load_module('builtins'), 'NotImplemented', NotImplemented)
 
 FileNotFoundError = FileNotFoundError
 IsADirectoryError = IsADirectoryError
@@ -214,10 +242,10 @@ class _HostFile:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read(name)
-                self._buffer = brought if brought is not False else ''
+                brought = _host_file_read(name, self._binary)
+                self._buffer = brought if brought is not False else (b'' if self._binary else '')
             else:
-                self._buffer = ''
+                self._buffer = b'' if self._binary else ''
             self._pos = len(self._buffer)
         else:
             kind = _host_file_kind(name)
@@ -225,7 +253,7 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name)
+            brought = _host_file_read(name, self._binary)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
@@ -241,7 +269,7 @@ class _HostFile:
         return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
 
     def _carried(self, text):
-        return text.encode('utf-8') if self._binary else text
+        return text if not self._binary or isinstance(text, bytes) else text.encode('utf-8')
 
     def read(self, size=-1):
         self._open()
@@ -315,7 +343,10 @@ class _HostFile:
             raise ValueError('File not open for writing')
         if self._binary:
             if not isinstance(data, bytes) and not isinstance(data, bytearray):
-                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
+                with _buffer_view(data, 0, '') as view:
+                    if not view.c_contiguous:
+                        raise BufferError('memoryview: underlying buffer is not C-contiguous')
+                    data = view.tobytes()
             data = bytes(data)
         elif not isinstance(data, str):
             raise TypeError('write() argument must be str, not ' + type(data).__name__)
@@ -415,7 +446,7 @@ class memoryview:
 
     def __init__(self, object):
         self._init_buffer(object, 284)
-    def _init_buffer(self, object, flags):
+    def _init_buffer(self, object, flags, error_prefix="memoryview: "):
         from array import array
         self._object = object.obj if isinstance(object, memoryview) else object
         self._owner = None
@@ -426,6 +457,8 @@ class memoryview:
             if not isinstance(object, memoryview):
                 raise TypeError('__buffer__ returned non-memoryview')
             self._owner_view = object
+            if hasattr(object, '_native_export_owner'):
+                self._object = object._native_export_owner
         if isinstance(object, memoryview):
             object._check()
             self._source = object._source
@@ -446,9 +479,30 @@ class memoryview:
             self._itemsize = object.itemsize
             self._readonly = False
         else:
-            raise TypeError("memoryview: a bytes-like object is required, not '" + type(object).__name__ + "'")
+            raise TypeError(error_prefix + "a bytes-like object is required, not '" + type(object).__name__ + "'")
+        self._stride = object._stride if isinstance(object, memoryview) else self._itemsize
         self._released = False
         self._export = _export(self._source) if isinstance(self._source, bytearray) else None
+
+    @property
+    def ndim(self):
+        self._check()
+        return 1
+
+    @property
+    def shape(self):
+        self._check()
+        return (len(self),)
+
+    @property
+    def strides(self):
+        self._check()
+        return (self._offsets.step if isinstance(self._offsets, range) else self._stride,)
+
+    @property
+    def suboffsets(self):
+        self._check()
+        return ()
 
     def _check(self):
         if self._released:
@@ -531,6 +585,7 @@ class memoryview:
         if isinstance(key, slice):
             child = memoryview(self)
             child._offsets = self._offsets[key]
+            child._stride = self._stride * (key.step or 1)
             return child
         try:
             first = self._offsets[key]
@@ -577,6 +632,12 @@ class memoryview:
     def tolist(self):
         self._check()
         return [self[i] for i in range(len(self))]
+
+    def toreadonly(self):
+        self._check()
+        result = memoryview(self)
+        result._readonly = True
+        return result
 
     def tobytes(self):
         self._check()
@@ -694,7 +755,7 @@ def _buffer_bytes(source):
         return view.tobytes()
 
 
-def _buffer_view(source, flags):
+def _buffer_view(source, flags, error_prefix="memoryview: "):
     view = object.__new__(memoryview)
-    view._init_buffer(source, flags)
+    view._init_buffer(source, flags, error_prefix)
     return view

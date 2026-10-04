@@ -1336,6 +1336,7 @@ impl Value {
     /// worth alone. Nothing for kinds that have no place of their own.
     pub fn same_place(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Adapter(first),Value::Adapter(second))=>Rc::ptr_eq(first,second),
             (Value::Bond(x), _) => x.borrow().same_place(other),
             (_, Value::Bond(y)) => self.same_place(&y.borrow()),
             (Value::Collection(x, _), _) => x.borrow().same_place(other),

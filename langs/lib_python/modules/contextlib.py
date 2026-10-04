@@ -34,21 +34,25 @@ class suppress:
         return False
 
 class redirect_stdout:
+    _stream = 'stdout'
     def __init__(self, target):
         self.target = target
         self.saved = []
 
     def __enter__(self):
         import sys
-        self.saved = [*self.saved, getattr(sys, 'stdout')]
-        setattr(sys, 'stdout', self.target)
+        self.saved = [*self.saved, getattr(sys, self._stream)]
+        setattr(sys, self._stream, self.target)
         return self.target
 
     def __exit__(self, kind, value, traceback):
         import sys
-        setattr(sys, 'stdout', self.saved[len(self.saved) - 1])
+        setattr(sys, self._stream, self.saved[len(self.saved) - 1])
         self.saved = self.saved[:-1]
         return False
+
+class redirect_stderr(redirect_stdout):
+    _stream = 'stderr'
 
 # The generator runs to its yield on entering and is resumed on leaving.
 # An exception raised in the body is thrown into it where the generator
