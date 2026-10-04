@@ -10627,6 +10627,8 @@ impl<'a> Engine<'a> {
                 // program's own __import__ answered with answers through
                 // the protocol it answers to.
                 let module = self.data.last().cloned().ok_or_else(|| "Stack underflow".to_string())?;
+                let absolute = self.relative_module_name(path)?;
+                let path = absolute.as_str();
                 if self.is_builtin_module(&module, path) {
                     self.import_member(&module, path, name)?
                 } else {
@@ -16997,8 +16999,9 @@ impl<'a> Engine<'a> {
         }
         if task == 40 {
             let [from, to] = args else { return Err(bad()); };
-            let pair = |value: &Value| match value { Value::Bytes(content, ..) => Ok(content.borrow().clone()), _ => Err(bad()) };
-            return self.byte_table(&pair(from)?, &pair(to)?);
+            let first = self.binary_buffer(from)?;
+            let second = self.binary_buffer(to)?;
+            return self.byte_table(&first, &second);
         }
         if task == 14 || task == 15 {
             if args.is_empty() || args.len() > if task == 14 { 3 } else { 2 } { return Err(bad()); }
@@ -20026,7 +20029,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::StructNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::StructNative | Builtin::BinAscii | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -20721,7 +20724,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::StructNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::StructNative | Builtin::BinAscii | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -21687,6 +21690,11 @@ impl Engine<'_> {
             Builtin::StructNative => {
                 arity(2, 3)?;
                 crate::structpack::apply(&args)?
+            }
+            Builtin::BinAscii => {
+                arity(2, 5)?;
+                if self.lang.binascii_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                self.binary_ascii(&args)?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;
@@ -24301,3 +24309,6 @@ fn unicode_decimal_digit(character: char) -> Option<u32> {
 
 #[path = "heap.rs"]
 mod heap;
+
+#[path = "binascii.rs"]
+mod binascii;

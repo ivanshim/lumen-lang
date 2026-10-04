@@ -257,7 +257,13 @@ class _HostFile:
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
-            self._lines = self._buffer[self._pos:].splitlines(keepends=True)
+            if self._binary:
+                parts = self._buffer[self._pos:].split(b'\n')
+                self._lines = [part + b'\n' for part in parts[:-1]]
+                if parts[-1]:
+                    self._lines.append(parts[-1])
+            else:
+                self._lines = self._buffer[self._pos:].splitlines(True)
             self._lines_at = 0
             self._lines_pos = self._pos
 
@@ -266,7 +272,7 @@ class _HostFile:
         if size is not None and size >= 0:
             start = self._pos
             limit = min(len(self._buffer), start + size)
-            found = self._buffer.find('\n', start, limit)
+            found = self._buffer.find(b'\n' if self._binary else '\n', start, limit)
             stop = limit if found < 0 else found + 1
             self._pos = stop
             self._lines = None
@@ -434,6 +440,7 @@ class memoryview:
             self._format = object._format
             self._itemsize = object._itemsize
             self._readonly = object._readonly
+            self._shape = object._shape
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
             self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
@@ -446,6 +453,7 @@ class memoryview:
             self._format = "w" if object.typecode in "uw" else object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
+            self._shape = (len(self._offsets),)
         else:
             raise TypeError("memoryview: a bytes-like object is required, not '" + type(object).__name__ + "'")
         self._released = False
@@ -508,17 +516,36 @@ class memoryview:
 
     @property
     def nbytes(self):
-        return len(self) * self.itemsize
+        self._check()
+        return len(self._offsets) * self.itemsize
+
+    @property
+    def ndim(self):
+        self._check()
+        return len(self._shape)
+
+    @property
+    def shape(self):
+        self._check()
+        return self._shape
+
+    @property
+    def c_contiguous(self):
+        self._check()
+        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
 
     def __len__(self):
         self._check()
-        return len(self._offsets)
+        return self._shape[0]
 
     def __getitem__(self, key):
         self._check()
+        if self.ndim != 1:
+            raise NotImplementedError('multi-dimensional sub-views are not implemented')
         if isinstance(key, slice):
             child = memoryview(self)
             child._offsets = self._offsets[key]
+            child._shape = (len(child._offsets),)
             return child
         try:
             first = self._offsets[key]
@@ -633,12 +660,25 @@ class memoryview:
         width = struct.calcsize('@' + destination)
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
-        if shape is not None and shape[0] != self.nbytes // width:
-            raise TypeError('memoryview: product(shape) * itemsize != buffer size')
+        dimensions = (self.nbytes // width,)
+        if shape is not None:
+            product = 1
+            if not shape or len(shape) > 64:
+                raise ValueError('memoryview: number of dimensions must not exceed 64')
+            for length in shape:
+                if not isinstance(length, int):
+                    raise TypeError('memoryview.cast(): elements of shape must be integers')
+                if length <= 0:
+                    raise ValueError('memoryview.cast(): elements of shape must be integers > 0')
+                product *= length
+            if product != self.nbytes // width:
+                raise TypeError('memoryview: product(shape) * itemsize != buffer size')
+            dimensions = tuple(shape)
         result = memoryview(self)
         result._format = format
         result._itemsize = width
         result._offsets = list(range(start, start + self.nbytes, width))
+        result._shape = dimensions
         return result
 
     def __del__(self):

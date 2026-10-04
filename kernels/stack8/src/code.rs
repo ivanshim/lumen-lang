@@ -752,6 +752,7 @@ pub enum Builtin {
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
     StructNative,
+    BinAscii,
     HeapNative,
     ReduceNative,
     RebuildNative,

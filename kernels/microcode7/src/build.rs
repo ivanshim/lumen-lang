@@ -10580,6 +10580,7 @@ impl<'a> Builder<'a> {
                         }
                         break;
                     }
+                    if part.shape == Shape::Bare && part.lexeme == "for" { break; }
                 }
                 if part.shape == Shape::Sign {
                     match part.lexeme.as_str() {

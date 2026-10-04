@@ -11254,6 +11254,7 @@ impl<'a> Compiler<'a> {
                     // Later commas may belong to an unpacking loop target.
                     break;
                 }
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") { break; }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }
                     else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
