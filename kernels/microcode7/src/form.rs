@@ -955,10 +955,13 @@ impl Form {
                 if inline[index] { return Ok(()); }
                 *value = match (&*value, wanted) {
                     (Value::Routine(current), Value::Routine(template)) => {
-                        if current.lexical_origin != template.lexical_origin || current.body_boundary != template.body_boundary || current.declared_on != template.declared_on || current.formals != template.formals || current.referenced != template.referenced {
+                        if current.lexical_origin != template.lexical_origin || current.body_boundary != template.body_boundary || current.declared_on != template.declared_on || current.formals != template.formals {
                             return Err(String::from("NotImplementedError: replacing a nested instruction body is unavailable"));
                         }
-                        let mut adjusted = current.with_literals(&template.literals)?;
+                        let mut adjusted = template.as_ref().clone();
+                        (adjusted.globe, adjusted.born, adjusted.framed_in) =
+                            (current.globe.clone(), current.born.clone(), current.framed_in.clone());
+                        adjusted.carried = current.carried.clone();
                         adjusted.ident = template.ident.clone();
                         adjusted.qualification = template.qualification.clone();
                         adjusted.written_in = template.written_in.clone();
