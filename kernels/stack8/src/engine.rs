@@ -155,6 +155,8 @@ pub struct Engine<'a> {
     modules: HashMap<String, Value>,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
+    wildcard_file: Option<Rc<str>>,
+    wildcard_active: bool,
     wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
     module_slots: HashMap<Rc<str>, (usize, String)>,
     /// Names now under construction: a module reading its own name back
@@ -1308,6 +1310,8 @@ impl<'a> Engine<'a> {
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
+            wildcard_file: None,
+            wildcard_active: false,
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
             importing: std::collections::HashSet::new(),
@@ -5020,7 +5024,7 @@ impl<'a> Engine<'a> {
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }
-                Instr::Const(Value::ByteKind(changeable, shown)) if !self.wildcard_slots.is_empty() && (program.body_of_all || program.declared_on != 0) => {
+                Instr::Const(Value::ByteKind(changeable, shown)) if self.wildcard_in_scope() && (program.body_of_all || program.declared_on != 0) => {
                     let word = self.byte_kind_word(*changeable);
                     self.data.push(self.wildcard_value(word).unwrap_or_else(|| Value::ByteKind(*changeable, shown.clone())));
                 }
@@ -5146,7 +5150,7 @@ impl<'a> Engine<'a> {
                     // names, as the reference has it, and only the
                     // outermost body has none but the globals.
                     let done = match op {
-                        Action::Builtin(native, name) if !self.wildcard_slots.is_empty()
+                        Action::Builtin(native, name) if self.wildcard_in_scope()
                             && (program.body_of_all || program.declared_on != 0) && self.wildcard_callable(name, *native).is_some() => {
                             self.data.push(self.wildcard_callable(name, *native).unwrap());
                             self.perform(&Action::Invoke(name.clone()), argc + 1)
@@ -10284,6 +10288,7 @@ impl<'a> Engine<'a> {
                             } else { fields.push((name.clone(), self.world[at].clone())); }
                         }
                         if self.lang.shadow_builtins {
+                            self.wildcard_file = None;
                             self.wildcard_slots.entry(self.source.clone()).or_default().insert(name, at);
                         }
                     }
@@ -21304,6 +21309,15 @@ impl Engine<'_> {
 }
 
 impl Engine<'_> {
+    fn wildcard_in_scope(&mut self) -> bool {
+        let changed = self.wildcard_file.as_ref().map_or(true, |file| !Rc::ptr_eq(file, &self.source));
+        if changed {
+            self.wildcard_active = self.wildcard_slots.contains_key(&self.source);
+            self.wildcard_file = Some(self.source.clone());
+        }
+        self.wildcard_active
+    }
+
     fn wildcard_value(&self, name: &str) -> Option<Value> {
         let at = self.wildcard_slots.get(&self.source)?.get(name)?;
         let held = match self.world.get(*at)? {

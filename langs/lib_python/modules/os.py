@@ -423,7 +423,12 @@ def get_inheritable(fd):
 
 def set_inheritable(fd, inheritable):
     from operator import index
-    return _posix_call('set_inheritable', index(fd), bool(inheritable))
+    if not hasattr(type(inheritable), '__index__'):
+        raise TypeError("'" + type(inheritable).__name__ + "' object cannot be interpreted as an integer")
+    inheritable = index(inheritable)
+    if inheritable < -2147483648 or inheritable > 2147483647:
+        raise OverflowError('Python int too large to convert to C int')
+    return _posix_call('set_inheritable', index(fd), inheritable != 0)
 
 
 def pipe():
