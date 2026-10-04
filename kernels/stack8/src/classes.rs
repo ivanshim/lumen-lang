@@ -842,10 +842,20 @@ impl<'a> Engine<'a> {
                 82 => {
                     // A group's own maker: the class to make, then its
                     // heading and exceptions, as the reference's __new__.
-                    let Some(Value::Class(class)) = args.first().map(|value| value.contents()) else { return Err(self.class_refusal()); };
-                    let class = class.clone();
-                    let rest = args[1..].to_vec();
-                    self.exception_allocate(class, rest)
+                    let Some(receiver) = args.first().map(Value::contents) else {
+                        return Err("TypeError: BaseExceptionGroup.__new__(): not enough arguments".into());
+                    };
+                    let Value::Class(class) = &receiver else {
+                        if let Some(name) = receiver.kind_it_names().or_else(|| self.kind_spelled(&receiver).map(|word| word.to_string())) {
+                            return Err(format!("TypeError: BaseExceptionGroup.__new__({name}): {name} is not a subtype of BaseExceptionGroup").into());
+                        }
+                        return Err(format!("TypeError: BaseExceptionGroup.__new__(X): X is not a type object ({})", Self::type_argument_kind(&receiver)).into());
+                    };
+                    if !self.stands_on(class, 37) {
+                        let name = &class.name;
+                        return Err(format!("TypeError: BaseExceptionGroup.__new__({name}): {name} is not a subtype of BaseExceptionGroup").into());
+                    }
+                    self.exception_allocate(class.clone(), args[1..].to_vec())
                 }
                 129 => {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }

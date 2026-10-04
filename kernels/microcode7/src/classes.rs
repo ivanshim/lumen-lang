@@ -930,10 +930,20 @@ impl<'a> Machine<'a> {
             Value::Wrapped(82, _) => {
                 // A group's own maker: the kind to make, then its heading
                 // and its members, as the reference's __new__.
-                let Some(Value::Blueprint(class)) = values.first().map(|value| value.settled()) else { return Err(self.class_unready()); };
-                let class = class.clone();
-                let rest = values[1..].to_vec();
-                self.allocate_fault(class, rest)
+                match values.first().map(Value::settled) {
+                    Some(Value::Blueprint(kind)) if self.stands_under(&kind, 37) => {
+                        self.allocate_fault(kind, values[1..].to_vec())
+                    }
+                    Some(other) => {
+                        let word = other.kind_it_names().or_else(|| self.kind_spelling(&other).map(|name| name.to_string()));
+                        let complaint = match word {
+                            Some(name) => format!("TypeError: BaseExceptionGroup.__new__({0}): {0} is not a subtype of BaseExceptionGroup", name),
+                            None => format!("TypeError: BaseExceptionGroup.__new__(X): X is not a type object ({})", Self::type_argument_kind(&other)),
+                        };
+                        Err(complaint.into())
+                    }
+                    None => Err(String::from("TypeError: BaseExceptionGroup.__new__(): not enough arguments").into()),
+                }
             }
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
