@@ -91,6 +91,16 @@ pub(crate) fn perform(values: &[Value]) -> Result<Value, String> {
                 }
             }
         }
+        "fd_mode" => {
+            use std::{mem::ManuallyDrop, os::{fd::FromRawFd, unix::fs::MetadataExt as ModeBits}};
+            let handle = integer(1)?;
+            let file_view = unsafe { std::fs::File::from_raw_fd(handle) };
+            let retained = ManuallyDrop::new(file_view);
+            match retained.metadata() {
+                Ok(info) => Ok(Value::Small(info.mode().into())),
+                Err(failure) => Err(failure),
+            }
+        }
         "fd_flags" => {
             extern "C" { fn fcntl(descriptor: std::ffi::c_int, request: std::ffi::c_int, ...) -> std::ffi::c_int; }
             let bits = unsafe { fcntl(integer(1)?, 3) };

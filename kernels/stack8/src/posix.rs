@@ -83,6 +83,14 @@ pub(crate) fn operate(args: &[Value]) -> Result<Value, String> {
                 }
             }
         }
+        "fd_mode" => {
+            use std::os::fd::FromRawFd;
+            use std::os::unix::fs::MetadataExt;
+            let descriptor = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;
+            // The caller keeps ownership while metadata borrows the handle.
+            let borrowed = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(descriptor) });
+            borrowed.metadata().map(|metadata| Value::Small(i64::from(metadata.mode())))
+        }
         "fd_flags" => {
             extern "C" { fn fcntl(fd: std::ffi::c_int, operation: std::ffi::c_int, ...) -> std::ffi::c_int; }
             let fd = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;

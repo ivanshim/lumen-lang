@@ -231,12 +231,12 @@ def fsencode(filename):
     return filename.encode('utf-8', 'surrogateescape') if isinstance(filename, str) else filename
 
 def _posix_call(operation, path, *args):
-    result, error = _host_posix(operation, path if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty', 'get_inheritable', 'set_inheritable', 'pipe') else fsdecode(path), *args)
+    result, error = _host_posix(operation, path if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'fd_mode', 'isatty', 'get_inheritable', 'set_inheritable', 'pipe') else fsdecode(path), *args)
     if error is not None:
         number, message = error
         message = message.split(' (os error')[0]
         error_type = {11: BlockingIOError, 1: PermissionError, 2: FileNotFoundError, 13: PermissionError, 17: FileExistsError, 20: NotADirectoryError, 21: IsADirectoryError}.get(number, OSError)
-        if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty', 'get_inheritable', 'set_inheritable', 'pipe'):
+        if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'fd_mode', 'isatty', 'get_inheritable', 'set_inheritable', 'pipe'):
             raise error_type(number, message)
         raise error_type(number, message, path)
     return result

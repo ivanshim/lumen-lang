@@ -683,6 +683,8 @@ class IncrementalNewlineDecoder:
 class FileIO(_RawIOBase):
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
+        if getattr(self, '_fd', -1) >= 0:
+            self.close()
         if not isinstance(mode, str):
             raise TypeError('mode must be a string')
         base = [letter for letter in mode if letter in 'rwax']
@@ -693,34 +695,67 @@ class FileIO(_RawIOBase):
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
-        self.name = file
         self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb') + ('+' if '+' in mode else '')
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
-        if isinstance(file, int) or hasattr(type(file), '__index__'):
-            fd = _index(file)
-            if fd < 0:
-                raise ValueError('negative file descriptor')
-            os._posix_call('fd_flags', fd)
-        else:
-            if not closefd:
-                raise ValueError('Cannot use closefd=False with file name')
-            flags = os.O_RDWR if '+' in mode else os.O_RDONLY if base[0] == 'r' else os.O_WRONLY
-            if base[0] in ('w', 'x', 'a'):
-                flags |= os.O_CREAT
-            if base[0] == 'w': flags |= os.O_TRUNC
-            if base[0] == 'x': flags |= os.O_EXCL
-            if base[0] == 'a': flags |= os.O_APPEND
-            fd = os.open(file, flags, 438) if opener is None else _index(opener(file, flags))
-            if fd < 0:
-                raise ValueError('opener returned a negative file descriptor')
-        self._fd = fd
-        self._closed = False
-        if base[0] == 'a':
+        owned = False
+        fd = -1
+        try:
+            if isinstance(file, int) or hasattr(type(file), '__index__'):
+                fd = _index(file)
+                if fd < 0:
+                    raise ValueError('negative file descriptor')
+                if fd > 2147483647:
+                    raise OverflowError('Python int too large to convert to C int')
+                os._posix_call('fd_flags', fd)
+            else:
+                if not closefd:
+                    raise ValueError('Cannot use closefd=False with file name')
+                flags = os.O_RDWR if '+' in mode else os.O_RDONLY if base[0] == 'r' else os.O_WRONLY
+                if base[0] in ('w', 'x', 'a'):
+                    flags |= os.O_CREAT
+                if base[0] == 'w': flags |= os.O_TRUNC
+                if base[0] == 'x': flags |= os.O_EXCL
+                if base[0] == 'a': flags |= os.O_APPEND
+                flags |= os.O_CLOEXEC
+                if opener is None:
+                    fd = os.open(file, flags, 438)
+                else:
+                    fd = opener(file, flags)
+                    if not isinstance(fd, int):
+                        raise TypeError('expected integer from opener')
+                    if fd < -2147483648 or fd > 2147483647:
+                        raise OverflowError('Python int too large to convert to C int')
+                    if fd < 0:
+                        raise ValueError('opener returned ' + str(fd))
+                owned = True
+                os.set_inheritable(fd, False)
             try:
-                self.seek(0, 2)
-            except OSError:
-                pass
+                file_mode = os._posix_call('fd_mode', fd)
+            except OSError as exc:
+                if exc.errno == 9:
+                    raise
+            else:
+                if file_mode & 61440 == 16384:
+                    raise IsADirectoryError(21, 'Is a directory', file)
+            self.name = file
+            self._fd = fd
+            self._closed = False
+            if base[0] == 'a':
+                try:
+                    self.seek(0, 2)
+                except OSError as exc:
+                    if exc.errno != 29:
+                        raise
+        except BaseException:
+            self._fd = -1
+            self._closed = True
+            if owned and fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
     @property
     def closefd(self):
         return self._closefd
