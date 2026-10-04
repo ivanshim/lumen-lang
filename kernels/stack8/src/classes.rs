@@ -2409,7 +2409,7 @@ impl<'a> Engine<'a> {
             if name == self.class_word("receiver") { return Ok(owner); }
             if name == self.class_word("name") { return Ok(Value::text(&member)); }
             if name == self.class_word("qualified") {
-                let title = match &owner { Value::Class(class) => class.name.clone(), Value::Native(_, spelling) => spelling.to_string(), _ => owner.core_kind() };
+                let title = match &owner { Value::Class(_) => self.class_get(owner.clone(), name, false)?.plain(), Value::Native(_, spelling) => spelling.to_string(), _ => owner.core_kind() };
                 return Ok(Value::text(&format!("{title}.{member}")));
             }
             if name == self.class_word("module") { return Ok(Value::Null); }

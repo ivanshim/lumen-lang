@@ -8914,9 +8914,16 @@ impl<'a> Machine<'a> {
             return Err(format!("TypeError: cannot pickle '{}' object", receiver.kind_word()).into());
         }
         if name == "float_getformat" {
-            let kind = if let Value::Blueprint(class) = receiver { class.name.as_str() } else { "float" };
-            if !keywords.is_empty() { return Err(format!("TypeError: {kind}.__getformat__() takes no keyword arguments").into()); }
-            if arguments.len() != 1 { return Err(format!("TypeError: {kind}.__getformat__() takes exactly one argument ({} given)", arguments.len()).into()); }
+            if arguments.len() != 1 || !keywords.is_empty() {
+                let kind = match receiver {
+                    Value::Blueprint(_) => self.read_class_member(receiver.clone(), "__qualname__", false)?.bare(),
+                    _ => "float".to_owned(),
+                };
+                let problem = if keywords.is_empty() {
+                    format!("TypeError: {kind}.__getformat__() takes exactly one argument ({} given)", arguments.len())
+                } else { format!("TypeError: {kind}.__getformat__() takes no keyword arguments") };
+                return Err(problem.into());
+            }
             let text = Self::underlying(&arguments[0]).unwrap_or_else(|| arguments[0].settled()).settled();
             self.reject_type_surrogates(&text)?;
             if let Value::Text(word) = text {

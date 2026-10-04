@@ -15351,9 +15351,13 @@ impl<'a> Engine<'a> {
             return Err(format!("TypeError: cannot pickle '{}' object", receiver.core_kind()));
         }
         if operation == "float_getformat" {
-            let owner = match receiver { Value::Class(class) => class.name.clone(), _ => String::from("float") };
-            if !named.is_empty() { return Err(format!("TypeError: {owner}.__getformat__() takes no keyword arguments")); }
-            if args.len() != 1 { return Err(format!("TypeError: {owner}.__getformat__() takes exactly one argument ({} given)", args.len())); }
+            if !named.is_empty() || args.len() != 1 {
+                let owner = if matches!(receiver, Value::Class(_)) {
+                    self.class_get(receiver.clone(), "__qualname__", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain()
+                } else { String::from("float") };
+                if !named.is_empty() { return Err(format!("TypeError: {owner}.__getformat__() takes no keyword arguments")); }
+                return Err(format!("TypeError: {owner}.__getformat__() takes exactly one argument ({} given)", args.len()));
+            }
             let argument = Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()).contents();
             if let Err(fault) = self.type_utf8(&argument) {
                 if let Fault::Note(words) = fault { return Err(words); }

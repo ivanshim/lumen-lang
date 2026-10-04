@@ -2675,9 +2675,6 @@ impl<'a> Machine<'a> {
         if let Value::Member(owner, operation) = &value {
             if key == self.detail("receiver") { return Ok(owner.as_ref().clone()); }
             let public_format = (operation == "float_getformat").then(|| self.table.single("ext.builtin.method.getformat")).flatten();
-            if key == self.detail("qualified") {
-                return Ok(Value::text(&public_format.map(str::to_owned).unwrap_or_else(|| [owner.kind_word(), operation.clone()].join("."))));
-            }
             if key == self.detail("name") {
                 return Ok(Value::text(public_format.and_then(|word| word.rsplit('.').next()).unwrap_or(operation)));
             }
@@ -2901,7 +2898,7 @@ impl<'a> Machine<'a> {
             if key == self.detail("name") { return Ok(Value::text(&word)); }
             if key == self.detail("receiver") { return Ok(receiver); }
             if key == self.detail("qualified") {
-                let defining = if let Value::Blueprint(class) = &receiver { class.name.to_owned() } else if let Value::Intrinsic(_, spelling) = &receiver { spelling.to_string() } else { receiver.kind_word() };
+                let defining = if matches!(&receiver, Value::Blueprint(_)) { self.read_class_member(receiver.clone(), key, false)?.bare() } else if let Value::Intrinsic(_, spelling) = &receiver { spelling.to_string() } else { receiver.kind_word() };
                 return Ok(Value::text(&format!("{}.{}", defining, word)));
             }
             if key == self.detail("module") { return Ok(Value::Nil); }
