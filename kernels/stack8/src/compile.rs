@@ -238,6 +238,7 @@ pub struct Compiler<'a> {
     reading_annotation: bool,
     annotation_namespace: Option<(String, std::collections::HashSet<String>)>,
     reading_generic_class: bool,
+    generic_class_parameters: Vec<String>,
     future_annotations: bool,
     pending_annotations: Vec<(String, usize)>,
     module_annotation_marks: HashMap<usize, String>,
@@ -442,7 +443,7 @@ pub fn compile_within(
 /// wanted is only which names the text as a whole has ever declared
 /// `global`, not where, so a walk that never enters or leaves a scope
 /// answers it well enough.
-fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
+pub(crate) fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
     let sep = lang.calling.as_ref().and_then(|c| c.between.clone());
     let mut names = Vec::new();
     let mut i = 0;
@@ -589,7 +590,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -2118,6 +2119,7 @@ impl<'a> Compiler<'a> {
         } else if !["def", "class", "type"].contains(&first) { return None; }
         if self.tokens.get(name_at)?.shape != Shape::Instr { return None; }
         let alias = first == "type";
+        if alias && !spelling(name_at).chars().next().is_some_and(|c| c == '_' || c.is_alphabetic()) { return None; }
         let mut at = name_at + 1;
         let generic = spelling(at) == "[";
         if generic {
@@ -2693,7 +2695,7 @@ impl<'a> Compiler<'a> {
                     else { "SyntaxError: 'continue' not properly in loop" }.into());
             }
         }
-        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
+        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).lexeme.chars().next().is_some_and(|c| c == '_' || c.is_alphabetic()) {
             let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.take();
             let alias = self.want_name("as the type alias")?;
@@ -5920,7 +5922,8 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme))
+        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme)
+            || Lang::spells(&lang.match_words, &self.look().lexeme) || Lang::spells(&lang.match_cases, &self.look().lexeme))
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
@@ -6162,6 +6165,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn python_class(&mut self, generic: bool) -> Res<bool> {
+        let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let lang = self.lang;
         self.act(Action::Builtin(Builtin::ClassTool(14), Rc::from("")), 0);
         let builder = self.gensym("class_builder"); self.write(&builder);
@@ -6187,7 +6191,7 @@ impl<'a> Compiler<'a> {
         let mut namespace = None;
         let mut unready = false;
         let body = self.routine(&original_name, Vec::new(), 0, true, |c| {
-            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone())?;
+            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters)?;
             namespace = Some((book, cell, protocol)); unready = declined; Ok(())
         })?;
         let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
@@ -6202,7 +6206,7 @@ impl<'a> Compiler<'a> {
         Ok(unready)
     }
 
-    fn python_class_body(&mut self, original_name: String, qualification: String) -> Res<(String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String]) -> Res<(String, Option<String>, bool, bool)> {
         self.piece().python_fallthrough = true;
         let lang = self.lang;
         let base = None;
@@ -6220,10 +6224,16 @@ impl<'a> Compiler<'a> {
         }
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
+        let mut shared: Vec<(String, String)> = Vec::new();
+        if !parameters.is_empty() {
+            for parameter in parameters { self.read(parameter); }
+            self.act(Action::MakeTuple, parameters.len());
+            let slot = self.gensym("class_parameters"); self.write(&slot);
+            shared.push(("__type_params__".into(), slot));
+        }
         self.class_names.push((self.pieces.len(), HashMap::new()));
         self.class_globals.push((self.pieces.len(), Vec::new()));
         self.class_seen.push(Vec::new());
-        let mut shared: Vec<(String, String)> = Vec::new();
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
         }
@@ -6296,6 +6306,7 @@ impl<'a> Compiler<'a> {
                 let parameters = compiler.create_type_parameters()?;
                 compiler.pos = declaration;
                 compiler.reading_generic_class = true;
+                compiler.generic_class_parameters = parameters.clone();
                 compiler.explicit_class()?;
                 compiler.attach_type_parameters(&name, &parameters);
                 compiler.read(&name);
@@ -6331,13 +6342,14 @@ impl<'a> Compiler<'a> {
             let mut expanded = false;
             for token in &self.tokens[self.pos..] {
                 if depth == 0 && token.lexeme == close { break; }
+                if depth == 0 && lang.class_details.contains_key("mro.entries") && Lang::spells(&lang.comprehension_for, &token.lexeme) { return Err("SyntaxError: invalid syntax".into()); }
                 if depth == 0 && (Lang::spells(&lang.call_spread, &token.lexeme) || Lang::spells(&lang.call_spread_pairs, &token.lexeme)) { expanded = true; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {}
                 }
             }
-            if expanded {
+            if expanded || lang.class_details.contains_key("mro.entries") {
                 let pair = lang.calling.clone().expect("class call marks");
                 let count = self.arguments(&pair)?;
                 self.act(Action::MakeTuple, count);
@@ -6448,8 +6460,44 @@ impl<'a> Compiler<'a> {
         // a write through either as the body's first statement finds
         // somewhere of its own already standing, not made as part of
         // the write.
-        if self.class_body_names_locals(self.pos, inline) {
-            self.class_book();
+        if lang.class_details.get("prepare").map_or(false, |names| !names.is_empty())
+            && (base.is_some() || !further.is_empty() || self.gathering().shared.iter().any(|(key, _)| key == MAKER_MEMBER || key == "\0header")) {
+            self.constant(Value::text(&original_name));
+            let ancestors: Vec<String> = base.iter().chain(further.iter()).cloned().collect();
+            for place in &ancestors { self.read(place); }
+            self.act(Action::MakeTuple, ancestors.len());
+            let asked = self.gathering().shared.iter().find(|(key, _)| key == MAKER_MEMBER).map(|(_, place)| place.clone());
+            if let Some(place) = asked { self.read(&place); } else { self.constant(Value::Null); }
+            let keywords: Vec<_> = self.gathering().shared.iter().filter_map(|(key, place)| key.strip_prefix("\0keyword:").map(|word| (word.to_string(), place.clone()))).collect();
+            for (word, place) in &keywords {
+                self.constant(Value::text(word)); self.read(place); self.act(Action::MakeTuple, 2);
+            }
+            self.act(Action::MakeTuple, keywords.len());
+            let expanded = self.gathering().shared.iter().find(|(key, _)| key == "\0header").map(|(_, place)| place.clone());
+            if let Some(place) = expanded { self.read(&place); } else { self.constant(Value::Null); }
+            self.act(Action::Builtin(Builtin::ClassTool(13), Rc::from("")), 5);
+            let book = self.gensym("prepared");
+            self.write(&book);
+            self.gathering().book = Some(book.clone());
+            if let Some(module_word) = lang.class_details.get("module").and_then(|words| words.first()) {
+                self.read("__name__");
+                let module_place = self.gensym("class_module"); self.write(&module_place);
+                self.mirror_member(module_word, &module_place)?;
+            }
+            let initial = self.gathering().shared.clone();
+            for (key, place) in initial {
+                if !key.starts_with('\0') { self.mirror_member(&key, &place)?; }
+            }
+        } else {
+            if self.class_body_names_locals(self.pos, inline) { self.class_book(); }
+            if let Some(word) = lang.class_details.get("module").and_then(|names| names.first()) {
+                self.read("__name__");
+                let slot = self.gensym("module_of_class");
+                self.write(&slot);
+                self.gathering().shared.push((word.clone(), slot.clone()));
+                self.gathering().order.push(word.clone());
+                self.mirror_member(word, &slot)?;
+            }
         }
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
@@ -8182,7 +8230,13 @@ impl<'a> Compiler<'a> {
         let saved_place = std::mem::replace(&mut self.writing_place, writing_target);
         let outer_annotation = self.annotation_target;
         self.annotation_target = if starts_here { self.statement_annotation() } else { None };
-        let expression = self.expr_at(0, false);
+        let expression = if self.annotation_target == Some(target_at + 1) && self.look().shape == Shape::Instr {
+            let named = self.take().lexeme;
+            self.claim(&named);
+            let target = self.cell_to_write(&named);
+            self.put(Instr::Read(target));
+            Ok(())
+        } else { self.expr_at(0, false) };
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;
@@ -9470,18 +9524,25 @@ impl<'a> Compiler<'a> {
                 self.act(Action::StringFault, 1);
             }
             Shape::StringBegin => {
-                self.constant(Value::text(""));
+                let template = token.lexeme.chars().next().is_some_and(|prefix| self.lang.template_prefixes.contains(&prefix));
+                if !template { self.constant(Value::text("")); }
+                let mut count = 0;
                 while self.look().shape != Shape::StringEnd {
                     if self.look().shape == Shape::StringField {
                         let field = self.take();
+                        let expression = self.take().lexeme;
                         self.expr(0)?;
                         self.string_piece()?;
-                        self.constant(Value::text(&field.lexeme));
-                        self.act(Action::StringRender, 3);
+                        self.constant(if template && field.lexeme.is_empty() { Value::Null } else { Value::text(&field.lexeme) });
+                        if template {
+                            self.constant(Value::text(&expression));
+                            self.act(Action::Interpolation, 4);
+                        } else { self.act(Action::StringRender, 3); }
                     } else { self.string_piece()?; }
-                    self.act(Action::Join, 2);
+                    if template { count += 1; } else { self.act(Action::Join, 2); }
                 }
                 self.take();
+                if template { self.act(Action::TemplateMake, count); }
             }
             _ => return Err(self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())),
         }
@@ -9823,9 +9884,17 @@ impl<'a> Compiler<'a> {
                         let count = self.arguments(&call)?;
                         self.act(Action::Summon(named.as_str().into()), count + 2);
                     } else {
+                        // A parent's member read and not called: the
+                        // super proxy is made, then the member read off
+                        // it, bound to the thing this method runs upon.
                         self.discard();
                         self.discard();
-                        self.class_cannot_run();
+                        let cell = self.gathering().class_cell.clone();
+                        self.read(&cell);
+                        self.read(&this);
+                        self.constant(PARENT_CALLABLE.with(Clone::clone));
+                        self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), 3);
+                        self.act(Action::Grab(Rc::from(named.as_str())), 1);
                     }
                 } else {
                     self.class_cannot_run();
@@ -11256,11 +11325,11 @@ impl<'a> Compiler<'a> {
         let source_end = self.pos;
         let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
         self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
-        let seed = self.gensym("generator_source");
+        let seed = ".0".to_string();
         let name = "<genexpr>".to_string();
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
-        let program = self.routine(&name, vec![seed], 1, true, |r| {
+        let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
             r.pos = clause;
             let names = r.comprehension_names.len();
@@ -11467,6 +11536,7 @@ impl<'a> Compiler<'a> {
             let instruction_start = self.mark();
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
+                if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
             } else {
                 self.expr(1)?;

@@ -23,7 +23,17 @@ def get_annotate_from_class_namespace(obj):
     try:
         return obj['__annotate__']
     except Exception:
-        return None
+        try:
+            rows = obj['\0annotate']
+        except KeyError:
+            return None
+        def annotate(format):
+            _check_format(format)
+            result = {}
+            for index in range(0, len(rows), 2):
+                result[rows[index]] = rows[index + 1]()
+            return result
+        return annotate
 
 def call_annotate_function(annotate, format, owner=None):
     _check_format(format)

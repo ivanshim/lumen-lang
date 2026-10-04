@@ -153,7 +153,11 @@ def _normalize(encoding):
     name = encoding.lower().replace('-', '_').replace(' ', '_')
     aliases = {'utf8': 'utf_8', 'utf7': 'utf_7', 'utf16': 'utf_16', 'utf32': 'utf_32',
                'latin1': 'latin_1', 'iso8859_1': 'latin_1', 'iso_8859_1': 'latin_1',
-               'us_ascii': 'ascii', '646': 'ascii'}
+               'us_ascii': 'ascii', '646': 'ascii',
+               'utf16le': 'utf_16_le', 'utf16be': 'utf_16_be',
+               'utf_16le': 'utf_16_le', 'utf_16be': 'utf_16_be',
+               'utf32le': 'utf_32_le', 'utf32be': 'utf_32_be',
+               'utf_32le': 'utf_32_le', 'utf_32be': 'utf_32_be'}
     if name in aliases:
         return aliases[name]
     if name in _charmaps or name in (

@@ -118,17 +118,15 @@ pub struct Progression {
 }
 
 impl Progression {
-    /// Where the three bounds each sit inside a machine word, the size
-    /// of the walk and every member of it can be reckoned in the wider
-    /// word, sparing the great numbers. A stride of nought is refused
-    /// here and left to the older road, which answers as it always did.
+    /// Use wide integers when the bounds, their difference and a
+    /// nonzero step fit. Other progressions retain the big integer path.
     fn plain_bounds(&self) -> Option<(i128, i128, i128)> {
-        let stride = i128::from(self.stride.to_i64()?);
-        if stride == 0 { return None; }
-        let first = i128::from(self.first.to_i64()?);
-        let limit = i128::from(self.limit.to_i64()?);
-        let span = if stride < 0 { first - limit } else { limit - first };
-        let size = if span > 0 { (span - 1) / stride.abs() + 1 } else { 0 };
+        let first=self.first.to_i128()?;
+        let limit=self.limit.to_i128()?;
+        let stride=self.stride.to_i128()?;
+        let magnitude=stride.checked_abs().filter(|step|*step!=0)?;
+        let span=if stride<0 {first.checked_sub(limit)?} else {limit.checked_sub(first)?};
+        let size=if span<=0 {0} else {(span-1)/magnitude+1};
         Some((first, stride, size))
     }
 
@@ -145,11 +143,12 @@ impl Progression {
         // A loop over a progression asks this at every turn, so the
         // plain answer is given without a great number being made.
         if let Some((first, stride, size)) = self.plain_bounds() {
-            if let Some(asked) = position.to_i64() {
-                let mut offset = i128::from(asked);
-                if offset < 0 { offset += size; }
-                if offset < 0 || offset >= size { return None; }
-                return Some(Value::Small((first + stride * offset) as i64));
+            if let Some(asked)=position.to_i128() {
+                let offset=if asked<0 {asked+size} else {asked};
+                if !(0..size).contains(&offset) {return None;}
+                if let Some(member)=stride.checked_mul(offset).and_then(|jump|first.checked_add(jump)) {
+                    return Some(if let Ok(word)=i64::try_from(member) {Value::Small(word)} else {Value::from_big(BigInt::from(member))});
+                }
             }
         }
         let count = self.count();
@@ -471,6 +470,12 @@ impl MapStore {
         self.pairs[at].1 = value;
     }
 
+    /// The pairs themselves, read only: a blueprint that spells its
+    /// slots as a mapping reads each name off a key.
+    pub fn pairs(&self) -> &[(Value, Value)] {
+        &self.pairs
+    }
+
     /// Add a key already proven absent and already known by its own
     /// address, growing the pairs and the place together so a map
     /// built up key by key never has its place emptied and walked
@@ -719,6 +724,12 @@ impl Value {
             Value::OctetKind { changeable, .. } => Ok(format!("octetkind/{changeable}")),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
+            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut address = format!("native/{tag}");
+                for item in items.iter() { address.push_str(&format!("/{:?}", item.hash_address()?)); }
+                Ok(address)
+            }
+            Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
 
@@ -739,6 +750,10 @@ impl Value {
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
+            // A loose member descriptor is addressed by the descriptor it
+            // is kept as: two readings of the same member, and of the
+            // same member on the same kind, are the one address.
+            Value::Wrapped(60, parts) => Ok(format!("descriptor:{:p}", Rc::as_ptr(parts))),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
                 // Nothing under the line marks a worth off the scale.
@@ -1096,6 +1111,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Refusal(a), Value::Refusal(b)) => a == b,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -1531,6 +1547,7 @@ impl Value {
     /// attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
         match kind {
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
@@ -1705,7 +1722,8 @@ impl Blueprint {
             true => self.name.eq_ignore_ascii_case(name),
             false => self.name == name,
         };
-        it || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
+        it
+            || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
             || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 

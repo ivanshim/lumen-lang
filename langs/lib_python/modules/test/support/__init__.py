@@ -263,6 +263,9 @@ import re
 TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python')
 _header = 'nP'
 _align = '0n'
+LOOPBACK_TIMEOUT = 10.0
+INTERNET_TIMEOUT = 60.0
+SHORT_TIMEOUT = 30.0
 LONG_TIMEOUT = 300.0
 max_memuse = 0
 real_max_memuse = 0
@@ -942,6 +945,9 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
     if pattern is None:
         pattern = "test*"
     top_dir = STDLIB_DIR
+    # Reference packages live in the interpreter's versioned test directory.
+    if not os.path.abspath(pkg_dir).startswith(os.path.abspath(top_dir).rstrip('/') + '/'):
+        top_dir = os.path.dirname(pkg_dir)
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,
@@ -1600,3 +1606,31 @@ def check_sanitizer(*, address=False, memory=False, ub=False, thread=False,
     return any(enabled and ('sanitizer=' + name in flags or
                             '-fsanitize=' + name in flags)
                for enabled, name in requested)
+
+# Repository root used to locate optional CPython source-tree resources.
+REPO_ROOT = __file__.split("/langs/lib_python/modules/test/support/", 1)[0]
+
+# Color controls mirror CPython's test-support contract.
+@contextlib.contextmanager
+def force_color(color):
+    import _colorize
+    from .os_helper import EnvironmentVarGuard
+    with swap_attr(_colorize, "can_colorize", lambda *, file=None: color), EnvironmentVarGuard() as env:
+        for name in ("FORCE_COLOR", "NO_COLOR", "PYTHON_COLORS"):
+            env.unset(name)
+        env.set("FORCE_COLOR" if color else "NO_COLOR", "1")
+        yield
+
+def force_colorized(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with force_color(True):
+            return func(*args, **kwargs)
+    return wrapper
+
+def force_not_colorized(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with force_color(False):
+            return func(*args, **kwargs)
+    return wrapper

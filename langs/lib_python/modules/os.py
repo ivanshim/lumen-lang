@@ -74,6 +74,13 @@ def remove(path, *, dir_fd=None):
 unlink = remove
 
 class _Path:
+    def lexists(self, filename):
+        try:
+            lstat(filename)
+        except (OSError, ValueError):
+            return False
+        return True
+
     def join(self, path, *parts):
         for part in parts:
             if part[:1] == '/':

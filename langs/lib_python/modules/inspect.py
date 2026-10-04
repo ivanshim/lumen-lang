@@ -340,6 +340,7 @@ def _has_code_flag(f, flag):
     return bool(f.__code__.co_flags & flag)
 
 def _has_coroutine_mark(f):
+    f = _unwrap_coroutine_callable(f)
     while ismethod(f):
         f = f.__func__
     f = functools._unwrap_partial(f)

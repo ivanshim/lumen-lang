@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/argparse.py; PSF License.
 # Author: Steven J. Bethard <steven.bethard@gmail.com>.
 # New maintainer as of 29 August 2019:  Raymond Hettinger <raymond.hettinger@gmail.com>
 
