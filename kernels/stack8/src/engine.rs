@@ -761,6 +761,9 @@ impl<'a> Engine<'a> {
     /// object it was sought on.
     fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
+            if class.all_fields().iter().any(|(name, _)| name == "\0group") {
+                return self.class_construct(class, given);
+            }
             let positional = self.call_items(given.clone())?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
             let made = self.exception_instance(class, positional, Value::Null);
             let mut supplied = vec![made.clone()];
@@ -768,6 +771,12 @@ impl<'a> Engine<'a> {
             self.class_apply(init, supplied)?;
             return Ok(made);
         }
+        self.exception_allocate(class, given)
+    }
+
+    /// Native allocation validates and stores exception state without
+    /// running a subclass initializer. Class construction does that later.
+    fn exception_allocate(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         let class_name = class.name.clone();
         let import = self.stands_on(&class, 19);
         let mut args = Vec::new();
@@ -7704,6 +7713,16 @@ impl<'a> Engine<'a> {
         // method is bound to the class first, a plain routine is given
         // the class before the key.
         if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
+            if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
+                let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
+                    match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
+                } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
+                return match asked {
+                    Ok(answer) => Ok(answer),
+                    Err(Fault::Note(words)) => Err(words),
+                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                };
+            }
             // A group class is parameterisable, as the reference's is;
             // the other fault kinds are not subscriptable at all.
             if self.exception_class(c) {
@@ -7725,16 +7744,6 @@ impl<'a> Engine<'a> {
                     };
                 }
                 return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
-            }
-            if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
-                let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
-                    match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
-                } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
-                return match asked {
-                    Ok(answer) => Ok(answer),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-                };
             }
         }
         // A thing standing for a whole number is that number wherever a

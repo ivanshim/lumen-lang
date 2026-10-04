@@ -834,7 +834,7 @@ impl<'a> Machine<'a> {
                 let Some(Value::Blueprint(class)) = values.first().map(|value| value.settled()) else { return Err(self.class_unready()); };
                 let class = class.clone();
                 let rest = values[1..].to_vec();
-                self.fault_from_call(class, rest)
+                self.allocate_fault(class, rest)
             }
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),

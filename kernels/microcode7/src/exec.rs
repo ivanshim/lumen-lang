@@ -1073,6 +1073,8 @@ impl<'a> Machine<'a> {
     fn fault_from_call(&mut self, kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let initializer = self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&kind, key));
         if let Some(init) = initializer {
+            let gathers = kind.every_field().iter().any(|(key, _)| key == "\0gathers");
+            if gathers { return self.construct_plainly(kind, supplied); }
             let (ordered, _) = self.open_arguments(supplied.clone())?;
             let instance = self.make_fault(kind, ordered, Value::Nil);
             let mut call = supplied;
@@ -1080,6 +1082,12 @@ impl<'a> Machine<'a> {
             self.apply_class_member(init, call)?;
             return Ok(instance);
         }
+        self.allocate_fault(kind, supplied)
+    }
+
+    /// Keep the native maker separate from calls to user initialization:
+    /// a forwarding __new__ must receive a fully formed fault first.
+    fn allocate_fault(&mut self, kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let title = kind.name.clone();
         let importing = self.stands_under(&kind, 19);
         let (row, named) = self.open_arguments(supplied)?;
@@ -17532,25 +17540,25 @@ impl<'a> Machine<'a> {
             Prim::Join => Value::text(&format!("{}{}", self.told(&v[0], w), self.told(&v[1], w))),
             Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
-                // A group kind is parameterisable, as the reference's is;
-                // the other fault kinds are not subscriptable at all.
-                if self.is_fault_kind(class) {
-                    if class.every_field().iter().any(|(k, _)| k == "\0gathers") {
-                        let namespace = self.load_namespace("types")?;
-                        let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
-                        self.apply_class_member(alias_class, vec![v[0].clone(), v[1].clone()]).map_err(|escape| self.suspension_fault(escape))?
-                    } else {
+                // Resolve inherited user hooks before the native fallback.
+                if let Some(entry) = self.inherited_entry(class, self.rules.detail_getitem) {
+                    let asked = match entry {
+                        method @ Value::Wrapped(5, _) => {
+                            let bound = self.member_binding(method, None, class.clone());
+                            bound.and_then(|callable| self.apply_class_member(callable, vec![v[1].clone()]))
+                        }
+                        routine => self.apply_class_member(routine, vec![v[0].clone(), v[1].clone()]),
+                    };
+                    asked.map_err(|fault| self.suspension_fault(fault))?
+                } else if self.is_fault_kind(class) {
+                    if !class.every_field().iter().any(|(k, _)| k == "\0gathers") {
                         return Err(format!("TypeError: type '{}' is not subscriptable", class.name).into());
                     }
+                    let namespace = self.load_namespace("types")?;
+                    let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
+                    self.apply_class_member(alias_class, vec![v[0].clone(), v[1].clone()]).map_err(|escape| self.suspension_fault(escape))?
                 } else {
-                    // The class's own item entry answers with the key: a
-                    // class method bound to the class, a plain routine given
-                    // the class before the key.
-                    let Some(entry)=self.inherited_entry(class,self.rules.detail_getitem) else{return Err(self.rules.detail_unready.to_owned())};
-                    let asked=if matches!(&entry,Value::Wrapped(5,_)){
-                        match self.member_binding(entry,None,class.clone()){Ok(bound)=>self.apply_class_member(bound,vec![v[1].clone()]),Err(escape)=>Err(escape)}
-                    }else{self.apply_class_member(entry,vec![v[0].clone(),v[1].clone()])};
-                    asked.map_err(|fault|self.suspension_fault(fault))?
+                    return Err(self.rules.detail_unready.to_owned());
                 }
             }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,

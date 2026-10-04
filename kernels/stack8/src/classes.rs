@@ -753,7 +753,7 @@ impl<'a> Engine<'a> {
                     let Some(Value::Class(class)) = args.first().map(|value| value.contents()) else { return Err(self.class_refusal()); };
                     let class = class.clone();
                     let rest = args[1..].to_vec();
-                    self.exception_new(class, rest)
+                    self.exception_allocate(class, rest)
                 }
                 9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
                 0 => Ok(w.1[0].clone()),
