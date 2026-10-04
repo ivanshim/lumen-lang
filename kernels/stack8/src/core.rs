@@ -67,6 +67,7 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
+            Value::ValueMethod(method) if method.1 == "__next__" => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -92,6 +93,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 31 => "cell",
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
+            Value::Adapter(w) if w.0 == 143 => "function",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => {
                 let class = o.class_now();
@@ -249,6 +251,18 @@ impl Value {
                 let start = if length.is_zero() { Value::Null } else { Value::of_big(span.start.clone()) };
                 let step = if length > BigInt::from(1) { Value::of_big(span.step.clone()) } else { Value::Null };
                 Value::tuple(vec![Value::of_big(length), start, step]).core_hash()
+            }
+            // A loose member descriptor folds what it is kept as -- the
+            // kind's word and the member's name -- so two readings of the
+            // same member, and of the same member on the same kind, hash
+            // alike, and one may be a key in a map or a member of a set.
+            Value::Adapter(held) => {
+                let mut h = 2870177450012600261u64;
+                for part in held.1.iter() {
+                    h = h.wrapping_add((part.core_hash()? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
             }
             _ => None,
         }

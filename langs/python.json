@@ -44,7 +44,9 @@
   "ext.builtin.complex.zero": [
     "ZeroDivisionError: division by zero"
   ],
-  "ext.builtin.posix": ["__posix"],
+  "ext.builtin.posix": [
+    "__posix"
+  ],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -88,9 +90,17 @@
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
-  "ext.builtin.at_end": ["__at_end"],
+  "ext.builtin.at_end": [
+    "__at_end"
+  ],
   "ext.builtin.host.info": [
     "__host_info"
+  ],
+  "ext.builtin.text.scan_ascii": [
+    "__text_scan_ascii"
+  ],
+  "ext.builtin.json.scanstring": [
+    "__json_string_scan"
   ],
   "ext.builtin.subprocess": [
     "__subprocess"
@@ -121,6 +131,9 @@
   ],
   "ext.builtin.method.fromhex": [
     "float.fromhex"
+  ],
+  "ext.builtin.method.getformat": [
+    "float.__getformat__"
   ],
   "ext.builtin.method.from_number": [
     "float.from_number"
@@ -158,7 +171,43 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
-  "ext.lexical.identifier.reserved": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"],
+  "ext.lexical.identifier.reserved": [
+    "False",
+    "None",
+    "True",
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "class",
+    "continue",
+    "def",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "try",
+    "while",
+    "with",
+    "yield"
+  ],
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -167,8 +216,13 @@
     "' and '",
     "'"
   ],
-  "ext.stmt.class.native.name": ["__native_type_name__"],
-  "ext.stmt.class.bases.resolve": ["__mro_entries__", "__orig_bases__"],
+  "ext.stmt.class.native.name": [
+    "__native_type_name__"
+  ],
+  "ext.stmt.class.bases.resolve": [
+    "__mro_entries__",
+    "__orig_bases__"
+  ],
   "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
     "__annotations__"
@@ -583,9 +637,12 @@
   "ext.builtin.bytes.hex": [
     "hex"
   ],
-  "ext.builtin.bytes.resize": ["resize"],
-  "ext.builtin.bytes._export": ["_export"],
-  "ext.builtin.bytes.escape_decode": ["__escape_decode_native__"],
+  "ext.builtin.bytes.resize": [
+    "resize"
+  ],
+  "ext.builtin.bytes._export": [
+    "_export"
+  ],
   "ext.builtin.bytes.join": [
     "join"
   ],
@@ -645,7 +702,9 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
-  "ext.builtin.sre": ["__sre_native"],
+  "ext.builtin.sre": [
+    "__sre_native"
+  ],
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -813,8 +872,9 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
-  "ext.builtin.struct_native": ["__struct_native"],
-  "ext.builtin.heap_native": ["__heap_native__"],
+  "ext.builtin.heap_native": [
+    "__heap_native__"
+  ],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -893,6 +953,7 @@
     "PermissionError",
     "FileExistsError",
     "NotADirectoryError",
+    "BrokenPipeError",
     "FloatingPointError",
     "EnvironmentError",
     "IOError"
@@ -965,7 +1026,33 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "__unused_python314_generator_state__", "tb_lasti"
+    "traceback",
+    "tb_lineno",
+    "tb_next",
+    "tb_frame",
+    "f_lineno",
+    "f_code",
+    "co_name",
+    "co_filename",
+    "co_firstlineno",
+    "frame",
+    "<module>",
+    "f_back",
+    "f_locals",
+    "f_globals",
+    "gi_frame",
+    "gi_code",
+    "tb_end_lineno",
+    "tb_colno",
+    "tb_end_colno",
+    "ag_frame",
+    "cr_frame",
+    "gi_suspended",
+    "cr_suspended",
+    "cr_running",
+    "gi_yieldfrom",
+    "__unused_python314_generator_state__",
+    "tb_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -973,7 +1060,16 @@
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
   ],
-  "ext.builtin.exceptions.syntax": ["msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line"],
+  "ext.builtin.exceptions.syntax": [
+    "msg",
+    "filename",
+    "lineno",
+    "offset",
+    "text",
+    "end_lineno",
+    "end_offset",
+    "print_file_and_line"
+  ],
   "ext.builtin.exceptions.unicode": [
     "encoding",
     "object",
@@ -1059,8 +1155,13 @@
   ],
   "ext.stmt.class.parent.bind": true,
   "ext.builtin.math.sumprod": true,
-  "ext.system.module.path": ["__path__"],
-  "ext.system.module.package": ["__package__"],
+  "ext.builtin.random.words": true,
+  "ext.system.module.path": [
+    "__path__"
+  ],
+  "ext.system.module.package": [
+    "__package__"
+  ],
   "ext.builtin.max": [
     "max"
   ],
@@ -1077,6 +1178,12 @@
     "AttributeError: module '",
     "' has no attribute '",
     "'"
+  ],
+  "ext.builtin.storage.get": [
+    "__storage_get"
+  ],
+  "ext.builtin.storage.set": [
+    "__storage_set"
   ],
   "ext.builtin.member.get": [
     "getattr"
@@ -1110,7 +1217,10 @@
   "ext.builtin.method.clear": [
     "clear"
   ],
-  "ext.builtin.method.take_bytes": ["take_bytes", "bytearray.take_bytes"],
+  "ext.builtin.method.take_bytes": [
+    "take_bytes",
+    "bytearray.take_bytes"
+  ],
   "ext.builtin.method.copy": [
     "copy"
   ],
@@ -1595,7 +1705,9 @@
     "center",
     "str.center"
   ],
-  "ext.builtin.uncaught": ["__uncaught"],
+  "ext.builtin.uncaught": [
+    "__uncaught"
+  ],
   "ext.builtin.text.complaint": [
     "TypeError:",
     "ValueError:",
@@ -1826,7 +1938,10 @@
     "split",
     "str.split"
   ],
-  "ext.builtin.text.getnewargs": ["__getnewargs__", "str.__getnewargs__"],
+  "ext.builtin.text.getnewargs": [
+    "__getnewargs__",
+    "str.__getnewargs__"
+  ],
   "ext.builtin.text.splitlines": [
     "splitlines",
     "str.splitlines"
@@ -1860,7 +1975,10 @@
     "str.zfill"
   ],
   "ext.builtin.to_int.digits": 4300,
-  "ext.builtin.to_int.digits.state": ["sys", "_int_max_str_digits"],
+  "ext.builtin.to_int.digits.state": [
+    "sys",
+    "_int_max_str_digits"
+  ],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
     " digits) for integer string conversion"
@@ -2423,8 +2541,8 @@
     ": %b requires a bytes-like object, or an object that implements __bytes__, not "
   ],
   "ext.op.rem.format.character": [
-    "TypeError: format argument",
-    ": %c requires ",
+    "TypeError: ",
+    "%c requires ",
     ", not "
   ],
   "ext.op.rem.format.character.range": [
@@ -2433,8 +2551,9 @@
     ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format %",
-    " at position "
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index "
   ],
   "ext.op.rem.format.few": [
     "TypeError: not enough arguments for format string (got ",
@@ -2455,9 +2574,9 @@
     "OverflowError: cannot convert float infinity to integer"
   ],
   "ext.op.rem.format.integer": [
-    "TypeError: format argument",
-    ": %",
-    " requires an integer, not "
+    "TypeError: ",
+    "%",
+    " format: an integer is required, not "
   ],
   "ext.op.rem.format.many": [
     "TypeError: not all arguments converted during ",
@@ -2484,9 +2603,9 @@
     "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
-    "TypeError: format argument",
-    ": %",
-    " requires a real number, not "
+    "TypeError: ",
+    "%",
+    " format: a real number is required, not "
   ],
   "ext.op.rem.format.real": [
     "TypeError: format argument",
@@ -2677,8 +2796,23 @@
   "ext.stmt.class.detail.allocate": [
     "__new__"
   ],
-  "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__"],
-  "ext.stmt.class.detail.code.replace": ["replace", "co_linetable"],
+  "ext.stmt.class.detail.code.fields": [
+    "co_name",
+    "co_qualname",
+    "co_posonlyargcount",
+    "co_kwonlyargcount",
+    "co_nlocals",
+    "co_names",
+    "co_consts",
+    "co_flags",
+    "co_filename",
+    "co_firstlineno",
+    "__annotate__"
+  ],
+  "ext.stmt.class.detail.code.replace": [
+    "replace",
+    "co_linetable"
+  ],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
   ],
@@ -2820,6 +2954,18 @@
   "ext.stmt.class.detail.module": [
     "__module__"
   ],
+  "ext.stmt.class.detail.module.spec": [
+    "__spec__"
+  ],
+  "ext.stmt.class.detail.module.path": [
+    "__path__"
+  ],
+  "ext.stmt.class.detail.mro.entries": [
+    "__mro_entries__"
+  ],
+  "ext.stmt.class.detail.original.bases": [
+    "__orig_bases__"
+  ],
   "ext.stmt.class.detail.mro": [
     "__mro__"
   ],
@@ -2856,10 +3002,18 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
-  "ext.builtin.namespace_type": ["__namespace_type"],
-  "ext.builtin.inline_values": ["_has_inline_values"],
-  "ext.stmt.class.detail.flags": ["__flags__"],
-  "ext.stmt.class.detail.prepare": ["__prepare__"],
+  "ext.builtin.namespace_type": [
+    "__namespace_type"
+  ],
+  "ext.builtin.inline_values": [
+    "_has_inline_values"
+  ],
+  "ext.stmt.class.detail.flags": [
+    "__flags__"
+  ],
+  "ext.stmt.class.detail.prepare": [
+    "__prepare__"
+  ],
   "ext.stmt.class.detail.unready": [
     "NotImplementedError: this class operation is not supported"
   ],
@@ -2959,7 +3113,9 @@
     "() requires a code object with ",
     " free vars, not "
   ],
-  "ext.stmt.class.detail.classcell": ["__classcell__"],
+  "ext.stmt.class.detail.classcell": [
+    "__classcell__"
+  ],
   "ext.stmt.class.detail.cell.contents": [
     "cell_contents"
   ],
@@ -2990,7 +3146,13 @@
     ".__new__() takes exactly one argument (the type to instantiate)"
   ],
   "ext.stmt.class.detail.integer.layout": [
-    "__basicsize__", "__itemsize__", "__sizeof__", "24", "4", "30", "32"
+    "__basicsize__",
+    "__itemsize__",
+    "__sizeof__",
+    "24",
+    "4",
+    "30",
+    "32"
   ],
   "ext.stmt.class.detail.root.members": [
     "__eq__",
@@ -3231,7 +3393,10 @@
     "' from '",
     "'"
   ],
-  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
+  "ext.stmt.import.nonpackage": [
+    "; '",
+    "' is not a package"
+  ],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
@@ -3389,6 +3554,9 @@
   ],
   "ext.stmt.yield.send": [
     "send"
+  ],
+  "ext.stmt.yield.input": [
+    ".0"
   ],
   "ext.stmt.yield.suspends": true,
   "ext.stmt.yield.throw": [
@@ -3684,13 +3852,24 @@
     "RecursionError: maximum recursion depth exceeded"
   ],
   "ext.system.recursion.limit": 1000,
-  "ext.system.recursion.variable": ["sys", "_recursion_limit"],
+  "ext.system.recursion.variable": [
+    "sys",
+    "_recursion_limit"
+  ],
   "ext.system.module.doc": [
     "__doc__"
   ],
-  "ext.builtin.build_class": ["__build_class__"],
-  "ext.stmt.class.builder": ["__build_class__", "NameError: __build_class__ not found"],
-  "ext.system.module.kind": ["types", "ModuleType"],
+  "ext.builtin.build_class": [
+    "__build_class__"
+  ],
+  "ext.stmt.class.builder": [
+    "__build_class__",
+    "NameError: __build_class__ not found"
+  ],
+  "ext.system.module.kind": [
+    "types",
+    "ModuleType"
+  ],
   "ext.system.module.builtins": [
     "__builtins__"
   ],
@@ -3827,9 +4006,24 @@
   "ext.text.format.zero.string": [
     "ValueError: Negative zero coercion (z) not allowed in string format specifier"
   ],
-  "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
-  "ext.lexical.escape.named.unknown": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name"],
-  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."],
+  "ext.lexical.escape.named.amiss": [
+    "SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"
+  ],
+  "ext.lexical.escape.named.unknown": [
+    "SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name"
+  ],
+  "ext.lexical.escape.warning": [
+    "warnings",
+    "warn_explicit",
+    "SyntaxWarning",
+    "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."
+  ],
   "ext.builtin.iter.stop_value": [],
-  "ext.builtin.iter.stop_exception": []
+  "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.bytes.escape_decode": [
+    "__escape_decode_native__"
+  ],
+  "ext.builtin.struct_native": [
+    "__struct_native"
+  ]
 }

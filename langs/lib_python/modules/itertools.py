@@ -357,6 +357,7 @@ class groupby(_Iterator):
     _keyword_constructor = True
     def _initialize(self, iterable, key=None):
         self.source, self.key = iter(iterable), key
+        self._group_type = _Group
         self.generation = 0
         self.ready, self.started, self.done = False, False, False
         self.target = None
@@ -426,3 +427,8 @@ def tee(iterable, n=2, /):
     for _ in range(n - 1):
         copies.append(source.__copy__())
     return tuple(copies)
+
+# Native state transitions preserve the same live group and key callbacks.
+_Group.__next__ = _product_step("group")
+groupby.__next__ = _product_step("groupby")
+groupby._peek = _product_step("group_peek")

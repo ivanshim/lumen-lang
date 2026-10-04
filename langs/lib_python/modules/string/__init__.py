@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/string/__init__.py; PSF License.
 """A collection of string constants.
 
 Public module variables:

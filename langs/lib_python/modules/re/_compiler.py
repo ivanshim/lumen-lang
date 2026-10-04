@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/re/_compiler.py; PSF License.
 #
 # Secret Labs' Regular Expression Engine
 #

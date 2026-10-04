@@ -151,6 +151,8 @@ pub enum Prim {
     AsChars,
     /// The value, specification and conversion of a field in text.
     RenderField,
+    TemplateField,
+    TemplateParts,
     /// Stop upon reaching a character the run cannot represent.
     UnheldText,
     /// The value made a flag.
@@ -241,6 +243,8 @@ pub enum Prim {
     /// at a time (ext.builtin.subprocess): one word, told which step it
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
+ AsciiRun,
+    JsonStringScan,
     Subprocess,
     Posix,
     /// The host's signals, one word told which step it is on
@@ -412,6 +416,7 @@ pub enum Prim {
     /// its stead answers with that one, and so on until one does not; a
     /// thing that is its own walk is wound back and answers with itself;
     /// anything else answers with itself.
+    IteratorInput,
     Walked,
     AwaitResult,
     AsyncGathered,
