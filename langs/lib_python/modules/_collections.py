@@ -687,7 +687,7 @@ class _OrderedDictIterator:
         self._at += 1
         if self._kind == 'k':
             return key
-        value = self._mapping[key]
+        value = dict.__getitem__(self._mapping, key)
         if self._kind == 'v':
             return value
         return (key, value)
