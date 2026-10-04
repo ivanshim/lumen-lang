@@ -106,6 +106,10 @@ impl<'a> Engine<'a> {
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
         self.class_maker = Some(c.clone());
+        for detail in ["mro", "namespace"] {
+            let key = self.class_word(detail);
+            if !key.is_empty() { c.shared.borrow_mut().push((key.to_string(), self.held_kind_descriptor("type", key))); }
+        }
         for at in [8, 17] { if let Some(name) = self.lang.class_special.get(at) {
             c.shared.borrow_mut().push((name.clone(), self.held_kind_descriptor("type", name)));
         } }
@@ -1946,6 +1950,24 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
+            if w.0 == 29 && w.1[0].plain() == "type" && subject.is_some() {
+                let name = w.1[1].plain();
+                if name == self.class_word("mro") || name == self.class_word("namespace") {
+                    let target = subject.as_ref().unwrap().contents();
+                    let c = match &target {
+                        Value::Class(c) => c.clone(),
+                        Value::Native(Builtin::SortOf, _) => self.metaclass_root(),
+                        other => match self.kind_spelled(other) {
+                            Some(word) if self.stands_for_kind(other) => self.kind_class(&word),
+                            _ => return Err(self.class_refusal()),
+                        },
+                    };
+                    if name == self.class_word("namespace") { return Ok(Value::View(Rc::new((Value::Class(c), "mapping".into())))); }
+                    let mut line = vec![self.public_class(c.clone())];
+                    line.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));
+                    return Ok(Value::tuple(line));
+                }
+            }
             if w.0 == 29 && w.1[0].plain() == "int" {
                 let receiver = subject.clone().unwrap_or_else(|| Value::Class(class.clone()));
                 if let Some(method) = self.integer_member(&receiver, &w.1[1].plain()) { return Ok(method); }
@@ -2266,6 +2288,10 @@ impl<'a> Engine<'a> {
                 other=>self.kind_spelled(other),
             };
             if let Some(word)=builtin {
+                if word.as_ref() == "type" {
+                    let owner = self.metaclass_root();
+                    return Ok(Value::View(Rc::new((Value::Class(owner), "mapping".into()))));
+                }
                 let mut listed = self.kind_sample(&word).map_or_else(Vec::new, |sample| self.kind_member_names(&sample));
                 if word.as_ref() == "type" { listed.extend([8, 17].iter().filter_map(|at| self.lang.class_special.get(*at).cloned())); }
                 if word.as_ref() == "dict" { listed.extend(self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == "fromkeys").map(|(key, _)| key.clone())); }
@@ -2279,7 +2305,7 @@ impl<'a> Engine<'a> {
         // A routine, a wrapped routine and a slot each read as a member
         // that binds; the slot writes and removes as well.
         if name == self.class_word("descriptor.get") && !name.is_empty()
-            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16))) {
+            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16 | 29))) {
             return Ok(Self::adapter(15, vec![subject]));
         }
         if let Value::Adapter(w) = &subject {

@@ -118,19 +118,6 @@ def linked_to_musl():
     # Stub: no host C library is inspected.
     return None
 
-# The reference spells this as a skipUnless over HAVE_DOCSTRINGS, which
-# it proves with a probe function's own docstring and a C-build check
-# that cannot apply here; the probe alone settles it, as upstream's
-# HAVE_PY_DOCSTRINGS does.
-def _check_docstrings():
-    """Just used to check if docstrings are enabled"""
-
-HAVE_DOCSTRINGS = _check_docstrings.__doc__ is not None
-
-requires_docstrings = unittest.skipUnless(HAVE_DOCSTRINGS,
-                                          "test requires docstrings")
-
-
 def gc_collect():
     gc.collect()
     gc.collect()

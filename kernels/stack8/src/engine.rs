@@ -6490,6 +6490,9 @@ impl<'a> Engine<'a> {
         if word.as_ref() == "dict" && self.lang.value_methods.get(name).map(String::as_str) == Some("fromkeys") {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
         }
+        if word.as_ref() == "type" && [self.class_word("mro"), self.class_word("namespace")].contains(&name) {
+            return Some(self.held_kind_descriptor(&word, name));
+        }
         if word.as_ref() == "type" && [8, 17].iter().any(|index| self.lang.class_special.get(*index).map_or(false, |slot| slot == name)) {
             return Some(self.held_kind_descriptor(&word, name));
         }
@@ -15913,8 +15916,12 @@ impl<'a> Engine<'a> {
                 return self.dict_update(receiver, args, &named);
             }
         }
-        crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone(),
-            &|value, op| self.member_amiss(value, &self.spelled_member(op)))
+        let answer = crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone(),
+            &|value, op| self.member_amiss(value, &self.spelled_member(op)))?;
+        if matches!(operation, "clear" | "popitem") {
+            if let Some(book) = Self::map_cell(receiver) { self.globals_sync_written(&book); }
+        }
+        Ok(answer)
     }
 
     fn order_values(&mut self, source: &Value, named: &[(String, Value)]) -> Res<Vec<Value>> {
@@ -23461,6 +23468,12 @@ impl Engine<'_> {
     fn globals_sync_written(&mut self, cell: &Rc<RefCell<Value>>) {
         let Some(path) = self.globals_module_of(cell) else { return };
         let Some(Value::Object(module)) = self.modules.get(&path).cloned() else { return };
+        let present = match &*cell.borrow() {
+            Value::Map(rows) => rows.iter().map(|(key, _)| key.plain()).collect::<std::collections::HashSet<_>>(),
+            _ => return,
+        };
+        let removed = module.fields.borrow().iter().filter(|(name, _)| !present.contains(name)).map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        for name in removed { self.globals_mirror_remove(cell, &name); }
         let mut joined = Vec::new();
         {
             let mut book_mut = cell.borrow_mut();

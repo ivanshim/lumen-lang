@@ -224,6 +224,9 @@ impl<'a> Machine<'a> {
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
         self.builder_kind=Some(kind.clone());
+        for word in [self.detail("namespace"), self.detail("mro")] {
+            if !word.is_empty() { kind.shared.borrow_mut().push((word.to_owned(), self.kind_entry("type", word))); }
+        }
         for at in [8, 17] { if let Some(key) = self.table.strings("ext.stmt.class.special").get(at) {
             kind.shared.borrow_mut().push((key.clone(), self.kind_entry("type", key)));
         } }
@@ -2025,6 +2028,25 @@ impl<'a> Machine<'a> {
 
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         if let Value::Wrapped(60, parts) = &entry {
+            let key = parts[1].bare();
+            if parts[0].bare() == "type" && receiver.is_some() && (key == self.detail("namespace") || key == self.detail("mro")) {
+                let target = receiver.as_ref().unwrap().settled();
+                let owner = match target {
+                    Value::Blueprint(b) => b,
+                    Value::Intrinsic(Prim::SortOf, _) => self.builder_blueprint(),
+                    other => {
+                        if !self.stands_for_a_kind(&other) { return Err(self.class_unready()); }
+                        let word = self.kind_spelling(&other).ok_or_else(|| self.class_unready())?;
+                        self.native_kind(&word)
+                    },
+                };
+                if key == self.detail("mro") {
+                    let mut ranks = vec![self.visible_blueprint(owner.clone())];
+                    for parent in &owner.ancestry { ranks.push(self.visible_blueprint(parent.clone())); }
+                    return Ok(Value::tuple(ranks));
+                }
+                return Ok(Value::Window(Rc::new(Value::Blueprint(owner)), 'm'));
+            }
             if parts[0].bare() == "int" {
                 let value = receiver.as_ref().cloned().unwrap_or(Value::Blueprint(owner.clone()));
                 if let Some(integer) = self.integer_attribute(&value, &parts[1].bare()) { return Ok(integer); }
@@ -2801,6 +2823,10 @@ impl<'a> Machine<'a> {
                 other=>self.kind_spelling(other),
             };
             if let Some(word)=native {
+                if word.as_ref() == "type" {
+                    let actual = self.builder_blueprint();
+                    return Ok(Value::Window(Rc::new(Value::Blueprint(actual)), 'm'));
+                }
                 let mut names = self.kind_stand_in(&word).map_or_else(Vec::new, |sample| self.native_directory(&sample));
                 if word.as_ref() == "type" { let slots = self.table.strings("ext.stmt.class.special"); names.extend([8, 17].iter().filter_map(|at| slots.get(*at).cloned())); }
                 if word.as_ref() == "dict" { names.extend(self.table.strings("ext.builtin.method.fromkeys").iter().cloned()); }
@@ -2816,7 +2842,7 @@ impl<'a> Machine<'a> {
         // Routines, wrapped routines and slots are members that bind, and
         // read as such; a slot writes and removes besides.
         if self.protocol_spelled() {
-            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|32,_));
+            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|32|60,_));
             if binds && key==self.detail("descriptor.get"){return Ok(Self::wrap(31,vec![value]));}
             if let Value::Wrapped(32,parts)=&value {
                 if key==self.detail("descriptor.set"){return Ok(Self::wrap(33,parts.as_ref().clone()));}

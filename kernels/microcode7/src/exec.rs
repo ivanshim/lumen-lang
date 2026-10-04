@@ -8152,6 +8152,9 @@ impl<'a> Machine<'a> {
         if word == "dict" && self.table.spells("ext.builtin.method.fromkeys", name) {
             return Some(self.kind_entry(&word, name));
         }
+        if word == "type" && (name == self.detail("namespace") || name == self.detail("mro")) {
+            return Some(self.kind_entry(&word, name));
+        }
         if word == "type" {
             let slots = self.table.strings("ext.stmt.class.special");
             if slots.get(8).map_or(false, |slot| slot == name) || slots.get(17).map_or(false, |slot| slot == name) {
@@ -9506,7 +9509,11 @@ impl<'a> Machine<'a> {
         if name != "sort" {
             let says = |kind: &str| self.method_fault(kind);
             let unanswered = |value: &Value, word: &str| self.member_missing(value, &self.member_spelling(word));
-            return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says, unanswered: &unanswered }.answer().map_err(Escape::from);
+            let result = crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says, unanswered: &unanswered }.answer().map_err(Escape::from)?;
+            if name == "popitem" || name == "clear" {
+                if let Some(namespace) = Self::dict_cell(receiver) { self.space_sync_written(&namespace); }
+            }
+            return Ok(result);
         }
         if !arguments.is_empty() || !matches!(receiver.settled(), Value::Vector(_)) { return Err(self.method_fault("arguments").into()); }
         let Value::Mutable(place, _) = receiver else { return Err(self.method_fault("unready").into()) };
@@ -23638,6 +23645,12 @@ impl<'a> Machine<'a> {
     fn space_sync_written(&mut self, cell: &Rc<RefCell<Value>>) {
         let Some(path) = self.book_space_of(cell) else { return };
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return };
+        let keys: Vec<String> = match cell.borrow().clone() {
+            Value::Dict(entries) => entries.iter().map(|(key, _)| key.bare()).collect(),
+            _ => return,
+        };
+        let absent: Vec<String> = module.holds.borrow().iter().filter_map(|(word, _)| (!keys.contains(word)).then(|| word.clone())).collect();
+        for word in absent { self.space_mirror_remove(cell, &word); }
         let mut joined = Vec::new();
         {
             let mut opened = cell.borrow_mut();

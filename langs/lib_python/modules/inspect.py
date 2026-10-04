@@ -252,7 +252,6 @@ def isabstract(object):
 
 _static_getmro = type.__dict__['__mro__'].__get__
 _get_dunder_dict_of_class = type.__dict__['__dict__'].__get__
-_TYPE_OWNED_DICT = type.__dict__['__dict__']
 
 
 def _check_instance(obj, attr):
@@ -282,10 +281,9 @@ def _shadowed_dict(klass):
         dunder_dict = _get_dunder_dict_of_class(entry)
         if '__dict__' in dunder_dict:
             class_dict = dunder_dict['__dict__']
-            if not (class_dict is _TYPE_OWNED_DICT
-                    or (type(class_dict) is types.GetSetDescriptorType and
-                        getattr(class_dict, '__name__', None) == "__dict__" and
-                        getattr(class_dict, '__objclass__', None) is entry)):
+            if not (type(class_dict) is types.GetSetDescriptorType and
+                    class_dict.__name__ == "__dict__" and
+                    class_dict.__objclass__ is entry):
                 return class_dict
     return _sentinel
 
