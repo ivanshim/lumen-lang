@@ -522,7 +522,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(20), Some(20), Some(58), Some(58), Some(58), Some(58), Some(20), Some(20), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -572,6 +572,28 @@ impl<'a> Engine<'a> {
 
     fn stands_on(&self, class: &Rc<Class>, at: usize) -> bool {
         self.furnished(at).map_or(false, |wanted| Self::exception_beneath(class, &wanted))
+    }
+
+    /// The class an operating-system number names, where the language's
+    /// own OSError was called with that number and a word beside it;
+    /// nothing where the class is any other, or the number is not one
+    /// the map gives a class to.
+    fn os_error_class(&self, class: &Rc<Class>, args: &[Value]) -> Option<Rc<Class>> {
+        let oserror = self.furnished(20)?;
+        if !Rc::ptr_eq(class, &oserror) || args.len() < 2 { return None; }
+        let Value::Small(number) = args.first()?.contents() else { return None };
+        let name = self.lang.os_errno.iter().find_map(|entry| {
+            let (key, word) = entry.split_once(' ')?;
+            (key.parse::<i64>() == Ok(number)).then(|| word.to_owned())
+        })?;
+        match self.native_exceptions.get(&name) { Some(Value::Class(mapped)) => Some(mapped.clone()), _ => None }
+    }
+
+    /// A fault made by a base class's making, with the number-to-subclass
+    /// choice applied first.
+    fn native_exception_new(&mut self, class: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        let class = self.os_error_class(&class, &args).unwrap_or(class);
+        Ok(self.exception_instance(class, args, Value::Null))
     }
 
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
@@ -760,7 +782,7 @@ impl<'a> Engine<'a> {
     /// tuple; a group's two are its heading and its members; and the
     /// only names a call may give are those of an absent name and the
     /// object it was sought on.
-    fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
+    fn exception_new(&mut self, mut class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
             let positional = self.call_items(given.clone())?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
             let made = self.exception_instance(class, positional, Value::Null);
@@ -776,6 +798,7 @@ impl<'a> Engine<'a> {
         for (key, value) in self.call_items(given)? {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
         }
+        if let Some(mapped) = self.os_error_class(&class, &args) { class = mapped; }
         let syntax = if self.stands_on(&class, 36) { self.check_syntax_details(&args)? } else { Vec::new() };
         let unicode_arity = if self.stands_on(&class, 43) || self.stands_on(&class, 44) { Some(5) }
             else if self.stands_on(&class, 45) { Some(4) } else { None };
@@ -10157,6 +10180,11 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 if self.exception_class(&class) {
+                    if self.class_value(&class, self.class_word("allocate")).is_some() {
+                        let made = self.class_make(class, args)?;
+                        self.data.push(made);
+                        return Ok(());
+                    }
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
                     let object = self.exception_new(class, args)?;
                     self.data.push(object);

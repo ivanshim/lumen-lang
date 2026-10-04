@@ -821,7 +821,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 => Some(20), 42 => Some(19),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=58 | 63..=65 => Some(20), 42 => Some(19), 59..=62 => Some(58),
                 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
             };
             let mut seed = Vec::new();
@@ -866,6 +866,28 @@ impl<'a> Machine<'a> {
 
     fn stands_under(&self, kind: &Rc<Blueprint>, place: usize) -> bool {
         self.furnished_kind(place).map_or(false, |ancestor| Self::fault_descends(kind, &ancestor))
+    }
+
+    /// The kind an operating-system number names, where the language's
+    /// own OSError was called with that number and a word beside it;
+    /// nothing where the kind is any other, or the number is not one
+    /// the map gives a kind to.
+    fn os_error_kind(&self, kind: &Rc<Blueprint>, args: &[Value]) -> Option<Rc<Blueprint>> {
+        let oserror = self.furnished_kind(20)?;
+        if !Rc::ptr_eq(kind, &oserror) || args.len() < 2 { return None; }
+        let Value::Small(number) = args.first()?.settled() else { return None };
+        let name = self.table.strings("ext.builtin.exceptions.os.errno").iter().find_map(|entry| {
+            let (key, word) = entry.split_once(' ')?;
+            (key.parse::<i64>() == Ok(number)).then(|| word.to_owned())
+        })?;
+        match self.fault_kinds.get(&name) { Some(Value::Blueprint(mapped)) => Some(mapped.clone()), _ => None }
+    }
+
+    /// A fault made by a base kind's making, with the number-to-kind
+    /// choice applied first.
+    fn native_fault_new(&mut self, kind: Rc<Blueprint>, args: Vec<Value>) -> Value {
+        let kind = self.os_error_kind(&kind, &args).unwrap_or(kind);
+        self.make_fault(kind, args, Value::Nil)
     }
 
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
@@ -1085,6 +1107,7 @@ impl<'a> Machine<'a> {
         let title = kind.name.clone();
         let importing = self.stands_under(&kind, 19);
         let (row, named) = self.open_arguments(supplied)?;
+        let kind = self.os_error_kind(&kind, &row).unwrap_or(kind);
         let locations = if self.stands_under(&kind, 36) { self.syntax_detail_count(&row)? } else { Vec::new() };
         let unicode_arity = if self.stands_under(&kind, 43) || self.stands_under(&kind, 44) { Some(5) }
             else if self.stands_under(&kind, 45) { Some(4) } else { None };
@@ -6445,6 +6468,9 @@ impl<'a> Machine<'a> {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
                     if self.is_fault_kind(&class) {
+                        if self.inherited_entry(&class, self.rules.detail_allocate).is_some() {
+                            return self.construct_ordered(class, values);
+                        }
                         if Self::fault_methods(&class) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
                         return self.fault_from_call(class, values);
                     }
@@ -8197,6 +8223,9 @@ impl<'a> Machine<'a> {
             return self.apply_class_member(answering, given);
         }
         if self.is_fault_kind(&class) {
+            if self.inherited_entry(&class, self.rules.detail_allocate).is_some() {
+                return self.construct_ordered(class, args);
+            }
             if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
             }

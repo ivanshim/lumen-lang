@@ -3781,6 +3781,10 @@ impl<'a> Engine<'a> {
                 continue;
             }
             if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
+            if self.exception_class(c) && self.class_word("allocate") == name {
+                let Some((Value::Class(cls), rest)) = args.split_first() else { return Err(self.class_refusal()) };
+                return self.native_exception_new(cls.clone(), rest.to_vec());
+            }
             if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
                 if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }
             }

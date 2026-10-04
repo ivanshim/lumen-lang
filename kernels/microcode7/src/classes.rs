@@ -3967,6 +3967,10 @@ impl<'a> Machine<'a> {
                 continue;
             }
             if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
+            if key==self.detail("allocate") && self.is_fault_kind(b) {
+                let Some((Value::Blueprint(cls), rest)) = args.split_first() else { return Err(self.class_unready()) };
+                return Ok(self.native_fault_new(cls.clone(), rest.to_vec()));
+            }
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
                 if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
             }
