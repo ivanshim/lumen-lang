@@ -487,6 +487,7 @@ pub struct Machine<'a> {
     imported: HashMap<String, Value>,
     wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
     loaded_spaces: HashMap<Rc<str>, String>,
+    namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
     /// `builtins` asks for itself this way -- is handed the instance
@@ -830,8 +831,8 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 => Some(20), 42 => Some(19),
-                43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 | 60..=65 => Some(20), 42 => Some(19),
+                57..=59 => Some(56), 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
@@ -878,6 +879,15 @@ impl<'a> Machine<'a> {
     }
 
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
+        let kind = if self.table.single("ext.builtin.posix").is_some() && row.len() >= 2 && row.len() <= 5
+            && self.furnished_kind(20).is_some_and(|base| Rc::ptr_eq(&base, &kind)) {
+            let tag = row[0].as_big().ok().and_then(|n| n.to_i64()).and_then(|code| {
+                [(1,63),(2,40),(3,64),(4,61),(10,55),(11,53),(13,63),(17,60),(20,62),
+                 (21,41),(32,54),(103,57),(104,59),(110,65),(111,58)]
+                    .iter().find_map(|&(error, index)| if error == code {Some(index)} else {None})
+            });
+            tag.and_then(|index| self.furnished_kind(index)).unwrap_or(kind)
+        } else {kind};
         self.made += 1;
         let mut holds = kind.every_field();
         // The rest of what a fault holds: a traceback that is nil, the
@@ -1612,6 +1622,7 @@ impl<'a> Machine<'a> {
             imported: HashMap::new(),
             wildcard_names: HashMap::new(),
             loaded_spaces: HashMap::new(),
+            namespace_books: Vec::new(),
             within_spare: false,
             world_book: None,
             readings: Vec::new(),
@@ -3523,6 +3534,7 @@ impl<'a> Machine<'a> {
                 return Ok(());
             }
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
+                self.booked_write(slot.at, &slot.ident, Some(stored.clone()));
                 if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
             }
             if Rc::ptr_eq(destination, &self.outermost) { self.booked_write(slot.at, &slot.ident, Some(stored.clone())); }
@@ -17989,6 +18001,29 @@ impl<'a> Machine<'a> {
                     _ => return Err(String::from("NotImplementedError: unsupported cryptographic operation")),
                 }
             }
+            Prim::HostPosix => {
+                let action = v.first().map(Value::settled);
+                if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "fspath") {
+                    n(2)?;
+                    self.path_from_protocol(v[1].clone())?
+                } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "structseq_new") {
+                    n(4)?;
+                    let blueprint = match v[1].settled() {Value::Blueprint(kind) => kind, _ => return Err(String::from("TypeError: a class is required"))};
+                    let row = Value::tuple(self.gathered_members(&v[2])?);
+                    let attributes = Value::tuple(self.gathered_members(&v[3])?);
+                    self.made += 1;
+                    Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: blueprint, turn: self.made,
+                        holds: RefCell::new(vec![(String::from("\0underlying"), row), (String::from("\0named-sequence"), attributes)])}))
+                } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "structseq_get") {
+                    n(3)?;
+                    let Value::Thing(instance) = v[1].settled() else {return Err(String::from("TypeError: a struct sequence is required"));};
+                    let storage = instance.holds.borrow();
+                    let extra = storage.iter().find_map(|(key, value)| if key == "\0named-sequence" {Some(value)} else {None});
+                    let Some(Value::Tuple(items)) = extra else {return Err(String::from("TypeError: a struct sequence is required"));};
+                    let index = as_index(&v[2])?;
+                    match items.get(index) {Some(item) => item.clone(), None => return Err(String::from("IndexError: tuple index out of range"))}
+                } else { crate::posix::perform(v)? }
+            },
             Prim::HostRow => {
                 if v.len() == 1 && matches!(&v[0], Value::Text(query) if query.as_ref() == "build") {
                     return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));
@@ -18137,7 +18172,6 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
-            Prim::Posix => crate::posix::perform(v)?,
             Prim::AsciiRun => {
                 n(4)?;
                 let offset = as_index(&v[1])?;
@@ -22492,6 +22526,34 @@ fn suspension_within(form: &Form) -> bool {
 }
 
 impl Machine<'_> {
+    fn path_from_protocol(&mut self, original: Value) -> Result<Value, String> {
+        fn fits(value: &Value) -> bool {
+            match value {
+                Value::Text(_) | Value::Unpaired(_) | Value::Octets {changeable: false, ..} => true,
+                Value::Thing(instance) => SelfMarker::is_path(&instance.blueprint()),
+                _ => false,
+            }
+        }
+        struct SelfMarker;
+        impl SelfMarker {
+            fn is_path(kind: &Blueprint) -> bool {matches!(Machine::native_beneath(kind).as_deref(), Some("str" | "bytes"))}
+        }
+        let candidate = original.settled();
+        if fits(&candidate) {return Ok(original);}
+        if !matches!(candidate, Value::Thing(_) | Value::Blueprint(_)) {return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", candidate.kind_word()));}
+        let class = match self.class_from_type(vec![candidate.clone()]) {
+            Ok(Value::Blueprint(class)) => class,
+            Ok(_) => return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", candidate.kind_word())),
+            Err(escape) => {self.got_away = Some(escape); return Err(self.bad_answer());}
+        };
+        let member = self.inherited_entry(&class, "__fspath__");
+        let member = match member {Some(value) if !matches!(value, Value::Nil) => value, _ => return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", candidate.kind_word()))};
+        let bound = self.member_binding(member, Some(candidate.clone()), class);
+        let result = bound.and_then(|callable| self.apply_class_member(callable, Vec::new()));
+        let value = match result {Ok(value) => value, Err(escape) => {self.got_away = Some(escape); return Err(self.bad_answer());}};
+        if fits(&value.settled()) {Ok(value)} else {Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", candidate.kind_word(), value.kind_word()))}
+    }
+
     fn spread_value(&self, word: &str) -> Option<Value> {
         // Library helpers keep their own native operations even when
         // the calling module has imported a replacement for that word.
@@ -22541,6 +22603,10 @@ impl Machine<'_> {
     }
 
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+        let path_group_needs_os = (path == "posixpath" || path == "genericpath")
+            && self.table.single("ext.builtin.posix").is_some()
+            && !self.imported.contains_key("os") && !self.importing.contains("os");
+        if path_group_needs_os { self.load_namespace("os")?; }
         if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") { return Ok(self.type_support_namespace()); }
 
         // A name a program's own code took out of `sys.modules` is read
@@ -22691,6 +22757,7 @@ impl Machine<'_> {
         };
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
+        self.namespace_books.retain(|(name, _)| name != path);
         self.imported.insert(path.into(), value.clone());
         let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
@@ -22964,6 +23031,7 @@ struct Namebook {
 /// Which dictionary a slot's value lives in, when it lives in one.
 #[derive(Clone, Copy)]
 enum Held {
+    Namespace(usize),
     World,
     Reading(usize),
 }
@@ -23013,6 +23081,12 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
+        if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
+            let (owner, _) = word.rsplit_once('/')?;
+            for (index, (path, _)) in self.namespace_books.iter().enumerate() {
+                if owner == path { return Some(Held::Namespace(index)); }
+            }
+        }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
         let bare = ident.rsplit('/').next().unwrap_or(ident);
@@ -23047,6 +23121,19 @@ impl<'a> Machine<'a> {
     /// means the cell itself is to be read after all.
     fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
         match self.book_holding(at)? {
+            Held::Namespace(index) => {
+                if !Self::visible_name(name) { return None; }
+                let found = looked_up(&self.namespace_books[index].1, name);
+                if let Some(found) = found {
+                    if let Value::Shared(place) = &found {
+                        let world = self.outermost.cells.borrow();
+                        if matches!(world.get(at), Some(Value::Shared(slot)) if Rc::ptr_eq(slot, place)) { return Some(Ok(place.borrow().clone())); }
+                    }
+                    return Some(Ok(found));
+                }
+                let cell = self.outermost.cells.borrow().get(at)?.settled();
+                if self.passed_over(name, &cell) { None } else { Some(Err(format!("Undefined variable: {name}"))) }
+            }
             Held::World => {
                 let book = self.world_book.as_ref()?;
                 if let Some(worth) = looked_up(book, name) {
@@ -23123,6 +23210,7 @@ impl<'a> Machine<'a> {
     /// Write a slot's name into the dictionary it lives in, or strike it out.
     fn booked_write(&mut self, at: usize, name: &str, worth: Option<Value>) {
         match self.book_holding(at) {
+            Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down(&self.namespace_books[index].1, name, worth) },
             Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];
@@ -25589,7 +25677,8 @@ impl Machine<'_> {
                     Value::Dict(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Attributes(owner) => Rc::as_ptr(owner) as usize as u64,
-                    Value::Method(_, _, marker) => Rc::as_ptr(marker) as usize as u64,
+                    Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
+                    Value::Method(_, _, handle) => Rc::as_ptr(handle) as usize as u64,
                     Value::Wrapped(_, payload) => Rc::as_ptr(payload) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Octets { cell, .. } => Rc::as_ptr(cell) as usize as u64,
@@ -26134,7 +26223,7 @@ impl Machine<'_> {
             let read = slot.settled();
             if let Value::Dict(pairs) = read {
                 for (key, item) in pairs.iter() {
-                    if matches!(key, Value::Text(text) if text.as_ref() == sought) { return Some(item.settled()); }
+                    if spells_key(key, sought) { return Some(item.settled()); }
                 }
             }
         }
@@ -26149,7 +26238,7 @@ impl Machine<'_> {
         let Some((_, held)) = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).cloned() else { return true };
         let cache = held.settled();
         match cache {
-            Value::Dict(entries) => entries.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
+            Value::Dict(entries) => entries.iter().any(|(key, _)| spells_key(key, path)),
             _ => true,
         }
     }
@@ -26164,7 +26253,7 @@ impl Machine<'_> {
                 Value::Dict(items) if imported_name != names[0] => items.to_vec(),
                 _ => self.imported.iter().map(|(word, value)| (Value::text(word), value.clone())).collect(),
             };
-            pairs.retain(|(word, _)| !matches!(word, Value::Text(text) if text.as_ref() == imported_name));
+            pairs.retain(|(word, _)| !spells_key(word, imported_name));
             if let Some(value) = self.imported.get(imported_name) { pairs.push((Value::text(imported_name), value.clone())); }
             let dictionary = Value::Dict(Rc::new(pairs.into()));
             let slot = worth;

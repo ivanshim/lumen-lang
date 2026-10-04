@@ -90,6 +90,7 @@
   ],
   "ext.builtin.at_end": ["__at_end"],
   "ext.builtin.crypto": ["__crypto"],
+  "ext.builtin.posix": ["__posix"],
   "ext.builtin.host.info": [
     "__host_info"
   ],
@@ -941,6 +942,13 @@
     "FileExistsError",
     "NotADirectoryError",
     "BrokenPipeError",
+    "ChildProcessError",
+    "ConnectionError",
+    "ConnectionAbortedError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "InterruptedError",
+    "ProcessLookupError",
     "TimeoutError"
   ],
   "ext.builtin.exceptions.args": [

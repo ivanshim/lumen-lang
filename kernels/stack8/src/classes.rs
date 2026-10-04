@@ -886,6 +886,7 @@ impl<'a> Engine<'a> {
             held => held,
         };
         match callable {
+            Value::Bond(cell) => { let held = cell.borrow().clone(); self.class_apply(held, args) },
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             Value::Native(operation, name) => { let items = self.call_items(args)?; Ok(self.builtin_call(operation, &name, items)?) }
             // A method bound to a value of a builtin kind, reached as a
@@ -3128,6 +3129,9 @@ impl<'a> Engine<'a> {
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {
+                if o.fields.borrow().iter().any(|(key, _)| key == "\0structseq") {
+                    return Err(if name.starts_with("st_") { "AttributeError: readonly attribute".to_string().into() } else { format!("AttributeError: 'os.stat_result' object has no attribute '{}' and no __dict__ for setting new attributes", name).into() });
+                }
                 if self.module_holding(&subject).is_some() || o.class_now().name == "ModuleType" {
                     let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
                     if name == annotate {

@@ -3508,6 +3508,11 @@ impl<'a> Machine<'a> {
         }
         let success=match &subject {
             Value::Thing(t)=>{
+                let named_sequence = t.holds.borrow().iter().any(|entry| entry.0 == "\0named-sequence");
+                if named_sequence {
+                    if key.starts_with("st_") {return Err("AttributeError: readonly attribute".to_string().into());}
+                    return Err(format!("AttributeError: 'os.stat_result' object has no attribute '{}' and no __dict__ for setting new attributes", key).into());
+                }
                 if self.namespace_holding(&subject).is_some() || t.blueprint().name == "ModuleType" {
                     let evaluator = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
                     if key == evaluator {
@@ -3616,7 +3621,7 @@ impl<'a> Machine<'a> {
                 // code reads through; a new value goes into the cell.
                 if self.namespace_holding(&subject).is_some() {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
-                    if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
+                    if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = self.collection_cell(v); return Ok(Value::Nil); }
                 }
                 // A blueprint naming the entries its things hold, and
                 // holding one of its own under a name not among them,

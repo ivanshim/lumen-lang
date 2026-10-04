@@ -628,6 +628,7 @@ pub enum Builtin {
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
     Crypto,
+    PosixCall,
     /// A command handed to the host's own shell, answering with all
     /// that the shell wrote where a run writes (ext.builtin.shell).
     /// Only a language that spells this may start another program at
@@ -646,7 +647,6 @@ pub enum Builtin {
     AsciiSpan,
     JsonString,
     Subprocess,
-    Posix,
     /// The host's own signals, one word told which step it is on
     /// (ext.builtin.signal): give a number the handler it answers with,
     /// ask which handler a number was given, or leave a number pending
