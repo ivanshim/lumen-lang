@@ -17542,6 +17542,10 @@ impl<'a> Machine<'a> {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
                 // Resolve inherited user hooks before the native fallback.
                 if let Some(entry) = self.inherited_entry(class, self.rules.detail_getitem) {
+                    if matches!(entry.settled(), Value::Nil) && self.is_fault_kind(class) {
+                        let name = &class.name;
+                        return Err(format!("TypeError: type '{name}' is not subscriptable").into());
+                    }
                     let asked = match entry {
                         method @ Value::Wrapped(5, _) => {
                             let bound = self.member_binding(method, None, class.clone());

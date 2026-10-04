@@ -7714,6 +7714,9 @@ impl<'a> Engine<'a> {
         // the class before the key.
         if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
             if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
+                if self.exception_class(c) && matches!(hook.contents(), Value::Null) {
+                    return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
+                }
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
                 } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
