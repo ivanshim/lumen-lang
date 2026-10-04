@@ -3472,6 +3472,7 @@ impl<'a> Machine<'a> {
             // a function is bound this way, and its name, its full name
             // and what it says of itself are the function's.
             if matches!(*tag, 3 | 132) {
+                if *tag == 3 && key == self.detail("kind") { return Ok(self.kind_named_after(&value)); }
                 if key==self.detail("receiver"){return Ok(items[1].clone());}
                 if key==self.detail("function"){return Ok(items[0].clone());}
                 if *tag == 132 && key == self.detail("kind") {

@@ -17474,9 +17474,12 @@ impl<'a> Machine<'a> {
                 }
                 if matches!(v[0], Value::Member(..)) {
                     // A method bound to a value of a builtin kind still
-                    // answers for the few members naming it, before the
-                    // form that cannot be reached is told of.
+                    // answers for its named members, then uses the
+                    // ordinary class lookup for inherited attributes.
                     if let Some(bound) = self.attribute(&v[0], &called) { return Ok(bound); }
+                    if self.has_class_order() {
+                        return self.read_class_member(v[0].clone(), &called, false).map_err(|fault| self.suspension_fault(fault));
+                    }
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
                 // The member that lays a template out is given back

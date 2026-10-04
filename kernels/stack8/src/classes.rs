@@ -2906,6 +2906,7 @@ impl<'a> Engine<'a> {
                 }
             }
             Value::Adapter(w) if matches!(w.0, 3 | 131) => {
+                if w.0 == 3 && name == self.class_word("kind") { return self.class_type(vec![subject.clone()]); }
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
                 if w.0 == 131 {

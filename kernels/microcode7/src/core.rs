@@ -86,6 +86,7 @@ impl Value {
             Self::Wrapped(143, _) => "function",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
+            Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => "builtin_function_or_method",
             Self::Wrapped(3, _) => "method-wrapper",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
