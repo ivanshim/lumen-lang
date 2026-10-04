@@ -480,6 +480,7 @@ class memoryview:
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
+            self._shape = (len(self._offsets),)
         elif isinstance(object, array):
             self._source = object
             self._offsets = list(range(0, len(object._buffer), object.itemsize))
@@ -680,8 +681,8 @@ class memoryview:
                     raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
-        if shape is not None and (not isinstance(shape, (list, tuple)) or len(shape) != 1):
-            raise TypeError('memoryview: multi-dimensional casts are not supported')
+        if shape is not None and not isinstance(shape, (list, tuple)):
+            raise TypeError('shape must be a list or a tuple')
         format.encode('ascii')
         destination = format[1:] if format.startswith('@') else format
         if len(destination) != 1 or destination not in 'cbBhHiIlLqQnNfde?P':

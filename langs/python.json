@@ -104,7 +104,7 @@
     "__remove_tree"
   ],
   "ext.builtin.at_end": [
-    "__at_end__"
+    "__at_end"
   ],
   "ext.builtin.crypto": [
     "__crypto"

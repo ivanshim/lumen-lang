@@ -22,3 +22,37 @@ def index(a):
     raise 'TypeError: value cannot be interpreted as an integer'
 
 
+
+_native_compare = __crypto
+
+class _DigestComparison:
+    """Callable bridge with the non-binding behavior of a C builtin."""
+    __name__ = '_compare_digest'
+
+    def __call__(self, a, b, /):
+        if isinstance(a, str) and isinstance(b, str):
+            if not a.isascii() or not b.isascii():
+                raise TypeError('comparing strings with non-ASCII characters is not supported')
+            a, b = a.encode('ascii'), b.encode('ascii')
+        else:
+            import array
+            buffers = (bytes, bytearray, memoryview, array.array)
+            if not isinstance(a, buffers) and not isinstance(b, buffers):
+                raise TypeError("unsupported operand types(s) or combination of types: '" + type(a).__name__[:100] + "' and '" + type(b).__name__[:100] + "'")
+            converted = []
+            for operand in (a, b):
+                if not isinstance(operand, buffers):
+                    raise TypeError("a bytes-like object is required, not '" + type(operand).__name__ + "'")
+                if isinstance(operand, (bytes, bytearray)):
+                    converted.append(bytes(operand))
+                    continue
+                view = memoryview(operand)
+                view._check()
+                for i in range(1, len(view._offsets)):
+                    if view._offsets[i] - view._offsets[i - 1] != view._itemsize:
+                        raise BufferError('memoryview: underlying buffer is not C-contiguous')
+                converted.append(view.tobytes())
+            a, b = converted
+        return _native_compare(2, a, b)
+
+_compare_digest = _DigestComparison()

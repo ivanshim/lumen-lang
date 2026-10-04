@@ -1157,6 +1157,12 @@ impl<'a> Machine<'a> {
                         let function = self.read_class_member(module, word, false)?;
                         self.apply_class_member(function, values)
                     }
+                    49 if values.len() == 1 => {
+                        let space = self.load_namespace("typing")?;
+                        let constructor = self.read_class_member(space, "_GenericAlias", false)?;
+                        let owner = Value::Blueprint(self.native_kind("Generic"));
+                        self.apply_class_member(constructor.settled(), vec![owner, values[0].clone()])
+                    }
                     49 if values.is_empty() => {
                         self.type_support_namespace();
                         Ok(Value::Blueprint(self.native_kind("Generic")))

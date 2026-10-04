@@ -206,6 +206,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.test_iter", include_str!("test/test_iter.py"), "test/test_iter.py"),
     ("test.test_math", include_str!("test/test_math.py"), "test/test_math.py"),
     ("test.test_weakref", include_str!("test/test_weakref.py"), "test/test_weakref.py"),
+    ("test.tokenizedata", include_str!("test/tokenizedata/__init__.py"), "test/tokenizedata/__init__.py"),
     ("test.typinganndata", include_str!("test/typinganndata/__init__.py"), "test/typinganndata/__init__.py"),
     ("test.typinganndata._typed_dict_helper", include_str!("test/typinganndata/_typed_dict_helper.py"), "test/typinganndata/_typed_dict_helper.py"),
     ("test.typinganndata.ann_module", include_str!("test/typinganndata/ann_module.py"), "test/typinganndata/ann_module.py"),

@@ -11,7 +11,7 @@ impl<'a> Engine<'a> {
     // step of every program asks this, so it stands as a field on the
     // language rather than a hashmap looked into afresh each time.
     pub(super) fn fuller_classes(&self) -> bool { self.lang.fuller_classes }
-    fn class_refusal(&self) -> Fault {   self.class_word("unready").to_string().into() }
+    fn class_refusal(&self) -> Fault { self.class_word("unready").to_string().into() }
     pub(super) fn root_class(&mut self) -> Rc<Class> {
         if let Some(c) = &self.class_root { return c.clone(); }
         let name = self.class_word("root").to_string();
@@ -601,7 +601,7 @@ impl<'a> Engine<'a> {
             }
             return Ok(());
         };
-        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), single => vec![single] };
+        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(), single => vec![single] };
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
@@ -1117,6 +1117,9 @@ impl<'a> Engine<'a> {
                     for item in checked { result = self.join_types(&result, &item); }
                     Ok(result)
                 }
+                77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
+                    Ok(args.remove(0))
+                }
                 154 => {
                     let module = self.import_module("typing")?;
                     let function = self.class_get(module, &w.1[0].plain(), false)?;
@@ -1138,6 +1141,12 @@ impl<'a> Engine<'a> {
                     let word = if w.0 == 152 { "_generic_init_subclass" } else { "_generic_class_getitem" };
                     let function = self.class_get(module, word, false)?;
                     self.class_apply(function, args)
+                }
+                49 if args.len() == 1 => {
+                    let module = self.import_module("typing")?;
+                    let alias = self.class_get(module, "_GenericAlias", false)?;
+                    let generic = Value::Class(self.kind_class("Generic"));
+                    self.class_apply(alias.contents(), vec![generic, args.remove(0)])
                 }
                 49 if args.is_empty() => {
                     self.typing_module();

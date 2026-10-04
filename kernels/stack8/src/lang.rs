@@ -2116,6 +2116,7 @@ impl Lang {
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
             ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
+            ("ext.builtin.crypto", Builtin::Crypto),
             ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.kind", Builtin::FileKind), ("ext.builtin.file.stat", Builtin::FileKind), ("ext.system.fault.current", Builtin::FaultInHand), ("ext.system.fault.held", Builtin::FaultItself), ("ext.builtin.weak.make", Builtin::WeakMake), ("ext.builtin.weak.get", Builtin::WeakGet), ("ext.builtin.gc.collect", Builtin::Collect), ("ext.builtin.host.info", Builtin::HostFacts), ("ext.builtin.file.remove", Builtin::FileGone),
     ("ext.builtin.file.link", Builtin::FileLink),
             ("ext.builtin.dir.list", Builtin::DirList), ("ext.builtin.dir.make", Builtin::DirMake), ("ext.builtin.dir.remove_tree", Builtin::DirGone),
