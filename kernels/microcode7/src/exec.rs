@@ -13099,6 +13099,78 @@ impl<'a> Machine<'a> {
     /// dotted names -- stand in `given` by their place. A tuple subject
     /// may be taken apart but never kept whole, the kernel having no
     /// tuple value to hand over for it.
+    /// Whether a subject is a row a sequence pattern may take apart, and
+    /// how many places it holds. Text, bytes and a map are not rows, and
+    /// neither is a thing answering `keys`; a row too long for a machine
+    /// word answers nothing.
+    fn case_row_length(&mut self, subject: &Value) -> Result<Option<usize>, String> {
+        match subject {
+            Value::Vector(items) | Value::Tuple(items) | Value::Row(items) => Ok(Some(items.len())),
+            Value::Progression(walk) => Ok(walk.count().to_usize()),
+            Value::Text(_) | Value::Octets { .. } | Value::Dict(_) | Value::Set(_) => Ok(None),
+            Value::Thing(_) => {
+                if self.read_class_member(subject.clone(), "keys", false).is_ok() { return Ok(None); }
+                match self.ask_special(subject, 10, &[])? {
+                    Some(count) => Ok(match count.settled() { Value::Small(n) if n >= 0 => Some(n as usize), _ => None }),
+                    None => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The value at one place of a row a pattern is taking apart.
+    fn case_row_item(&mut self, subject: &Value, at: usize) -> Result<Option<Value>, String> {
+        match subject {
+            Value::Vector(items) | Value::Tuple(items) | Value::Row(items) => Ok(items.get(at).cloned()),
+            Value::Progression(walk) => Ok(walk.item(&BigInt::from(at))),
+            Value::Thing(_) => Ok(self.ask_special(subject, 11, &[Value::Small(at as i64)])?.map(|item| item.settled())),
+            _ => Ok(None),
+        }
+    }
+
+    /// A run of places a starred part of a pattern binds, as a row.
+    fn case_row_slice(&mut self, subject: &Value, from: usize, count: usize) -> Result<Value, String> {
+        match subject {
+            Value::Vector(items) | Value::Tuple(items) | Value::Row(items) => Ok(Value::Vector(crate::tuples::Sequence::plain(items[from..from + count].to_vec()))),
+            _ => {
+                let mut items = Vec::with_capacity(count);
+                for at in from..from + count {
+                    if let Some(item) = self.case_row_item(subject, at)? { items.push(item); }
+                }
+                Ok(Value::Vector(crate::tuples::Sequence::plain(items)))
+            }
+        }
+    }
+
+    /// The entries of a map, or of a mapping of the program's own that
+    /// answers `keys`; every other subject is no mapping. A mapping of
+    /// the program's own has its keys matched the way a map's are.
+    fn case_mapping_store(&mut self, subject: &Value) -> Result<Option<Rc<crate::data::MapStore>>, String> {
+        let bare = subject.settled();
+        // A thing standing on a native map keeps that map as its worth;
+        // the entries of that map are what the pattern reads, through
+        // whatever member the thing has chosen to answer for them.
+        let under = self.underlying_unless(&bare, &[]).unwrap_or_else(|| bare.clone());
+        if let Value::Dict(entries) = &under { return Ok(Some(entries.clone())); }
+        if !matches!(bare, Value::Thing(_)) { return Ok(None); }
+        // A mapping of the program's own answers `keys`; one standing on
+        // a map of the builtin kind may answer it off the map itself.
+        let keys = match self.read_class_member(bare.clone(), "keys", false)
+            .ok().and_then(|method| self.apply_class_member(method, Vec::new()).ok())
+            .and_then(|walk| self.gathered_members(&walk).ok())
+        {
+            Some(keys) => keys,
+            None => match self.gathered_members(&bare) { Ok(keys) => keys, Err(_) => return Ok(None) },
+        };
+        let mut pairs = Vec::with_capacity(keys.len());
+        for key in keys {
+            let Some(value) = self.ask_special(&bare, 11, std::slice::from_ref(&key))? else { return Ok(None) };
+            pairs.push((self.hash_key(&key)?, value.settled()));
+        }
+        Ok(Some(Rc::new(crate::data::MapStore::from(pairs))))
+    }
+
     fn fit_case(&mut self, test: &crate::form::CaseTest, value: &Value, tuple: bool, given: &[Value]) -> Result<Option<HashMap<String, Value>>, String> {
         use crate::form::CaseTest;
         let unready = self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned();
@@ -13133,23 +13205,25 @@ impl<'a> Machine<'a> {
                     let inner = cell.borrow().clone();
                     return self.fit_case(test, &inner, tuple, given);
                 }
-                let Value::Vector(values) = value else { return Ok(None); };
-                let values = values.clone();
+                // A list, a tuple, a range and a row of the program's own
+                // are rows a pattern may take apart; text, bytes and a map
+                // are not. A row is read a place at a time, so one too long
+                // to hold is still only looked at where the pattern asks.
+                let bare = value.settled();
+                let Some(count) = self.case_row_length(&bare)? else { return Ok(None); };
                 let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
-                if values.len() < minimum { return Ok(None); }
-                if spread.is_none() && minimum != values.len() { return Ok(None); }
-                let mut position = 0;
+                if count < minimum { return Ok(None); }
+                if spread.is_none() && minimum != count { return Ok(None); }
+                let extra = count - minimum;
                 for (ordinal, member) in members.iter().enumerate() {
                     let next = match spread {
                         Some(star) if ordinal == *star => {
-                            let end = values.len() - (members.len() - ordinal - 1);
-                            let portion = Value::Vector(crate::tuples::Sequence::plain(values[position..end].to_vec()));
-                            position = end;
-                            portion
+                            if matches!(member, CaseTest::Ignore) { continue; }
+                            self.case_row_slice(&bare, ordinal, extra)?
                         }
                         _ => {
-                            let portion = values[position].clone();
-                            position += 1;
+                            let at = if spread.map_or(false, |s| ordinal > s) { ordinal + extra - 1 } else { ordinal };
+                            let Some(portion) = self.case_row_item(&bare, at)? else { return Ok(None); };
                             portion
                         }
                     };
@@ -13164,8 +13238,7 @@ impl<'a> Machine<'a> {
                     let inner = cell.borrow().clone();
                     return self.fit_case(test, &inner, tuple, given);
                 }
-                let Value::Dict(entries) = value else { return Ok(None); };
-                let entries = entries.clone();
+                let Some(entries) = self.case_mapping_store(value)? else { return Ok(None); };
                 let mut taken = Vec::new();
                 for (key, member) in pairs {
                     let wanted = match key {
@@ -13174,6 +13247,7 @@ impl<'a> Machine<'a> {
                         _ => return Err(unready),
                     };
                     let Some(at) = self.dict_place(&entries, &wanted)? else { return Ok(None); };
+                    if taken.contains(&at) { return Err("ValueError: mapping pattern checks duplicate key".to_owned()); }
                     let held = entries[at].1.clone();
                     match self.fit_case(member, &held, false, given)? {
                         None => return Ok(None),
@@ -13187,8 +13261,11 @@ impl<'a> Machine<'a> {
                 }
             }
             CaseTest::Shape { kind, positional, named } => {
-                let class = given[*kind].clone();
-                if !self.core_belongs(value, &class)? { return Ok(None); }
+                let class = given[*kind].settled();
+                // A subject kept in a cell is read through it: the kind a
+                // class pattern asks about is the value the name holds.
+                let asked = value.settled();
+                if !self.core_belongs(&asked, &class)? { return Ok(None); }
                 // A native kind arrives as the intrinsic or as the plain
                 // reading of its word; either stands for the whole subject
                 // with one positional test.
@@ -13212,6 +13289,21 @@ impl<'a> Machine<'a> {
                             if positional.len() > words.len() {
                                 let plural = if words.len() == 1 { "" } else { "s" };
                                 return Err(format!("TypeError: {title}() accepts {} positional sub-pattern{plural} ({} given)", words.len(), positional.len()));
+                            }
+                            // The same attribute may not be given twice, by
+                            // two places or by a place and a name.
+                            let mut used: Vec<String> = Vec::new();
+                            for word in words.iter().take(positional.len()) {
+                                let Value::Text(word) = word else { return Err("TypeError: __match_args__ elements must be strings".to_owned()) };
+                                if used.iter().any(|seen| seen == word.as_ref()) {
+                                    return Err(format!("TypeError: {title}() got multiple sub-patterns for attribute '{word}'"));
+                                }
+                                used.push(word.to_string());
+                            }
+                            for (word, _) in named {
+                                if used.iter().any(|seen| seen == word) {
+                                    return Err(format!("TypeError: {title}() got multiple sub-patterns for attribute '{word}'"));
+                                }
                             }
                             for (member, word) in positional.iter().zip(words.iter()) {
                                 let Value::Text(word) = word else { return Err("TypeError: __match_args__ elements must be strings".to_owned()) };

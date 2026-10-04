@@ -5931,6 +5931,7 @@ impl<'a> Builder<'a> {
         if self.look().shape != Shape::Open { return Err(self.bad_case()); }
         self.advance();
         let mut arms = Vec::new();
+        let mut unreachable = false;
         loop {
             self.skip_line_ends();
             if self.look().shape == Shape::Close { self.advance(); break; }
@@ -5940,6 +5941,9 @@ impl<'a> Builder<'a> {
                 }
                 return Err(self.bad_case());
             }
+            // A case whose test fits everything leaves no subject for a
+            // later case, which the reference refuses to read.
+            if unreachable { return Err(self.bad_case()); }
             self.advance();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
@@ -5960,6 +5964,7 @@ impl<'a> Builder<'a> {
             }
             if starts_wide && !separated { return Err(self.bad_case()); }
             let pattern = if separated { crate::form::CaseTest::Series { members, spread } } else { members.pop().unwrap() };
+            let falls_through = Self::irrefutable_case(&pattern);
             let names = pattern.names().map_err(|_| self.bad_case())?;
             let slots = names.into_iter().map(|name| {
                 let address = self.address_to_write(&name);
@@ -5967,11 +5972,16 @@ impl<'a> Builder<'a> {
             }).collect();
             let kinds = std::mem::take(&mut self.pattern_kinds);
             let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple, kinds };
+            let mut has_guard = false;
             if self.key("ext.stmt.match.guard") {
                 self.advance();
                 let guard = self.expr(0)?;
                 fits = self.choose(fits, guard, constant(Value::Flag(false)));
+                has_guard = true;
             }
+            // A guard keeps a case that fits everything from leaving the
+            // later cases with nothing to fit.
+            unreachable = falls_through && !has_guard;
             if !self.on_any("block.intro") { return Err(self.bad_case()); }
             let same_line = self.glance(1).row == self.look().row;
             let mut statements = vec![self.body()?];
@@ -6042,6 +6052,26 @@ impl<'a> Builder<'a> {
         Ok(CaseTest::Keep(word))
     }
 
+    /// Whether a case test fits every subject: a capture or a wildcard,
+    /// or an alternative of such. Such a test leaves nothing for a later
+    /// alternative or a later case to fit.
+    /// Whether two literal mapping keys are the same key. A flag is the
+    /// number it stands for, as a map's own keying has it.
+    fn key_alike(a: &Value, b: &Value) -> bool {
+        let plain = |v: &Value| match v { Value::Flag(flag) => Value::Small(i64::from(*flag)), other => other.clone() };
+        plain(a).equals(&plain(b))
+    }
+
+    fn irrefutable_case(test: &crate::form::CaseTest) -> bool {
+        use crate::form::CaseTest;
+        match test {
+            CaseTest::Ignore | CaseTest::Keep(_) => true,
+            CaseTest::Also { test, .. } => Self::irrefutable_case(test),
+            CaseTest::AnyOf(arms) => arms.iter().any(Self::irrefutable_case),
+            _ => false,
+        }
+    }
+
     fn pattern_choice(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let first = self.pattern_single()?;
@@ -6051,6 +6081,11 @@ impl<'a> Builder<'a> {
                 self.advance();
                 alternatives.push(self.pattern_single()?);
                 if !self.on_any("ext.stmt.match.or") { break; }
+            }
+            // An alternative that fits everything leaves no subject for
+            // the alternatives after it, which the reference refuses.
+            if alternatives[..alternatives.len() - 1].iter().any(Self::irrefutable_case) {
+                return Err(self.bad_case());
             }
             CaseTest::AnyOf(alternatives)
         } else { first };
@@ -6117,19 +6152,55 @@ impl<'a> Builder<'a> {
         (end, last.end_row.max(last.row))
     }
 
+    /// A signed numeral in a pattern, answering whether it names an
+    /// imaginary part. A minus before an imaginary part is a complex of
+    /// its own, so both coordinates are turned apart.
+    fn pattern_number(&mut self) -> Res<(Value, bool)> {
+        let table = self.table;
+        let below = self.on_any("op.sub");
+        if below { self.advance(); }
+        if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+        let text = self.advance().lexeme;
+        let letters = table.letters("ext.lexical.number.imaginary");
+        let imaginary = text.chars().next_back().map_or(false, |c| letters.contains(&c));
+        let number = numeral(&text, table)?;
+        if !below { return Ok((number, imaginary)); }
+        let turned = if imaginary {
+            let (real, sole) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
+            crate::complex::pair(table, -real, -sole)
+        } else {
+            math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??
+        };
+        Ok((turned, imaginary))
+    }
+
     fn pattern_single(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let table = self.table;
         if self.look().shape == Shape::Numeral || self.on_any("op.sub") {
-            let negative = self.on_any("op.sub");
-            if negative { self.advance(); }
-            if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
-            let text = self.advance().lexeme;
-            let mut number = numeral(&text, table)?;
-            if negative {
-                number = math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??;
+            let (mut number, mut imaginary) = self.pattern_number()?;
+            // A real part met by a plus or a minus and an imaginary part
+            // makes a complex literal; every other pairing is refused.
+            while self.on_any("op.add") || self.on_any("op.sub") {
+                if imaginary { return Err(self.bad_case()); }
+                let below = self.on_any("op.sub");
+                self.advance();
+                let (part, part_imaginary) = self.pattern_number()?;
+                if !part_imaginary { return Err(self.bad_case()); }
+                let (real, _) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
+                let (_, sole) = crate::complex::coordinates(&part).ok_or_else(|| self.bad_case())?;
+                number = crate::complex::pair(table, real, if below { -sole } else { sole });
+                imaginary = true;
             }
             return Ok(CaseTest::Equal(number));
+        }
+        if self.look().shape == Shape::ByteQuote {
+            let mut octets = Vec::new();
+            while self.look().shape == Shape::ByteQuote {
+                octets.extend(self.advance().lexeme.chars().map(|c| c as u8));
+            }
+            return Ok(CaseTest::Equal(Value::Octets { cell: Rc::new(std::cell::RefCell::new(octets)), changeable: false,
+                lead: Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()) }));
         }
         if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
             let mut numbers = Vec::new();
@@ -6188,6 +6259,13 @@ impl<'a> Builder<'a> {
                 } else {
                     let key = self.pattern_single()?;
                     if !matches!(key, CaseTest::Equal(_) | CaseTest::Worth(_)) { return Err(self.bad_case()); }
+                    // A key a literal already written down equals is refused
+                    // as a duplicate; a key read ahead is left to the fit.
+                    if let CaseTest::Equal(value) = &key {
+                        for (old, _) in &pairs {
+                            if matches!(old, CaseTest::Equal(prev) if Self::key_alike(prev, value)) { return Err(self.bad_case()); }
+                        }
+                    }
                     self.need_sign(table.single("syntax.map.pair").unwrap_or_default(), "between a key and its pattern")?;
                     pairs.push((key, self.pattern_choice()?));
                 }

@@ -8769,6 +8769,78 @@ impl<'a> Engine<'a> {
     /// names -- stand in `given` by their place. A tuple subject may be
     /// taken apart but not kept whole: the kernel has no tuple value to
     /// hand over in its stead.
+    /// Whether a subject is a row a sequence pattern may take apart,
+    /// and how many places it holds. Text, bytes and a bytearray are
+    /// not, and neither is a map nor a set nor a thing that answers
+    /// `keys`; a row too long for a machine word answers nothing.
+    fn pattern_row_length(&mut self, subject: &Value) -> Res<Option<usize>> {
+        match subject {
+            Value::Array(items) | Value::Tuple(items) => Ok(Some(items.len())),
+            Value::Counted(span) => Ok(span.length().to_usize()),
+            Value::Text(_) | Value::Bytes(..) | Value::Map(_) | Value::Set(_) => Ok(None),
+            Value::Object(_) => {
+                if self.class_get(subject.clone(), "keys", false).is_ok() { return Ok(None); }
+                if self.special_method(subject, 10).is_none() { return Ok(None); }
+                match self.special_call(subject, 10, Vec::new())? {
+                    Some(count) => Ok(match count.contents() { Value::Small(n) if n >= 0 => Some(n as usize), _ => None }),
+                    None => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The value at one place of a row a pattern is taking apart.
+    fn pattern_row_item(&mut self, subject: &Value, at: usize) -> Res<Option<Value>> {
+        match subject {
+            Value::Array(items) | Value::Tuple(items) => Ok(items.get(at).cloned()),
+            Value::Counted(span) => Ok(span.at(BigInt::from(at as i64))),
+            Value::Object(_) => Ok(self.special_call(subject, 11, vec![Value::Small(at as i64)])?.map(|item| item.contents())),
+            _ => Ok(None),
+        }
+    }
+
+    /// A run of places a starred part of a pattern binds, as a row.
+    fn pattern_row_slice(&mut self, subject: &Value, from: usize, count: usize) -> Res<Value> {
+        match subject {
+            Value::Array(items) | Value::Tuple(items) => Ok(Value::Array(crate::tuples::Items::plain(items[from..from + count].to_vec()))),
+            _ => {
+                let mut items = Vec::with_capacity(count);
+                for at in from..from + count {
+                    if let Some(item) = self.pattern_row_item(subject, at)? { items.push(item); }
+                }
+                Ok(Value::Array(crate::tuples::Items::plain(items)))
+            }
+        }
+    }
+
+    /// The entries of a map, of a thing keeping a map of a builtin kind
+    /// as its worth, or of a mapping of the program's own answering
+    /// `keys`; every other subject is no mapping.
+    fn pattern_mapping_pairs(&mut self, subject: &Value) -> Res<Option<Vec<(Value, Value)>>> {
+        let base = subject.contents();
+        // A thing standing on a native map keeps that map as its worth;
+        // a thing standing on some other kind keeps that kind's worth,
+        // which is no map, and is read through `keys` as any mapping is.
+        let bare = match Self::worth_of(&base) {
+            Some(worth) if matches!(worth.contents(), Value::Map(_)) => worth.contents(),
+            _ => base,
+        };
+        if let Value::Map(pairs) = &bare {
+            return Ok(Some(pairs.iter().map(|(key, value)| (key.clone(), value.clone())).collect()));
+        }
+        if !matches!(bare, Value::Object(_)) { return Ok(None); }
+        let Ok(keys_method) = self.class_get(bare.clone(), "keys", false) else { return Ok(None) };
+        let Ok(keys) = self.class_apply(keys_method, Vec::new()) else { return Ok(None) };
+        let Ok(keys) = self.special_items(&keys) else { return Ok(None) };
+        let mut pairs = Vec::with_capacity(keys.len());
+        for key in keys {
+            let Some(value) = self.special_call(&bare, 11, vec![key.clone()])? else { return Ok(None) };
+            pairs.push((key, value.contents()));
+        }
+        Ok(Some(pairs))
+    }
+
     fn fit_pattern(&mut self, pattern: &crate::code::Pattern, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool, given: &[Value]) -> Flow<bool> {
         use crate::code::Pattern;
         let unready = self.lang.match_unready.first().cloned().unwrap_or_default();
@@ -8792,26 +8864,35 @@ impl<'a> Engine<'a> {
             }
             Pattern::Sequence(parts, star) => {
                 if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
-                let Value::Array(items) = subject else { return Ok(false); };
-                let items = items.clone();
+                // Text, bytes and a bytearray are not rows a pattern may
+                // take apart, and neither is a map nor a set; a list, a
+                // tuple, a range and a row of the program's own are, and
+                // are read a place at a time rather than all at once, so
+                // that a row too long to hold is still only looked at
+                // where the pattern asks.
+                let bare = subject.contents();
+                let Some(count) = self.pattern_row_length(&bare)? else { return Ok(false); };
                 let fixed = parts.len() - usize::from(star.is_some());
-                if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
-                let extra = items.len() - fixed;
+                if count < fixed || (star.is_none() && count != fixed) { return Ok(false); }
+                let extra = count - fixed;
                 for (i, part) in parts.iter().enumerate() {
-                    let held = if *star == Some(i) {
-                        Value::Array(crate::tuples::Items::plain(items[i..i + extra].to_vec()))
+                    if *star == Some(i) {
+                        // A starred part binding nothing needs no row of its
+                        // own: the places it would hold are never looked at.
+                        if matches!(part, Pattern::Any) { continue; }
+                        let held = self.pattern_row_slice(&bare, i, extra)?;
+                        if !self.fit_pattern(part, &held, bound, false, given)? { return Ok(false); }
                     } else {
                         let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
-                        items[at].clone()
-                    };
-                    if !self.fit_pattern(part, &held, bound, false, given)? { return Ok(false); }
+                        let Some(held) = self.pattern_row_item(&bare, at)? else { return Ok(false); };
+                        if !self.fit_pattern(part, &held, bound, false, given)? { return Ok(false); }
+                    }
                 }
                 Ok(true)
             }
             Pattern::Mapping(pairs, rest) => {
                 if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
-                let Value::Map(store) = subject else { return Ok(false) };
-                let store = store.clone();
+                let Some(store) = self.pattern_mapping_pairs(subject)? else { return Ok(false) };
                 let mut taken = Vec::new();
                 for (key, part) in pairs {
                     let wanted = match key {
@@ -8819,8 +8900,9 @@ impl<'a> Engine<'a> {
                         Pattern::Value(at) => given[*at].clone(),
                         _ => return Err(unready.into()),
                     };
-                    let (found, _) = self.map_locate(&store, Some(&store), &wanted)?;
+                    let (found, _) = self.map_locate(&store, None, &wanted)?;
                     let Some(at) = found else { return Ok(false) };
+                    if taken.contains(&at) { return Err("ValueError: mapping pattern checks duplicate key".into()); }
                     let entry = store[at].1.clone();
                     if !self.fit_pattern(part, &entry, bound, false, given)? { return Ok(false); }
                     taken.push(at);
@@ -8832,8 +8914,11 @@ impl<'a> Engine<'a> {
                 Ok(true)
             }
             Pattern::Class(at, positional, keyed) => {
-                let kind = given[*at].clone();
-                if !self.core_isinstance(subject, &kind)? { return Ok(false); }
+                let kind = given[*at].contents();
+                // A subject kept in a cell is read through it: the kind
+                // a class pattern asks about is the value the name holds.
+                let asked = subject.contents();
+                if !self.core_isinstance(&asked, &kind)? { return Ok(false); }
                 // A builtin kind comes as the native value or as the plain
                 // reading of its word; either stands for the whole subject
                 // with a single positional sub-pattern.
@@ -8857,6 +8942,21 @@ impl<'a> Engine<'a> {
                         Some(Value::Tuple(names)) | Some(Value::Array(names)) => {
                             if positional.len() > names.len() {
                                 return Err(format!("TypeError: {title}() accepts {} positional sub-pattern{} ({} given)", names.len(), if names.len() == 1 { "" } else { "s" }, positional.len()).into());
+                            }
+                            // The same attribute may not be given twice, by
+                            // two places or by a place and a name.
+                            let mut taken_names: Vec<String> = Vec::new();
+                            for name in names.iter().take(positional.len()) {
+                                let Value::Text(word) = name else { return Err("TypeError: __match_args__ elements must be strings".into()) };
+                                if taken_names.iter().any(|seen| seen == word.as_ref()) {
+                                    return Err(format!("TypeError: {title}() got multiple sub-patterns for attribute '{word}'").into());
+                                }
+                                taken_names.push(word.to_string());
+                            }
+                            for (word, _) in keyed {
+                                if taken_names.iter().any(|seen| seen == word) {
+                                    return Err(format!("TypeError: {title}() got multiple sub-patterns for attribute '{word}'").into());
+                                }
                             }
                             for (part, name) in positional.iter().zip(names.iter()) {
                                 let Value::Text(word) = name else { return Err("TypeError: __match_args__ elements must be strings".into()) };
