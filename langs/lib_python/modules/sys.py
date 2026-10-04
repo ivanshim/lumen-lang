@@ -266,7 +266,29 @@ def intern(string):
         raise 'TypeError: intern() argument must be str'
     return string
 
+# The builtin kinds whose rough count below stands for them and their
+# subclasses that say nothing of their own measurement.
+_sizeof_bases = (str, list, int, float, bytes, bytearray, tuple, set,
+                 frozenset, dict, bool, complex)
+
+
 def getsizeof(value, default=None):
+    # A type of the program's own may say how it is measured, and its
+    # answer is honoured before any rough count. The reference asks the
+    # type's own method, never an attribute set on the instance, and
+    # requires a non-negative integer.
+    for base in type(value).__mro__:
+        if base is object or base in _sizeof_bases:
+            break
+        if '__sizeof__' in base.__dict__:
+            measured = type(value).__sizeof__(value)
+            if not isinstance(measured, int):
+                raise TypeError('__sizeof__() should return int, got ' + type(measured).__name__)
+            if measured < 0:
+                if default is not None:
+                    return default
+                raise ValueError('__sizeof__() should return >= 0')
+            return measured
     # A rough count of the value's payload and its enclosing record.
     if isinstance(value, str):
         largest = max((ord(char) for char in value), default=0)
@@ -279,13 +301,6 @@ def getsizeof(value, default=None):
         return 28
     if isinstance(value, float):
         return 24
-    # A type of the program's own may say how it is measured; the
-    # reference asks the very method the object carries for that.
-    for kind in type(value).__mro__:
-        if kind is object:
-            break
-        if '__sizeof__' in kind.__dict__:
-            return value.__sizeof__()
     return 16
 
 class UnraisableHookArgs:

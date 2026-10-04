@@ -12886,6 +12886,14 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            Value::Wrapped(3, parts) if !self.rules.detail_main.is_empty() => {
+                let named = match parts.first() {
+                    Some(Value::Routine(code) | Value::Bound(code, _)) => if code.qualification.is_empty() { code.ident.clone() } else { code.qualification.clone() },
+                    _ => String::new(),
+                };
+                let of = match parts.get(1) { Some(receiver) => self.object_words(receiver, true)?, None => String::new() };
+                Ok(format!("<bound method {named} of {of}>"))
+            }
             // A bound method is written by the routine's own full name
             // and the thing it is bound to, as CPython writes it; a
             // language with no word for the running module keeps the
@@ -19043,6 +19051,11 @@ impl<'a> Machine<'a> {
                 if let [value @ Value::Unpaired(_)] = v { return Ok(value.clone()); }
                 n(1)?;
                 self.figures_allowed(&v[0])?;
+                // A bound method (or a method closure) is written by the
+                // thing it is bound to, which only the program can word.
+                if matches!(&v[0], Value::Wrapped(3, _) | Value::Method(..)) {
+                    return self.object_words(&v[0], false).map(|text| Value::text(&text));
+                }
                 Value::text(&self.told(&v[0], w))
             }
             Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
@@ -24247,6 +24260,13 @@ impl Machine<'_> {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
             Quoted => {
                 require(1, 1)?;
+                // A bound method or a method closure is written by the thing
+                // it is bound to, whose own __repr__ may only run where the
+                // program does; the plain quoting road cannot reach it.
+                if portion.is_none() && matches!(input[0], Value::Wrapped(3, _) | Value::Method(..)) {
+                    let rendered = self.object_words(&input[0], true)?;
+                    return Ok(Value::text(&rendered));
+                }
                 if portion.is_none() && matches!(input[0], Value::Vector(_) | Value::Tuple(_)) {
                     let rendered = self.object_words(&input[0], true)?;
                     return Ok(Value::text(&rendered));

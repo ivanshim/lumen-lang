@@ -556,32 +556,37 @@ _repr_factories = set()
 
 
 class defaultdict(dict):
+    # The factory is kept in a slot the class alone names, apart from any
+    # attribute a subclass may define, the way the reference keeps it in
+    # a member of its own.
+    __slots__ = ('_defaultdict__factory',)
+
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
 
     def __init__(self, default_factory=None, *args, **kwargs):
         if default_factory is not None and not callable(default_factory):
             raise TypeError('first argument must be callable or None')
-        self._factory = default_factory
+        self._defaultdict__factory = default_factory
         super().__init__(*args, **kwargs)
 
     @property
     def default_factory(self):
-        return self._factory
+        return self._defaultdict__factory
 
     @default_factory.setter
     def default_factory(self, factory):
-        self._factory = factory
+        self._defaultdict__factory = factory
 
     @default_factory.deleter
     def default_factory(self):
-        self._factory = None
+        self._defaultdict__factory = None
 
     def __getitem__(self, key):
         return dict.__getitem__(self, key)
 
     def __missing__(self, key):
-        factory = self._factory
+        factory = self._defaultdict__factory
         if factory is None:
             raise KeyError(key)
         value = factory()
@@ -589,7 +594,7 @@ class defaultdict(dict):
 
     def __repr__(self):
         inside = dict.__repr__(self)
-        factory = self._factory
+        factory = self._defaultdict__factory
         if factory is None:
             shown = 'None'
         else:
@@ -605,7 +610,7 @@ class defaultdict(dict):
         return '%s(%s, %s)' % (type(self).__name__, shown, inside)
 
     def copy(self):
-        return type(self)(self._factory, self)
+        return type(self)(self._defaultdict__factory, self)
 
     def __copy__(self):
         return self.copy()
@@ -613,22 +618,22 @@ class defaultdict(dict):
     def __or__(self, other):
         if not isinstance(other, dict):
             return NotImplemented
-        new = type(self)(self._factory, self)
+        new = type(self)(self._defaultdict__factory, self)
         dict.update(new, other)
         return new
 
     def __ror__(self, other):
         if not isinstance(other, dict):
             return NotImplemented
-        new = type(self)(self._factory, other)
+        new = type(self)(self._defaultdict__factory, other)
         dict.update(new, self)
         return new
 
     def __reduce__(self):
-        if self._factory is None:
+        if self._defaultdict__factory is None:
             args = ()
         else:
-            args = (self._factory,)
+            args = (self._defaultdict__factory,)
         return type(self), args, None, None, iter(self.items())
 
 
