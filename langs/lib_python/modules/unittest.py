@@ -1088,6 +1088,9 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
         selected = _select_tests(suite, only)
         suite = TestSuite() if selected is None else selected
         suite.module_namespace = namespace
+        # Named CI selections always emit one progress marker per method,
+        # even when a reference file explicitly requests verbose output.
+        verbosity = 1
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)

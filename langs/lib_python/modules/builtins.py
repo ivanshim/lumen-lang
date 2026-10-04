@@ -187,6 +187,7 @@ class _HostFile:
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
         self.errors = errors if errors is not None else 'strict'
         self.closed = False
+        self._descriptor = None
         self._pos = 0
         self._dirty = False
         # Line-at-a-time reading is what both the reference tests and
@@ -377,11 +378,26 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', self.name)
             self._dirty = False
 
+    def fileno(self):
+        self._open()
+        self.flush()
+        import posix
+        if self._descriptor is None:
+            flags = posix.O_RDWR if '+' in self.mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
+            self._descriptor = posix.open(self.name, flags)
+        position = self._pos if self._binary else len(self._buffer[:self._pos].encode(self.encoding, self.errors))
+        posix.lseek(self._descriptor, position, 0)
+        return self._descriptor
+
     def close(self):
         if self.closed:
             return
         if self.writable():
             self.flush()
+        if self._descriptor is not None:
+            import posix
+            posix.close(self._descriptor)
+            self._descriptor = None
         self.closed = True
 
     def __enter__(self):

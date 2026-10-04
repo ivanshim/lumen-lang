@@ -72,10 +72,7 @@ class MappingProxyType:
         return gathered
 
     def copy(self):
-        copied = {}
-        for key in list(self._mapping):
-            copied[key] = self._mapping[key]
-        return copied
+        return self._mapping.copy()
 
     def __eq__(self, other):
         if isinstance(other, MappingProxyType):
