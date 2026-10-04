@@ -431,6 +431,19 @@ class StringIO(_TextIOBase):
     def readline(self, size=-1):
         size = _size(size)
         self._checkClosed()
+        if self._newline != '':
+            start = self._pos
+            end = len(self._text)
+            if start >= end:
+                return ''
+            newline = self._newline or '\n'
+            found = self._text.find(newline, start)
+            if found >= 0:
+                end = found + len(newline)
+            if size >= 0:
+                end = min(end, start + size)
+            self._pos = end
+            return self._text[start:end]
         data = self._text[self._pos:]
         end = len(data)
         if self._newline == '':

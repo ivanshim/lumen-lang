@@ -525,6 +525,7 @@ pub struct Machine<'a> {
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
+    world_positions: RefCell<HashMap<usize, Option<usize>>>,
     reaping: bool,
     loose_entries: RefCell<HashMap<(String, String), Value>>,
     /// Routines whose spare arguments or code the program wrote over,
@@ -1580,7 +1581,7 @@ impl<'a> Machine<'a> {
             body_namespace: None,
             code_kind: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), world_positions: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -10586,13 +10587,30 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let wanted = Rc::as_ptr(body);
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
-            crate::ghost::Ghost::Bound(code, room) => code.as_ptr() == wanted && code.strong_count() != 0 && room.strong_count() != 0,
-            crate::ghost::Ghost::Routine(code) => code.as_ptr() == wanted && code.strong_count() != 0,
+        let address = Rc::as_ptr(body) as usize;
+        let live = |candidate: &crate::ghost::Ghost| match candidate {
+            crate::ghost::Ghost::Bound(code, room) => code.as_ptr() as usize == address && code.strong_count() != 0 && room.strong_count() != 0,
+            crate::ghost::Ghost::Routine(code) => code.as_ptr() as usize == address && code.strong_count() != 0,
             _ => false,
-        })?;
-        let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
+        };
+        let remembered = if self.names_in_calls { self.world_positions.borrow().get(&address).copied() } else { None };
+        let slot;
+        if let Some(cached) = remembered {
+            match cached {
+                None => return None,
+                Some(position) if self.routine_members.get(position).is_some_and(|(key, _)| live(key)) => slot = position,
+                _ => {
+                    let replacement = self.routine_members.iter().position(|(key, _)| live(key));
+                    self.world_positions.borrow_mut().insert(address, replacement);
+                    slot = replacement?;
+                }
+            }
+        } else {
+            let located = self.routine_members.iter().position(|(key, _)| live(key));
+            if self.names_in_calls { self.world_positions.borrow_mut().insert(address, located); }
+            slot = located?;
+        }
+        let worth = self.routine_members[slot].1.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
         else { None }
@@ -20185,11 +20203,16 @@ impl<'a> Machine<'a> {
         if let Value::Span(bounds) = at {
             if let Value::Text(text) = target {
                 if self.rules.indexed_text {
-                    let size = text.chars().count();
+                    let width_is_one = text.is_ascii();
+                    let size = if width_is_one { text.len() } else { text.chars().count() };
                     let (limits, _, contiguous) = self.span_edges(bounds, size)?;
                     if contiguous {
                         if limits[1] <= limits[0] { return Ok(Value::text("")); }
                         if limits == [0, size as i128] { return Ok(target.clone()); }
+                        if width_is_one {
+                            let window = limits[0] as usize..limits[1] as usize;
+                            return Ok(Value::text(&text[window]));
+                        }
                         let selected: String = text.chars().skip(limits[0] as usize)
                             .take((limits[1] - limits[0]) as usize).collect();
                         return Ok(Value::text(&selected));

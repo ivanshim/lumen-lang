@@ -1696,10 +1696,10 @@ impl<'a> Engine<'a> {
             return self.call_descriptor(&value, reader, vec![subject.unwrap_or(Value::Null), Value::Class(class)]);
         }
         match (value,subject) {
+            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::method(o,f)),
             (Value::Routine(f), Some(receiver)) if self.lang.bind_names => {
                 Ok(Self::adapter(131, vec![Value::Routine(f), receiver]))
             }
-            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::method(o,f)),
             (Value::Routine(f),Some(other)) => Ok(Self::adapter(3, vec![Value::Routine(f), other])),
             (v,_) => Ok(v),
         }
@@ -1743,6 +1743,19 @@ impl<'a> Engine<'a> {
         let subject = if !self.lang.class_builder.is_empty() {
             match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
         } else { subject };
+        if self.lang.bind_names && !name.starts_with("__") {
+            if let Value::Object(instance) = &subject {
+                let class = instance.class_now();
+                let slotted = class.declares_slots || class.lineage.iter().any(|base| base.declares_slots);
+                if slotted && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
+                    if let Some(Value::Adapter(slot)) = self.class_value(&class, name) {
+                        if slot.0 == 16 {
+                            if let Ok(value) = self.slot_read(&subject, &slot.1) { return Ok(value); }
+                        }
+                    }
+                }
+            }
+        }
         if let Value::Object(code) = &subject {
             if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &code.class_now()))
                 && self.lang.class_details.get("code.replace").and_then(|words| words.first()).is_some_and(|word| word == name) {
@@ -2791,6 +2804,7 @@ impl<'a> Engine<'a> {
         fresh
     }
     fn function_storage(&mut self, function: &Value) -> usize {
+        self.constructor_indices.borrow_mut().clear();
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
         let class = self.root_class();
         self.made += 1;

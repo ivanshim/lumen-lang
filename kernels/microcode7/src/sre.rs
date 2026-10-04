@@ -233,7 +233,11 @@ impl Regex<'_> {
 }
 pub fn invoke(input: &[Value]) -> Result<Value, String> {
     fn integer(v: &Value) -> Result<i64, String> {
-        v.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: regular expression code size limit exceeded"))
+        match v {
+            Value::Small(whole) => Ok(*whole),
+            Value::Flag(truth) => Ok(if *truth { 1 } else { 0 }),
+            other => other.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: regular expression code size limit exceeded")),
+        }
     }
     let action = input.first().map(integer).transpose()?.unwrap_or(-1);
     if action == 6 { return Ok(Value::text(character_category(integer(&input[1])? as u32))); }

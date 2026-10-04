@@ -1766,10 +1766,6 @@ impl<'a> Machine<'a> {
         if let Some(reader)=self.protocol_entry(&entry,"descriptor.get") {
             return self.through_descriptor(&entry,reader,vec![receiver.unwrap_or(Value::Nil),Value::Blueprint(owner)]);
         }
-        if self.names_in_calls && matches!(entry, Value::Routine(_) | Value::Bound(..)) {
-            if let Some(instance) = receiver { return Ok(Self::wrap(3, vec![entry, instance])); }
-            return Ok(entry);
-        }
         match receiver {
             Some(Value::Thing(t))=>match entry {Value::Routine(code)=>Ok(Value::method(code, t)),Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,Value::Thing(t)])),_=>Ok(entry)},
             Some(other) if matches!(entry,Value::Routine(_)|Value::Bound(..))=>Ok(Self::wrap(3,vec![entry,other])),
@@ -2159,6 +2155,7 @@ impl<'a> Machine<'a> {
         fresh
     }
     fn routine_storage(&mut self, code: &Value) -> usize {
+        self.world_positions.borrow_mut().clear();
         match self.routine_members.iter().position(|(candidate, _)| candidate.revive().is_some_and(|key| key.equals(code))) {
             Some(found) => found,
             None => {
@@ -2264,6 +2261,21 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         let value = if self.table.has_any("ext.stmt.class.builder") { value.settled() } else { value };
+        if self.names_in_calls && !key.starts_with("__") {
+            let slot = match &value {
+                Value::Thing(thing) => {
+                    let blueprint = thing.blueprint();
+                    let has_slots = blueprint.has_slot_storage || blueprint.ancestry.iter().any(|base| base.has_slot_storage);
+                    if has_slots && (direct || self.inherited_entry(&blueprint, self.detail("get")).is_none()) {
+                        self.inherited_entry(&blueprint, key)
+                    } else { None }
+                }
+                _ => None,
+            };
+            if let Some(Value::Wrapped(32, layout)) = slot {
+                if let Ok(stored) = self.slot_value(&value, &layout) { return Ok(stored); }
+            }
+        }
         if let Value::Thing(item) = &value {
             let replace = self.table.strings("ext.stmt.class.detail.code.replace").first();
             if replace.is_some_and(|word| word == key) && self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {

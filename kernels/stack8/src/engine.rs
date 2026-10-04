@@ -113,6 +113,7 @@ pub struct Engine<'a> {
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
+    constructor_indices: RefCell<HashMap<usize, Option<usize>>>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     lang: &'a Lang,
@@ -1236,7 +1237,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), constructor_indices: RefCell::new(HashMap::new()), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             native_exceptions,
             lang,
             world,
@@ -3563,7 +3564,19 @@ impl<'a> Engine<'a> {
     }
 
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value.revive(), Some(Value::Routine(code)) if Rc::ptr_eq(&code, program)))?;
+        let same = |held: &crate::faint::Hold| matches!(held.revive(), Some(Value::Routine(code)) if Rc::ptr_eq(&code, program));
+        let pointer = Rc::as_ptr(program) as usize;
+        let known = self.lang.bind_names.then(|| self.constructor_indices.borrow().get(&pointer).copied()).flatten();
+        let index = match known {
+            Some(None) => return None,
+            Some(Some(at)) if self.function_members.get(at).is_some_and(|(held, _)| same(held)) => at,
+            _ => {
+                let found = self.function_members.iter().position(|(held, _)| same(held));
+                if self.lang.bind_names { self.constructor_indices.borrow_mut().insert(pointer, found); }
+                found?
+            }
+        };
+        let holder = &self.function_members[index].1;
         let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
         match book {
             Value::Bond(cell) | Value::Binding(cell) => Some(cell),
@@ -13543,11 +13556,13 @@ impl<'a> Engine<'a> {
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
-                let length = text.chars().count();
+                let ascii = text.is_ascii();
+                let length = if ascii { text.len() } else { text.chars().count() };
                 let (first, last, step) = self.slice_edges(parts, length)?;
                 if step == 1 {
                     if first >= last { return Ok(Value::text("")); }
                     if first == 0 && last == length as i128 { return Ok(target.clone()); }
+                    if ascii { return Ok(Value::text(&text[first as usize..last as usize])); }
                     let from = text.char_indices().nth(first as usize).map_or(text.len(), |(byte, _)| byte);
                     let until = text.char_indices().nth(last as usize).map_or(text.len(), |(byte, _)| byte);
                     return Ok(Value::text(&text[from..until]));

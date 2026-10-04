@@ -240,7 +240,12 @@ impl Machine<'_> {
 }
 
 pub fn call(args: &[Value]) -> Result<Value, String> {
-    let number = |i: usize| -> Result<i64, String> { args.get(i).and_then(|v| v.as_big().ok().and_then(|n| n.to_i64())).ok_or_else(|| "TypeError: SRE argument must be an integer".into()) };
+    let number = |i: usize| -> Result<i64, String> {
+        args.get(i).and_then(|v| match v {
+            Value::Small(n) => Some(*n), Value::Flag(flag) => Some(i64::from(*flag)),
+            _ => v.as_big().ok().and_then(|n| n.to_i64()),
+        }).ok_or_else(|| "TypeError: SRE argument must be an integer".into())
+    };
     let op = number(0)?;
     if op == 6 {
         return Ok(Value::text(general_category(number(1)? as u32)));
@@ -257,7 +262,13 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     if args.len() != if op == 7 { 6 } else { 8 } { return Err("TypeError: invalid SRE matcher argument count".into()); }
     let Value::Array(items) = args[1].contents() else { return Err("TypeError: SRE code must be a list".into()) };
     let mut code = Vec::with_capacity(items.len());
-    for item in items.iter() { code.push(u32::try_from(item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?); }
+    for item in items.iter() {
+        let word = match item {
+            Value::Small(n) => *n, Value::Flag(flag) => i64::from(*flag),
+            _ => item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?,
+        };
+        code.push(u32::try_from(word).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?);
+    }
     let text = args[2].contents().text_codes().ok_or_else(|| "TypeError: SRE input must be text".to_string())?;
     let start = number(3)?.max(0) as usize;
     let end = (number(4)?.max(0) as usize).min(text.len());
