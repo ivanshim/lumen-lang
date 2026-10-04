@@ -14,6 +14,7 @@ pub enum Shape {
     Woven,
     WovenEnd,
     Field,
+    FieldText,
     Unheld,
     CharacterRow,
     EscapeNotice,
@@ -573,24 +574,20 @@ fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Toke
 
 /// The marks and letters opening a string, found before names are cut.
 fn quoted_start(src: &[char], offset: usize, table: &Table) -> Option<(usize, Vec<char>, bool, bool)> {
-    let quotes = table.letters("lexical.string_quotes");
+    let quotes = &table.quoted_letters;
     let mut flags = 0u8;
     let mut begin = offset;
     while !quotes.contains(src.get(begin)?) {
         if begin - offset >= 2 { return None; }
-        let letter = src[begin].to_string();
-        let kind = ["raw", "bytes", "plain", "format"].iter().position(|part|
-            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))
-            .or_else(|| table.spells("ext.lexical.string.prefix.template", &letter).then_some(3))?;
+        let kind = table.quoted_prefixes.iter().find(|(letter, _)| *letter == src[begin])?.1.min(3);
         let bit = 1 << kind;
         if flags & bit != 0 { return None; }
         flags |= bit;
         begin += 1;
     }
     if begin - offset == 2 && flags != 3 && flags != 9 { return None; }
-    let ending = table.strings("ext.lexical.string.long").iter()
-        .map(|s| s.chars().collect::<Vec<_>>()).filter(|s| src[begin..].starts_with(s))
-        .max_by_key(Vec::len).unwrap_or_else(|| vec![src[begin]]);
+    let ending = table.quoted_terminators.iter().filter(|s| src[begin..].starts_with(s))
+        .max_by_key(|s| s.len()).cloned().unwrap_or_else(|| vec![src[begin]]);
     Some((begin + ending.len(), ending, flags & 1 != 0, flags & 8 != 0))
 }
 
@@ -608,11 +605,9 @@ fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String>
     let mut seen = 0u8;
     let mut duplicate = false;
     let mut at = offset;
-    let quotes = table.letters("lexical.string_quotes");
+    let quotes = &table.quoted_letters;
     while !quotes.contains(src.get(at)?) {
-        let character = src[at].to_string();
-        let family = ["raw", "bytes", "plain", "format", "template"]
-            .iter().position(|name| table.spells(&format!("ext.lexical.string.prefix.{name}"), &character))?;
+        let family = table.quoted_prefixes.iter().find(|(letter, _)| *letter == src[at])?.1;
         let bit = 1u8 << family;
         duplicate |= seen & bit != 0;
         seen |= bit;
@@ -1035,6 +1030,7 @@ impl Quotation<'_> {
             return Err(self.field_fault(issue, &[]));
         }
         self.token(Shape::Field, convert);
+        self.token(Shape::FieldText, code.clone());
         let left = self.table.single("syntax.group.open").ok_or_else(|| self.bad())?.to_owned();
         let right = self.table.single("syntax.group.close").ok_or_else(|| self.bad())?.to_owned();
         self.token(Shape::Sign, left);
@@ -1061,7 +1057,7 @@ impl Quotation<'_> {
             t
         }));
         self.token(Shape::Sign, right);
-        self.token(Shape::Woven, template.map(|c| c.to_string()).unwrap_or_default());
+        self.token(Shape::Woven, String::new());
         let mut noticed = false;
         let mut specification = String::new();
         let mut missing = false;

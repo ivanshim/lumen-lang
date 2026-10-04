@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/locale.py; PSF License.
 """Locale support module.
 
 The module provides low-level access to the C lib's locale APIs and adds high

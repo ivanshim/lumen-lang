@@ -294,6 +294,7 @@ pub struct Builder<'a> {
     annotation_lookup: bool,
     annotation_owner: Option<(String, Vec<String>)>,
     generic_class_body: bool,
+    generic_class_parameters: Vec<String>,
     annotations_as_strings: bool,
     annotation_sites: Vec<(String, usize)>,
     module_site_flags: HashMap<usize, String>,
@@ -450,7 +451,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
 /// wanted is only which names the text as a whole has ever declared
 /// `global`, not where, so a walk that never enters or leaves a scope
 /// answers it well enough.
-fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
+pub(crate) fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
     let sep = table.single("syntax.call.separator");
     let mut names = Vec::new();
     let mut i = 0;
@@ -572,7 +573,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -683,6 +684,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
+                        if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
                         stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
                     }
                 }
@@ -2147,6 +2149,7 @@ impl<'a> Builder<'a> {
             _ => return None,
         };
         if self.tokens.get(named)?.shape != Shape::Bare { return None; }
+        if head == "type" && !word(named).chars().next().is_some_and(|letter| letter.is_alphabetic() || letter == '_') { return None; }
         let mut cursor = named + 1;
         let has_types = word(cursor) == "[";
         if has_types {
@@ -2975,7 +2978,7 @@ impl<'a> Builder<'a> {
             if self.key("stmt.for") {
                 return self.for_stmt();
             }
-            if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+            if self.key("ext.stmt.type_alias") && self.glance(1).lexeme.chars().next().is_some_and(|letter| letter.is_alphabetic() || letter == '_') {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
                 self.advance();
                 let alias = self.need_word("as the type alias")?;
@@ -4529,7 +4532,8 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !(table.keywords.contains(&self.look().lexeme) && !table.spells("ext.stmt.type_alias", &self.look().lexeme))
+            } else if self.look().shape == Shape::Bare
+                && (!table.keywords.contains(&self.look().lexeme) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().lexeme)))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -4886,6 +4890,7 @@ impl<'a> Builder<'a> {
     }
 
     fn python_class(&mut self, generic: bool) -> Res<(Form, bool)> {
+        let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let builder = self.gensym("class_builder");
         let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
         self.advance();
@@ -4908,7 +4913,7 @@ impl<'a> Builder<'a> {
         let mut namespace = None;
         let mut cannot = false;
         let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
-            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone())?;
+            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone(), &parameters)?;
             namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
@@ -4923,7 +4928,7 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String) -> Res<(Form, String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String]) -> Res<(Form, String, Option<String>, bool, bool)> {
         let table = self.table;
         let parent: Option<Address> = None;
         let cannot = false;
@@ -4954,6 +4959,12 @@ impl<'a> Builder<'a> {
             setup.push(made);
         }
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+        if !parameters.is_empty() {
+            let values = parameters.iter().map(|word| self.read(word)).collect();
+            self.member_ranked("__type_params__");
+            self.parts().attributes.push("__type_params__".into());
+            self.parts().held.push(prim_call(Prim::MakeTuple, values));
+        }
         // Seed documentation only when the body starts with a docstring.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
             let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
@@ -5017,6 +5028,7 @@ impl<'a> Builder<'a> {
                 let (mut forms, names) = reader.declare_type_objects()?;
                 reader.pos = beginning;
                 reader.generic_class_body = true;
+                reader.generic_class_parameters = names.clone();
                 forms.push(reader.class_with_receiver()?.0);
                 forms.push(reader.give_type_parameters(&name, &names));
                 forms.push(reader.read(&name));
@@ -5047,13 +5059,16 @@ impl<'a> Builder<'a> {
             for token in &self.tokens[self.pos..] {
                 let word = token.lexeme.as_str();
                 if levels.is_empty() && word == end { break; }
+                if levels.is_empty() && table.has_any("ext.stmt.class.detail.mro.entries") && table.spells("ext.op.comprehension.for", word) {
+                    return Err(String::from("SyntaxError: invalid syntax"));
+                }
                 if levels.is_empty() && (table.spells("op.mul", word) || table.spells("op.pow", word)) { spreading = true; }
                 match word {
                     "(" => levels.push(")"), "[" => levels.push("]"), "{" => levels.push("}"),
                     _ if levels.last().copied() == Some(word) => { levels.pop(); }, _ => {}
                 }
             }
-            if spreading {
+            if spreading || table.has_any("ext.stmt.class.detail.mro.entries") {
                 let arguments = self.args("syntax.call.close", "syntax.call.separator")?;
                 let kept = self.gensym("header_arguments");
                 setup.push(Form::Write(kept.clone(), Box::new(prim_call(Prim::MakeTuple, arguments))));
@@ -5138,9 +5153,34 @@ impl<'a> Builder<'a> {
         // a write through either as the body's first statement finds
         // somewhere of its own already standing, not made as part of
         // the write.
-        if self.class_body_names_locals(self.pos, on_one_line) {
-            let made = self.class_book();
-            setup.push(made);
+        if table.has_any("ext.stmt.class.detail.prepare") && (parent.is_some() || !other_parents.is_empty()
+            || handed_words.iter().any(|(key, _)| key == "\0metaclass" || key == "\0header")) {
+            let mut bases = Vec::new();
+            bases.extend(parent.iter().cloned().map(Form::Read));
+            bases.extend(other_parents.iter().cloned().map(Form::Read));
+            let factory = handed_words.iter().find(|(key, _)| key == "\0metaclass").map(|(_, value)| value.clone()).unwrap_or_else(|| constant(Value::Nil));
+            let options: Vec<Form> = handed_words.iter().filter_map(|(key, read)| {
+                key.strip_prefix("\0handed:").map(|word| prim_call(Prim::MakeTuple, vec![constant(Value::text(word)), read.clone()]))
+            }).collect();
+            let header = handed_words.iter().find(|(key, _)| key == "\0header").map(|(_, form)| form.clone()).unwrap_or_else(|| constant(Value::Nil));
+            let prepared = prim_call(Prim::ClassWork(13), vec![constant(Value::text(&class_title)), prim_call(Prim::MakeTuple, bases), factory, prim_call(Prim::MakeTuple, options), header]);
+            let place = self.gensym("prepared_body");
+            self.parts().book = Some(place.clone());
+            setup.push(Form::Write(place, Box::new(prepared)));
+            if let Some(name) = table.single("ext.stmt.class.detail.module") {
+                let source_module = self.read("__name__");
+                let address = self.gensym("module_name");
+                setup.push(Form::Write(address.clone(), Box::new(source_module)));
+                if let Some(write) = self.mirror_member(name, &address) { setup.push(write); }
+            }
+        } else {
+            if self.class_body_names_locals(self.pos, on_one_line) { setup.push(self.class_book()); }
+            if let Some(module_key) = table.single("ext.stmt.class.detail.module") {
+                let module = self.read("__name__");
+                self.member_ranked(module_key);
+                self.parts().attributes.push(module_key.to_string());
+                self.parts().held.push(module);
+            }
         }
         if table.has_any("ext.stmt.class.special") {
             if let Some(module_key) = table.single("ext.stmt.class.detail.module") {
@@ -5160,6 +5200,14 @@ impl<'a> Builder<'a> {
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
+        }
+        if self.parts().book.is_some() {
+            let initial: Vec<_> = { let parts = self.parts(); parts.attributes.iter().cloned().zip(parts.held.clone()).collect() };
+            for (key, value) in initial {
+                let slot = self.gensym("initial_member");
+                setup.push(Form::Write(slot.clone(), Box::new(value)));
+                if let Some(write) = self.mirror_member(&key, &slot) { setup.push(write); }
+            }
         }
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
@@ -5809,6 +5857,11 @@ impl<'a> Builder<'a> {
                     };
                     r.pos = after;
                     items.push(write);
+                }
+                if place.is_none() && r.in_class_body() && !item.starts_with('#') && !r.declared_outside_class(&item) {
+                    let slot = r.address_to_write(&item);
+                    r.class_bindings.last_mut().expect("class loop target").1.insert(item.clone(), slot.clone());
+                    if let Some(stored) = r.mirror_member(&item, &slot) { items.push(stored); }
                 }
                 items.push(r.body()?);
                 let pass = sequence(items);
@@ -8020,7 +8073,11 @@ impl<'a> Builder<'a> {
         self.place_depth += usize::from(writing);
         let enclosing_mark = self.kind_mark.take();
         if boundary { self.kind_mark = self.declaration_mark(); }
-        let read = self.expr_at(0, false);
+        let read = if self.kind_mark == Some(began + 1) && self.look().shape == Shape::Bare {
+            let name = self.advance().lexeme;
+            self.claim(&name);
+            Ok(Form::Read(self.address_to_write(&name)))
+        } else { self.expr_at(0, false) };
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let mut expr = read?;
@@ -8274,9 +8331,9 @@ impl<'a> Builder<'a> {
         };
         // The live class book can supply an object with no writable name.
         // Keep the evaluated object and key, then perform its actual write.
-        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+        if self.table.has_any("ext.stmt.class.builder") {
             if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
-                if operands.len() == 2 {
+                if operands.len() == 2 && (self.in_class_body() || matches!(&operands[0], Form::Apply(Callee::Code(_), _))) {
                     let object = self.gensym("target_object");
                     let key = self.gensym("target_key");
                     let put = self.gensym("target_value");
@@ -9065,18 +9122,23 @@ impl<'a> Builder<'a> {
         if start.shape != Shape::Woven {
             return Err(self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned());
         }
-        let mut result = constant(Value::text(""));
-        loop {
-            if self.look().shape == Shape::WovenEnd { self.advance(); break; }
-            let piece = if self.look().shape == Shape::Field {
+        let keeps_fields = start.lexeme.chars().next().is_some_and(|lead| self.table.spells("ext.lexical.string.prefix.template", &lead.to_string()));
+        let mut fragments = Vec::new();
+        while self.look().shape != Shape::WovenEnd {
+            let fragment = if self.look().shape == Shape::Field {
                 let conversion = self.advance().lexeme;
+                let expression = self.advance().lexeme;
                 let value = self.expr(0)?;
                 let spec = self.quotation()?;
-                prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))])
+                if keeps_fields {
+                    prim_call(Prim::TemplateField, vec![value, constant(Value::text(&expression)), constant(if conversion.is_empty() { Value::Nil } else { Value::text(&conversion) }), spec])
+                } else { prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))]) }
             } else { self.quotation()? };
-            result = prim_call(Prim::Join, vec![result, piece]);
+            fragments.push(fragment);
         }
-        Ok(result)
+        self.advance();
+        if keeps_fields { return Ok(prim_call(Prim::TemplateParts, fragments)); }
+        Ok(fragments.into_iter().fold(constant(Value::text("")), |text, fragment| prim_call(Prim::Join, vec![text, fragment])))
     }
 
     fn monadic_piece(&mut self) -> Res<Form> {
@@ -9389,7 +9451,18 @@ impl<'a> Builder<'a> {
                             self.advance();
                             given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                             prim_call(Prim::Bid, given)
-                        } else { self.class_not_ready() }
+                        } else {
+                            // A parent's member read and not called: the
+                            // super proxy is made, then the member read
+                            // off it, bound to the receiver this method
+                            // runs upon.
+                            let private = self.parts().completed_class.ident.to_string();
+                            let proxy = invoke(
+                                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into())),
+                                vec![self.read(&private), self.read(&receiver)],
+                            );
+                            prim_call(Prim::Of, vec![proxy, constant(Value::text(&called))])
+                        }
                     }
                     _ => self.class_not_ready(),
                 }
@@ -10573,10 +10646,10 @@ impl<'a> Builder<'a> {
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
-        let parameter = self.gather_name("first_source");
+        let parameter = String::from(".0");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
         let mut async_result = false;
-        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter.clone()], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();
@@ -10797,7 +10870,12 @@ impl<'a> Builder<'a> {
         let walks = self.table.flag("ext.stmt.yield.suspends");
         let beginning = self.pos;
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
-            Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
+            Some((_, end, parameter)) => {
+                self.pos = end;
+                let supplied = self.read(&parameter);
+                if asynchronous || !self.table.has_any("ext.stmt.yield.input") { supplied }
+                else { prim_call(Prim::IteratorInput, vec![supplied]) }
+            }
             None => {
                 let value = self.expr(1)?;
                 prim_call(if asynchronous { Prim::AsyncWalked } else if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
