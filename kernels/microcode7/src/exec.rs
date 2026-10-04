@@ -6656,13 +6656,13 @@ impl<'a> Machine<'a> {
                                         let mut held = cell.borrow_mut();
                                         let Value::Dict(rc) = &mut *held else { unreachable!("checked just above") };
                                         let rows = Rc::make_mut(rc);
-                                        // A place holding a cell that
-                                        // names share is written through,
-                                        // never written over; one handed
-                                        // its very cell back is let alone.
+                                        // A place of a loaded space's
+                                        // dictionary that holds a binding's
+                                        // cell is written through, never
+                                        // written over; any other map's
+                                        // place is simply written over.
                                         let through = match (&rows[at].1, &value) {
-                                            (Value::Shared(link) | Value::Mutable(link, _), Value::Shared(given) | Value::Mutable(given, _)) if Rc::ptr_eq(link, given) => None,
-                                            (Value::Shared(link) | Value::Mutable(link, _), _) => Some(link.clone()),
+                                            (Value::Shared(link) | Value::Mutable(link, _), _) if self.book_space_of(&cell).is_some() => Some(link.clone()),
                                             _ => None,
                                         };
                                         match through {
@@ -6692,8 +6692,7 @@ impl<'a> Machine<'a> {
                                     if let Some(at) = position {
                                         let rows = Rc::make_mut(&mut updated);
                                         let through = match (&rows[at].1, &value) {
-                                            (Value::Shared(link) | Value::Mutable(link, _), Value::Shared(given) | Value::Mutable(given, _)) if Rc::ptr_eq(link, given) => None,
-                                            (Value::Shared(link) | Value::Mutable(link, _), _) => Some(link.clone()),
+                                            (Value::Shared(link) | Value::Mutable(link, _), _) if self.book_space_of(&cell).is_some() => Some(link.clone()),
                                             _ => None,
                                         };
                                         match through {
@@ -6710,16 +6709,7 @@ impl<'a> Machine<'a> {
                             let mut entries = entries.to_vec();
                             let mut position = 0;
                             while position < entries.len() && !self.keys_agree(&entries[position].0, &key)? { position += 1; }
-                            if position < entries.len() {
-                                // A place holding a cell that names share
-                                // is written through, never written over;
-                                // one handed its very cell back is let alone.
-                                match (&entries[position].1, &value) {
-                                    (Value::Shared(link) | Value::Mutable(link, _), Value::Shared(given) | Value::Mutable(given, _)) if Rc::ptr_eq(link, given) => {}
-                                    (Value::Shared(link) | Value::Mutable(link, _), _) => { let link = link.clone(); *link.borrow_mut() = value; }
-                                    _ => entries[position].1 = value,
-                                }
-                            } else { entries.push((key, value)); }
+                            if position < entries.len() { entries[position].1 = value; } else { entries.push((key, value)); }
                             let changed = Value::Dict(Rc::new(entries.into()));
                             match (worth_cell, original) {
                                 (Some(cell), _) => { cell.replace(changed); self.space_sync_written(&cell); }
@@ -21454,16 +21444,40 @@ impl<'a> Machine<'a> {
             let rows = Rc::make_mut(pairs);
             for (key, held) in rows.iter_mut() {
                 let Value::Text(name) = key else { continue };
-                if module.holds.borrow().iter().any(|(entry, _)| entry == name.as_ref()) { continue; }
-                let link = match held {
-                    Value::Shared(existing) => existing.clone(),
-                    plain => {
-                        let made = Rc::new(RefCell::new(plain.clone()));
-                        *plain = Value::Shared(made.clone());
-                        made
+                let member_link = {
+                    let mut holds = module.holds.borrow_mut();
+                    match holds.iter_mut().find(|(entry, _)| entry == name.as_ref()) {
+                        None => None,
+                        // The space's member is brought under a cell if
+                        // it has none, so the dictionary's place and the
+                        // binding always have one to share.
+                        Some((_, entry)) => match entry {
+                            Value::Shared(link) => Some(link.clone()),
+                            plain => { let made = Rc::new(RefCell::new(plain.settled())); *plain = Value::Shared(made.clone()); Some(made) }
+                        },
                     }
                 };
-                joined.push((name.to_string(), link));
+                let Some(member_link) = member_link else {
+                    let link = match held {
+                        Value::Shared(existing) => existing.clone(),
+                        plain => {
+                            let made = Rc::new(RefCell::new(plain.clone()));
+                            *plain = Value::Shared(made.clone());
+                            made
+                        }
+                    };
+                    joined.push((name.to_string(), link));
+                    continue;
+                };
+                // The place and the binding share one cell: what the
+                // place came to hold is what the binding holds, and the
+                // place points at the binding's cell from then on.
+                let linked = match &*held { Value::Shared(link) => Rc::ptr_eq(link, &member_link), _ => false };
+                if !linked {
+                    let settled = held.settled();
+                    *member_link.borrow_mut() = settled;
+                    *held = Value::Shared(member_link);
+                }
             }
         }
         for (name, link) in joined {

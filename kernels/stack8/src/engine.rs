@@ -8277,16 +8277,7 @@ impl<'a> Engine<'a> {
                 let key = self.special_key(&args[0])?;
                 let mut found = None;
                 for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
-                if let Some(at) = found {
-                    // A row holding a cell that names share is written
-                    // through, not written over; one handed its very
-                    // cell back is left alone.
-                    match (&entries[at].1, &args[1]) {
-                        (Value::Bond(shared) | Value::Binding(shared), Value::Bond(given) | Value::Binding(given)) if Rc::ptr_eq(shared, given) => {}
-                        (Value::Bond(shared) | Value::Binding(shared), _) => { let shared = shared.clone(); *shared.borrow_mut() = args[1].clone(); }
-                        _ => entries[at].1 = args[1].clone(),
-                    }
-                } else { entries.push((key, args[1].clone())); }
+                if let Some(at) = found { entries[at].1 = args[1].clone(); } else { entries.push((key, args[1].clone())); }
                 Value::Map(Rc::new(entries))
             }
             Builtin::Erase if args.len() == 2 && matches!(&args[0], Value::Map(_)) => {
@@ -16187,12 +16178,13 @@ impl<'a> Engine<'a> {
                                 let mut held = cell.borrow_mut();
                                 let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
                                 let rows = Rc::make_mut(rc);
-                                // A row holding a cell that names share is
-                                // written through, not written over; a row
-                                // handed its very cell back is left alone.
+                                // A row of a module's own dictionary that
+                                // holds a binding's cell is written through,
+                                // not written over; any other map's row is
+                                // simply written over.
+                                let booked = self.globals_module_of(&cell).is_some();
                                 let through = match (&rows[at].1, &value) {
-                                    (Value::Bond(shared) | Value::Binding(shared), Value::Bond(given) | Value::Binding(given)) if Rc::ptr_eq(shared, given) => None,
-                                    (Value::Bond(shared) | Value::Binding(shared), _) => Some(shared.clone()),
+                                    (Value::Bond(shared) | Value::Binding(shared), _) if booked => Some(shared.clone()),
                                     _ => None,
                                 };
                                 match through {
@@ -16256,8 +16248,7 @@ impl<'a> Engine<'a> {
                         Some(at) => {
                             let rows = Rc::make_mut(&mut next);
                             let through = match (&rows[at].1, &args[1]) {
-                                (Value::Bond(shared) | Value::Binding(shared), Value::Bond(given) | Value::Binding(given)) if Rc::ptr_eq(shared, given) => None,
-                                (Value::Bond(shared) | Value::Binding(shared), _) => Some(shared.clone()),
+                                (Value::Bond(shared) | Value::Binding(shared), _) if self.globals_module_of(&cell).is_some() => Some(shared.clone()),
                                 _ => None,
                             };
                             match through {
@@ -16313,14 +16304,7 @@ impl<'a> Engine<'a> {
     fn replace_item(&self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
         if self.lang.bind_names {
             if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| self.keys_alike(k, &key)) {
-                // A place holding a cell that names share is written
-                // through, not written over; one handed its very cell
-                // back is left alone.
-                match (&*old, &value) {
-                    (Value::Bond(shared) | Value::Binding(shared), Value::Bond(given) | Value::Binding(given)) if Rc::ptr_eq(shared, given) => {}
-                    (Value::Bond(shared) | Value::Binding(shared), _) => { let shared = shared.clone(); *shared.borrow_mut() = value; }
-                    _ => *old = value,
-                }
+                *old = value;
             } else { pairs.push((key, value)); }
         } else { put_key(pairs, key, value); }
     }
@@ -21506,16 +21490,40 @@ impl Engine<'_> {
             let rows = Rc::make_mut(pairs);
             for (key, value) in rows.iter_mut() {
                 let Value::Text(name) = key else { continue };
-                if module.fields.borrow().iter().any(|(n, _)| n == name.as_ref()) { continue; }
-                let shared = match value {
-                    Value::Bond(binding) | Value::Binding(binding) => binding.clone(),
-                    plain => {
-                        let made = Rc::new(RefCell::new(plain.clone()));
-                        *plain = Value::Bond(made.clone());
-                        made
+                let field_cell = {
+                    let mut fields = module.fields.borrow_mut();
+                    match fields.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                        None => None,
+                        // The module's member is brought under a cell if
+                        // it has none, so the dictionary's place and the
+                        // binding always have one to share.
+                        Some((_, held)) => match held {
+                            Value::Bond(binding) | Value::Binding(binding) => Some(binding.clone()),
+                            plain => { let made = Rc::new(RefCell::new(plain.contents())); *plain = Value::Bond(made.clone()); Some(made) }
+                        },
                     }
                 };
-                joined.push((name.to_string(), shared));
+                let Some(field_cell) = field_cell else {
+                    let shared = match value {
+                        Value::Bond(binding) | Value::Binding(binding) => binding.clone(),
+                        plain => {
+                            let made = Rc::new(RefCell::new(plain.clone()));
+                            *plain = Value::Bond(made.clone());
+                            made
+                        }
+                    };
+                    joined.push((name.to_string(), shared));
+                    continue;
+                };
+                // The place and the binding share one cell: what the
+                // place came to hold is what the binding holds, and the
+                // place points at the binding's cell from then on.
+                let linked = match &*value { Value::Bond(binding) | Value::Binding(binding) => Rc::ptr_eq(binding, &field_cell), _ => false };
+                if !linked {
+                    let settled = value.contents();
+                    *field_cell.borrow_mut() = settled;
+                    *value = Value::Bond(field_cell);
+                }
             }
         }
         for (name, shared) in joined {
