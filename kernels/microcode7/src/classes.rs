@@ -59,6 +59,10 @@ impl<'a> Machine<'a> {
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
             protocols.extend(names.iter().enumerate().map(|(i, n)| (n.to_string(), Self::wrap(125, vec![Value::Small(i as i64)]))));
         }
+        if word == "super" {
+            let init = self.table.single("ext.stmt.class.constructor").unwrap_or_default();
+            protocols.push((init.to_owned(), Self::wrap(124, Vec::new())));
+        }
         if word == "SimpleNamespace" {
             let init = self.table.single("ext.stmt.class.constructor").unwrap_or_default();
             let operations = [self.detail("allocate"), init, "__repr__", "__eq__", "__ne__", "__reduce__", "__replace__"];
@@ -696,6 +700,20 @@ impl<'a> Machine<'a> {
             shared:RefCell::new(entries),weak_slot:Cell::new(None),has_slot_storage: storage, sealed:Cell::new(false), type_names: RefCell::new(type_names)});
         if let Some(cell) = class_cell { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(cell, &word, Some(Value::Blueprint(class.clone())), true)?; }
 
+        // A builder whose own answering of the order is written out is
+        // asked for it once while the class stands, as the reference
+        // asks it then; the order the building walked stands all the
+        // same.
+        let order_word = self.detail("order");
+        if !order_word.is_empty() {
+            if let Some(builder) = Self::builder_over(&class) {
+                if let Some(reader @ (Value::Routine(_) | Value::Bound(..))) = std::iter::once(&builder).chain(builder.ancestry.iter()).find_map(|base| Self::own_entry(base, order_word)) {
+                    let bound = self.member_binding(reader, Some(Value::Blueprint(class.clone())), builder)?;
+                    self.apply_class_member(bound, Vec::new())?;
+                }
+            }
+        }
+
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
         // class standing, and before the forebears hear of it.
@@ -1045,6 +1063,7 @@ impl<'a> Machine<'a> {
                         Ok(Value::text(&parts.join(" | ")))
                     }
                     125 => self.alias_action(&kept, values),
+                    124 => self.parent_initialised(values),
                     123 => self.namespace_action(&kept, values),
                     9 if kept.is_empty() && values.len() == 2 => {
                         values = values.iter().map(Value::settled).collect();
@@ -1628,6 +1647,7 @@ impl<'a> Machine<'a> {
         Ok(alias)
     }
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if self.has_class_order() && Self::parent_kind_descended(&class) { return self.parent_constructed(class, given); }
         if Self::native_word(&class).is_some() && matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.make_type_parameter(class, given);
         }
@@ -2529,72 +2549,30 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(self.class_unready()),
                 };
-                let mut passed = false;
-                for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
-                    if passed {
-                        if key == self.detail("allocate") {
-                            if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
-                                return Ok(Self::wrap(14, vec![Value::text(&native)]));
-                            }
-                        }
-                        if let Some(entry) = Self::own_entry(base, key) {
-                            let receiver = if key == self.detail("allocate") { None } else { Some(instance.clone()) };
-                            return self.member_binding(entry, receiver, actual.clone());
-                        }
-                        if Self::native_word(base).is_some() || self.is_fault_kind(base) {
-                            let maker = key == self.detail("allocate") || self.table.single("ext.stmt.class.constructor") == Some(key);
-                            let working = Self::underlying(instance).and_then(|worth| self.attribute(&worth, key));
-                            if maker || matches!(working, Some(Value::Member(..))) {
-                                return Ok(Self::wrap(73, vec![instance.clone(), Value::text(&defining.name), Value::text(key)]));
-                            }
-                        }
-                        if Self::own_entry(base, self.detail("module")).is_none() {
-                            let prototype = Self::native_word(base).and_then(|word| self.kind_by_word(&word)).unwrap_or_else(|| Value::Blueprint(base.clone()));
-                            let inherited = self.read_class_member(prototype, key, false);
-                            match inherited {
-                                Ok(found) => {
-                                    let bind = matches!(&found, Value::Wrapped(tag, _) if [2, 10, 11, 12, 19, 30, 60, 71].contains(tag));
-                                    return Ok(if bind { Self::wrap(3, vec![found, instance.clone()]) } else { found });
-                                }
-                                Err(escape) if self.missing_member_escape(&escape) => (),
-                                Err(escape) => return Err(escape),
-                            }
-                        }
-                        // Native slots are descriptors on their defining kind;
-                        // bind that descriptor before considering the root.
-                        if Self::native_word(base).is_some() {
-                            if let Some(slot) = self.carried_by_kind(&Value::Blueprint(base.clone()), key) {
-                                return Ok(Self::wrap(3, vec![slot, instance.clone()]));
-                            }
-                        }
-                        if self.table.single("ext.stmt.class.constructor")==Some(key) {
-                            if Self::native_word(base).as_deref().and_then(|word|self.table.prims.get(word)).is_some_and(|op|matches!(op,Prim::Listed|Prim::Dictionary)) {
-                                if let Some(entry)=self.inherited_entry(base,key) { return self.member_binding(entry,Some(instance.clone()),actual.clone()); }
-                            }
-                        }
-                        // A member a native forebear carries without
-                        // keeping an entry of its own, `__hash__` or
-                        // `__eq__` among them, is answered off the worth
-                        // the thing holds, which is what the base's own
-                        // reading of that name gives.
-                        if Self::native_beneath(base).is_some() {
-                            if let Some(worth) = Self::underlying(&instance) {
-                                if let Some(member) = self.attribute(&worth, key) { return Ok(member); }
-                            }
-                        }
-                    }
-                    passed |= Rc::ptr_eq(base, defining);
-                }
-                // The walk coming to the common ancestor, the root
-                // answers with its own members as a plain read of a
-                // thing does: the maker every blueprint stands on, its
-                // beginning among them.
-                if let Some(root)=self.from_the_root(key,true,&actual) {
-                    if key==self.detail("allocate"){return Ok(root);}
-                    let bound=if key==self.detail("subclass"){Value::Blueprint(actual.clone())}else{instance.clone()};
-                    return Ok(Self::wrap(3,vec![root,bound]));
-                }
+                if let Some(found) = self.parent_walk(defining, instance, actual, key)? { return Ok(found); }
                 return Err(self.absent_attribute(&value, key));
+            }
+        }
+        // A thing of the parent class reads a member past the class it
+        // was made against: the same walk the parent proxy takes, over
+        // the line of the class the thing it stands on answers as. What
+        // the walk never finds, the plain reading of the thing answers,
+        // the very way the reference has a name the classes past know
+        // nothing of fall to the parent thing's own members.
+        if let Value::Thing(t) = &value {
+            if self.has_class_order() && Self::parent_kind_descended(&t.blueprint()) && key != self.detail("kind") {
+                let (owner, stands_on, answers_as) = {
+                    let holds = t.holds.borrow();
+                    (holds.iter().find(|(name, _)| name == "__thisclass__").map(|(_, held)| held.clone()),
+                     holds.iter().find(|(name, _)| name == "__self__").map(|(_, held)| held.clone()),
+                     holds.iter().find(|(name, _)| name == "\0objtype").map(|(_, held)| held.clone()))
+                };
+                if key == "__self_class__" { return Ok(answers_as.unwrap_or(Value::Nil)); }
+                if let (Some(owner), Some(receiver), Some(actual)) = (self.parent_blueprint_of(owner), stands_on, self.parent_blueprint_of(answers_as)) {
+                    if !matches!(receiver, Value::Nil) {
+                        if let Some(found) = self.parent_walk(&owner, &receiver, actual, key)? { return Ok(found); }
+                    }
+                }
             }
         }
         let sought=self.seek_class_member(value.clone(),key,direct);
@@ -4590,5 +4568,259 @@ impl<'a> Machine<'a> {
                     holds: RefCell::new(vec![("__args__".to_owned(), Value::tuple(row))]) }))
             }
         }
+    }
+}
+
+impl<'a> Machine<'a> {
+    /// Whether the blueprint is the parent class or stands beneath it:
+    /// the kind word it or one of its forebears was made with is the
+    /// parent class's own.
+    pub(super) fn parent_kind_descended(b:&Rc<Blueprint>)->bool {
+        std::iter::once(b).chain(b.ancestry.iter()).any(|base| Self::native_word(base).as_deref() == Some("super"))
+    }
+
+    /// Whether two blueprints are one for the parent walk's purposes:
+    /// the very blueprint, or two standings of one builtin kind, whose
+    /// blueprint is made in more than one place.
+    pub(super) fn parent_same_class(a:&Rc<Blueprint>,b:&Rc<Blueprint>)->bool {
+        Rc::ptr_eq(a,b) || matches!((Self::native_word(a),Self::native_word(b)),(Some(x),Some(y)) if x==y)
+    }
+
+    /// The name the parent class's refusals give a value's kind: the
+    /// blueprint's own name for a thing of one, the kind word for a
+    /// plain value, and the cell's name for a cell, as the reference
+    /// names them in this very complaint.
+    pub(super) fn parent_tp_name(&self,value:&Value)->String {
+        if let Some(word) = self.kind_spelling(value) { return word.to_string(); }
+        match value {
+            Value::Thing(t) => t.blueprint().name.clone(),
+            Value::Blueprint(b) => b.name.clone(),
+            other => other.kind_word(),
+        }
+    }
+
+    /// How the parent thing keeps a class it names: the kind word the
+    /// program reads for a builtin kind, the blueprint for any other.
+    fn parent_public(&self,b:&Rc<Blueprint>)->Value {
+        Self::native_word(b).and_then(|word| self.kind_by_word(&word)).unwrap_or_else(|| Value::Blueprint(b.clone()))
+    }
+
+    /// The blueprint a kept form names: a blueprint as it stands, or
+    /// the blueprint of a builtin kind word, the two forms the parent
+    /// thing keeps its classes in.
+    fn parent_blueprint_of(&mut self,held:Option<Value>)->Option<Rc<Blueprint>> {
+        match held {
+            Some(Value::Blueprint(b)) => Some(b),
+            Some(Value::Intrinsic(op, word)) if Self::names_a_kind(&op) => Some(self.native_kind(word.as_ref())),
+            _ => None,
+        }
+    }
+
+    /// The blueprint the first of the parent class's arguments names: a
+    /// blueprint as it stands, the blueprint of a builtin kind word, and
+    /// otherwise the refusal the reference words the same way.
+    fn parent_type_arg(&mut self,given:&Value)->Result<Rc<Blueprint>,Escape> {
+        match given.settled() {
+            Value::Blueprint(b) => Ok(b.clone()),
+            Value::Intrinsic(op, word) if Self::names_a_kind(&op) => Ok(self.native_kind(word.as_ref())),
+            other => Err(format!("TypeError: super() argument 1 must be a type, not {}", other.kind_word()).into()),
+        }
+    }
+
+    /// The blueprint a parent thing answers as: the value given itself
+    /// for a class beneath the type, the value's own blueprint for a
+    /// thing of one, and otherwise the refusal the reference words the
+    /// same way.
+    fn parent_check(&mut self,owner:&Rc<Blueprint>,receiver:&Value)->Result<Rc<Blueprint>,Escape> {
+        let stands = |actual:&Rc<Blueprint>| std::iter::once(actual).chain(actual.ancestry.iter()).any(|base| Self::parent_same_class(base, owner));
+        if let Value::Blueprint(given) = receiver {
+            if stands(given) { return Ok(given.clone()); }
+            // A class the type given builds is one of its things: the
+            // builder answers for it, as its own kind does in the
+            // reference.
+            if let Some(maker) = Self::builder_over(given) {
+                if stands(&maker) { return Ok(maker); }
+            }
+        }
+        if let Value::Thing(t) = receiver {
+            let actual = t.blueprint();
+            if stands(&actual) { return Ok(actual); }
+        }
+        if let Value::Intrinsic(op, word) = receiver {
+            if Self::names_a_kind(op) {
+                let actual = self.native_kind(word.as_ref());
+                if stands(&actual) { return Ok(actual); }
+            }
+        }
+        let spelled = Self::underlying(receiver).and_then(|worth| self.kind_spelling(&worth).map(|word| word.to_string()))
+            .unwrap_or_else(|| receiver.kind_word());
+        if !spelled.is_empty() {
+            let actual = self.native_kind(&spelled);
+            if stands(&actual) { return Ok(actual); }
+        }
+        let (which, spelled) = match receiver {
+            Value::Blueprint(given) => ("type", given.name.clone()),
+            Value::Intrinsic(op, word) if Self::names_a_kind(op) => ("type", word.to_string()),
+            other => ("instance of", self.parent_tp_name(other)),
+        };
+        Err(format!("TypeError: super(type, obj): obj ({} {}) is not an instance or subtype of type ({}).", which, spelled, owner.name).into())
+    }
+
+    /// A thing of the parent class made of the class it looks past and
+    /// the thing it stands on, the reference's own checks worded as it
+    /// words them: too many arguments, a first that is no type, and a
+    /// second the type has no hold on.
+    pub(super) fn parent_constructed(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        let (positional, named) = self.open_arguments(given)?;
+        if !named.is_empty() { return Err("TypeError: super() takes no keyword arguments".to_owned().into()); }
+        let plain: Vec<Value> = positional.into_iter().map(|value| value.settled()).collect();
+        if plain.len() > 2 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len()).into()); }
+        let Some(first) = plain.first() else { return Err("RuntimeError: super(): no arguments".to_owned().into()); };
+        let owner = self.parent_type_arg(first)?;
+        let receiver = plain.get(1).cloned().unwrap_or(Value::Nil);
+        let mut answers_as = Value::Nil;
+        if !matches!(receiver, Value::Nil) {
+            let checked = self.parent_check(&owner, &receiver)?;
+            answers_as = self.parent_public(&checked);
+        }
+        let shown_owner = self.parent_public(&owner);
+        self.made += 1;
+        let made = Value::Thing(Rc::new(Thing {
+            reclassified: RefCell::new(None),
+            of: class.clone(),
+            holds: RefCell::new(vec![
+                ("__thisclass__".to_owned(), shown_owner),
+                ("__self__".to_owned(), receiver),
+                ("\0objtype".to_owned(), answers_as),
+            ]),
+            turn: self.made,
+        }));
+        // A class beneath the parent class whose own constructing is
+        // written out runs it with the arguments given, as any call of
+        // a class runs the constructing it names.
+        if let Some(init) = Self::own_entry(&class, self.table.single("ext.stmt.class.constructor").unwrap_or("\0none")) {
+            if !matches!(&init, Value::Wrapped(124, _)) {
+                let bound = self.member_binding(init, Some(made.clone()), class.clone())?;
+                let answer = self.apply_class_member(bound, plain)?;
+                if !matches!(answer, Value::Nil) { return Err(format!("TypeError: __init__() should return None, not '{}'", answer.kind_word()).into()); }
+            }
+        }
+        Ok(made)
+    }
+
+    /// The parent class's own constructing called by name: the thing is
+    /// measured against the arguments once more and made over, the way
+    /// the reference lets its constructing run again on a thing made.
+    fn parent_initialised(&mut self,given:Vec<Value>)->Res {
+        let (positional, named) = self.open_arguments(given)?;
+        if !named.is_empty() { return Err("TypeError: super() takes no keyword arguments".to_owned().into()); }
+        let plain: Vec<Value> = positional.into_iter().map(|value| value.settled()).collect();
+        let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".to_owned().into()); };
+        let Value::Thing(t) = subject else { return Err(self.class_unready()); };
+        if plain.len() > 3 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len() - 1).into()); }
+        let Some(first) = plain.get(1) else { return Ok(Value::Nil); };
+        let owner = self.parent_type_arg(first)?;
+        let receiver = plain.get(2).cloned().unwrap_or(Value::Nil);
+        let mut answers_as = Value::Nil;
+        if !matches!(receiver, Value::Nil) {
+            let checked = self.parent_check(&owner, &receiver)?;
+            answers_as = self.parent_public(&checked);
+        }
+        let shown_owner = self.parent_public(&owner);
+        let mut holds = t.holds.borrow_mut();
+        for (key, value) in [("__thisclass__", shown_owner), ("__self__", receiver), ("\0objtype", answers_as)] {
+            match holds.iter_mut().find(|(kept, _)| kept == key) {
+                Some((_, place)) => *place = value,
+                None => holds.push((key.to_owned(), value)),
+            }
+        }
+        Ok(Value::Nil)
+    }
+
+    /// The member a parent reading finds: the line of the blueprint the
+    /// thing answers as, walked from just after the blueprint given,
+    /// each member found tied to the thing the reading stands on — or
+    /// left loose where that thing is itself a class, the very reading
+    /// the class would take of it. Nothing where the walk finds no
+    /// member, so the caller's own reading answers instead.
+    fn parent_walk(&mut self,owner:&Rc<Blueprint>,receiver:&Value,actual:Rc<Blueprint>,key:&str)->Res<Option<Value>> {
+        let loose = matches!(receiver, Value::Blueprint(r) if Self::parent_same_class(r, &actual));
+        let mut passed = false;
+        for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
+            if passed {
+                if key == self.detail("allocate") {
+                    if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                        return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
+                    }
+                }
+                if let Some(entry) = Self::own_entry(base, key) {
+                    let receiver = if key == self.detail("allocate") || loose { None } else { Some(receiver.clone()) };
+                    return Ok(Some(self.member_binding(entry, receiver, actual.clone())?));
+                }
+                if Self::native_word(base).is_some() || self.is_fault_kind(base) {
+                    if self.table.single("ext.stmt.class.constructor") == Some(key) {
+                        // The constructing of a native forebear is the
+                        // descriptor the kind itself answers with, tied
+                        // to what the reading stands on.
+                        let builds = self.builds_classes(base) || base.ancestry.iter().any(|p| self.builds_classes(p));
+                        let descriptor = Self::wrap(if builds { 73 } else { 2 }, Vec::new());
+                        return Ok(Some(if loose { descriptor } else { Self::wrap(3, vec![descriptor, receiver.clone()]) }));
+                    }
+                    if let Some(member @ Value::Member(..)) = Self::underlying(receiver).and_then(|worth| self.attribute(&worth, key)) {
+                        return Ok(Some(member));
+                    }
+                }
+                if Self::own_entry(base, self.detail("module")).is_none() {
+                    let prototype = Self::native_word(base).and_then(|word| self.kind_by_word(&word)).unwrap_or_else(|| Value::Blueprint(base.clone()));
+                    let inherited = self.read_class_member(prototype, key, false);
+                    match inherited {
+                        Ok(found) => {
+                            // A classmethod found ties to the class even
+                            // where the reading stands loose; anything
+                            // else loose comes back as it lies.
+                            let bind = (!loose || key == self.detail("subclass")) && matches!(&found, Value::Wrapped(tag, _) if [2, 10, 11, 12, 19, 30, 36, 60, 71, 73].contains(tag));
+                            return Ok(Some(if bind { Self::wrap(3, vec![found, receiver.clone()]) } else { found }));
+                        }
+                        Err(escape) if self.missing_member_escape(&escape) => (),
+                        Err(escape) => return Err(escape),
+                    }
+                }
+                // Native slots are descriptors on their defining kind;
+                // bind that descriptor before considering the root.
+                if Self::native_word(base).is_some() {
+                    if let Some(slot) = self.carried_by_kind(&Value::Blueprint(base.clone()), key) {
+                        return Ok(Some(if loose { slot } else { Self::wrap(3, vec![slot, receiver.clone()]) }));
+                    }
+                }
+                if self.table.single("ext.stmt.class.constructor")==Some(key) {
+                    if Self::native_word(base).as_deref().and_then(|word|self.table.prims.get(word)).is_some_and(|op|matches!(op,Prim::Listed|Prim::Dictionary)) {
+                        if let Some(entry)=self.inherited_entry(base,key) { return Ok(Some(self.member_binding(entry,Some(receiver.clone()),actual.clone())?)); }
+                    }
+                }
+                // A member a native forebear carries without keeping an
+                // entry of its own, `__hash__` or `__eq__` among them, is
+                // answered off the worth the thing holds, which is what
+                // the base's own reading of that name gives.
+                if Self::native_beneath(base).is_some() {
+                    if let Some(worth) = Self::underlying(receiver) {
+                        if let Some(member) = self.attribute(&worth, key) { return Ok(Some(member)); }
+                    }
+                }
+            }
+            passed |= Self::parent_same_class(base, owner);
+        }
+        // The walk coming to the common ancestor, the root answers with
+        // its own members as a plain read of a thing does: the maker
+        // every blueprint stands on, its beginning among them.
+        if let Some(root)=self.from_the_root(key,true,&actual) {
+            if key==self.detail("allocate") { return Ok(Some(root)); }
+            // A member the root hands every class answers for the class
+            // even where the reading stands loose; the rest come back
+            // as they lie where nothing binds them.
+            if loose && key != self.detail("subclass") { return Ok(Some(root)); }
+            let bound=if key==self.detail("subclass"){Value::Blueprint(actual.clone())}else{receiver.clone()};
+            return Ok(Some(Self::wrap(3,vec![root,bound])));
+        }
+        Ok(None)
     }
 }

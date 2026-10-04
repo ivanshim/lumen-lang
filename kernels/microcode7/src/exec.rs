@@ -6633,6 +6633,44 @@ impl<'a> Machine<'a> {
                     all.extend(values);
                     Ok(self.invoke(program, self.outermost.clone(), all)?)
                 }
+                Prim::Parentless => {
+                    // A parent call with no argument written: the word
+                    // read as a name stands for the parent class itself,
+                    // and the cell and the first parameter make the
+                    // thing, each absence said the way the reference says
+                    // it; any other callable the name was given is called
+                    // with no arguments at all.
+                    let values = self.value_list(args, frame)?;
+                    let callable = values[0].settled();
+                    let descended = match &callable {
+                        Value::Blueprint(b) => Self::parent_kind_descended(b),
+                        Value::Wrapped(9, kept) => kept.is_empty(),
+                        _ => false,
+                    };
+                    if !descended {
+                        return self.apply_held(callable, Vec::new());
+                    }
+                    let mode = match &values[1] { Value::Small(n) => *n, _ => 0 };
+                    if mode == 2 {
+                        return Err("RuntimeError: super(): no arguments".to_owned().into());
+                    }
+                    if matches!(values[5], Value::Flag(true)) {
+                        return Err("RuntimeError: super(): arg[0] deleted".to_owned().into());
+                    }
+                    if mode == 1 {
+                        return Err("RuntimeError: super(): __class__ cell not found".to_owned().into());
+                    }
+                    if matches!(values[4], Value::Flag(true)) {
+                        return Err("RuntimeError: super(): empty __class__ cell".to_owned().into());
+                    }
+                    let cell = values[2].settled();
+                    let Value::Blueprint(owner) = cell else {
+                        return Err(format!("RuntimeError: super(): __class__ is not a type ({})", self.parent_tp_name(&cell)).into());
+                    };
+                    let this = values[3].settled();
+                    let class = match &callable { Value::Blueprint(b) => b.clone(), _ => self.native_kind("super") };
+                    self.parent_constructed(class, vec![Value::Blueprint(owner), this])
+                }
                 Prim::Bid => {
                     let mut values = self.value_list(args, frame)?;
                     if values.len() < 3 {
@@ -12634,6 +12672,28 @@ impl<'a> Machine<'a> {
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
         } else { Ok(value.clone()) }
+    }
+
+    /// Whether two cell wrappers look into one room: each is a shared
+    /// cell standing alone or a frame and a place in it, and the two are
+    /// one where the shared cell is one or the frame and place are.
+    fn one_cell_room(&self, one: &[Value], two: &[Value]) -> bool {
+        enum Room { Cell(usize), Slot(usize, usize) }
+        let room = |items: &[Value]| -> Option<Room> {
+            if let [Value::Shared(cell)] = items { return Some(Room::Cell(Rc::as_ptr(cell) as usize)); }
+            let (frame, at) = self.cell_place(items)?;
+            if frame.capture_slots.borrow().contains(&at) {
+                if let Value::Shared(binding) = &frame.cells.borrow()[at] {
+                    return Some(Room::Cell(Rc::as_ptr(binding) as usize));
+                }
+            }
+            Some(Room::Slot(Rc::as_ptr(&frame) as usize, at))
+        };
+        match (room(one), room(two)) {
+            (Some(Room::Cell(a)), Some(Room::Cell(b))) => a == b,
+            (Some(Room::Slot(one_frame, one_at)), Some(Room::Slot(other_frame, other_at))) => one_frame == other_frame && one_at == other_at,
+            _ => false,
+        }
     }
 
     fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
@@ -19429,6 +19489,9 @@ impl<'a> Machine<'a> {
                     (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(_, _, a), Value::Method(_, _, b)) => Rc::ptr_eq(a, b),
+                    // A cell asked after twice is the one cell: the
+                    // wrappers differ, the room they look into is one.
+                    (Value::Wrapped(35, one), Value::Wrapped(35, two)) => self.one_cell_room(one, two),
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
                     (Value::Member(owner, operation), Value::Member(other, action)) => operation == action && Rc::ptr_eq(owner, other),
                     (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
@@ -20291,7 +20354,7 @@ impl<'a> Machine<'a> {
                 x.clone()
             }
             Prim::Octets(_) | Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
+            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise | Prim::Parentless => unreachable!("handled in eval"),
         })
     }
 
@@ -22507,6 +22570,9 @@ impl Machine<'_> {
         let package_word = self.table.single("ext.system.module.package");
         let package_name = if search.is_some() { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
         let mut members = Vec::with_capacity(exported.len());
+        let parent_class = if self.rules.explicit_receiver && self.has_class_order() {
+            self.table.strings("ext.stmt.class.parent").first().map(|word| Value::Blueprint(self.native_kind(word)))
+        } else { None };
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
@@ -22517,7 +22583,7 @@ impl Machine<'_> {
                     else if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
                     else if self.rules.explicit_receiver && self.table.spells("ext.stmt.class.parent", name) {
-                        Value::Wrapped(9, Rc::new(Vec::new()).into())
+                        parent_class.clone().unwrap_or_else(|| Value::Wrapped(9, Rc::new(Vec::new()).into()))
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
@@ -23206,8 +23272,17 @@ impl<'a> Machine<'a> {
         };
         if let Some(Value::Wrapped(35, items)) = class_cell {
             if !protocol { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(Value::Wrapped(35, items), &word, Some(result.clone()), true)?; return Ok(result); }
-            let held = self.cell_contents(&items).ok_or_else(|| format!("RuntimeError: __class__ not set defining '{}'", name))?;
-            if !matches!((held.settled(), result.settled()), (Value::Blueprint(a), Value::Blueprint(b)) if Rc::ptr_eq(&a, &b)) { return Err(format!("TypeError: __class__ set to a different value defining '{}'", name).into()); }
+            // What the builder answered may be no class at all: the cell
+            // then names nothing and nothing is asked of it.
+            let Value::Blueprint(made) = result.settled() else { return Ok(result) };
+            let shown = made.presentation.clone().unwrap_or_else(|| format!("<class '{}'>", made.name));
+            let Some(held) = self.cell_contents(&items) else {
+                return Err(format!("RuntimeError: __class__ not set defining '{}' as {}. Was __classcell__ propagated to type.__new__?", name, shown).into());
+            };
+            if !matches!(held.settled(), Value::Blueprint(a) if Rc::ptr_eq(&a, &made)) {
+                let had = match held.settled() { Value::Blueprint(a) => a.presentation.clone().unwrap_or_else(|| format!("<class '{}'>", a.name)), other => other.quoted(false) };
+                return Err(format!("TypeError: __class__ set to {} defining '{}' as {}", had, name, shown).into());
+            }
         }
         Ok(result)
     }

@@ -468,6 +468,12 @@ pub enum Prim {
     /// Call a method of a named class: what it is for, the class, the
     /// name, then the arguments.
     Bid,
+    /// A parent call with no argument written: the callable the parent
+    /// word read, how much of the frame it may take, then the class cell
+    /// and the first parameter, each read without complaint, and a flag
+    /// for each saying whether it was there. The parent class itself is
+    /// made of the two; any other callable is called with no arguments.
+    Parentless,
     /// Whether the first is a thing of the class named second.
     Akin,
     /// The name of the class of a thing, or of a class.

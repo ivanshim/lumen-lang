@@ -1148,6 +1148,13 @@ impl Value {
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
             (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
+            // A cell asked after twice is the one cell where both
+            // wrappers name the one room they look into.
+            (Value::Wrapped(35, x), Value::Wrapped(35, y)) => match (x.as_slice(), y.as_slice()) {
+                ([Value::Shared(a)], [Value::Shared(b)]) => Rc::ptr_eq(a, b),
+                ([Value::Bound(p, r), Value::Small(i), ..], [Value::Bound(q, s), Value::Small(j), ..]) => Rc::ptr_eq(p, q) && Rc::ptr_eq(r, s) && i == j,
+                _ => Rc::ptr_eq(x, y),
+            },
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,
