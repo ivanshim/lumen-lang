@@ -215,12 +215,12 @@ def fsencode(filename):
     return filename.encode('utf-8', 'surrogateescape') if isinstance(filename, str) else filename
 
 def _posix_call(operation, path, *args):
-    result, error = _host_posix(operation, fsdecode(path) if operation != 'close' else path, *args)
+    result, error = _host_posix(operation, path if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty') else fsdecode(path), *args)
     if error is not None:
         number, message = error
         message = message.split(' (os error')[0]
-        error_type = {1: PermissionError, 2: FileNotFoundError, 13: PermissionError, 17: FileExistsError, 20: NotADirectoryError, 21: IsADirectoryError}.get(number, OSError)
-        if operation == 'close':
+        error_type = {11: BlockingIOError, 1: PermissionError, 2: FileNotFoundError, 13: PermissionError, 17: FileExistsError, 20: NotADirectoryError, 21: IsADirectoryError}.get(number, OSError)
+        if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty'):
             raise error_type(number, message)
         raise error_type(number, message, path)
     return result
@@ -363,3 +363,28 @@ def _path_islink(name):
 path.islink = _path_islink
 
 supports_follow_symlinks.add(stat)
+
+
+import abc
+from _collections_abc import _check_methods
+from types import GenericAlias
+
+class PathLike(abc.ABC):
+
+    """Abstract base class for implementing the file system path protocol."""
+
+    __slots__ = ()
+
+    @abc.abstractmethod
+    def __fspath__(self):
+        """Return the file system path representation of the object."""
+        raise NotImplementedError
+
+    @classmethod
+    def __subclasshook__(cls, subclass):
+        if cls is PathLike:
+            return _check_methods(subclass, '__fspath__')
+        return NotImplemented
+
+    __class_getitem__ = classmethod(GenericAlias)
+

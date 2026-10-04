@@ -669,7 +669,128 @@ class IncrementalNewlineDecoder:
 
 class FileIO(_RawIOBase):
     def __init__(self, file, mode='r', closefd=True, opener=None):
-        raise UnsupportedOperation('File descriptors are not implemented')
+        import os
+        if not isinstance(mode, str):
+            raise TypeError('mode must be a string')
+        base = [letter for letter in mode if letter in 'rwax']
+        if len(base) != 1 or any(letter not in 'rwax+b' for letter in mode) or mode.count('+') > 1 or mode.count('b') > 1:
+            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+        self._readable = base[0] == 'r' or '+' in mode
+        self._writable = base[0] != 'r' or '+' in mode
+        self._closefd = bool(closefd)
+        self._fd = -1
+        self._closed = True
+        self.name = file
+        self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb') + ('+' if '+' in mode else '')
+        if isinstance(file, float):
+            raise TypeError('integer argument expected, got float')
+        if isinstance(file, int) or hasattr(type(file), '__index__'):
+            fd = _index(file)
+            if fd < 0:
+                raise ValueError('negative file descriptor')
+            os._posix_call('fd_flags', fd)
+        else:
+            if not closefd:
+                raise ValueError('Cannot use closefd=False with file name')
+            flags = os.O_RDWR if '+' in mode else os.O_RDONLY if base[0] == 'r' else os.O_WRONLY
+            if base[0] in ('w', 'x', 'a'):
+                flags |= os.O_CREAT
+            if base[0] == 'w': flags |= os.O_TRUNC
+            if base[0] == 'x': flags |= os.O_EXCL
+            if base[0] == 'a': flags |= os.O_APPEND
+            fd = os.open(file, flags, 438) if opener is None else _index(opener(file, flags))
+            if fd < 0:
+                raise ValueError('opener returned a negative file descriptor')
+        self._fd = fd
+        self._closed = False
+        if base[0] == 'a':
+            try:
+                self.seek(0, 2)
+            except OSError:
+                pass
+    @property
+    def closefd(self):
+        return self._closefd
+    def fileno(self):
+        self._checkClosed()
+        return self._fd
+    def close(self):
+        if not self.closed:
+            import os
+            try:
+                if self._closefd:
+                    os.close(self._fd)
+            finally:
+                self._fd = -1
+                self._closed = True
+    def readable(self):
+        self._checkClosed()
+        return self._readable
+    def writable(self):
+        self._checkClosed()
+        return self._writable
+    def seekable(self):
+        self._checkClosed()
+        try:
+            self.seek(0, 1)
+        except OSError:
+            return False
+        return True
+    def isatty(self):
+        import os
+        return os._posix_call('isatty', self.fileno())
+    def read(self, size=-1):
+        self._checkClosed()
+        self._checkReadable()
+        size = _size(size)
+        if size < 0:
+            return self.readall()
+        import os
+        try:
+            return os._posix_call('read', self._fd, size)
+        except BlockingIOError:
+            return None
+    def readall(self):
+        self._checkClosed()
+        self._checkReadable()
+        chunks = []
+        while True:
+            chunk = self.read(DEFAULT_BUFFER_SIZE)
+            if chunk is None:
+                return b''.join(chunks) if chunks else None
+            if not chunk:
+                return b''.join(chunks)
+            chunks.append(chunk)
+    def readinto(self, buffer):
+        with _get_buffer(buffer) as view:
+            if view.readonly:
+                raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
+            data = self.read(view.nbytes)
+            if data is None:
+                return None
+            view.cast('B')[:len(data)] = data
+            return len(data)
+    def write(self, buffer):
+        self._checkClosed()
+        self._checkWritable()
+        import os
+        try:
+            return os._posix_call('write', self._fd, _buffer(buffer))
+        except BlockingIOError:
+            return None
+    def seek(self, offset, whence=0):
+        self._checkClosed()
+        import os
+        return os._posix_call('seek', self._fd, _ssize(offset), _whence(whence))
+    def truncate(self, size=None):
+        self._checkClosed()
+        self._checkWritable()
+        if size is None:
+            size = self.tell()
+        size = _ssize(size)
+        import os
+        os._posix_call('truncate', self._fd, size)
+        return size
 
 class _CheckedRaw:
     # Buffered C streams use raw.readinto(), even when raw also has read().
@@ -837,6 +958,29 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+        if isinstance(file, int) or opener is not None:
+            binary = 'b' in mode
+            if binary and (encoding is not None or errors is not None or newline is not None):
+                raise ValueError("binary mode doesn't take an encoding, errors, or newline argument")
+            raw = FileIO(file, mode.replace('t', ''), closefd, opener)
+            try:
+                if buffering == 0:
+                    if not binary:
+                        raise ValueError("can't have unbuffered text I/O")
+                    return raw
+                size = DEFAULT_BUFFER_SIZE if buffering < 0 or buffering == 1 else _index(buffering)
+                if '+' in mode:
+                    buffer = BufferedRandom(raw, size)
+                elif raw.readable():
+                    buffer = BufferedReader(raw, size)
+                else:
+                    buffer = BufferedWriter(raw, size)
+                if binary:
+                    return buffer
+                return TextIOWrapper(buffer, encoding, errors, newline, line_buffering=buffering == 1)
+            except:
+                raw.close()
+                raise
         from builtins import _host_open
         return _host_open(file, mode, buffering, encoding, errors, newline, closefd, opener)
 

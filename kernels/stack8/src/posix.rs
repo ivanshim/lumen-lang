@@ -35,6 +35,65 @@ pub(crate) fn operate(args: &[Value]) -> Result<Value, String> {
             let fd = unsafe { open(name.as_ptr(), flags | 524288, mode) };
             if fd < 0 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(i64::from(fd))) }
         }
+        "read" | "write" | "seek" | "truncate" => {
+            extern "C" {
+                fn read(fd: i32, buffer: *mut std::ffi::c_void, size: usize) -> isize;
+                fn write(fd: i32, buffer: *const std::ffi::c_void, size: usize) -> isize;
+                fn lseek(fd: i32, offset: i64, whence: i32) -> i64;
+                fn ftruncate(fd: i32, size: i64) -> i32;
+            }
+            let descriptor = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;
+            match command.as_str() {
+                "read" => {
+                    let length = args.get(2).ok_or("TypeError: read size is required")?.as_big()?.to_string().parse::<usize>().map_err(|_| "OverflowError: read size is out of range")?;
+                    let mut buffer = Vec::new();
+                    buffer.try_reserve_exact(length).map_err(|_| "MemoryError: cannot allocate read buffer")?;
+                    buffer.resize(length, 0);
+                    let count = loop {
+                        let count = unsafe { read(descriptor, buffer.as_mut_ptr().cast(), length) };
+                        if count >= 0 { break Ok(count as usize); }
+                        let fault = std::io::Error::last_os_error();
+                        if fault.kind() != std::io::ErrorKind::Interrupted { break Err(fault); }
+                    };
+                    count.map(|used| {
+                        buffer.truncate(used);
+                        Value::Bytes(std::rc::Rc::new(std::cell::RefCell::new(buffer)), false, std::rc::Rc::from("bytes"))
+                    })
+                }
+                "write" => {
+                    let contents = args.get(2).ok_or("TypeError: write buffer is required")?.contents();
+                    let Value::Bytes(bytes, ..) = contents else { return Err("TypeError: a bytes-like object is required".into()); };
+                    let buffer = bytes.borrow();
+                    loop {
+                        let count = unsafe { write(descriptor, buffer.as_ptr().cast(), buffer.len()) };
+                        if count >= 0 { break Ok(Value::Small(count as i64)); }
+                        let fault = std::io::Error::last_os_error();
+                        if fault.kind() != std::io::ErrorKind::Interrupted { break Err(fault); }
+                    }
+                }
+                "seek" => {
+                    let offset = args.get(2).ok_or("TypeError: seek offset is required")?.as_big()?.to_string().parse::<i64>().map_err(|_| "OverflowError: seek offset is out of range")?;
+                    let whence = args.get(3).ok_or("TypeError: seek direction is required")?.as_big()?.to_string().parse::<i32>().map_err(|_| "OverflowError: seek direction is out of range")?;
+                    let place = unsafe { lseek(descriptor, offset, whence) };
+                    if place < 0 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(place)) }
+                }
+                _ => {
+                    let length = args.get(2).ok_or("TypeError: truncate size is required")?.as_big()?.to_string().parse::<i64>().map_err(|_| "OverflowError: truncate size is out of range")?;
+                    if unsafe { ftruncate(descriptor, length) } < 0 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Null) }
+                }
+            }
+        }
+        "fd_flags" => {
+            extern "C" { fn fcntl(fd: std::ffi::c_int, operation: std::ffi::c_int, ...) -> std::ffi::c_int; }
+            let fd = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;
+            let flags = unsafe { fcntl(fd, 3) };
+            if flags < 0 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(i64::from(flags))) }
+        }
+        "isatty" => {
+            extern "C" { fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int; }
+            let fd = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;
+            Ok(Value::Flag(unsafe { isatty(fd) } != 0))
+        }
         "close" => {
             extern "C" { fn close(fd: std::ffi::c_int) -> std::ffi::c_int; }
             let descriptor = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;

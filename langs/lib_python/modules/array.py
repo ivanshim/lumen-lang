@@ -1,4 +1,5 @@
 # Numeric array elements are kept in a list.
+_binary_float = __math
 typecodes = 'bBuhHiIlLqQfdw'
 
 class array:
@@ -20,7 +21,11 @@ class array:
             if not isinstance(value, str) or len(value) != 1:
                 raise TypeError('array item must be unicode character')
         elif self.typecode in ('f', 'd'):
-            raise NotImplementedError('floating-point array payload conversion is unavailable')
+            if isinstance(value, (str, bytes, bytearray)):
+                raise TypeError('must be real number, not ' + type(value).__name__)
+            value = float(value)
+            if self.typecode == 'f':
+                value = _binary_float('bits_float32', _binary_float('float_bits32', value))
         else:
             import operator
             value = operator.index(value)
@@ -30,7 +35,7 @@ class array:
             high = 2 ** (bits - (1 if signed else 0)) - 1
             if value < low or value > high:
                 raise OverflowError('array item is out of range')
-        self.data = [*self.data, value]
+        self.data.append(value)
 
     def extend(self, values):
         for value in values:
@@ -52,6 +57,8 @@ class array:
         import sys
         for at in range(0, len(raw), self.itemsize):
             value = int.from_bytes(raw[at:at + self.itemsize], sys.byteorder, signed=self.typecode.islower() and self.typecode not in ('u', 'w'))
+            if self.typecode in ('f', 'd'):
+                value = _binary_float('bits_float32' if self.typecode == 'f' else 'bits_float64', int.from_bytes(raw[at:at + self.itemsize], sys.byteorder))
             self.append(chr(value) if self.typecode in ('u', 'w') else value)
 
     def tobytes(self):
@@ -60,7 +67,9 @@ class array:
         result = b''
         for value in self.data:
             number = ord(value) if self.typecode in ('u', 'w') else value
-            result += number.to_bytes(self.itemsize, __import__('sys').byteorder, signed=self.typecode.islower() and self.typecode not in ('u', 'w'))
+            if self.typecode in ('f', 'd'):
+                number = _binary_float('float_bits32' if self.typecode == 'f' else 'float_bits64', value)
+            result += number.to_bytes(self.itemsize, __import__('sys').byteorder, signed=self.typecode.islower() and self.typecode not in ('u', 'w', 'f', 'd'))
         return result
 
     def __int__(self):

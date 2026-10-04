@@ -17640,6 +17640,33 @@ impl<'a> Machine<'a> {
                 if working == "method" && v.len() == 3 {
                     return Ok(Value::Wrapped(134, Rc::new(vec![v[1].clone(),v[2].clone()]).into()));
                 }
+                if self.rules.floating_math {
+                    let format = match working.as_str() {
+                        "float_bits32" => Some((false, true)), "float_bits64" => Some((false, false)),
+                        "bits_float32" => Some((true, true)), "bits_float64" => Some((true, false)), _ => None,
+                    };
+                    if let Some((decode, single)) = format {
+                        if v.len() != 2 { return Err(String::from("TypeError: binary float conversion expects one value")); }
+                        if decode {
+                            let pattern = v[1].as_big()?.to_string().parse::<u64>().map_err(|_| String::from("OverflowError: float bit pattern is out of range"))?;
+                            let binary = match single {
+                                true => f32::from_bits(u32::try_from(pattern).map_err(|_| String::from("OverflowError: float bit pattern is out of range"))?) as f64,
+                                false => f64::from_bits(pattern),
+                            };
+                            let mut decoded = crate::data::worth_of_binary(binary, self.real_figures());
+                            if let Value::Frac(ratio) = &mut decoded { Rc::make_mut(ratio).float_style = true; }
+                            return Ok(decoded);
+                        }
+                        let input = v[1].settled();
+                        let ratio = math::ratio_of(&input).ok_or_else(|| String::from("TypeError: must be real number"))?;
+                        let width = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                        let signed = match &input {
+                            Value::Frac(r) if r.under && r.above.is_zero() => -width.abs(), _ => width,
+                        };
+                        let word = if single { (signed as f32).to_bits() as u64 } else { signed.to_bits() };
+                        return Ok(Value::from_big(BigInt::from(word)));
+                    }
+                }
                 if working == "sumprod" && self.table.flag("ext.builtin.math.sumprod") {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
                     return self.dot_product(&v[1], &v[2]);
@@ -24128,6 +24155,9 @@ impl Machine<'_> {
             Value::Blueprint(class) => {
                 // A class whose metaclass speaks for the kind is asked first.
                 if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
+                if self.namespace_holding(item).is_some() {
+                    if Self::native_word(class).as_deref() == Some("module") { return Ok(true); }
+                }
                 // Every value at all is of the class every value is of.
                 if self.has_class_order() {
                     let root=self.common_ancestor();

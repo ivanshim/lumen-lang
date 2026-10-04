@@ -64,3 +64,7 @@ then `LUMEN_PYTHON`, then the newest registered release. Never edit a reference
 file. A bugfix refresh uses `git mv` on its full-release directory and replaces
 the table pin; it does not keep an older micro release. Add a provenance table
 here for each newly registered series.
+
+The embedded `langs/lib_python/modules/tempfile.py` is also a complete copy of
+CPython v3.14.8 `Lib/tempfile.py`, unchanged beneath its single PSF provenance
+header. Descriptor I/O is supplied by the runtime `_io` adapter and both kernels.

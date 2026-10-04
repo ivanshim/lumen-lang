@@ -3603,6 +3603,8 @@ only. The extension labels so far, all from PHP:
   a whole-valued result. Other exact reals retain their former spelling.
   This Python-only switch also enables the `frexp`, `frexp_plain`,
   `ldexp_plain`, `fsum_partial`, `fsum_finite` and `dist_float` workings.
+  It also enables `float_bits32`, `float_bits64`, `bits_float32` and
+  `bits_float64`, the IEEE binary conversions used by numeric arrays.
   Without it these names retain the unknown-working path and its arity.
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
@@ -5915,7 +5917,7 @@ the native type name used in exception messages and an immutable type namespace.
 This metadata belongs to the
 class itself and is not inherited by Python subclasses.
 
-`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
+`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. Descriptor operations include read, write, seek, truncate, status flags and terminal checks; read and write retry interrupted calls. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
 

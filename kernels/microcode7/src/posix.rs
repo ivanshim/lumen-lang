@@ -41,6 +41,65 @@ pub(crate) fn perform(values: &[Value]) -> Result<Value, String> {
             let handle = unsafe { open(spelling.as_ptr(), options | 0x80000, permissions) };
             if handle == -1 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(handle.into())) }
         }
+        "read" | "write" | "seek" | "truncate" => {
+            extern "C" {
+                fn read(handle: std::ffi::c_int, into: *mut u8, count: usize) -> isize;
+                fn write(handle: std::ffi::c_int, from: *const u8, count: usize) -> isize;
+                fn lseek(handle: std::ffi::c_int, shift: i64, from: std::ffi::c_int) -> i64;
+                fn ftruncate(handle: std::ffi::c_int, length: i64) -> std::ffi::c_int;
+            }
+            let fd = integer(1)?;
+            if step == "read" {
+                let wanted = values.get(2).ok_or("TypeError: missing read count")?.as_big()?.to_string().parse::<usize>().map_err(|_| "OverflowError: read count outside size range")?;
+                let mut bytes = Vec::new();
+                bytes.try_reserve_exact(wanted).map_err(|_| "MemoryError: read allocation failed")?;
+                bytes.resize(wanted, 0);
+                let got = loop {
+                    let n = unsafe { read(fd, bytes.as_mut_ptr(), wanted) };
+                    if n != -1 { break Ok(n as usize); }
+                    let why = std::io::Error::last_os_error();
+                    if why.raw_os_error() != Some(4) { break Err(why); }
+                };
+                got.map(|amount| {
+                    bytes.truncate(amount);
+                    Value::Octets { cell: std::rc::Rc::new(std::cell::RefCell::new(bytes)), changeable: false, lead: std::rc::Rc::from("bytes") }
+                })
+            } else if step == "write" {
+                let buffer = values.get(2).ok_or("TypeError: missing write data")?.settled();
+                match buffer {
+                    Value::Octets { cell, .. } => {
+                        let data = cell.borrow();
+                        loop {
+                            let used = unsafe { write(fd, data.as_ptr(), data.len()) };
+                            if used != -1 { break Ok(Value::Small(used as i64)); }
+                            let error = std::io::Error::last_os_error();
+                            if error.raw_os_error() != Some(4) { break Err(error); }
+                        }
+                    },
+                    _ => return Err(String::from("TypeError: a bytes-like object is required")),
+                }
+            } else if step == "seek" {
+                let displacement = values.get(2).ok_or("TypeError: missing seek offset")?.as_big()?.to_string().parse::<i64>().map_err(|_| "OverflowError: seek offset outside file range")?;
+                let origin = integer(3)?;
+                match unsafe { lseek(fd, displacement, origin) } {
+                    -1 => Err(std::io::Error::last_os_error()), position => Ok(Value::Small(position)),
+                }
+            } else {
+                let amount = values.get(2).ok_or("TypeError: missing truncate size")?.as_big()?.to_string().parse::<i64>().map_err(|_| "OverflowError: truncate size outside file range")?;
+                match unsafe { ftruncate(fd, amount) } {
+                    0 => Ok(Value::Nil), _ => Err(std::io::Error::last_os_error()),
+                }
+            }
+        }
+        "fd_flags" => {
+            extern "C" { fn fcntl(descriptor: std::ffi::c_int, request: std::ffi::c_int, ...) -> std::ffi::c_int; }
+            let bits = unsafe { fcntl(integer(1)?, 3) };
+            if bits == -1 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(bits.into())) }
+        }
+        "isatty" => {
+            extern "C" { fn isatty(descriptor: std::ffi::c_int) -> std::ffi::c_int; }
+            Ok(Value::Flag(unsafe { isatty(integer(1)?) } == 1))
+        }
         "close" => {
             extern "C" { fn close(handle: std::ffi::c_int) -> std::ffi::c_int; }
             let handle = values[1].as_big()?.to_string().parse().map_err(|_| String::from("OverflowError: descriptor outside integer range"))?;

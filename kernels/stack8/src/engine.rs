@@ -17814,6 +17814,28 @@ impl<'a> Engine<'a> {
                 if working == "method" && args.len() == 3 {
                     return Ok(Self::adapter(64, vec![args[1].clone(), args[2].clone()]));
                 }
+                if self.lang.math_floating && matches!(working.as_str(), "float_bits32" | "float_bits64" | "bits_float32" | "bits_float64") {
+                    if args.len() != 2 { return Err("TypeError: binary float conversion expects one value".into()); }
+                    let narrow = working.ends_with("32");
+                    if working.starts_with("bits_") {
+                        let bits = args[1].as_big()?.to_string().parse::<u64>().map_err(|_| "OverflowError: float bit pattern is out of range")?;
+                        let number = if narrow {
+                            let word = u32::try_from(bits).map_err(|_| "OverflowError: float bit pattern is out of range")?;
+                            f64::from(f32::from_bits(word))
+                        } else { f64::from_bits(bits) };
+                        let mut result = crate::value::real_of(number, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                        if let Value::Real(real) = &mut result { Rc::make_mut(real).floating = true; }
+                        return Ok(result);
+                    }
+                    let value = args[1].contents();
+                    let exact = arith::Exact::from_value(&value).ok_or("TypeError: must be real number")?;
+                    let mut number = crate::value::as_binary(&exact.p, &exact.q);
+                    if let Value::Real(real) = &value {
+                        if real.below && real.p.is_zero() { number = -number.abs(); }
+                    }
+                    let bits = if narrow { u64::from((number as f32).to_bits()) } else { number.to_bits() };
+                    return Ok(Value::of_big(BigInt::from(bits)));
+                }
                 if working == "sumprod" && self.lang.math_sumprod {
                     if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
                     return self.product_sum(&args[1], &args[2]);
@@ -20479,6 +20501,9 @@ impl Engine<'_> {
         if let Value::Class(class) = kind {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
+            if Self::own_kind(class).as_deref() == Some("module") && self.module_holding(value).is_some() {
+                return Ok(true);
+            }
             // Every value whatever is of the class every other one is of.
             if self.fuller_classes() {
                 let root = self.root_class();
