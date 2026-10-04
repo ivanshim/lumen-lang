@@ -389,7 +389,16 @@ def main():
         for why, n in (reasons[lead][key] if key == "php" else Counter(results[lead][f][1] for f in files)).most_common(40):
             lines.append("| " + why.replace("|", "\\|") + f" | {n} |")
         lines.append("")
-        split = [f for f in files if len({results[k][f][0] for k in kernels}) > 1]
+        # A kernel cut off by the per-file time limit has not given an answer, so a timeout is
+        # listed apart as slow, not as a disagreement; two finished, different answers still are.
+        timed_out = lambda f: any(results[k][f][1] == "timeout" for k in kernels)
+        split = [f for f in files if len({results[k][f][0] for k in kernels}) > 1 and not timed_out(f)]
+        slow = [f for f in files if len({results[k][f][0] for k in kernels}) > 1 and timed_out(f)]
+        if slow:
+            lines += [f"### Slow on a kernel (timed out after {TIMEOUT} s; not counted as a disagreement): {len(slow)}", "", "| Test | " + " | ".join(kernels) + " |", "|---|" + "---|" * len(kernels)]
+            for f in slow:
+                lines.append(f"| `{f.relative_to(ROOT / 'tests')}` | " + " | ".join(f"{results[k][f][0]}: " + results[k][f][1].replace("|", "\\|") for k in kernels) + " |")
+            lines.append("")
         if split:
             lines += [f"### Kernel disagreements: {len(split)}", "", "| Test | " + " | ".join(kernels) + " |", "|---|" + "---|" * len(kernels)]
             for f in split:

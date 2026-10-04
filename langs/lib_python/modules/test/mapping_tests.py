@@ -1,4 +1,4 @@
-# Source: CPython Lib/test/mapping_tests.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/mapping_tests.py; PSF License.
 # tests common to dict and UserDict
 import unittest
 import collections

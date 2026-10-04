@@ -2460,3 +2460,30 @@ to date and checked again.
 Measured on both kernels, the sixty files count 3224 of 3596, identical file by file to batch 20x: the move changes no
 result. The full check agrees on 1182 scratch programs with no mismatch and passes every gate; kernel independence
 reports no problem.
+
+### 1bb. The Python release selection merged as #533; batch 20y: io, re, types, weakref and the core standard library
+
+The first standard-library batch on the CPython 3.14.8 suite. Eight branches, each reviewed and accepted on its own,
+were merged one at a time by a GPT-6 Astra integrator; GPT-6.1 Sol workers wrote most of them.
+
+- fix/stdlib-io: CPython's own io.py and _pyio.py in memory over an _io adapter — from now the one io; every other
+  branch's BytesIO / TextIOWrapper stand-in was dropped. The runtime unittest now discovers inherited test methods and
+  honours load_tests, as CPython's loader does.
+- fix/support-helpers: the test.support helpers the suite needs.
+- fix/stdlib-re: CPython's re package over a faithful _sre; copyreg is the upstream file.
+- fix/stdlib-types: CPython's types.py and the native objects its fallbacks probe (MethodType identity, mappingproxy).
+- fix/stdlib-weakref: upstream weakref and _weakrefset over native weak primitives.
+- fix/stdlib-collections, fix/stdlib-string, fix/stdlib-random: CPython's modules and their tests.
+
+The integration audit's requirements hold: one canonical test.support.subTests awaits coroutine test methods,
+inspect.iscoroutinefunction sees through partials, partial methods and coroutine markers, and an async test with a
+failing assertion fails on both kernels, directly and through a partial. Every CPython-derived file was checked against
+the v3.14.8 tag (138 files); added tests live in tests/python-3.14.8/.
+
+Measured on both kernels: 4107 (stack8) and 4106 (microcode7) of 4520, over 70 files, from 3224 of 3596 over 60 — new
+files include test_re 151/166, test_weakref 123/137, test_weakset 46/46, test_memoryio 179/184, test_collections 112/116,
+test_random 111/116, test_string 41/42. Three totals changed because discovery is now correct: test_bigmem 61→166,
+test_functools 326→325, test_str 138→139 — exactly what CPython 3.14's own loader counts in those files. test_io runs
+whole on the remote at 485 of 669 on both kernels but exceeds Lambda's time limit; test_types waits for _datetime. The
+merged full check agrees on 1194 scratch programs with no mismatch and passes every gate; kernel independence reports no
+problem.

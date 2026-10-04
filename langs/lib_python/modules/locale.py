@@ -1,620 +1,685 @@
-# Stub: the plain C locale is the only locale carried here.
-LC_CTYPE = 0
-LC_NUMERIC = 1
-LC_TIME = 2
-LC_COLLATE = 3
-LC_MONETARY = 4
-LC_MESSAGES = 5
-LC_ALL = 6
-CHAR_MAX = 127
+# From CPython v3.14.8 (8e6e75d9102e), Lib/locale.py; PSF License.
+"""Locale support module.
 
-def setlocale(category, locale=None):
-    if category < 0 or category > 6:
-        raise 'ValueError: invalid locale category'
-    if locale is not None and locale != 'C' and locale != 'POSIX' and locale != '':
-        raise 'NotImplementedError: locale.setlocale supports only C'
-    return 'C'
+The module provides low-level access to the C lib's locale APIs and adds high
+level number formatting APIs as well as a locale aliasing engine to complement
+these.
 
-def getlocale(category=0):
-    if category == LC_ALL:
-        raise 'TypeError: category LC_ALL is not supported'
-    if category < 0 or category > 6:
-        raise 'ValueError: invalid locale category'
-    return (None, None)
+The aliasing engine includes support for many commonly used locale names and
+maps them to values suitable for passing to the C lib's setlocale() function. It
+also includes default encodings for all supported locale names.
 
+"""
+
+import sys
+import encodings
+import encodings.aliases
+import _collections_abc
+from builtins import str as _builtin_str
+import functools
+
+# Try importing the _locale module.
+#
+# If this fails, fall back on a basic 'C' locale emulation.
+
+# Yuck:  LC_MESSAGES is non-standard:  can't tell whether it exists before
+# trying the import.  So __all__ is also fiddled at the end of the file.
+__all__ = ["getlocale", "getdefaultlocale", "getpreferredencoding", "Error",
+           "setlocale", "localeconv", "strcoll", "strxfrm",
+           "str", "atof", "atoi", "format_string", "currency",
+           "normalize", "LC_CTYPE", "LC_COLLATE", "LC_TIME", "LC_MONETARY",
+           "LC_NUMERIC", "LC_ALL", "CHAR_MAX", "getencoding"]
+
+def _strcoll(a,b):
+    """ strcoll(string,string) -> int.
+        Compares two strings according to the locale.
+    """
+    return (a > b) - (a < b)
+
+def _strxfrm(s):
+    """ strxfrm(string) -> string.
+        Returns a string that behaves for cmp locale-aware.
+    """
+    return s
+
+try:
+
+    from _locale import *
+
+except ImportError:
+
+    # Locale emulation
+
+    CHAR_MAX = 127
+    LC_ALL = 6
+    LC_COLLATE = 3
+    LC_CTYPE = 0
+    LC_MESSAGES = 5
+    LC_MONETARY = 4
+    LC_NUMERIC = 1
+    LC_TIME = 2
+    Error = ValueError
+
+    def localeconv():
+        """ localeconv() -> dict.
+            Returns numeric and monetary locale-specific parameters.
+        """
+        # 'C' locale default values
+        return {'grouping': [127],
+                'currency_symbol': '',
+                'n_sign_posn': 127,
+                'p_cs_precedes': 127,
+                'n_cs_precedes': 127,
+                'mon_grouping': [],
+                'n_sep_by_space': 127,
+                'decimal_point': '.',
+                'negative_sign': '',
+                'positive_sign': '',
+                'p_sep_by_space': 127,
+                'int_curr_symbol': '',
+                'p_sign_posn': 127,
+                'thousands_sep': '',
+                'mon_thousands_sep': '',
+                'frac_digits': 127,
+                'mon_decimal_point': '',
+                'int_frac_digits': 127}
+
+    def setlocale(category, value=None):
+        """ setlocale(integer,string=None) -> string.
+            Activates/queries locale processing.
+        """
+        if value not in (None, '', 'C'):
+            raise Error('_locale emulation only supports "C" locale')
+        return 'C'
+
+# These may or may not exist in _locale, so be sure to set them.
+if 'strxfrm' not in globals():
+    strxfrm = _strxfrm
+if 'strcoll' not in globals():
+    strcoll = _strcoll
+
+
+_localeconv = localeconv
+
+# With this dict, you can override some items of localeconv's return value.
+# This is useful for testing purposes.
+_override_localeconv = {}
+
+@functools.wraps(_localeconv)
 def localeconv():
-    return {'decimal_point': '.', 'thousands_sep': '', 'grouping': [], 'int_curr_symbol': '', 'currency_symbol': '', 'mon_decimal_point': '', 'mon_thousands_sep': '', 'mon_grouping': [], 'positive_sign': '', 'negative_sign': '', 'int_frac_digits': 127, 'frac_digits': 127, 'p_cs_precedes': 127, 'p_sep_by_space': 127, 'n_cs_precedes': 127, 'n_sep_by_space': 127, 'p_sign_posn': 127, 'n_sign_posn': 127}
-
-# The name-alias engine and its two tables are CPython's Lib/locale.py at
-# v3.14.8 / 8e6e75d9102e; the encoding-name normaliser it calls is
-# CPython's Lib/encodings/__init__.py, carried here because the encodings
-# package is not part of this run's library. Both alias tables the
-# engine reads are carried as well: Lib/encodings/aliases.py, and
-# Lib/locale.py's own locale_encoding_alias and locale_alias, each at
-# v3.14.8 / 8e6e75d9102e.
-_encoding_aliases = {
-
-    # Please keep this list sorted alphabetically by value !
-
-    # ascii codec
-    '646'                : 'ascii',
-    'ansi_x3.4_1968'     : 'ascii',
-    'ansi_x3_4_1968'     : 'ascii', # some email headers use this non-standard name
-    'ansi_x3.4_1986'     : 'ascii',
-    'cp367'              : 'ascii',
-    'csascii'            : 'ascii',
-    'ibm367'             : 'ascii',
-    'iso646_us'          : 'ascii',
-    'iso_646.irv_1991'   : 'ascii',
-    'iso_ir_6'           : 'ascii',
-    'us'                 : 'ascii',
-    'us_ascii'           : 'ascii',
-
-    # base64_codec codec
-    'base64'             : 'base64_codec',
-    'base_64'            : 'base64_codec',
-
-    # big5 codec
-    'big5_tw'            : 'big5',
-    'csbig5'             : 'big5',
-
-    # big5hkscs codec
-    'big5_hkscs'         : 'big5hkscs',
-    'hkscs'              : 'big5hkscs',
-
-    # bz2_codec codec
-    'bz2'                : 'bz2_codec',
-
-    # cp037 codec
-    '037'                : 'cp037',
-    'csibm037'           : 'cp037',
-    'ebcdic_cp_ca'       : 'cp037',
-    'ebcdic_cp_nl'       : 'cp037',
-    'ebcdic_cp_us'       : 'cp037',
-    'ebcdic_cp_wt'       : 'cp037',
-    'ibm037'             : 'cp037',
-    'ibm039'             : 'cp037',
-
-    # cp1026 codec
-    '1026'               : 'cp1026',
-    'csibm1026'          : 'cp1026',
-    'ibm1026'            : 'cp1026',
-
-    # cp1125 codec
-    '1125'                : 'cp1125',
-    'ibm1125'             : 'cp1125',
-    'cp866u'              : 'cp1125',
-    'ruscii'              : 'cp1125',
-
-    # cp1140 codec
-    '1140'               : 'cp1140',
-    'cp01140'            : 'cp1140',
-    'csibm01140'         : 'cp1140',
-    'ebcdic_us_37_euro'  : 'cp1140',
-    'ibm01140'           : 'cp1140',
-    'ibm1140'            : 'cp1140',
-
-    # cp1250 codec
-    '1250'               : 'cp1250',
-    'windows_1250'       : 'cp1250',
-
-    # cp1251 codec
-    '1251'               : 'cp1251',
-    'windows_1251'       : 'cp1251',
-
-    # cp1252 codec
-    '1252'               : 'cp1252',
-    'windows_1252'       : 'cp1252',
-
-    # cp1253 codec
-    '1253'               : 'cp1253',
-    'windows_1253'       : 'cp1253',
-
-    # cp1254 codec
-    '1254'               : 'cp1254',
-    'windows_1254'       : 'cp1254',
-
-    # cp1255 codec
-    '1255'               : 'cp1255',
-    'windows_1255'       : 'cp1255',
-
-    # cp1256 codec
-    '1256'               : 'cp1256',
-    'windows_1256'       : 'cp1256',
-
-    # cp1257 codec
-    '1257'               : 'cp1257',
-    'windows_1257'       : 'cp1257',
-
-    # cp1258 codec
-    '1258'               : 'cp1258',
-    'windows_1258'       : 'cp1258',
-
-    # cp273 codec
-    '273'                : 'cp273',
-    'ibm273'             : 'cp273',
-    'csibm273'           : 'cp273',
-
-    # cp424 codec
-    '424'                : 'cp424',
-    'csibm424'           : 'cp424',
-    'ebcdic_cp_he'       : 'cp424',
-    'ibm424'             : 'cp424',
-
-    # cp437 codec
-    '437'                : 'cp437',
-    'cspc8codepage437'   : 'cp437',
-    'ibm437'             : 'cp437',
-
-    # cp500 codec
-    '500'                : 'cp500',
-    'csibm500'           : 'cp500',
-    'ebcdic_cp_be'       : 'cp500',
-    'ebcdic_cp_ch'       : 'cp500',
-    'ibm500'             : 'cp500',
-
-    # cp775 codec
-    '775'                : 'cp775',
-    'cspc775baltic'      : 'cp775',
-    'ibm775'             : 'cp775',
-
-    # cp850 codec
-    '850'                : 'cp850',
-    'cspc850multilingual' : 'cp850',
-    'ibm850'             : 'cp850',
-
-    # cp852 codec
-    '852'                : 'cp852',
-    'cspcp852'           : 'cp852',
-    'ibm852'             : 'cp852',
-
-    # cp855 codec
-    '855'                : 'cp855',
-    'csibm855'           : 'cp855',
-    'ibm855'             : 'cp855',
-
-    # cp857 codec
-    '857'                : 'cp857',
-    'csibm857'           : 'cp857',
-    'ibm857'             : 'cp857',
-
-    # cp858 codec
-    '858'                : 'cp858',
-    'cp00858'            : 'cp858',
-    'csibm00858'         : 'cp858',
-    'csibm858'           : 'cp858',
-    'ibm00858'           : 'cp858',
-    'ibm858'             : 'cp858',
-    'pc_multilingual_850_euro' : 'cp858',
-
-    # cp860 codec
-    '860'                : 'cp860',
-    'csibm860'           : 'cp860',
-    'ibm860'             : 'cp860',
-
-    # cp861 codec
-    '861'                : 'cp861',
-    'cp_is'              : 'cp861',
-    'csibm861'           : 'cp861',
-    'ibm861'             : 'cp861',
-
-    # cp862 codec
-    '862'                : 'cp862',
-    'cspc862latinhebrew' : 'cp862',
-    'ibm862'             : 'cp862',
-
-    # cp863 codec
-    '863'                : 'cp863',
-    'csibm863'           : 'cp863',
-    'ibm863'             : 'cp863',
-
-    # cp864 codec
-    '864'                : 'cp864',
-    'csibm864'           : 'cp864',
-    'ibm864'             : 'cp864',
-
-    # cp865 codec
-    '865'                : 'cp865',
-    'csibm865'           : 'cp865',
-    'ibm865'             : 'cp865',
-
-    # cp866 codec
-    '866'                : 'cp866',
-    'csibm866'           : 'cp866',
-    'ibm866'             : 'cp866',
-
-    # cp869 codec
-    '869'                : 'cp869',
-    'cp_gr'              : 'cp869',
-    'csibm869'           : 'cp869',
-    'ibm869'             : 'cp869',
-
-    # cp874 codec
-    '874'                : 'cp874',
-    'ms874'              : 'cp874',
-    'windows_874'        : 'cp874',
-
-    # cp932 codec
-    '932'                : 'cp932',
-    'ms932'              : 'cp932',
-    'mskanji'            : 'cp932',
-    'ms_kanji'           : 'cp932',
-    'windows_31j'        : 'cp932',
-
-    # cp949 codec
-    '949'                : 'cp949',
-    'ms949'              : 'cp949',
-    'uhc'                : 'cp949',
-
-    # cp950 codec
-    '950'                : 'cp950',
-    'ms950'              : 'cp950',
-
-    # euc_jis_2004 codec
-    'jisx0213'           : 'euc_jis_2004',
-    'eucjis2004'         : 'euc_jis_2004',
-    'euc_jis2004'        : 'euc_jis_2004',
-
-    # euc_jisx0213 codec
-    'eucjisx0213'        : 'euc_jisx0213',
-
-    # euc_jp codec
-    'eucjp'              : 'euc_jp',
-    'ujis'               : 'euc_jp',
-    'u_jis'              : 'euc_jp',
-
-    # euc_kr codec
-    'euckr'              : 'euc_kr',
-    'korean'             : 'euc_kr',
-    'ksc5601'            : 'euc_kr',
-    'ks_c_5601'          : 'euc_kr',
-    'ks_c_5601_1987'     : 'euc_kr',
-    'ksx1001'            : 'euc_kr',
-    'ks_x_1001'          : 'euc_kr',
-    'cseuckr'            : 'euc_kr',
-
-    # gb18030 codec
-    'gb18030_2000'       : 'gb18030',
-
-    # gb2312 codec
-    'chinese'            : 'gb2312',
-    'csiso58gb231280'    : 'gb2312',
-    'euc_cn'             : 'gb2312',
-    'euccn'              : 'gb2312',
-    'eucgb2312_cn'       : 'gb2312',
-    'gb2312_1980'        : 'gb2312',
-    'gb2312_80'          : 'gb2312',
-    'iso_ir_58'          : 'gb2312',
-
-    # gbk codec
-    '936'                : 'gbk',
-    'cp936'              : 'gbk',
-    'ms936'              : 'gbk',
-
-    # hex_codec codec
-    'hex'                : 'hex_codec',
-
-    # hp_roman8 codec
-    'roman8'             : 'hp_roman8',
-    'r8'                 : 'hp_roman8',
-    'csHPRoman8'         : 'hp_roman8',
-    'cp1051'             : 'hp_roman8',
-    'ibm1051'            : 'hp_roman8',
-
-    # hz codec
-    'hzgb'               : 'hz',
-    'hz_gb'              : 'hz',
-    'hz_gb_2312'         : 'hz',
-
-    # iso2022_jp codec
-    'csiso2022jp'        : 'iso2022_jp',
-    'iso2022jp'          : 'iso2022_jp',
-    'iso_2022_jp'        : 'iso2022_jp',
-
-    # iso2022_jp_1 codec
-    'iso2022jp_1'        : 'iso2022_jp_1',
-    'iso_2022_jp_1'      : 'iso2022_jp_1',
-
-    # iso2022_jp_2 codec
-    'iso2022jp_2'        : 'iso2022_jp_2',
-    'iso_2022_jp_2'      : 'iso2022_jp_2',
-
-    # iso2022_jp_2004 codec
-    'iso_2022_jp_2004'   : 'iso2022_jp_2004',
-    'iso2022jp_2004'     : 'iso2022_jp_2004',
-
-    # iso2022_jp_3 codec
-    'iso2022jp_3'        : 'iso2022_jp_3',
-    'iso_2022_jp_3'      : 'iso2022_jp_3',
-
-    # iso2022_jp_ext codec
-    'iso2022jp_ext'      : 'iso2022_jp_ext',
-    'iso_2022_jp_ext'    : 'iso2022_jp_ext',
-
-    # iso2022_kr codec
-    'csiso2022kr'        : 'iso2022_kr',
-    'iso2022kr'          : 'iso2022_kr',
-    'iso_2022_kr'        : 'iso2022_kr',
-
-    # iso8859_10 codec
-    'csisolatin6'        : 'iso8859_10',
-    'iso_8859_10'        : 'iso8859_10',
-    'iso_8859_10_1992'   : 'iso8859_10',
-    'iso_ir_157'         : 'iso8859_10',
-    'l6'                 : 'iso8859_10',
-    'latin6'             : 'iso8859_10',
-
-    # iso8859_11 codec
-    'thai'               : 'iso8859_11',
-    'iso_8859_11'        : 'iso8859_11',
-    'iso_8859_11_2001'   : 'iso8859_11',
-
-    # iso8859_13 codec
-    'iso_8859_13'        : 'iso8859_13',
-    'l7'                 : 'iso8859_13',
-    'latin7'             : 'iso8859_13',
-
-    # iso8859_14 codec
-    'iso_8859_14'        : 'iso8859_14',
-    'iso_8859_14_1998'   : 'iso8859_14',
-    'iso_celtic'         : 'iso8859_14',
-    'iso_ir_199'         : 'iso8859_14',
-    'l8'                 : 'iso8859_14',
-    'latin8'             : 'iso8859_14',
-
-    # iso8859_15 codec
-    'iso_8859_15'        : 'iso8859_15',
-    'l9'                 : 'iso8859_15',
-    'latin9'             : 'iso8859_15',
-
-    # iso8859_16 codec
-    'iso_8859_16'        : 'iso8859_16',
-    'iso_8859_16_2001'   : 'iso8859_16',
-    'iso_ir_226'         : 'iso8859_16',
-    'l10'                : 'iso8859_16',
-    'latin10'            : 'iso8859_16',
-
-    # iso8859_2 codec
-    'csisolatin2'        : 'iso8859_2',
-    'iso_8859_2'         : 'iso8859_2',
-    'iso_8859_2_1987'    : 'iso8859_2',
-    'iso_ir_101'         : 'iso8859_2',
-    'l2'                 : 'iso8859_2',
-    'latin2'             : 'iso8859_2',
-
-    # iso8859_3 codec
-    'csisolatin3'        : 'iso8859_3',
-    'iso_8859_3'         : 'iso8859_3',
-    'iso_8859_3_1988'    : 'iso8859_3',
-    'iso_ir_109'         : 'iso8859_3',
-    'l3'                 : 'iso8859_3',
-    'latin3'             : 'iso8859_3',
-
-    # iso8859_4 codec
-    'csisolatin4'        : 'iso8859_4',
-    'iso_8859_4'         : 'iso8859_4',
-    'iso_8859_4_1988'    : 'iso8859_4',
-    'iso_ir_110'         : 'iso8859_4',
-    'l4'                 : 'iso8859_4',
-    'latin4'             : 'iso8859_4',
-
-    # iso8859_5 codec
-    'csisolatincyrillic' : 'iso8859_5',
-    'cyrillic'           : 'iso8859_5',
-    'iso_8859_5'         : 'iso8859_5',
-    'iso_8859_5_1988'    : 'iso8859_5',
-    'iso_ir_144'         : 'iso8859_5',
-
-    # iso8859_6 codec
-    'arabic'             : 'iso8859_6',
-    'asmo_708'           : 'iso8859_6',
-    'csisolatinarabic'   : 'iso8859_6',
-    'ecma_114'           : 'iso8859_6',
-    'iso_8859_6'         : 'iso8859_6',
-    'iso_8859_6_1987'    : 'iso8859_6',
-    'iso_ir_127'         : 'iso8859_6',
-
-    # iso8859_7 codec
-    'csisolatingreek'    : 'iso8859_7',
-    'ecma_118'           : 'iso8859_7',
-    'elot_928'           : 'iso8859_7',
-    'greek'              : 'iso8859_7',
-    'greek8'             : 'iso8859_7',
-    'iso_8859_7'         : 'iso8859_7',
-    'iso_8859_7_1987'    : 'iso8859_7',
-    'iso_ir_126'         : 'iso8859_7',
-
-    # iso8859_8 codec
-    'csisolatinhebrew'   : 'iso8859_8',
-    'hebrew'             : 'iso8859_8',
-    'iso_8859_8'         : 'iso8859_8',
-    'iso_8859_8_1988'    : 'iso8859_8',
-    'iso_ir_138'         : 'iso8859_8',
-    'iso_8859_8_i'       : 'iso8859_8',
-    'iso_8859_8_e'       : 'iso8859_8',
-
-    # iso8859_9 codec
-    'csisolatin5'        : 'iso8859_9',
-    'iso_8859_9'         : 'iso8859_9',
-    'iso_8859_9_1989'    : 'iso8859_9',
-    'iso_ir_148'         : 'iso8859_9',
-    'l5'                 : 'iso8859_9',
-    'latin5'             : 'iso8859_9',
-
-    # johab codec
-    'cp1361'             : 'johab',
-    'ms1361'             : 'johab',
-
-    # koi8_r codec
-    'cskoi8r'            : 'koi8_r',
-
-    # kz1048 codec
-    'kz_1048'           : 'kz1048',
-    'rk1048'            : 'kz1048',
-    'strk1048_2002'     : 'kz1048',
-
-    # latin_1 codec
-    #
-    # Note that the latin_1 codec is implemented internally in C and a
-    # lot faster than the charmap codec iso8859_1 which uses the same
-    # encoding. This is why we discourage the use of the iso8859_1
-    # codec and alias it to latin_1 instead.
-    #
-    '8859'               : 'latin_1',
-    'cp819'              : 'latin_1',
-    'csisolatin1'        : 'latin_1',
-    'ibm819'             : 'latin_1',
-    'iso8859'            : 'latin_1',
-    'iso8859_1'          : 'latin_1',
-    'iso_8859_1'         : 'latin_1',
-    'iso_8859_1_1987'    : 'latin_1',
-    'iso_ir_100'         : 'latin_1',
-    'l1'                 : 'latin_1',
-    'latin'              : 'latin_1',
-    'latin1'             : 'latin_1',
-
-    # mac_cyrillic codec
-    'maccyrillic'        : 'mac_cyrillic',
-
-    # mac_greek codec
-    'macgreek'           : 'mac_greek',
-
-    # mac_iceland codec
-    'maciceland'         : 'mac_iceland',
-
-    # mac_latin2 codec
-    'maccentraleurope'   : 'mac_latin2',
-    'mac_centeuro'       : 'mac_latin2',
-    'maclatin2'          : 'mac_latin2',
-
-    # mac_roman codec
-    'macintosh'          : 'mac_roman',
-    'macroman'           : 'mac_roman',
-
-    # mac_turkish codec
-    'macturkish'         : 'mac_turkish',
-
-    # mbcs codec
-    'ansi'               : 'mbcs',
-    'dbcs'               : 'mbcs',
-
-    # ptcp154 codec
-    'csptcp154'          : 'ptcp154',
-    'pt154'              : 'ptcp154',
-    'cp154'              : 'ptcp154',
-    'cyrillic_asian'     : 'ptcp154',
-
-    # quopri_codec codec
-    'quopri'             : 'quopri_codec',
-    'quoted_printable'   : 'quopri_codec',
-    'quotedprintable'    : 'quopri_codec',
-
-    # rot_13 codec
-    'rot13'              : 'rot_13',
-
-    # shift_jis codec
-    'csshiftjis'         : 'shift_jis',
-    'shiftjis'           : 'shift_jis',
-    'sjis'               : 'shift_jis',
-    's_jis'              : 'shift_jis',
-
-    # shift_jis_2004 codec
-    'shiftjis2004'       : 'shift_jis_2004',
-    'sjis_2004'          : 'shift_jis_2004',
-    's_jis_2004'         : 'shift_jis_2004',
-
-    # shift_jisx0213 codec
-    'shiftjisx0213'      : 'shift_jisx0213',
-    'sjisx0213'          : 'shift_jisx0213',
-    's_jisx0213'         : 'shift_jisx0213',
-
-    # tis_620 codec
-    'tis620'             : 'tis_620',
-    'tis_620_0'          : 'tis_620',
-    'tis_620_2529_0'     : 'tis_620',
-    'tis_620_2529_1'     : 'tis_620',
-    'iso_ir_166'         : 'tis_620',
-
-    # utf_16 codec
-    'u16'                : 'utf_16',
-    'utf16'              : 'utf_16',
-
-    # utf_16_be codec
-    'unicodebigunmarked' : 'utf_16_be',
-    'utf_16be'           : 'utf_16_be',
-
-    # utf_16_le codec
-    'unicodelittleunmarked' : 'utf_16_le',
-    'utf_16le'           : 'utf_16_le',
-
-    # utf_32 codec
-    'u32'                : 'utf_32',
-    'utf32'              : 'utf_32',
-
-    # utf_32_be codec
-    'utf_32be'           : 'utf_32_be',
-
-    # utf_32_le codec
-    'utf_32le'           : 'utf_32_le',
-
-    # utf_7 codec
-    'u7'                 : 'utf_7',
-    'utf7'               : 'utf_7',
-    'unicode_1_1_utf_7'  : 'utf_7',
-
-    # utf_8 codec
-    'u8'                 : 'utf_8',
-    'utf'                : 'utf_8',
-    'utf8'               : 'utf_8',
-    'utf8_ucs2'          : 'utf_8',
-    'utf8_ucs4'          : 'utf_8',
-    'cp65001'            : 'utf_8',
-
-    # uu_codec codec
-    'uu'                 : 'uu_codec',
-
-    # zlib_codec codec
-    'zip'                : 'zlib_codec',
-    'zlib'               : 'zlib_codec',
-
-    # temporary mac CJK aliases, will be replaced by proper codecs in 3.1
-    'x_mac_japanese'      : 'shift_jis',
-    'x_mac_korean'        : 'euc_kr',
-    'x_mac_simp_chinese'  : 'gb2312',
-    'x_mac_trad_chinese'  : 'big5',
-}
-
-
-def normalize_encoding(encoding):
-
-    """ Normalize an encoding name.
-
-        Normalization works as follows: all non-alphanumeric
-        characters except the dot used for Python package names are
-        collapsed and replaced with a single underscore, e.g. '  -;#'
-        becomes '_'. Leading and trailing underscores are removed.
-
-        Note that encoding names should be ASCII only.
+    d = _localeconv()
+    if _override_localeconv:
+        d.update(_override_localeconv)
+    return d
+
+
+### Number formatting APIs
+
+# Author: Martin von Loewis
+# improved by Georg Brandl
+
+# Iterate over grouping intervals
+def _grouping_intervals(grouping):
+    last_interval = None
+    for interval in grouping:
+        # if grouping is -1, we are done
+        if interval == CHAR_MAX:
+            return
+        # 0: re-use last group ad infinitum
+        if interval == 0:
+            if last_interval is None:
+                raise ValueError("invalid grouping")
+            while True:
+                yield last_interval
+        yield interval
+        last_interval = interval
+
+#perform the grouping from right to left
+def _group(s, monetary=False):
+    conv = localeconv()
+    thousands_sep = conv[monetary and 'mon_thousands_sep' or 'thousands_sep']
+    grouping = conv[monetary and 'mon_grouping' or 'grouping']
+    if not grouping:
+        return (s, 0)
+    if s[-1] == ' ':
+        stripped = s.rstrip()
+        right_spaces = s[len(stripped):]
+        s = stripped
+    else:
+        right_spaces = ''
+    left_spaces = ''
+    groups = []
+    for interval in _grouping_intervals(grouping):
+        if not s or s[-1] not in "0123456789":
+            # only non-digit characters remain (sign, spaces)
+            left_spaces = s
+            s = ''
+            break
+        groups.append(s[-interval:])
+        s = s[:-interval]
+    if s:
+        groups.append(s)
+    groups.reverse()
+    return (
+        left_spaces + thousands_sep.join(groups) + right_spaces,
+        len(thousands_sep) * (len(groups) - 1)
+    )
+
+# Strip a given amount of excess padding from the given string
+def _strip_padding(s, amount):
+    lpos = 0
+    while amount and s[lpos] == ' ':
+        lpos += 1
+        amount -= 1
+    rpos = len(s) - 1
+    while amount and s[rpos] == ' ':
+        rpos -= 1
+        amount -= 1
+    return s[lpos:rpos+1]
+
+_percent_re = None
+
+def _format(percent, value, grouping=False, monetary=False, *additional):
+    if additional:
+        formatted = percent % ((value,) + additional)
+    else:
+        formatted = percent % value
+    if percent[-1] in 'eEfFgGdiu':
+        formatted = _localize(formatted, grouping, monetary)
+    return formatted
+
+# Transform formatted as locale number according to the locale settings
+def _localize(formatted, grouping=False, monetary=False):
+    # floats and decimal ints need special action!
+    if '.' in formatted:
+        seps = 0
+        parts = formatted.split('.')
+        if grouping:
+            parts[0], seps = _group(parts[0], monetary=monetary)
+        decimal_point = localeconv()[monetary and 'mon_decimal_point'
+                                              or 'decimal_point']
+        formatted = decimal_point.join(parts)
+        if seps:
+            formatted = _strip_padding(formatted, seps)
+    else:
+        seps = 0
+        if grouping:
+            formatted, seps = _group(formatted, monetary=monetary)
+        if seps:
+            formatted = _strip_padding(formatted, seps)
+    return formatted
+
+def format_string(f, val, grouping=False, monetary=False):
+    """Formats a string in the same way that the % formatting would use,
+    but takes the current locale into account.
+
+    Grouping is applied if the third parameter is true.
+    Conversion uses monetary thousands separator and grouping strings if
+    forth parameter monetary is true."""
+    global _percent_re
+    if _percent_re is None:
+        import re
+
+        _percent_re = re.compile(r'%(?:\((?P<key>.*?)\))?(?P<modifiers'
+                                 r'>[-#0-9 +*.hlL]*?)[eEfFgGdiouxXcrs%]')
+
+    percents = list(_percent_re.finditer(f))
+    new_f = _percent_re.sub('%s', f)
+
+    if isinstance(val, _collections_abc.Mapping):
+        new_val = []
+        for perc in percents:
+            if perc.group()[-1]=='%':
+                new_val.append('%')
+            else:
+                new_val.append(_format(perc.group(), val, grouping, monetary))
+    else:
+        if not isinstance(val, tuple):
+            val = (val,)
+        new_val = []
+        i = 0
+        for perc in percents:
+            if perc.group()[-1]=='%':
+                new_val.append('%')
+            else:
+                starcount = perc.group('modifiers').count('*')
+                new_val.append(_format(perc.group(),
+                                      val[i],
+                                      grouping,
+                                      monetary,
+                                      *val[i+1:i+1+starcount]))
+                i += (1 + starcount)
+    val = tuple(new_val)
+
+    return new_f % val
+
+def currency(val, symbol=True, grouping=False, international=False):
+    """Formats val according to the currency settings
+    in the current locale."""
+    conv = localeconv()
+
+    # check for illegal values
+    digits = conv[international and 'int_frac_digits' or 'frac_digits']
+    if digits == 127:
+        raise ValueError("Currency formatting is not possible using "
+                         "the 'C' locale.")
+
+    s = _localize(f'{abs(val):.{digits}f}', grouping, monetary=True)
+    # '<' and '>' are markers if the sign must be inserted between symbol and value
+    s = '<' + s + '>'
+
+    if symbol:
+        smb = conv[international and 'int_curr_symbol' or 'currency_symbol']
+        precedes = conv[val<0 and 'n_cs_precedes' or 'p_cs_precedes']
+        separated = conv[val<0 and 'n_sep_by_space' or 'p_sep_by_space']
+
+        if precedes:
+            s = smb + (separated and ' ' or '') + s
+        else:
+            if international and smb[-1] == ' ':
+                smb = smb[:-1]
+            s = s + (separated and ' ' or '') + smb
+
+    sign_pos = conv[val<0 and 'n_sign_posn' or 'p_sign_posn']
+    sign = conv[val<0 and 'negative_sign' or 'positive_sign']
+
+    if sign_pos == 0:
+        s = '(' + s + ')'
+    elif sign_pos == 1:
+        s = sign + s
+    elif sign_pos == 2:
+        s = s + sign
+    elif sign_pos == 3:
+        s = s.replace('<', sign)
+    elif sign_pos == 4:
+        s = s.replace('>', sign)
+    else:
+        # the default if nothing specified;
+        # this should be the most fitting sign position
+        s = sign + s
+
+    return s.replace('<', '').replace('>', '')
+
+def str(val):
+    """Convert float to string, taking the locale into account."""
+    return _format("%.12g", val)
+
+def delocalize(string):
+    "Parses a string as a normalized number according to the locale settings."
+
+    conv = localeconv()
+
+    #First, get rid of the grouping
+    ts = conv['thousands_sep']
+    if ts:
+        string = string.replace(ts, '')
+
+    #next, replace the decimal point with a dot
+    dd = conv['decimal_point']
+    if dd:
+        string = string.replace(dd, '.')
+    return string
+
+def localize(string, grouping=False, monetary=False):
+    """Parses a string as locale number according to the locale settings."""
+    return _localize(string, grouping, monetary)
+
+def atof(string, func=float):
+    "Parses a string as a float according to the locale settings."
+    return func(delocalize(string))
+
+def atoi(string):
+    "Converts a string to an integer according to the locale settings."
+    return int(delocalize(string))
+
+def _test():
+    setlocale(LC_ALL, "")
+    #do grouping
+    s1 = format_string("%d", 123456789,1)
+    print(s1, "is", atoi(s1))
+    #standard formatting
+    s1 = str(3.14)
+    print(s1, "is", atof(s1))
+
+### Locale name aliasing engine
+
+# Author: Marc-Andre Lemburg, mal@lemburg.com
+# Various tweaks by Fredrik Lundh <fredrik@pythonware.com>
+
+# store away the low-level version of setlocale (it's
+# overridden below)
+_setlocale = setlocale
+
+def _replace_encoding(code, encoding):
+    if '.' in code:
+        langname = code[:code.index('.')]
+    else:
+        langname = code
+    # Convert the encoding to a C lib compatible encoding string
+    norm_encoding = encodings.normalize_encoding(encoding)
+    #print('norm encoding: %r' % norm_encoding)
+    norm_encoding = encodings.aliases.aliases.get(norm_encoding.lower(),
+                                                  norm_encoding)
+    #print('aliased encoding: %r' % norm_encoding)
+    encoding = norm_encoding
+    norm_encoding = norm_encoding.lower()
+    if norm_encoding in locale_encoding_alias:
+        encoding = locale_encoding_alias[norm_encoding]
+    else:
+        norm_encoding = norm_encoding.replace('_', '')
+        norm_encoding = norm_encoding.replace('-', '')
+        if norm_encoding in locale_encoding_alias:
+            encoding = locale_encoding_alias[norm_encoding]
+    #print('found encoding %r' % encoding)
+    return langname + '.' + encoding
+
+def _append_modifier(code, modifier):
+    if modifier == 'euro':
+        if '.' not in code:
+            return code + '.ISO8859-15'
+        _, _, encoding = code.partition('.')
+        if encoding in ('ISO8859-15', 'UTF-8'):
+            return code
+        if encoding == 'ISO8859-1':
+            return _replace_encoding(code, 'ISO8859-15')
+    return code + '@' + modifier
+
+def normalize(localename):
+
+    """ Returns a normalized locale code for the given locale
+        name.
+
+        The returned locale code is formatted for use with
+        setlocale().
+
+        If normalization fails, the original name is returned
+        unchanged.
+
+        If the given encoding is not known, the function defaults to
+        the default encoding for the locale code just like setlocale()
+        does.
 
     """
-    if isinstance(encoding, bytes):
-        encoding = str(encoding, "ascii")
+    # Normalize the locale name and extract the encoding and modifier
+    code = localename.lower()
+    if ':' in code:
+        # ':' is sometimes used as encoding delimiter.
+        code = code.replace(':', '.')
+    if '@' in code:
+        code, modifier = code.split('@', 1)
+    else:
+        modifier = ''
+    if '.' in code:
+        langname, encoding = code.split('.')[:2]
+    else:
+        langname = code
+        encoding = ''
 
-    chars = []
-    punct = False
-    for c in encoding:
-        if c.isalnum() or c == '.':
-            if punct and chars:
-                chars.append('_')
-            if c.isascii():
-                chars.append(c)
-            punct = False
+    # First lookup: fullname (possibly with encoding and modifier)
+    lang_enc = langname
+    if encoding:
+        norm_encoding = encoding.replace('-', '')
+        norm_encoding = norm_encoding.replace('_', '')
+        lang_enc += '.' + norm_encoding
+    lookup_name = lang_enc
+    if modifier:
+        lookup_name += '@' + modifier
+    code = locale_alias.get(lookup_name, None)
+    if code is not None:
+        return code
+    #print('first lookup failed')
+
+    if modifier:
+        # Second try: fullname without modifier (possibly with encoding)
+        code = locale_alias.get(lang_enc, None)
+        if code is not None:
+            #print('lookup without modifier succeeded')
+            if '@' not in code:
+                return _append_modifier(code, modifier)
+            if code.split('@', 1)[1].lower() == modifier:
+                return code
+        #print('second lookup failed')
+
+    if encoding:
+        # Third try: langname (without encoding, possibly with modifier)
+        lookup_name = langname
+        if modifier:
+            lookup_name += '@' + modifier
+        code = locale_alias.get(lookup_name, None)
+        if code is not None:
+            #print('lookup without encoding succeeded')
+            if '@' not in code:
+                return _replace_encoding(code, encoding)
+            code, modifier = code.split('@', 1)
+            return _replace_encoding(code, encoding) + '@' + modifier
+
+        if modifier:
+            # Fourth try: langname (without encoding and modifier)
+            code = locale_alias.get(langname, None)
+            if code is not None:
+                #print('lookup without modifier and encoding succeeded')
+                if '@' not in code:
+                    code = _replace_encoding(code, encoding)
+                    return _append_modifier(code, modifier)
+                code, defmod = code.split('@', 1)
+                if defmod.lower() == modifier:
+                    return _replace_encoding(code, encoding) + '@' + defmod
+
+    return localename
+
+def _parse_localename(localename):
+
+    """ Parses the locale code for localename and returns the
+        result as tuple (language code, encoding).
+
+        The localename is normalized and passed through the locale
+        alias engine. A ValueError is raised in case the locale name
+        cannot be parsed.
+
+        The language code corresponds to RFC 1766.  code and encoding
+        can be None in case the values cannot be determined or are
+        unknown to this implementation.
+
+    """
+    code = normalize(localename)
+    if '@' in code:
+        # Deal with locale modifiers
+        code, modifier = code.split('@', 1)
+        if modifier == 'euro' and '.' not in code:
+            # Assume Latin-9 for @euro locales. This is bogus,
+            # since some systems may use other encodings for these
+            # locales. Also, we ignore other modifiers.
+            return code, 'iso-8859-15'
+
+    if '.' in code:
+        return tuple(code.split('.')[:2])
+    elif code == 'C':
+        return None, None
+    elif code == 'UTF-8':
+        # On macOS "LC_CTYPE=UTF-8" is a valid locale setting
+        # for getting UTF-8 handling for text.
+        return None, 'UTF-8'
+    raise ValueError('unknown locale: %s' % localename)
+
+def _build_localename(localetuple):
+
+    """ Builds a locale code from the given tuple (language code,
+        encoding).
+
+        No aliasing or normalizing takes place.
+
+    """
+    try:
+        language, encoding = localetuple
+
+        if language is None:
+            language = 'C'
+        if encoding is None:
+            return language
         else:
-            punct = True
-    return ''.join(chars)
+            return language + '.' + encoding
+    except (TypeError, ValueError):
+        raise TypeError('Locale must be None, a string, or an iterable of '
+                        'two strings -- language code, encoding.') from None
+
+def getdefaultlocale(envvars=('LC_ALL', 'LC_CTYPE', 'LANG', 'LANGUAGE')):
+
+    """ Tries to determine the default locale settings and returns
+        them as tuple (language code, encoding).
+
+        According to POSIX, a program which has not called
+        setlocale(LC_ALL, "") runs using the portable 'C' locale.
+        Calling setlocale(LC_ALL, "") lets it use the default locale as
+        defined by the LANG variable. Since we don't want to interfere
+        with the current locale setting we thus emulate the behavior
+        in the way described above.
+
+        To maintain compatibility with other platforms, not only the
+        LANG variable is tested, but a list of variables given as
+        envvars parameter. The first found to be defined will be
+        used. envvars defaults to the search path used in GNU gettext;
+        it must always contain the variable name 'LANG'.
+
+        Except for the code 'C', the language code corresponds to RFC
+        1766.  code and encoding can be None in case the values cannot
+        be determined.
+
+    """
+
+    return _getdefaultlocale(envvars)
 
 
+def _getdefaultlocale(envvars=('LC_ALL', 'LC_CTYPE', 'LANG', 'LANGUAGE')):
+    try:
+        # check if it's supported by the _locale module
+        import _locale
+        code, encoding = _locale._getdefaultlocale()
+    except (ImportError, AttributeError):
+        pass
+    else:
+        # make sure the code/encoding values are valid
+        if sys.platform == "win32" and code and code[:2] == "0x":
+            # map windows language identifier to language name
+            code = windows_locale.get(int(code, 0))
+        # ...add other platform-specific processing here, if
+        # necessary...
+        return code, encoding
 
+    # fall back on POSIX behaviour
+    import os
+    lookup = os.environ.get
+    for variable in envvars:
+        localename = lookup(variable,None)
+        if localename:
+            if variable == 'LANGUAGE':
+                localename = localename.split(':')[0]
+            break
+    else:
+        localename = 'C'
+    return _parse_localename(localename)
+
+
+def getlocale(category=LC_CTYPE):
+
+    """ Returns the current setting for the given locale category as
+        tuple (language code, encoding).
+
+        category may be one of the LC_* value except LC_ALL. It
+        defaults to LC_CTYPE.
+
+        Except for the code 'C', the language code corresponds to RFC
+        1766.  code and encoding can be None in case the values cannot
+        be determined.
+
+    """
+    localename = _setlocale(category)
+    if category == LC_ALL and ';' in localename:
+        raise TypeError('category LC_ALL is not supported')
+    return _parse_localename(localename)
+
+def setlocale(category, locale=None):
+
+    """ Set the locale for the given category.  The locale can be
+        a string, an iterable of two strings (language code and encoding),
+        or None.
+
+        Iterables are converted to strings using the locale aliasing
+        engine.  Locale strings are passed directly to the C lib.
+
+        category may be given as one of the LC_* values.
+
+    """
+    if locale and not isinstance(locale, _builtin_str):
+        # convert to string
+        locale = normalize(_build_localename(locale))
+    return _setlocale(category, locale)
+
+
+try:
+    from _locale import getencoding
+except ImportError:
+    # When _locale.getencoding() is missing, locale.getencoding() uses the
+    # Python filesystem encoding.
+    def getencoding():
+        return sys.getfilesystemencoding()
+
+
+try:
+    CODESET
+except NameError:
+    def getpreferredencoding(do_setlocale=True):
+        """Return the charset that the user is likely using."""
+        if sys.flags.warn_default_encoding:
+            import warnings
+            warnings.warn(
+                "UTF-8 Mode affects locale.getpreferredencoding(). Consider locale.getencoding() instead.",
+                EncodingWarning, 2)
+        if sys.flags.utf8_mode:
+            return 'utf-8'
+        return getencoding()
+else:
+    # On Unix, if CODESET is available, use that.
+    def getpreferredencoding(do_setlocale=True):
+        """Return the charset that the user is likely using,
+        according to the system configuration."""
+
+        if sys.flags.warn_default_encoding:
+            import warnings
+            warnings.warn(
+                "UTF-8 Mode affects locale.getpreferredencoding(). Consider locale.getencoding() instead.",
+                EncodingWarning, 2)
+        if sys.flags.utf8_mode:
+            return 'utf-8'
+
+        if not do_setlocale:
+            return getencoding()
+
+        old_loc = setlocale(LC_CTYPE)
+        try:
+            try:
+                setlocale(LC_CTYPE, "")
+            except Error:
+                pass
+            return getencoding()
+        finally:
+            setlocale(LC_CTYPE, old_loc)
+
+
+### Database
+#
+# The following data was extracted from the locale.alias file which
+# comes with X11 and then hand edited removing the explicit encoding
+# definitions and adding some more aliases. The file is usually
+# available as /usr/lib/X11/locale/locale.alias.
+#
+
+#
+# The local_encoding_alias table maps lowercase encoding alias names
+# to C locale encoding names (case-sensitive). Note that normalize()
+# first looks up the encoding in the encodings.aliases dictionary and
+# then applies this mapping to find the correct C lib name for the
+# encoding.
+#
 locale_encoding_alias = {
 
     # Mappings for non-standard encoding names used in locale names
@@ -669,6 +734,154 @@ locale_encoding_alias = {
     # mappings, please file a bug report. Thanks.
 }
 
+for k, v in sorted(locale_encoding_alias.items()):
+    k = k.replace('_', '')
+    locale_encoding_alias.setdefault(k, v)
+del k, v
+
+#
+# The locale_alias table maps lowercase alias names to C locale names
+# (case-sensitive). Encodings are always separated from the locale
+# name using a dot ('.'); they should only be given in case the
+# language name is needed to interpret the given encoding alias
+# correctly (CJK codes often have this need).
+#
+# Note that the normalize() function which uses this tables
+# removes '_' and '-' characters from the encoding part of the
+# locale name before doing the lookup. This saves a lot of
+# space in the table.
+#
+# MAL 2004-12-10:
+# Updated alias mapping to most recent locale.alias file
+# from X.org distribution using makelocalealias.py.
+#
+# These are the differences compared to the old mapping (Python 2.4
+# and older):
+#
+#    updated 'bg' -> 'bg_BG.ISO8859-5' to 'bg_BG.CP1251'
+#    updated 'bg_bg' -> 'bg_BG.ISO8859-5' to 'bg_BG.CP1251'
+#    updated 'bulgarian' -> 'bg_BG.ISO8859-5' to 'bg_BG.CP1251'
+#    updated 'cz' -> 'cz_CZ.ISO8859-2' to 'cs_CZ.ISO8859-2'
+#    updated 'cz_cz' -> 'cz_CZ.ISO8859-2' to 'cs_CZ.ISO8859-2'
+#    updated 'czech' -> 'cs_CS.ISO8859-2' to 'cs_CZ.ISO8859-2'
+#    updated 'dutch' -> 'nl_BE.ISO8859-1' to 'nl_NL.ISO8859-1'
+#    updated 'et' -> 'et_EE.ISO8859-4' to 'et_EE.ISO8859-15'
+#    updated 'et_ee' -> 'et_EE.ISO8859-4' to 'et_EE.ISO8859-15'
+#    updated 'fi' -> 'fi_FI.ISO8859-1' to 'fi_FI.ISO8859-15'
+#    updated 'fi_fi' -> 'fi_FI.ISO8859-1' to 'fi_FI.ISO8859-15'
+#    updated 'iw' -> 'iw_IL.ISO8859-8' to 'he_IL.ISO8859-8'
+#    updated 'iw_il' -> 'iw_IL.ISO8859-8' to 'he_IL.ISO8859-8'
+#    updated 'japanese' -> 'ja_JP.SJIS' to 'ja_JP.eucJP'
+#    updated 'lt' -> 'lt_LT.ISO8859-4' to 'lt_LT.ISO8859-13'
+#    updated 'lv' -> 'lv_LV.ISO8859-4' to 'lv_LV.ISO8859-13'
+#    updated 'sl' -> 'sl_CS.ISO8859-2' to 'sl_SI.ISO8859-2'
+#    updated 'slovene' -> 'sl_CS.ISO8859-2' to 'sl_SI.ISO8859-2'
+#    updated 'th_th' -> 'th_TH.TACTIS' to 'th_TH.ISO8859-11'
+#    updated 'zh_cn' -> 'zh_CN.eucCN' to 'zh_CN.gb2312'
+#    updated 'zh_cn.big5' -> 'zh_TW.eucTW' to 'zh_TW.big5'
+#    updated 'zh_tw' -> 'zh_TW.eucTW' to 'zh_TW.big5'
+#
+# MAL 2008-05-30:
+# Updated alias mapping to most recent locale.alias file
+# from X.org distribution using makelocalealias.py.
+#
+# These are the differences compared to the old mapping (Python 2.5
+# and older):
+#
+#    updated 'cs_cs.iso88592' -> 'cs_CZ.ISO8859-2' to 'cs_CS.ISO8859-2'
+#    updated 'serbocroatian' -> 'sh_YU.ISO8859-2' to 'sr_CS.ISO8859-2'
+#    updated 'sh' -> 'sh_YU.ISO8859-2' to 'sr_CS.ISO8859-2'
+#    updated 'sh_hr.iso88592' -> 'sh_HR.ISO8859-2' to 'hr_HR.ISO8859-2'
+#    updated 'sh_sp' -> 'sh_YU.ISO8859-2' to 'sr_CS.ISO8859-2'
+#    updated 'sh_yu' -> 'sh_YU.ISO8859-2' to 'sr_CS.ISO8859-2'
+#    updated 'sp' -> 'sp_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sp_yu' -> 'sp_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sr' -> 'sr_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sr@cyrillic' -> 'sr_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sr_sp' -> 'sr_SP.ISO8859-2' to 'sr_CS.ISO8859-2'
+#    updated 'sr_yu' -> 'sr_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sr_yu.cp1251@cyrillic' -> 'sr_YU.CP1251' to 'sr_CS.CP1251'
+#    updated 'sr_yu.iso88592' -> 'sr_YU.ISO8859-2' to 'sr_CS.ISO8859-2'
+#    updated 'sr_yu.iso88595' -> 'sr_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sr_yu.iso88595@cyrillic' -> 'sr_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#    updated 'sr_yu.microsoftcp1251@cyrillic' -> 'sr_YU.CP1251' to 'sr_CS.CP1251'
+#    updated 'sr_yu.utf8@cyrillic' -> 'sr_YU.UTF-8' to 'sr_CS.UTF-8'
+#    updated 'sr_yu@cyrillic' -> 'sr_YU.ISO8859-5' to 'sr_CS.ISO8859-5'
+#
+# AP 2010-04-12:
+# Updated alias mapping to most recent locale.alias file
+# from X.org distribution using makelocalealias.py.
+#
+# These are the differences compared to the old mapping (Python 2.6.5
+# and older):
+#
+#    updated 'ru' -> 'ru_RU.ISO8859-5' to 'ru_RU.UTF-8'
+#    updated 'ru_ru' -> 'ru_RU.ISO8859-5' to 'ru_RU.UTF-8'
+#    updated 'serbocroatian' -> 'sr_CS.ISO8859-2' to 'sr_RS.UTF-8@latin'
+#    updated 'sh' -> 'sr_CS.ISO8859-2' to 'sr_RS.UTF-8@latin'
+#    updated 'sh_yu' -> 'sr_CS.ISO8859-2' to 'sr_RS.UTF-8@latin'
+#    updated 'sr' -> 'sr_CS.ISO8859-5' to 'sr_RS.UTF-8'
+#    updated 'sr@cyrillic' -> 'sr_CS.ISO8859-5' to 'sr_RS.UTF-8'
+#    updated 'sr@latn' -> 'sr_CS.ISO8859-2' to 'sr_RS.UTF-8@latin'
+#    updated 'sr_cs.utf8@latn' -> 'sr_CS.UTF-8' to 'sr_RS.UTF-8@latin'
+#    updated 'sr_cs@latn' -> 'sr_CS.ISO8859-2' to 'sr_RS.UTF-8@latin'
+#    updated 'sr_yu' -> 'sr_CS.ISO8859-5' to 'sr_RS.UTF-8@latin'
+#    updated 'sr_yu.utf8@cyrillic' -> 'sr_CS.UTF-8' to 'sr_RS.UTF-8'
+#    updated 'sr_yu@cyrillic' -> 'sr_CS.ISO8859-5' to 'sr_RS.UTF-8'
+#
+# SS 2013-12-20:
+# Updated alias mapping to most recent locale.alias file
+# from X.org distribution using makelocalealias.py.
+#
+# These are the differences compared to the old mapping (Python 3.3.3
+# and older):
+#
+#    updated 'a3' -> 'a3_AZ.KOI8-C' to 'az_AZ.KOI8-C'
+#    updated 'a3_az' -> 'a3_AZ.KOI8-C' to 'az_AZ.KOI8-C'
+#    updated 'a3_az.koi8c' -> 'a3_AZ.KOI8-C' to 'az_AZ.KOI8-C'
+#    updated 'cs_cs.iso88592' -> 'cs_CS.ISO8859-2' to 'cs_CZ.ISO8859-2'
+#    updated 'hebrew' -> 'iw_IL.ISO8859-8' to 'he_IL.ISO8859-8'
+#    updated 'hebrew.iso88598' -> 'iw_IL.ISO8859-8' to 'he_IL.ISO8859-8'
+#    updated 'sd' -> 'sd_IN@devanagari.UTF-8' to 'sd_IN.UTF-8'
+#    updated 'sr@latn' -> 'sr_RS.UTF-8@latin' to 'sr_CS.UTF-8@latin'
+#    updated 'sr_cs' -> 'sr_RS.UTF-8' to 'sr_CS.UTF-8'
+#    updated 'sr_cs.utf8@latn' -> 'sr_RS.UTF-8@latin' to 'sr_CS.UTF-8@latin'
+#    updated 'sr_cs@latn' -> 'sr_RS.UTF-8@latin' to 'sr_CS.UTF-8@latin'
+#
+# SS 2014-10-01:
+# Updated alias mapping with glibc 2.19 supported locales.
+#
+# SS 2018-05-05:
+# Updated alias mapping with glibc 2.27 supported locales.
+#
+# These are the differences compared to the old mapping (Python 3.6.5
+# and older):
+#
+#    updated 'ca_es@valencia' -> 'ca_ES.ISO8859-15@valencia' to 'ca_ES.UTF-8@valencia'
+#    updated 'kk_kz' -> 'kk_KZ.RK1048' to 'kk_KZ.ptcp154'
+#    updated 'russian' -> 'ru_RU.ISO8859-5' to 'ru_RU.KOI8-R'
+#
+# SS 2025-02-04:
+# Updated alias mapping with glibc 2.41 supported locales and the latest
+# X lib alias mapping.
+#
+# These are the differences compared to the old mapping (Python 3.13.1
+# and older):
+#
+#    updated 'c.utf8' -> 'C.UTF-8' to 'en_US.UTF-8'
+#    updated 'de_it' -> 'de_IT.ISO8859-1' to 'de_IT.UTF-8'
+#    removed 'de_li.utf8'
+#    updated 'en_il' -> 'en_IL.UTF-8' to 'en_IL.ISO8859-1'
+#    removed 'english.iso88591'
+#    updated 'es_cu' -> 'es_CU.UTF-8' to 'es_CU.ISO8859-1'
+#    updated 'russian' -> 'ru_RU.KOI8-R' to 'ru_RU.ISO8859-5'
+#    updated 'sr@latn' -> 'sr_CS.UTF-8@latin' to 'sr_RS.UTF-8@latin'
+#    removed 'univ'
+#    removed 'universal'
+#
+# SS 2025-06-10:
+# Remove 'c.utf8' -> 'en_US.UTF-8' because 'en_US.UTF-8' does not exist
+# on all platforms.
 
 locale_alias = {
     'a3':                                   'az_AZ.KOI8-C',
@@ -1274,120 +1487,507 @@ locale_alias = {
     'zu_za':                                'zu_ZA.ISO8859-1',
 }
 
+#
+# This maps Windows language identifiers to locale strings.
+#
+# This list has been updated from
+# https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-lcid/70feba9f-294e-491e-b6eb-56532684c37f
+# to include every locale up to protocol revision 16.0 (2024-04-23).
+#
+# NOTE: this mapping is incomplete.  If your language is missing, please
+# submit a bug report as detailed in the Python devguide at:
+#    https://devguide.python.org/triage/issue-tracker/
+# Make sure you include the missing language identifier and the suggested
+# locale code.
+#
 
-def _replace_encoding(code, encoding):
-    if '.' in code:
-        langname = code[:code.index('.')]
-    else:
-        langname = code
-    # Convert the encoding to a C lib compatible encoding string
-    norm_encoding = normalize_encoding(encoding)
-    #print('norm encoding: %r' % norm_encoding)
-    norm_encoding = _encoding_aliases.get(norm_encoding.lower(), norm_encoding)
-    #print('aliased encoding: %r' % norm_encoding)
-    encoding = norm_encoding
-    norm_encoding = norm_encoding.lower()
-    if norm_encoding in locale_encoding_alias:
-        encoding = locale_encoding_alias[norm_encoding]
-    else:
-        norm_encoding = norm_encoding.replace('_', '')
-        norm_encoding = norm_encoding.replace('-', '')
-        if norm_encoding in locale_encoding_alias:
-            encoding = locale_encoding_alias[norm_encoding]
-    #print('found encoding %r' % encoding)
-    return langname + '.' + encoding
+windows_locale = {
+    0x0036: "af", # Afrikaans
+    0x0436: "af_ZA", # Afrikaans - South Africa
+    0x001c: "sq", # Albanian
+    0x041c: "sq_AL", # Albanian - Albania
+    0x0084: "gsw", # Alsatian
+    0x0484: "gsw_FR", # Alsatian - France
+    0x005e: "am", # Amharic
+    0x045e: "am_ET", # Amharic - Ethiopia
+    0x0001: "ar", # Arabic
+    0x0401: "ar_SA", # Arabic - Saudi Arabia
+    0x0801: "ar_IQ", # Arabic - Iraq
+    0x0c01: "ar_EG", # Arabic - Egypt
+    0x1001: "ar_LY", # Arabic - Libya
+    0x1401: "ar_DZ", # Arabic - Algeria
+    0x1801: "ar_MA", # Arabic - Morocco
+    0x1c01: "ar_TN", # Arabic - Tunisia
+    0x2001: "ar_OM", # Arabic - Oman
+    0x2401: "ar_YE", # Arabic - Yemen
+    0x2801: "ar_SY", # Arabic - Syria
+    0x2c01: "ar_JO", # Arabic - Jordan
+    0x3001: "ar_LB", # Arabic - Lebanon
+    0x3401: "ar_KW", # Arabic - Kuwait
+    0x3801: "ar_AE", # Arabic - U.A.E.
+    0x3c01: "ar_BH", # Arabic - Bahrain
+    0x4001: "ar_QA", # Arabic - Qatar
+    0x002b: "hy", # Armenian
+    0x042b: "hy_AM", # Armenian - Armenia
+    0x004d: "as", # Assamese
+    0x044d: "as_IN", # Assamese - India
+    0x002c: "az", # Azerbaijani (Latin)
+    0x742c: "az", # Azerbaijani (Cyrillic)
+    0x782c: "az", # Azerbaijani (Latin)
+    0x042c: "az_AZ", # Azerbaijani (Latin) - Azerbaijan
+    0x0045: "bn", # Bangla
+    0x0445: "bn_IN", # Bangla - India
+    0x0845: "bn_BD", # Bangla - Bangladesh
+    0x006d: "ba", # Bashkir
+    0x046d: "ba_RU", # Bashkir - Russia
+    0x002d: "eu", # Basque
+    0x042d: "eu_ES", # Basque - Spain
+    0x0023: "be", # Belarusian
+    0x0423: "be_BY", # Belarusian - Belarus
+    0x641a: "bs", # Bosnian (Cyrillic)
+    0x681a: "bs", # Bosnian (Latin)
+    0x141a: "bs_BA", # Bosnian (Latin) - Bosnia and Herzegovina
+    0x201a: "bs_BA", # Bosnian (Cyrillic) - Bosnia and Herzegovina
+    0x781a: "bs", # Bosnian (Latin)
+    0x007e: "br", # Breton
+    0x047e: "br_FR", # Breton - France
+    0x0002: "bg", # Bulgarian
+    0x0402: "bg_BG", # Bulgarian - Bulgaria
+    0x0055: "my", # Burmese
+    0x0455: "my_MM", # Burmese - Myanmar
+    0x0003: "ca", # Catalan
+    0x0403: "ca_ES", # Catalan - Spain
+    0x0803: "ca_ES", # Valencian - Spain
+    0x0092: "ku", # Central Kurdish
+    0x7c92: "ku", # Central Kurdish
+    0x0492: "ku_IQ", # Central Kurdish - Iraq
+    0x005c: "chr", # Cherokee
+    0x7c5c: "chr", # Cherokee
+    0x045c: "chr_US", # Cherokee - United States
+    0x0004: "zh", # Chinese (Simplified)
+    0x7804: "zh", # Chinese (Simplified)
+    0x7c04: "zh", # Chinese (Traditional)
+    0x0404: "zh_TW", # Chinese (Traditional) - Taiwan
+    0x0804: "zh_CN", # Chinese (Simplified) - People's Republic of China
+    0x0c04: "zh_HK", # Chinese (Traditional) - Hong Kong S.A.R.
+    0x1004: "zh_SG", # Chinese (Simplified) - Singapore
+    0x1404: "zh_MO", # Chinese (Traditional) - Macao S.A.R.
+    0x0083: "co", # Corsican
+    0x0483: "co_FR", # Corsican - France
+    0x001a: "hr", # Croatian
+    0x041a: "hr_HR", # Croatian - Croatia
+    0x101a: "hr_BA", # Croatian (Latin) - Bosnia and Herzegovina
+    0x0005: "cs", # Czech
+    0x0405: "cs_CZ", # Czech - Czech Republic
+    0x0006: "da", # Danish
+    0x0406: "da_DK", # Danish - Denmark
+    0x008c: "prs", # Dari
+    0x048c: "prs_AF", # Dari - Afghanistan
+    0x0065: "dv", # Divehi
+    0x0465: "dv_MV", # Divehi - Maldives
+    0x0013: "nl", # Dutch
+    0x0413: "nl_NL", # Dutch - Netherlands
+    0x0813: "nl_BE", # Dutch - Belgium
+    0x0c51: "dz_BT", # Dzongkha - Bhutan
+    0x0009: "en", # English
+    0x0409: "en_US", # English - United States
+    0x0809: "en_GB", # English - United Kingdom
+    0x0c09: "en_AU", # English - Australia
+    0x1009: "en_CA", # English - Canada
+    0x1409: "en_NZ", # English - New Zealand
+    0x1809: "en_IE", # English - Ireland
+    0x1c09: "en_ZA", # English - South Africa
+    0x2009: "en_JM", # English - Jamaica
+    0x2809: "en_BZ", # English - Belize
+    0x2c09: "en_TT", # English - Trinidad and Tobago
+    0x3009: "en_ZW", # English - Zimbabwe
+    0x3409: "en_PH", # English - Republic of the Philippines
+    0x3c09: "en_HK", # English - Hong Kong
+    0x4009: "en_IN", # English - India
+    0x4409: "en_MY", # English - Malaysia
+    0x4809: "en_SG", # English - Singapore
+    0x4c09: "en_AE", # English - United Arab Emirates
+    0x0025: "et", # Estonian
+    0x0425: "et_EE", # Estonian - Estonia
+    0x0038: "fo", # Faroese
+    0x0438: "fo_FO", # Faroese - Faroe Islands
+    0x0064: "fil", # Filipino
+    0x0464: "fil_PH", # Filipino - Philippines
+    0x000b: "fi", # Finnish
+    0x040b: "fi_FI", # Finnish - Finland
+    0x000c: "fr", # French
+    0x040c: "fr_FR", # French - France
+    0x080c: "fr_BE", # French - Belgium
+    0x0c0c: "fr_CA", # French - Canada
+    0x100c: "fr_CH", # French - Switzerland
+    0x140c: "fr_LU", # French - Luxembourg
+    0x180c: "fr_MC", # French - Principality of Monaco
+    0x1c0c: "fr_029", # French - Caribbean
+    0x200c: "fr_RE", # French - Reunion
+    0x240c: "fr_CD", # French - Congo, DRC
+    0x280c: "fr_SN", # French - Senegal
+    0x2c0c: "fr_CM", # French - Cameroon
+    0x300c: "fr_CI", # French - Côte d'Ivoire
+    0x340c: "fr_ML", # French - Mali
+    0x380c: "fr_MA", # French - Morocco
+    0x3c0c: "fr_HT", # French - Haiti
+    0x0062: "fy", # Frisian
+    0x0462: "fy_NL", # Frisian - Netherlands
+    0x0067: "ff", # Fulah
+    0x7c67: "ff", # Fulah (Latin)
+    0x0467: "ff_NG",
+    0x0867: "ff_SN", # Fulah - Senegal
+    0x0056: "gl", # Galician
+    0x0456: "gl_ES", # Galician - Spain
+    0x0037: "ka", # Georgian
+    0x0437: "ka_GE", # Georgian - Georgia
+    0x0007: "de", # German
+    0x0407: "de_DE", # German - Germany
+    0x0807: "de_CH", # German - Switzerland
+    0x0c07: "de_AT", # German - Austria
+    0x1007: "de_LU", # German - Luxembourg
+    0x1407: "de_LI", # German - Liechtenstein
+    0x0008: "el", # Greek
+    0x0408: "el_GR", # Greek - Greece
+    0x006f: "kl", # Greenlandic
+    0x046f: "kl_GL", # Greenlandic - Greenland
+    0x0074: "gn", # Guarani
+    0x0474: "gn_PY", # Guarani - Paraguay
+    0x0047: "gu", # Gujarati
+    0x0447: "gu_IN", # Gujarati - India
+    0x0068: "ha", # Hausa (Latin)
+    0x7c68: "ha", # Hausa (Latin)
+    0x0468: "ha_NG", # Hausa (Latin) - Nigeria
+    0x0075: "haw", # Hawaiian
+    0x0475: "haw_US", # Hawaiian - United States
+    0x000d: "he", # Hebrew
+    0x040d: "he_IL", # Hebrew - Israel
+    0x0039: "hi", # Hindi
+    0x0439: "hi_IN", # Hindi - India
+    0x000e: "hu", # Hungarian
+    0x040e: "hu_HU", # Hungarian - Hungary
+    0x000f: "is", # Icelandic
+    0x040f: "is_IS", # Icelandic - Iceland
+    0x0070: "ig", # Igbo
+    0x0470: "ig_NG", # Igbo - Nigeria
+    0x0021: "id", # Indonesian
+    0x0421: "id_ID", # Indonesian - Indonesia
+    0x005d: "iu", # Inuktitut (Latin)
+    0x785d: "iu", # Inuktitut (Syllabics)
+    0x7c5d: "iu", # Inuktitut (Latin)
+    0x045d: "iu_CA", # Inuktitut (Syllabics) - Canada
+    0x085d: "iu_CA", # Inuktitut (Latin) - Canada
+    0x003c: "ga", # Irish
+    0x083c: "ga_IE", # Irish - Ireland
+    0x0010: "it", # Italian
+    0x0410: "it_IT", # Italian - Italy
+    0x0810: "it_CH", # Italian - Switzerland
+    0x0011: "ja", # Japanese
+    0x0411: "ja_JP", # Japanese - Japan
+    0x004b: "kn", # Kannada
+    0x044b: "kn_IN", # Kannada - India
+    0x0471: "kr_NG", # Kanuri (Latin) - Nigeria
+    0x0060: "ks", # Kashmiri
+    0x0460: "ks", # Kashmiri - Perso_Arabic
+    0x0860: "ks_IN", # Kashmiri (Devanagari) - India
+    0x003f: "kk", # Kazakh
+    0x043f: "kk_KZ", # Kazakh - Kazakhstan
+    0x0053: "km", # Khmer
+    0x0453: "km_KH", # Khmer - Cambodia
+    0x0087: "rw", # Kinyarwanda
+    0x0487: "rw_RW", # Kinyarwanda - Rwanda
+    0x0041: "sw", # Kiswahili
+    0x0441: "sw_KE", # Kiswahili - Kenya
+    0x0057: "kok", # Konkani
+    0x0457: "kok_IN", # Konkani - India
+    0x0012: "ko", # Korean
+    0x0412: "ko_KR", # Korean - Korea
+    0x0040: "ky", # Kyrgyz
+    0x0440: "ky_KG", # Kyrgyz - Kyrgyzstan
+    0x0054: "lo", # Lao
+    0x0454: "lo_LA", # Lao - Lao P.D.R.
+    0x0476: "la_VA", # Latin - Vatican City
+    0x0026: "lv", # Latvian
+    0x0426: "lv_LV", # Latvian - Latvia
+    0x0027: "lt", # Lithuanian
+    0x0427: "lt_LT", # Lithuanian - Lithuania
+    0x7c2e: "dsb", # Lower Sorbian
+    0x082e: "dsb_DE", # Lower Sorbian - Germany
+    0x006e: "lb", # Luxembourgish
+    0x046e: "lb_LU", # Luxembourgish - Luxembourg
+    0x002f: "mk", # Macedonian
+    0x042f: "mk_MK", # Macedonian - North Macedonia
+    0x003e: "ms", # Malay
+    0x043e: "ms_MY", # Malay - Malaysia
+    0x083e: "ms_BN", # Malay - Brunei Darussalam
+    0x004c: "ml", # Malayalam
+    0x044c: "ml_IN", # Malayalam - India
+    0x003a: "mt", # Maltese
+    0x043a: "mt_MT", # Maltese - Malta
+    0x0081: "mi", # Maori
+    0x0481: "mi_NZ", # Maori - New Zealand
+    0x007a: "arn", # Mapudungun
+    0x047a: "arn_CL", # Mapudungun - Chile
+    0x004e: "mr", # Marathi
+    0x044e: "mr_IN", # Marathi - India
+    0x007c: "moh", # Mohawk
+    0x047c: "moh_CA", # Mohawk - Canada
+    0x0050: "mn", # Mongolian (Cyrillic)
+    0x7850: "mn", # Mongolian (Cyrillic)
+    0x7c50: "mn", # Mongolian (Traditional Mongolian)
+    0x0450: "mn_MN", # Mongolian (Cyrillic) - Mongolia
+    0x0c50: "mn_MN", # Mongolian (Traditional Mongolian) - Mongolia
+    0x0061: "ne", # Nepali
+    0x0461: "ne_NP", # Nepali - Nepal
+    0x0861: "ne_IN", # Nepali - India
+    0x0014: "no", # Norwegian (Bokmal)
+    0x0414: "nb_NO", # Norwegian (Bokmal) - Norway
+    0x0814: "nn_NO", # Norwegian (Nynorsk) - Norway
+    0x7814: "nn", # Norwegian (Nynorsk)
+    0x7c14: "nb", # Norwegian (Bokmal)
+    0x0082: "oc", # Occitan
+    0x0482: "oc_FR", # Occitan - France
+    0x0048: "or", # Odia
+    0x0448: "or_IN", # Odia - India
+    0x0072: "om", # Oromo
+    0x0472: "om_ET", # Oromo - Ethiopia
+    0x0063: "ps", # Pashto
+    0x0463: "ps_AF", # Pashto - Afghanistan
+    0x0029: "fa", # Persian
+    0x0429: "fa_IR", # Persian - Iran
+    0x0015: "pl", # Polish
+    0x0415: "pl_PL", # Polish - Poland
+    0x0016: "pt", # Portuguese
+    0x0416: "pt_BR", # Portuguese - Brazil
+    0x0816: "pt_PT", # Portuguese - Portugal
+    0x0046: "pa", # Punjabi
+    0x7c46: "pa", # Punjabi
+    0x0446: "pa_IN", # Punjabi - India
+    0x0846: "pa_PK", # Punjabi - Islamic Republic of Pakistan
+    0x006b: "quz", # Quechua
+    0x046b: "quz_BO", # Quechua - Bolivia
+    0x086b: "quz_EC", # Quechua - Ecuador
+    0x0c6b: "quz_PE", # Quechua - Peru
+    0x0018: "ro", # Romanian
+    0x0418: "ro_RO", # Romanian - Romania
+    0x0818: "ro_MD", # Romanian - Moldova
+    0x0017: "rm", # Romansh
+    0x0417: "rm_CH", # Romansh - Switzerland
+    0x0019: "ru", # Russian
+    0x0419: "ru_RU", # Russian - Russia
+    0x0819: "ru_MD", # Russian - Moldova
+    0x0085: "sah", # Sakha
+    0x0485: "sah_RU", # Sakha - Russia
+    0x003b: "se", # Sami (Northern)
+    0x043b: "se_NO", # Sami (Northern) - Norway
+    0x083b: "se_SE", # Sami (Northern) - Sweden
+    0x0c3b: "se_FI", # Sami (Northern) - Finland
+    0x7c3b: "smj", # Sami (Lule)
+    0x103b: "smj_NO", # Sami (Lule) - Norway
+    0x143b: "smj_SE", # Sami (Lule) - Sweden
+    0x783b: "sma", # Sami (Southern)
+    0x183b: "sma_NO", # Sami (Southern) - Norway
+    0x1c3b: "sma_SE", # Sami (Southern) - Sweden
+    0x743b: "sms", # Sami (Skolt)
+    0x203b: "sms_FI", # Sami (Skolt) - Finland
+    0x703b: "smn", # Sami (Inari)
+    0x243b: "smn_FI", # Sami (Inari) - Finland
+    0x004f: "sa", # Sanskrit
+    0x044f: "sa_IN", # Sanskrit - India
+    0x0091: "gd", # Scottish Gaelic
+    0x0491: "gd_GB", # Scottish Gaelic - United Kingdom
+    0x6c1a: "sr", # Serbian (Cyrillic)
+    0x701a: "sr", # Serbian (Latin)
+    0x7c1a: "sr", # Serbian (Latin)
+    0x081a: "sr_CS", # Serbian (Latin) - Serbia and Montenegro (Former)
+    0x0c1a: "sr_CS", # Serbian (Cyrillic) - Serbia and Montenegro (Former)
+    0x181a: "sr_BA", # Serbian (Latin) - Bosnia and Herzegovina
+    0x1c1a: "sr_BA", # Serbian (Cyrillic) - Bosnia and Herzegovina
+    0x241a: "sr_RS", # Serbian (Latin) - Serbia
+    0x281a: "sr_RS", # Serbian (Cyrillic) - Serbia
+    0x2c1a: "sr_ME", # Serbian (Latin) - Montenegro
+    0x301a: "sr_ME", # Serbian (Cyrillic) - Montenegro
+    0x006c: "nso", # Sesotho sa Leboa
+    0x046c: "nso_ZA", # Sesotho sa Leboa - South Africa
+    0x0032: "tn", # Setswana
+    0x0432: "tn_ZA", # Setswana - South Africa
+    0x0832: "tn_BW", # Setswana - Botswana
+    0x0059: "sd", # Sindhi
+    0x7c59: "sd", # Sindhi
+    0x0859: "sd_PK", # Sindhi - Islamic Republic of Pakistan
+    0x005b: "si", # Sinhala
+    0x045b: "si_LK", # Sinhala - Sri Lanka
+    0x001b: "sk", # Slovak
+    0x041b: "sk_SK", # Slovak - Slovakia
+    0x0024: "sl", # Slovenian
+    0x0424: "sl_SI", # Slovenian - Slovenia
+    0x0477: "so_SO", # Somali - Somalia
+    0x0030: "st", # Sotho
+    0x0430: "st_ZA", # Sotho - South Africa
+    0x000a: "es", # Spanish
+    0x040a: "es_ES", # Spanish - Spain
+    0x080a: "es_MX", # Spanish - Mexico
+    0x0c0a: "es_ES", # Spanish - Spain
+    0x100a: "es_GT", # Spanish - Guatemala
+    0x140a: "es_CR", # Spanish - Costa Rica
+    0x180a: "es_PA", # Spanish - Panama
+    0x1c0a: "es_DO", # Spanish - Dominican Republic
+    0x200a: "es_VE", # Spanish - Bolivarian Republic of Venezuela
+    0x240a: "es_CO", # Spanish - Colombia
+    0x280a: "es_PE", # Spanish - Peru
+    0x2c0a: "es_AR", # Spanish - Argentina
+    0x300a: "es_EC", # Spanish - Ecuador
+    0x340a: "es_CL", # Spanish - Chile
+    0x380a: "es_UY", # Spanish - Uruguay
+    0x3c0a: "es_PY", # Spanish - Paraguay
+    0x400a: "es_BO", # Spanish - Bolivia
+    0x440a: "es_SV", # Spanish - El Salvador
+    0x480a: "es_HN", # Spanish - Honduras
+    0x4c0a: "es_NI", # Spanish - Nicaragua
+    0x500a: "es_PR", # Spanish - Puerto Rico
+    0x540a: "es_US", # Spanish - United States
+    0x5c0a: "es_CU", # Spanish - Cuba
+    0x001d: "sv", # Swedish
+    0x041d: "sv_SE", # Swedish - Sweden
+    0x081d: "sv_FI", # Swedish - Finland
+    0x005a: "syr", # Syriac
+    0x045a: "syr_SY", # Syriac - Syria
+    0x0028: "tg", # Tajik (Cyrillic)
+    0x7c28: "tg", # Tajik (Cyrillic)
+    0x0428: "tg_TJ", # Tajik (Cyrillic) - Tajikistan
+    0x005f: "tzm", # Tamazight (Latin)
+    0x785f: "tzm",
+    0x7c5f: "tzm", # Tamazight (Latin)
+    0x085f: "tzm_DZ", # Tamazight (Latin) - Algeria
+    0x045f: "tzm_MA", # Central Atlas Tamazight (Arabic) - Morocco
+    0x105f: "tzm_MA",
+    0x0049: "ta", # Tamil
+    0x0449: "ta_IN", # Tamil - India
+    0x0849: "ta_LK", # Tamil - Sri Lanka
+    0x0044: "tt", # Tatar
+    0x0444: "tt_RU", # Tatar - Russia
+    0x004a: "te", # Telugu
+    0x044a: "te_IN", # Telugu - India
+    0x001e: "th", # Thai
+    0x041e: "th_TH", # Thai - Thailand
+    0x0051: "bo", # Tibetan
+    0x0451: "bo_CN", # Tibetan - People's Republic of China
+    0x0073: "ti", # Tigrinya
+    0x0473: "ti_ET", # Tigrinya - Ethiopia
+    0x0873: "ti_ER", # Tigrinya - Eritrea
+    0x0031: "ts", # Tsonga
+    0x0431: "ts_ZA", # Tsonga - South Africa
+    0x001f: "tr", # Turkish
+    0x041f: "tr_TR", # Turkish - Turkey
+    0x0042: "tk", # Turkmen
+    0x0442: "tk_TM", # Turkmen - Turkmenistan
+    0x0022: "uk", # Ukrainian
+    0x0422: "uk_UA", # Ukrainian - Ukraine
+    0x002e: "hsb", # Upper Sorbian
+    0x042e: "hsb_DE", # Upper Sorbian - Germany
+    0x0020: "ur", # Urdu
+    0x0420: "ur_PK", # Urdu - Islamic Republic of Pakistan
+    0x0820: "ur_IN", # Urdu - India
+    0x0080: "ug", # Uyghur
+    0x0480: "ug_CN", # Uyghur - People's Republic of China
+    0x0043: "uz", # Uzbek (Latin)
+    0x7843: "uz", # Uzbek (Cyrillic)
+    0x7c43: "uz", # Uzbek (Latin)
+    0x0443: "uz_UZ", # Uzbek (Latin) - Uzbekistan
+    0x0033: "ve", # Venda
+    0x0433: "ve_ZA", # Venda - South Africa
+    0x002a: "vi", # Vietnamese
+    0x042a: "vi_VN", # Vietnamese - Vietnam
+    0x0052: "cy", # Welsh
+    0x0452: "cy_GB", # Welsh - United Kingdom
+    0x0088: "wo", # Wolof
+    0x0488: "wo_SN", # Wolof - Senegal
+    0x0034: "xh", # Xhosa
+    0x0434: "xh_ZA", # Xhosa - South Africa
+    0x0078: "ii", # Yi
+    0x0478: "ii_CN", # Yi - People's Republic of China
+    0x043d: "yi_001", # Yiddish - World
+    0x006a: "yo", # Yoruba
+    0x046a: "yo_NG", # Yoruba - Nigeria
+    0x0035: "zu", # Zulu
+    0x0435: "zu_ZA", # Zulu - South Africa
+    0x0086: "qut",
 
-def _append_modifier(code, modifier):
-    if modifier == 'euro':
-        if '.' not in code:
-            return code + '.ISO8859-15'
-        _, _, encoding = code.partition('.')
-        if encoding in ('ISO8859-15', 'UTF-8'):
-            return code
-        if encoding == 'ISO8859-1':
-            return _replace_encoding(code, 'ISO8859-15')
-    return code + '@' + modifier
+#    0x0001007f: "x-IV-mathan", # math alphanumeric sorting
+    0x00010407: "de_DE",
+    0x0001040e: "hu_HU",
+    0x00010437: "ka_GE",
+    0x00020804: "zh_CN",
+    0x00021004: "zh_SG",
+    0x00021404: "zh_MO",
+    0x00030404: "zh_TW",
+    0x00040404: "zh_TW",
+    0x00040411: "ja_JP",
+    0x00040c04: "zh_HK",
+    0x00041404: "zh_MO",
+    0x00050804: "zh_CN",
+    0x00051004: "zh_SG",
+}
 
-def normalize(localename):
+def _print_locale():
 
-    """ Returns a normalized locale code for the given locale
-        name.
-
-        The returned locale code is formatted for use with
-        setlocale().
-
-        If normalization fails, the original name is returned
-        unchanged.
-
-        If the given encoding is not known, the function defaults to
-        the default encoding for the locale code just like setlocale()
-        does.
-
+    """ Test function.
     """
-    # Normalize the locale name and extract the encoding and modifier
-    code = localename.lower()
-    if ':' in code:
-        # ':' is sometimes used as encoding delimiter.
-        code = code.replace(':', '.')
-    if '@' in code:
-        code, modifier = code.split('@', 1)
+    categories = {}
+    def _init_categories(categories=categories):
+        for k,v in globals().items():
+            if k[:3] == 'LC_':
+                categories[k] = v
+    _init_categories()
+    del categories['LC_ALL']
+
+    print('Locale defaults as determined by getdefaultlocale():')
+    print('-'*72)
+    lang, enc = getdefaultlocale()
+    print('Language: ', lang or '(undefined)')
+    print('Encoding: ', enc or '(undefined)')
+    print()
+
+    print('Locale settings on startup:')
+    print('-'*72)
+    for name,category in categories.items():
+        print(name, '...')
+        lang, enc = getlocale(category)
+        print('   Language: ', lang or '(undefined)')
+        print('   Encoding: ', enc or '(undefined)')
+        print()
+
+    try:
+        setlocale(LC_ALL, "")
+    except:
+        print('NOTE:')
+        print('setlocale(LC_ALL, "") does not support the default locale')
+        print('given in the OS environment variables.')
     else:
-        modifier = ''
-    if '.' in code:
-        langname, encoding = code.split('.')[:2]
-    else:
-        langname = code
-        encoding = ''
+        print()
+        print('Locale settings after calling setlocale(LC_ALL, ""):')
+        print('-'*72)
+        for name,category in categories.items():
+            print(name, '...')
+            lang, enc = getlocale(category)
+            print('   Language: ', lang or '(undefined)')
+            print('   Encoding: ', enc or '(undefined)')
+            print()
 
-    # First lookup: fullname (possibly with encoding and modifier)
-    lang_enc = langname
-    if encoding:
-        norm_encoding = encoding.replace('-', '')
-        norm_encoding = norm_encoding.replace('_', '')
-        lang_enc += '.' + norm_encoding
-    lookup_name = lang_enc
-    if modifier:
-        lookup_name += '@' + modifier
-    code = locale_alias.get(lookup_name, None)
-    if code is not None:
-        return code
-    #print('first lookup failed')
+###
 
-    if modifier:
-        # Second try: fullname without modifier (possibly with encoding)
-        code = locale_alias.get(lang_enc, None)
-        if code is not None:
-            #print('lookup without modifier succeeded')
-            if '@' not in code:
-                return _append_modifier(code, modifier)
-            if code.split('@', 1)[1].lower() == modifier:
-                return code
-        #print('second lookup failed')
+try:
+    LC_MESSAGES
+except NameError:
+    pass
+else:
+    __all__.append("LC_MESSAGES")
 
-    if encoding:
-        # Third try: langname (without encoding, possibly with modifier)
-        lookup_name = langname
-        if modifier:
-            lookup_name += '@' + modifier
-        code = locale_alias.get(lookup_name, None)
-        if code is not None:
-            #print('lookup without encoding succeeded')
-            if '@' not in code:
-                return _replace_encoding(code, encoding)
-            code, modifier = code.split('@', 1)
-            return _replace_encoding(code, encoding) + '@' + modifier
-
-        if modifier:
-            # Fourth try: langname (without encoding and modifier)
-            code = locale_alias.get(langname, None)
-            if code is not None:
-                #print('lookup without modifier and encoding succeeded')
-                if '@' not in code:
-                    code = _replace_encoding(code, encoding)
-                    return _append_modifier(code, modifier)
-                code, defmod = code.split('@', 1)
-                if defmod.lower() == modifier:
-                    return _replace_encoding(code, encoding) + '@' + defmod
-
-    return localename
-
+if __name__=='__main__':
+    print('Locale aliasing:')
+    print()
+    _print_locale()
+    print()
+    print('Number formatting:')
+    print()
+    _test()

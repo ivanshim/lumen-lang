@@ -4529,7 +4529,7 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare && !(table.keywords.contains(&self.look().lexeme) && !table.spells("ext.stmt.type_alias", &self.look().lexeme))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -5142,6 +5142,14 @@ impl<'a> Builder<'a> {
             let made = self.class_book();
             setup.push(made);
         }
+        if table.has_any("ext.stmt.class.special") {
+            if let Some(module_key) = table.single("ext.stmt.class.detail.module") {
+                let module_value = Form::Read(self.global_address("__name__"));
+                self.member_ranked(module_key);
+                self.parts().attributes.push(module_key.to_owned());
+                self.parts().held.push(module_value);
+            }
+        }
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         // The module a class statement is written in is the module's
         // own `__name__`, read where the class is defined.
@@ -5253,12 +5261,13 @@ impl<'a> Builder<'a> {
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
         setup.push(Form::Write(completed_class.clone(), Box::new(declaration)));
-        let declaration = Form::Read(completed_class);
+        let declaration = Form::Read(completed_class.clone());
         if self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len()) {
             let slot = self.gensym("inner_class");
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
             setup.push(Form::Write(slot, Box::new(declaration)));
         } else { setup.push(self.write(&named, declaration)); }
+        setup.push(Form::Release(completed_class));
         for place in emptied { setup.push(Form::Forget(place)); }
         Ok((sequence(setup), cannot))
     }
@@ -5865,6 +5874,9 @@ impl<'a> Builder<'a> {
         all.push(start);
         all.extend(empty);
         all.push(looped);
+        if self.table.has_any("ext.stmt.class.special") && !alive {
+            all.push(Form::Release(self.address_to_write(&bag_name)));
+        }
         all.extend(loosed);
         Ok(sequence(all))
     }
@@ -7039,7 +7051,25 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            let value = self.expr(0)?;
+            // Where the table requests enclosing defaults, hide the routine's own
+            // names: a default naming what a parameter also names finds
+            // the one outside, the reference reading every default
+            // before the routine it belongs to exists. The parameters
+            // stand aside under names nothing can spell, so every place
+            // and mark the routine keeps stays where it was.
+            let mut kept = Vec::new();
+            if self.table.flag("ext.stmt.fn.defaults.enclosing") {
+                for (at, name) in formals.iter().enumerate() {
+                    let away = format!("\0default aside {}", name);
+                    let ids = &mut self.layers.last_mut().expect("a layer").idents;
+                    kept.push(std::mem::replace(&mut ids[at], away));
+                }
+            }
+            let built = self.expr(0);
+            for (at, back) in kept.into_iter().enumerate() {
+                self.layers.last_mut().expect("a layer").idents[at] = back;
+            }
+            let value = built?;
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
             let test = Form::Missing(slot);
@@ -7968,8 +7998,13 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(write) = self.chained_places()? { return Ok(write); }
-        if self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty()
-            && !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() {
+        let commas = self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple");
+        let tuple_before_write = match (commas.first(), self.second_sign_ahead()) {
+            (Some(comma), Some(sign)) => *comma < sign,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if tuple_before_write && self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty() {
             let tuple = self.comma_expression(false)?;
             return if self.on_writing() {
                 Err(String::from("SyntaxError: 'tuple' is an illegal expression for augmented assignment"))
@@ -8027,6 +8062,7 @@ impl<'a> Builder<'a> {
                 let saved = self.gensym("chain_value");
                 let mut steps = vec![Form::Write(saved.clone(), Box::new(answer))];
                 for destination in destinations { steps.push(self.write(&destination, Form::Read(saved.clone()))); }
+                steps.push(Form::Release(saved));
                 return Ok(sequence(steps));
             }
         }
@@ -8037,10 +8073,11 @@ impl<'a> Builder<'a> {
                 let value = self.comma_value()?;
                 let held = self.gensym("unpacked");
                 let name = held.ident.to_string();
-                let mut parts = vec![Form::Write(held, Box::new(value))];
+                let mut parts = vec![Form::Write(held.clone(), Box::new(value))];
                 let after = self.pos;
                 self.pos = began;
                 parts.extend(self.loop_targets(&name)?);
+                parts.push(Form::Release(held));
                 self.pos = after;
                 return Ok(sequence(parts));
             }
@@ -8063,7 +8100,7 @@ impl<'a> Builder<'a> {
             Form::Apply(Callee::Prim(Prim::At, _), args)
                 if matches!(args.first(), Some(Form::Apply(Callee::Code(_), _))));
         // Attributes and call results cannot yet retain writes in these scopes.
-        if (attribute && !self.table.has_any("ext.op.member") || temporary_index)
+        if (attribute && !self.table.has_any("ext.op.member") || (temporary_index && !self.table.has_any("ext.stmt.class.special")))
             && self.table.has_any("ext.system.scope.unready") {
             self.advance();
             let _right = self.comma_value()?;
@@ -8942,7 +8979,8 @@ impl<'a> Builder<'a> {
                             // Where the name is looked for again, since
                             // the far side may be what first bound it.
                             let now = self.read(&named);
-                            sequence(vec![set, prim_call(other, vec![now, Form::Read(by)])])
+                            let operand = if self.table.has_any("ext.stmt.class.special") { Form::Release(by) } else { Form::Read(by) };
+                            sequence(vec![set, prim_call(other, vec![now, operand])])
                         }
                         None => prim_call(other, vec![left, right]),
                     }
@@ -9330,10 +9368,23 @@ impl<'a> Builder<'a> {
                 }
                 self.need_sign(open, "after the parent word")?;
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
+                // Spelled with a class and the thing it is for, where
+                // the definition asks for that form, the parent word
+                // answers with the stand-in that reads that class's
+                // forebears on that thing, their members bound to it.
+                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") {
+                    let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                    return self.subscript(invoke(parent_word, extra));
+                }
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
-                    (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                    (false, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
+                        let callable = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                        invoke(callable, extra)
+                    }
+                    (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
+                        && (member.is_none() || self.glance(2).lexeme != open) => {
                         self.parts().needs_class_cell = true;
                         self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();
@@ -10450,7 +10501,7 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
-            let mut comprehension_begun = false;
+
             let mut parameter_lists = 0usize;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
@@ -10462,13 +10513,12 @@ impl<'a> Builder<'a> {
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
                     if part.shape == Shape::Bare && part.lexeme == "for" {
-                        // A comma among the items ahead of any clause is the
-                        // stray-generator mistake; commas within the target
-                        // of the first clause or in later ones are normal.
-                        if comma_before_for && !comprehension_begun {
+                        // The comma check belongs to the expression being
+                        // collected, ending at the first comprehension loop.
+                        if comma_before_for {
                             return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
                         }
-                        comprehension_begun = true;
+                        break;
                     }
                 }
                 if part.shape == Shape::Sign {
