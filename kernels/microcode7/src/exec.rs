@@ -7717,7 +7717,7 @@ impl<'a> Machine<'a> {
             Value::Octets { changeable, .. } => if changeable { 'B' } else { 'b' },
             Value::Vector(_) => 'l',
             Value::Tuple(_) | Value::Row(_) => 't',
-            Value::Dict(_) => 'd',
+            Value::Attributes(_) | Value::Dict(_) => 'd',
             Value::Set(ref store) => if store.try_borrow().map_or(false, |held| held.sealed) { 'E' } else { 'e' },
             Value::Progression(_) => 'p',
             _ => return None,
@@ -9053,10 +9053,17 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Attributes(owner) = receiver.settled() {
+            if self.native_place(receiver, name) == Some(58) {
+                if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                self.value_member(receiver, "update", arguments, keywords)?;
+                return Ok(receiver.clone());
+            }
             let snapshot = self.attribute_entries(&owner);
             let storage = Rc::new(RefCell::new(Value::Dict(Rc::new(snapshot.into()))));
+            let slot = self.native_place(receiver, name);
             let outcome = self.value_member(&Value::Mutable(storage.clone(), true), name, arguments, keywords);
-            let modifies = ["clear", "popitem", "pop", "update", "setdefault"].contains(&name);
+            let modifies = ["clear", "popitem", "pop", "update", "setdefault"].contains(&name)
+                || slot.is_some_and(|index| [12, 13, usize::MAX].contains(&index));
             if modifies {
                 if let Value::Dict(changed) = &*storage.borrow() {
                     self.attribute_restore(&owner, changed.iter().cloned().collect());
@@ -16199,6 +16206,13 @@ impl<'a> Machine<'a> {
         // it took; a map or any row of pairs may stand on the right, and
         // the pairs before an ill-shaped one are written before it stops.
         if let (Prim::SetAssign(0), [left, right]) = (op, v) {
+            if self.rules.map_union && matches!(left.settled(), Value::Attributes(_)) {
+                match self.value_member(left, "update", vec![right.clone()], Vec::new()) {
+                    Ok(_) => return Ok(left.clone()),
+                    Err(Escape::Error(words)) => return Err(words),
+                    Err(raised) => { self.got_away = Some(raised); return Err(String::new()); }
+                }
+            }
             if let Some(cell) = Self::dict_cell(left).filter(|_| self.rules.map_union) {
                 let (pairs, stopped) = self.pairs_offered(right);
                 let mut entries = match &*cell.borrow() { Value::Dict(held) => held.to_vec(), _ => Vec::new() };

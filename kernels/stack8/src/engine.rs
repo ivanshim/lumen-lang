@@ -6742,7 +6742,7 @@ impl<'a> Engine<'a> {
             Value::Bytes(_, changeable, _) => Kindred::Bytes(changeable),
             Value::Array(_) => Kindred::Row,
             Value::Tuple(_) => Kindred::Tuple,
-            Value::Map(_) => Kindred::Map,
+            Value::Map(_) | Value::Fields(_) => Kindred::Map,
             Value::Set(ref members) => Kindred::Set(members.try_borrow().map_or(false, |held| held.fixed)),
             Value::Counted(_) => Kindred::Counted,
             // A window upon a map is read before its contents, which
@@ -7917,6 +7917,10 @@ impl<'a> Engine<'a> {
             if let Some(repeated) = self.sequence_in_place(true, held, by)? { return Ok(Some(repeated)); }
         }
         let thing = held.contents();
+        if place == 58 && self.lang.or_maps && matches!(thing, Value::Fields(_)) {
+            self.value_method(held, "update", vec![by.clone()], Vec::new())?;
+            return Ok(Some(held.clone()));
+        }
         if !matches!(thing, Value::Object(_)) { return Ok(None); }
         Ok(match self.special_call(&thing, place, vec![by.clone()])? {
             Some(Value::Declined(_)) | None => None,
@@ -15451,12 +15455,15 @@ impl<'a> Engine<'a> {
         if let Value::Fields(object) = receiver.contents() {
             let entries = self.fields_entries(&object);
             let map = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
+            let protocol = self.native_place(receiver, operation);
             let result = self.value_method(&map, operation, args, named);
-            if matches!(operation, "setdefault" | "update" | "pop" | "popitem" | "clear") {
+            if matches!(operation, "setdefault" | "update" | "pop" | "popitem" | "clear")
+                || matches!(protocol, Some(12 | 13 | 58 | usize::MAX)) {
                 if let Value::Map(entries) = map.contents() {
                     self.fields_restore(&object, entries.iter().cloned().collect());
                 }
             }
+            if protocol == Some(58) && result.is_ok() { return Ok(receiver.clone()); }
             return result;
         }
 
