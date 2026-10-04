@@ -77,13 +77,9 @@ def resetwarnings():
 def _location(stacklevel):
     if type(stacklevel) != type(0) and type(stacklevel) != type(True):
         raise TypeError('stacklevel must be an integer')
-    calls = __warning_calls()
-    if stacklevel < 1:
-        stacklevel = 1
-    if stacklevel >= len(calls):
-        raise NotImplementedError('warning stack level lies outside the known calls')
-    frame = calls[stacklevel]
-    return [frame['file'], frame['line']]
+    import sys
+    frame = sys._getframe(max(stacklevel, 1) + 1)
+    return [frame.f_code.co_filename, frame.f_lineno]
 
 
 def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=None):
@@ -207,19 +203,24 @@ class catch_warnings:
         _state.seen = []
         return False
 
+# Source: CPython 3b564385e4c9, Lib/_py_warnings.py; PSF License.
+import sys
+
 
 _DEPRECATED_MSG = "{name!r} is deprecated and slated for removal in Python {remove}"
 
+def _deprecated(name, message=_DEPRECATED_MSG, *, remove, _version=sys.version_info):
+    """Warn that *name* is deprecated or should be removed.
 
-def _deprecated(name, message=_DEPRECATED_MSG, *, remove, _version=None):
-    # CPython's _py_warnings._deprecated at the suite's commit, under the
-    # PSF licence; the running version comes from sys here.
-    import sys
-    if _version is None:
-        _version = sys.version_info
+    RuntimeError is raised if *remove* specifies a major/minor tuple older than
+    the current Python version or the same version but past the alpha.
+
+    The *message* argument is formatted with *name* and *remove* as a Python
+    version tuple (e.g. (3, 11)).
+
+    """
     remove_formatted = f"{remove[0]}.{remove[1]}"
-    level = _version[3] if len(_version) > 3 else "final"
-    if (_version[:2] > remove) or (_version[:2] == remove and level != "alpha"):
+    if (_version[:2] > remove) or (_version[:2] == remove and _version[3] != "alpha"):
         msg = f"{name!r} was slated for removal after Python {remove_formatted} alpha"
         raise RuntimeError(msg)
     else:

@@ -431,9 +431,13 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
-            let mut portions=Vec::new();
-            for item in &row {match item {Value::Text(t)=>portions.push(t.as_ref()),_=>return Err(g.bad("join"))}}
-            Value::text(&portions.join(source))
+            let mut result: Vec<u32> = Vec::new();
+            for (position, item) in row.into_iter().enumerate() {
+                let numbers = item.character_numbers().ok_or_else(|| g.bad("join"))?;
+                if position > 0 { result.extend(source.chars().map(|ch| ch as u32)); }
+                result.extend(numbers);
+            }
+            Value::characters(result)
         }
         TRANSLATE=>{
             let lookup=&g.tail[0];
@@ -565,4 +569,21 @@ fn fill_mapping(table:&Table, pattern:&str, mapping:&Value, names:Names, level:u
         output.push_str(&rendered);
     }
     Ok(output)
+}
+
+
+pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
+    type LengthEntry = (std::rc::Weak<str>, usize);
+    thread_local! {
+        static EXTENTS: std::cell::RefCell<std::collections::BTreeMap<usize, LengthEntry>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    }
+    let identity = subject.as_ptr() as usize;
+    EXTENTS.with(|known| {
+        if let Some((_, measured)) = known.borrow().get(&identity) { return *measured; }
+        let measured = subject.chars().count();
+        let mut lengths = known.borrow_mut();
+        if lengths.len() > 1000 { lengths.retain(|_, entry| entry.0.strong_count() > 0); }
+        lengths.insert(identity, (Rc::downgrade(subject), measured));
+        measured
+    })
 }

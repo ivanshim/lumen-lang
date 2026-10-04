@@ -1,4 +1,3 @@
-# Source: CPython Lib/functools.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """functools.py - Tools for working with functions and callable objects
 """
 # Python module wrapper for _functools C module

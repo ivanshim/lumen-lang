@@ -2460,3 +2460,53 @@ to date and checked again.
 Measured on both kernels, the sixty files count 3224 of 3596, identical file by file to batch 20x: the move changes no
 result. The full check agrees on 1182 scratch programs with no mismatch and passes every gate; kernel independence
 reports no problem.
+
+### 1bb. The Python release selection merged as #533; batch 20y: io, re, types, weakref and the core standard library
+
+The first standard-library batch on the CPython 3.14.8 suite. Eight branches, each reviewed and accepted on its own,
+were merged one at a time by a GPT-6 Astra integrator; GPT-6.1 Sol workers wrote most of them.
+
+- fix/stdlib-io: CPython's own io.py and _pyio.py in memory over an _io adapter — from now the one io; every other
+  branch's BytesIO / TextIOWrapper stand-in was dropped. The runtime unittest now discovers inherited test methods and
+  honours load_tests, as CPython's loader does.
+- fix/support-helpers: the test.support helpers the suite needs.
+- fix/stdlib-re: CPython's re package over a faithful _sre; copyreg is the upstream file.
+- fix/stdlib-types: CPython's types.py and the native objects its fallbacks probe (MethodType identity, mappingproxy).
+- fix/stdlib-weakref: upstream weakref and _weakrefset over native weak primitives.
+- fix/stdlib-collections, fix/stdlib-string, fix/stdlib-random: CPython's modules and their tests.
+
+The integration audit's requirements hold: one canonical test.support.subTests awaits coroutine test methods,
+inspect.iscoroutinefunction sees through partials, partial methods and coroutine markers, and an async test with a
+failing assertion fails on both kernels, directly and through a partial. Every CPython-derived file was checked against
+the v3.14.8 tag (138 files); added tests live in tests/python-3.14.8/.
+
+Measured on both kernels: 4107 (stack8) and 4106 (microcode7) of 4520, over 70 files, from 3224 of 3596 over 60 — new
+files include test_re 151/166, test_weakref 123/137, test_weakset 46/46, test_memoryio 179/184, test_collections 112/116,
+test_random 111/116, test_string 41/42. Three totals changed because discovery is now correct: test_bigmem 61→166,
+test_functools 326→325, test_str 138→139 — exactly what CPython 3.14's own loader counts in those files. test_io runs
+whole on the remote at 485 of 669 on both kernels but exceeds Lambda's time limit; test_types waits for _datetime. The
+merged full check agrees on 1194 scratch programs with no mismatch and passes every gate; kernel independence reports no
+problem.
+
+### 1bc. Batch 20y merged as #534; batch 20z: json, enum, statistics, ipaddress, html, pprint and four small modules
+
+The second standard-library batch on the CPython 3.14.8 suite, on top of 20y's CPython io and re. Nine branches, each
+reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the branches came from GPT-6.1
+Sol, DeepSeek V4 Pro, DeepSeek V4.1 Flash and MiMo-V2.6-Pro workers.
+
+- fix/fixture-audit: the typinganndata fixtures restored to v3.14.8, now that types.new_class is faithful (grammar
+  75/75 and opcodes 8/8 hold).
+- fix/stdlib-html, fix/stdlib-pprint (with difflib), fix/stdlib-json, fix/stdlib-ipaddress (with urllib.parse),
+  fix/stdlib-enum, fix/stdlib-statistics: CPython's modules and their tests.
+- fix/trial-mimo-graphlib (graphlib, colorsys) and fix/trial-dsflash-quopri (quopri, sched).
+
+Every branch's own io or re stand-in was dropped for main's CPython versions, and one test.support stays. json now
+imports through CPython re and its eight earlier scratch mismatches are gone; one scratch record moved to CPython's own
+wording (`type() takes 1 or 3 arguments`). Every CPython-derived file was checked against the v3.14.8 tag (226 files).
+
+Measured: 5813 (stack8) and 5845 (microcode7) of 6335, over 83 files, from 4107 / 4106 of 4520 over 70. New files:
+test_enum 1007 (stack8) / 1053 (microcode7) of 1081, test_ipaddress 211/211, test_json 188 / 185 of 225, test_htmlparser
+66/68, test_urlparse 73/77, test_difflib 56/59, test_pprint 44/45, test_graphlib 17/17, test_quopri 11/11,
+test_colorsys 8/8, test_sched 9/11, test_html 2/2. test_statistics measures 409/415 on both kernels class by class but
+exceeds Lambda's time limit as a whole file. The full check of the final merge agrees on 1194 scratch programs with no
+mismatch, passes every gate and shows no regression or kernel disagreement; kernel independence reports no problem.

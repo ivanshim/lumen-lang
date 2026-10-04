@@ -105,6 +105,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     let names: &[&str] = match value.contents() {
         Value::Text(_) | Value::Codepoints(_) => TEXT,
         Value::Array(_) => ROW,
+        Value::Bytes(_, true, _) => &["copy"],
         Value::Map(_) | Value::Fields(_) => PAIRS,
         Value::Tuple(_) | Value::Counted(_) => PLACES,
         Value::Small(_) | Value::Huge(_) | Value::Flag(_) => WHOLE,
@@ -144,11 +145,44 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         return Ok(Value::Map(Rc::new(pairs.into())).held(false));
     }
     match &held {
+        Value::Bytes(bytes, true, word) if op == "copy" => {
+            arity(0,0)?;
+            Ok(Value::Bytes(Rc::new(std::cell::RefCell::new(bytes.borrow().clone())),true,word.clone()))
+        }
         // A real read from its hexadecimal spelling, as float.fromhex reads it.
         // A held surrogate answers the six category questions from a
-        // stand-in text built for exactly this reading; every other
-        // text working still refuses it, so nothing it stands for ever
-        // reaches the outside through a working that would spell it.
+        // stand-in text built for exactly this reading. Trimming and
+        // affix comparisons instead work on the original code units.
+        Value::Codepoints(row) if matches!(op, "strip" | "lstrip" | "rstrip") => {
+            arity(0, 1)?;
+            let characters = match a.first().map(Value::contents) {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.text_codes().ok_or_else(|| fault("arguments"))?),
+            };
+            let removes = |n: u32| characters.as_ref().map_or_else(
+                || char::from_u32(n).is_some_and(|c| c.is_whitespace()) || (28..=31).contains(&n),
+                |chars| chars.contains(&n));
+            let mut left = 0;
+            let mut right = row.len();
+            if op != "rstrip" { while left < right && removes(row[left]) { left += 1; } }
+            if op != "lstrip" { while right > left && removes(row[right - 1]) { right -= 1; } }
+            return Ok(Value::from_codes(row[left..right].to_vec()));
+        }
+        Value::Codepoints(row) if op == "startswith" || op == "endswith" => {
+            arity(1, 3)?;
+            let start_arg = a.get(1).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(0);
+            let left = bound(start_arg, row.len());
+            let right = a.get(2).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.map_or(row.len(), |n| bound(n, row.len()));
+            let ordered = start_arg <= row.len() as i64 && left <= right;
+            let part = &row[left..right.max(left)];
+            let alternatives = match a[0].contents() { Value::Tuple(v) => v.as_ref().clone(), one => vec![one] };
+            for candidate in alternatives {
+                let codes = candidate.contents().text_codes().ok_or_else(|| fault("arguments"))?;
+                let accepted = if op == "startswith" { part.starts_with(&codes) } else { part.ends_with(&codes) };
+                if ordered && accepted { return Ok(Value::Flag(true)); }
+            }
+            return Ok(Value::Flag(false));
+        }
         Value::Codepoints(row) if matches!(op, "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper") => {
             arity(0, 0)?;
             let s = Value::predicate_text(row);
@@ -333,7 +367,8 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(0,0)?;
                     let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
                     store(Value::Map(Rc::new(pairs)))?;
-                    return Ok(Value::tuple(vec![key,value]));
+                    let plain = match key { Value::Hashed(pair) => pair.0.clone(), other => other };
+                    return Ok(Value::tuple(vec![plain,value]));
                 }
                 "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}

@@ -44,6 +44,7 @@ impl Value {
                 }
             }),
             Value::View(view) => crate::value::view_kind(&view.1),
+            Value::Trace(_) => "traceback",
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
             Value::Declined(_) => "NotImplementedType",
@@ -66,6 +67,7 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
+            Value::ValueMethod(method) if method.1 == "__next__" => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -75,17 +77,29 @@ impl Value {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
                 _ => "object".to_string(),
             },
+            Value::Adapter(w) if w.0 == 129 => "function",
+            Value::Adapter(w) if w.0 == 63 => "method_descriptor",
+            Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
+            Value::Adapter(w) if w.0 == 131 => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
-            Value::Adapter(w) if w.0 == 119 => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119) => "wrapper_descriptor",
+            Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
+            Value::Adapter(w) if w.0 == 143 => "function",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
-            Value::Object(o) => return o.class_now().name.clone(),
+            Value::Object(o) => {
+                let class = o.class_now();
+                return class.constants.iter().find_map(|(key, value)| match (key.as_str(), value) {
+                    ("\0native-name", Value::Text(name)) => Some(name.to_string()), _ => None,
+                }).unwrap_or_else(|| class.name.clone());
+            }
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => return c.borrow().core_kind(),
             _ => "object",
         }.to_string()
@@ -165,10 +179,10 @@ impl Value {
                 Value::text(&text).core_hash()
             }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
-            Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
+            Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
-            Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
+            Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
             // The three bounds, folded as a tuple's items are, without a
@@ -236,6 +250,18 @@ impl Value {
                 let start = if length.is_zero() { Value::Null } else { Value::of_big(span.start.clone()) };
                 let step = if length > BigInt::from(1) { Value::of_big(span.step.clone()) } else { Value::Null };
                 Value::tuple(vec![Value::of_big(length), start, step]).core_hash()
+            }
+            // A loose member descriptor folds what it is kept as -- the
+            // kind's word and the member's name -- so two readings of the
+            // same member, and of the same member on the same kind, hash
+            // alike, and one may be a key in a map or a member of a set.
+            Value::Adapter(held) => {
+                let mut h = 2870177450012600261u64;
+                for part in held.1.iter() {
+                    h = h.wrapping_add((part.core_hash()? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
             }
             _ => None,
         }

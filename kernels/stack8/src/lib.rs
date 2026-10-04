@@ -22,6 +22,7 @@ pub mod value;
 pub mod code;
 pub mod faint;
 mod core;
+mod posix;
 mod complex;
 pub mod tuples;
 
@@ -550,3 +551,6 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     put_step(&mut inside, &steps[1..], value);
     into[at].1 = Value::Map(std::rc::Rc::new(inside.into()));
 }
+mod sre;
+
+mod statistics;

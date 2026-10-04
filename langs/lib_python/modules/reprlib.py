@@ -1,4 +1,3 @@
-# Source: CPython Lib/reprlib.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Redo the builtin repr() (representation) but with limits on most sizes."""
 
 __all__ = ["Repr", "repr", "recursive_repr"]

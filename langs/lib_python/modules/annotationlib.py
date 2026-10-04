@@ -1,8 +1,8 @@
 # The formats an __annotate__ function is asked for, and the one reader of
 # annotations that works without one. This runtime records the names a class
 # or module annotates but does not evaluate the annotations themselves, so
-# only VALUE can be served; the formats that need the annotation expression
-# back are refused rather than answered with a guess.
+# VALUE and resolved FORWARDREF annotations can be served; formats requiring
+# the original annotation expression are refused.
 
 class Format:
     VALUE = 1
@@ -15,19 +15,36 @@ _FORMAT_NAMES = {1: 'VALUE', 2: 'VALUE_WITH_FAKE_GLOBALS', 3: 'FORWARDREF', 4: '
 def _check_format(format):
     if format not in _FORMAT_NAMES:
         raise 'ValueError: ' + str(format) + ' is not a valid Format'
-    if format != Format.VALUE:
-        raise 'NotImplementedError: annotationlib can only serve Format.VALUE here'
+    if format not in (Format.VALUE, Format.FORWARDREF):
+        raise NotImplementedError("annotationlib cannot produce unevaluated annotation strings here")
 
 def get_annotate_from_class_namespace(obj):
     # A class body here never leaves an __annotate__ behind.
     try:
         return obj['__annotate__']
     except Exception:
-        return None
+        try:
+            rows = obj['\0annotate']
+        except KeyError:
+            return None
+        def annotate(format):
+            _check_format(format)
+            result = {}
+            for index in range(0, len(rows), 2):
+                result[rows[index]] = rows[index + 1]()
+            return result
+        return annotate
 
 def call_annotate_function(annotate, format, owner=None):
     _check_format(format)
-    return annotate(format)
+    try:
+        return annotate(format)
+    except NotImplementedError:
+        if format != Format.FORWARDREF:
+            raise
+        # Native annotation functions support VALUE; resolved expressions
+        # have the same result in FORWARDREF format.
+        return annotate(Format.VALUE)
 
 def call_evaluate_function(evaluate, format, owner=None):
     _check_format(format)
@@ -37,7 +54,7 @@ def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1)
     _check_format(format)
     annotate = getattr(obj, '__annotate__', None)
     if annotate is not None:
-        result = annotate(format)
+        result = call_annotate_function(annotate, format, owner=obj)
         if result is None:
             return {}
         return dict(result)

@@ -1,108 +1,150 @@
-# Only an in-memory text stream is carried here.
-class StringIO:
-    def __init__(self, initial_value='', newline='\n'):
-        if newline != "\n":
-            raise 'NotImplementedError: alternate newline modes are not supported'
-        self.text = initial_value
-        self.position = 0
-        self.closed = False
+"""The io module provides the Python interfaces to stream handling. The
+builtin open function is defined in this module.
 
-    def write(self, text):
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
-        while len(self.text) < self.position:
-            self.text += "\0"
-        self.text = self.text[:self.position] + text + self.text[self.position + len(text):]
-        self.position += len(text)
-        return len(text)
+At the top of the I/O hierarchy is the abstract base class IOBase. It
+defines the basic interface to a stream. Note, however, that there is no
+separation between reading and writing to streams; implementations are
+allowed to raise an OSError if they do not support a given operation.
 
-    def getvalue(self):
-        self._check()
-        return self.text
+Extending IOBase is RawIOBase which deals simply with the reading and
+writing of raw bytes to a stream. FileIO subclasses RawIOBase to provide
+an interface to OS files.
 
-    def read(self, size=-1):
-        self._check()
-        if size < 0:
-            size = len(self.text) - self.position
-        value = self.text[self.position:self.position + size]
-        self.position += len(value)
-        return value
+BufferedIOBase deals with buffering on a raw byte stream (RawIOBase). Its
+subclasses, BufferedWriter, BufferedReader, and BufferedRWPair buffer
+streams that are readable, writable, and both respectively.
+BufferedRandom provides a buffered interface to random access
+streams. BytesIO is a simple stream of in-memory bytes.
 
-    def seek(self, offset, whence=0):
-        self._check()
-        if whence not in [0, 1, 2]:
-            raise 'ValueError: invalid whence'
-        if whence != 0 and offset != 0:
-            raise 'OSError: cannot do nonzero cur-relative seeks'
-        if whence == 2:
-            offset += len(self.text)
-        elif whence == 1:
-            offset += self.position
-        if offset < 0:
-            raise 'ValueError: negative seek position'
-        self.position = offset
-        return offset
+Another IOBase subclass, TextIOBase, deals with the encoding and decoding
+of streams into text. TextIOWrapper, which extends it, is a buffered text
+interface to a buffered raw stream (`BufferedIOBase`). Finally, StringIO
+is an in-memory stream for text.
 
-    def tell(self):
-        self._check()
-        return self.position
+Argument names are not part of the specification, and only the arguments
+of open() are intended to be used as keyword arguments.
 
-    def flush(self):
-        self._check()
+data:
 
-    def close(self):
-        self.closed = True
+DEFAULT_BUFFER_SIZE
 
-    def __enter__(self):
-        self._check()
-        return self
+   An int containing the default buffer size used by the module's buffered
+   I/O classes. open() uses the file's blksize (as obtained by os.stat) if
+   possible.
+"""
+# New I/O library conforming to PEP 3116.
 
-    def __exit__(self, kind, value, traceback):
-        self.close()
-        return False
+__author__ = ("Guido van Rossum <guido@python.org>, "
+              "Mike Verdone <mike.verdone@gmail.com>, "
+              "Mark Russell <mark.russell@zen.co.uk>, "
+              "Antoine Pitrou <solipsis@pitrou.net>, "
+              "Amaury Forgeot d'Arc <amauryfa@gmail.com>, "
+              "Benjamin Peterson <benjamin@python.org>")
 
-    def readline(self, size=-1):
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
-        result = ''
-        while self.position < len(self.text) and (size < 0 or len(result) < size):
-            letter = self.read(1)
-            result += letter
-            if letter == '\n':
-                break
-        return result
+__all__ = ["BlockingIOError", "open", "open_code", "IOBase", "RawIOBase",
+           "FileIO", "BytesIO", "StringIO", "BufferedIOBase",
+           "BufferedReader", "BufferedWriter", "BufferedRWPair",
+           "BufferedRandom", "TextIOBase", "TextIOWrapper",
+           "UnsupportedOperation", "SEEK_SET", "SEEK_CUR", "SEEK_END",
+           "DEFAULT_BUFFER_SIZE", "text_encoding", "IncrementalNewlineDecoder",
+           "Reader", "Writer"]
 
 
-    def readlines(self, hint=-1):
-        self._check()
-        lines = []
-        length = 0
-        while True:
-            line = self.readline()
-            if line == '':
-                return lines
-            lines = [*lines, line]
-            length += len(line)
-            if hint > 0 and length > hint:
-                return lines
+import _io
+import abc
 
-    def __iter__(self):
-        self._check()
-        return self
+from _collections_abc import _check_methods
+from _io import (DEFAULT_BUFFER_SIZE, BlockingIOError, UnsupportedOperation,
+                 open, open_code, FileIO, BytesIO, StringIO, BufferedReader,
+                 BufferedWriter, BufferedRWPair, BufferedRandom,
+                 IncrementalNewlineDecoder, text_encoding, TextIOWrapper)
 
-    def _line_more(self):
-        self._line = self.readline()
-        return self._line != ''
 
-    def _line_value(self):
-        return self._line
+# for seek()
+SEEK_SET = 0
+SEEK_CUR = 1
+SEEK_END = 2
 
-    def __next__(self):
-        line = self.readline()
-        if line == '':
-            raise StopIteration
-        return line
+# Declaring ABCs in C is tricky so we do it here.
+# Method descriptions and default implementations are inherited from the C
+# version however.
+class IOBase(_io._IOBase, metaclass=abc.ABCMeta):
+    __doc__ = _io._IOBase.__doc__
 
-    def _check(self):
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
+class RawIOBase(_io._RawIOBase, IOBase):
+    __doc__ = _io._RawIOBase.__doc__
+
+class BufferedIOBase(_io._BufferedIOBase, IOBase):
+    __doc__ = _io._BufferedIOBase.__doc__
+
+class TextIOBase(_io._TextIOBase, IOBase):
+    __doc__ = _io._TextIOBase.__doc__
+
+RawIOBase.register(FileIO)
+
+for klass in (BytesIO, BufferedReader, BufferedWriter, BufferedRandom,
+              BufferedRWPair):
+    BufferedIOBase.register(klass)
+
+for klass in (StringIO, TextIOWrapper):
+    TextIOBase.register(klass)
+del klass
+
+try:
+    from _io import _WindowsConsoleIO
+except ImportError:
+    pass
+else:
+    RawIOBase.register(_WindowsConsoleIO)
+
+#
+# Static Typing Support
+#
+
+GenericAlias = type(list[int])
+
+
+class Reader(metaclass=abc.ABCMeta):
+    """Protocol for simple I/O reader instances.
+
+    This protocol only supports blocking I/O.
+    """
+
+    __slots__ = ()
+
+    @abc.abstractmethod
+    def read(self, size=..., /):
+        """Read data from the input stream and return it.
+
+        If *size* is specified, at most *size* items (bytes/characters) will be
+        read.
+        """
+
+    @classmethod
+    def __subclasshook__(cls, C):
+        if cls is Reader:
+            return _check_methods(C, "read")
+        return NotImplemented
+
+    __class_getitem__ = classmethod(GenericAlias)
+
+
+class Writer(metaclass=abc.ABCMeta):
+    """Protocol for simple I/O writer instances.
+
+    This protocol only supports blocking I/O.
+    """
+
+    __slots__ = ()
+
+    @abc.abstractmethod
+    def write(self, data, /):
+        """Write *data* to the output stream and return the number of items written."""
+
+    @classmethod
+    def __subclasshook__(cls, C):
+        if cls is Writer:
+            return _check_methods(C, "write")
+        return NotImplemented
+
+    __class_getitem__ = classmethod(GenericAlias)

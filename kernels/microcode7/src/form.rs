@@ -70,6 +70,7 @@ pub enum Prim {
     MakeHeir,
     CallResult,
     CopyWorth,
+    Regex,
     LoadModule,
     IsInstance,
     WriteMember,
@@ -150,6 +151,8 @@ pub enum Prim {
     AsChars,
     /// The value, specification and conversion of a field in text.
     RenderField,
+    TemplateField,
+    TemplateParts,
     /// Stop upon reaching a character the run cannot represent.
     UnheldText,
     /// The value made a flag.
@@ -240,7 +243,10 @@ pub enum Prim {
     /// at a time (ext.builtin.subprocess): one word, told which step it
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
+ AsciiRun,
+    JsonStringScan,
     Subprocess,
+    Posix,
     /// The host's signals, one word told which step it is on
     /// (ext.builtin.signal): give a number what answers for it, ask
     /// what a number was given, or leave a number to be taken up where
@@ -314,6 +320,14 @@ pub enum Prim {
     /// definition has no words of its own for. One label covers them
     /// all, since the one power lent is the working at the width.
     Reckon,
+    /// The Mersenne Twister a library module draws its chance from,
+    /// named by the first worth handed over and worked on the rest
+    /// (ext.builtin._random): a drawing stream opened, set going from
+    /// a whole number or from the system's own disorder, drawn on at
+    /// the width's 53 bits or as a stretch of whole bits, and told or
+    /// put back to where it stands. One label covers them all, since
+    /// the one stream kept is the kernel's own.
+    Chance,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,
@@ -401,6 +415,7 @@ pub enum Prim {
     /// its stead answers with that one, and so on until one does not; a
     /// thing that is its own walk is wound back and answers with itself;
     /// anything else answers with itself.
+    IteratorInput,
     Walked,
     AwaitResult,
     AsyncGathered,

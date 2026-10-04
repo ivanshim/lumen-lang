@@ -1,0 +1,26 @@
+finalize ['del', b'abc'] True
+collected True True ['BufferError']
+finalize ['del', b'abc'] True
+collected True True ['BufferError']
+raw count OSError NoneType
+raw count OSError TypeError
+raw count OSError NoneType
+reinit 3 False
+written b'abc'
+bad init ValueError
+invalidated ValueError
+readonly AttributeError
+array 8 32
+frombytes 10 True
+detached <_io.TextIOWrapper encoding='ascii'>
+direct readinto 3 b'abc'
+BufferedReader RuntimeError reentrant call inside _io.BufferedReader.__repr__
+detach True
+BufferedWriter RuntimeError reentrant call inside _io.BufferedWriter.__repr__
+detach True
+BufferedRandom RuntimeError reentrant call inside _io.BufferedRandom.__repr__
+detach True
+signed bytes [-128, -1] b'\x80\xff' b'\x80\xff'
+chunk size 8192
+chunk validation ValueError 17
+text invalidated ValueError

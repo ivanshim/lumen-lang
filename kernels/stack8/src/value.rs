@@ -109,18 +109,18 @@ pub struct Counted {
 }
 
 impl Counted {
-    /// The three bounds as machine words where they all fit in one,
-    /// and nothing where any of them does not. A stride of nought is
-    /// left to the great-number road, which complains of it as before.
+    /// Bounds whose distance and stride fit checked wide arithmetic.
+    /// Larger bounds and a zero stride use arbitrary precision.
     fn narrow(&self) -> Option<(i128, i128, i128)> {
-        let step = i128::from(self.step.to_i64()?);
-        if step == 0 { return None; }
-        Some((i128::from(self.start.to_i64()?), i128::from(self.stop.to_i64()?), step))
+        let step=self.step.to_i128()?;
+        if step==0 || step.checked_abs().is_none() { return None; }
+        let start=self.start.to_i128()?;
+        let stop=self.stop.to_i128()?;
+        if step>0 { stop.checked_sub(start)?; } else { start.checked_sub(stop)?; }
+        Some((start,stop,step))
     }
 
-    /// How many places a walk of those bounds holds. Wide words are
-    /// roomy enough: the two ends lie within one word each, so their
-    /// distance lies within two.
+    /// Count a walk after the bounds have passed the overflow checks.
     fn places(start: i128, stop: i128, step: i128) -> i128 {
         let distance = if step > 0 { stop - start } else { start - stop };
         if distance <= 0 { 0 } else { (distance - 1) / step.abs() + 1 }
@@ -139,12 +139,13 @@ impl Counted {
         // A walk within the machine's words is counted in words. This
         // is the road a loop over a counted row takes at every step,
         // and the great numbers cost more than the walk itself.
-        if let (Some((start, stop, step)), Some(wanted)) = (self.narrow(), index.to_i64()) {
-            let length = Self::places(start, stop, step);
-            let mut place = i128::from(wanted);
-            if place < 0 { place += length; }
-            if place < 0 || place >= length { return None; }
-            return Some(Value::Small((start + place * step) as i64));
+        if let (Some((start, stop, step)), Some(mut place)) = (self.narrow(), index.to_i128()) {
+            let length=Self::places(start,stop,step);
+            if place<0 { place+=length; }
+            if place<0 || place>=length { return None; }
+            if let Some(member)=place.checked_mul(step).and_then(|delta|start.checked_add(delta)) {
+                return Some(match i64::try_from(member) {Ok(small)=>Value::Small(small),Err(_)=>Value::of_big(BigInt::from(member))});
+            }
         }
         let length = self.length();
         if index.is_negative() { index += &length; }
@@ -297,6 +298,12 @@ pub struct Traceback {
     pub next: Value,
 }
 
+#[derive(Debug)]
+pub struct MethodStamp;
+impl Drop for MethodStamp {
+    fn drop(&mut self) { crate::faint::plain_departing(); }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Codepoints(Rc<Vec<u32>>),
@@ -351,7 +358,7 @@ pub enum Value {
     /// gathered into a map.
     Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
-    Method(Rc<Instance>, Rc<Routine>),
+    Method(Rc<Instance>, Rc<Routine>, Rc<MethodStamp>),
     Descriptor(Rc<Descriptor>),
     /// A weak hold on a value behind a pointer: it keeps nothing
     /// alive, and answers the value only while it is still there.
@@ -644,6 +651,12 @@ impl KeyedPairs {
         self.rows[at].1 = value;
     }
 
+    /// The rows themselves, for reading only: a class that names its
+    /// slots with a mapping takes each name from a key.
+    pub fn rows(&self) -> &[(Value, Value)] {
+        &self.rows
+    }
+
     /// Add a key already proven absent and already known by its own
     /// text, growing the rows and the lookup together so a map built
     /// one key at a time never has its lookup thrown away and walked
@@ -734,6 +747,8 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
 }
 
 impl Value {
+    pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
+
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
 
     pub fn keeps_point(&self) -> bool {
@@ -753,11 +768,22 @@ impl Value {
         self
     }
 
+    pub fn proxy_dictionary(&self) -> Value {
+        match self {
+            Value::Bond(cell) | Value::Collection(cell, _) | Value::Binding(cell) => cell.borrow().proxy_dictionary(),
+            Value::View(proxy) if proxy.1 == "mapping" => proxy.0.proxy_dictionary(),
+            Value::Class(class) => Value::Map(Rc::new(class.shared.borrow().iter()
+                .filter(|(key, _)| !key.starts_with(['\0', '#']))
+                .map(|(key, value)| (Value::text(key), value.clone())).collect())),
+            other => other.contents(),
+        }
+    }
+
     pub fn contents(&self) -> Value {
         match self {
             Value::Collection(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
             Value::View(view) => {
-                let Value::Map(pairs) = view.0.contents() else { return Value::array(Vec::new()); };
+                let Value::Map(pairs) = view.0.proxy_dictionary() else { return Value::array(Vec::new()); };
                 // A key kept beside its hash is handed out as the thing
                 // itself: the hash is the map's own reckoning of where
                 // the thing lies and no part of the key a viewer of the
@@ -777,7 +803,13 @@ impl Value {
     }
 
     pub fn held(self, quoted: bool) -> Value {
-        match self { Value::Bond(cell) => Value::Collection(cell, quoted), Value::Array(_) | Value::Map(_) => Value::Collection(Rc::new(RefCell::new(self)), quoted), _ => self }
+        let cell = match self {
+            Value::Bond(cell) => cell,
+            Value::Array(_) | Value::Map(_) => Rc::new(RefCell::new(self)),
+            _ => return self,
+        };
+        crate::faint::track_container(&cell);
+        Value::Collection(cell, quoted)
     }
 
     pub fn representation(&self, words: &Wording) -> String {
@@ -1033,12 +1065,19 @@ impl Value {
             Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
             Value::Bytes(_, true, _) => Err("bytearray"),
             Value::Native(_, word) => Ok(format!("builtin:{word}")),
+            Value::ByteKind(mutable, _) => Ok(format!("bytekind:{mutable}")),
             Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
-            Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
+            Value::Method(owner, code, _) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
 
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
+            // A builtin word, a kind marker and the two bytes kinds take
+            // an address from what makes them equal: the work beneath
+            // the word and the word both, the sort a marker stands for,
+            // and which of the two bytes kinds it is.
+            Value::SortOf(sort) => Ok(format!("sortof:{}", sort.tag())),
+            Value::Adapter(parts) if parts.0 == 9 => Ok(format!("parent-kind:{:p}", Rc::as_ptr(parts))),
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
             // A set that cannot be changed is addressed by what it
@@ -1047,6 +1086,10 @@ impl Value {
                 Ok(held) if held.fixed => Ok(held.address()),
                 _ => Err("set"),
             },
+            // A loose member descriptor is addressed by the descriptor it
+            // is kept as: two readings of the same member, and of the
+            // same member on the same kind, are the one key.
+            Value::Adapter(held) => Ok(format!("descriptor:{:p}", Rc::as_ptr(held))),
             Value::Bond(cell) => cell.borrow().member_key(),
             _ => Err(""),
         }
@@ -1232,12 +1275,13 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Declined(a), Value::Declined(b)) => a == b,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Descriptor(a), Value::Descriptor(b)) => Rc::ptr_eq(a, b),
-            (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
+            (Value::Method(a, p, _), Value::Method(b, q, _)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             // Two readings of a value's own method come to the same
             // method where the word is the word and the value read is
             // the very value, not merely one equal to it.
@@ -1250,7 +1294,17 @@ impl Value {
             // Two names for one object are the same object; two objects
             // of one class are not.
             (Value::Trace(a), Value::Trace(b)) => Rc::ptr_eq(a, b),
-            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            (Value::Object(a), Value::Object(b)) => {
+                let native = |object: &Instance| object.class_now().constants.iter().find(|(key, _)| key == "\0kind").map(|(_, value)| value.plain());
+                if native(a).as_deref() == Some("Union") && native(b).as_deref() == Some("Union") {
+                    let parts = |object: &Instance| object.fields.borrow().iter().find(|(key, _)| key == "__args__").and_then(|(_, value)| match value { Value::Tuple(row) => Some(row.to_vec()), _ => None });
+                    return match (parts(a), parts(b)) {
+                        (Some(one), Some(two)) => one.len() == two.len() && one.iter().all(|member| two.iter().any(|other| member.equals(other))),
+                        _ => false,
+                    };
+                }
+                Rc::ptr_eq(a, b)
+            },
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
             // Two readings of code are alike where they read the very
             // same body, however the routines they came from were
@@ -1261,6 +1315,9 @@ impl Value {
                     Rc::ptr_eq(&body(x), &body(y))
                 }
                 _ => Rc::ptr_eq(a, b),
+            },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
+                a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
             },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
@@ -1326,7 +1383,7 @@ impl Value {
         if let Some(told) = self.exception_message(sp) { return told; }
         match self {
             Value::Collection(cell, quote) => shown_once(cell, "[...]", |held| if *quote { held.representation(sp) } else { held.display(sp) }),
-            Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.contents().representation(sp)),
+            Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.proxy_dictionary().representation(sp)),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
@@ -1485,7 +1542,7 @@ impl Value {
             // read from the kind itself is bound to no thing at all and
             // is named with the kind it belongs to instead.
             Value::ValueMethod(pair) => method_written(&pair.0, &pair.1, Rc::as_ptr(pair) as *const u8 as usize),
-            Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.contents().plain()),
+            Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.proxy_dictionary().plain()),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             // A builtin word naming a kind stands for the kind itself,
             // and is written as the reference writes a class; every
@@ -1538,7 +1595,7 @@ impl Value {
                 let named = if p.qualified.is_empty() { p.ident.as_str() } else { p.qualified.as_str() };
                 format!("<function {named} at 0x1>")
             }
-            Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(_, p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => {
                 if let Some(title) = c.python_title() { return format!("<class '{title}'>"); }
@@ -1575,7 +1632,11 @@ impl Value {
     /// an attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
         match kind {
+            "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
+            "function" if name == "__globals__" => Some(("member", "member_descriptor")),
+            "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),
             "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
             "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
             "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
@@ -1645,7 +1706,7 @@ impl Value {
                 into.push(')');
             }
             Value::Descriptor(d) => { let _ = write!(into, "d{:p}", Rc::as_ptr(d)); }
-            Value::Method(o, p) => {
+            Value::Method(o, p, _) => {
                 let _ = write!(into, "m{:p}:{:p}", Rc::as_ptr(o), Rc::as_ptr(p));
             }
             Value::Routine(p) => {
@@ -1977,7 +2038,10 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
 pub fn real_of(x: f64, places: usize) -> Value {
     match from_binary(x) {
         // A nought that came out below nought keeps its minus.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), x.is_sign_negative()),
+        Some((p, q)) => Value::Real(Rc::new(Real {
+            floating: false, p, q, places,
+            below: x == 0.0 && x.is_sign_negative(), point: false,
+        })),
         None => outside_number(x, places),
     }
 }

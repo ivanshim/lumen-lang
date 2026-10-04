@@ -20,7 +20,13 @@ impl Value {
     pub fn kind_word(&self) -> String {
         let word = match self {
             Self::Complex(_) => "complex",
-            Self::Thing(thing) => return thing.blueprint().name.to_owned(),
+            Self::Thing(thing) => {
+                let blueprint = thing.blueprint();
+                if let Some((_, Self::Text(name))) = blueprint.constants.iter().find(|(key, _)| key == "\0native-name") {
+                    return name.to_string();
+                }
+                return blueprint.name.to_owned();
+            }
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
             Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },
@@ -57,21 +63,30 @@ impl Value {
                 IteratorKind::Select(..) => "filter",
                 _ => state.walks.as_deref().unwrap_or("iterator"),
             })),
+            Self::Backtrace(_) => "traceback",
             Self::Span(_) => "slice", Self::Ellipsis => "ellipsis", Self::Refusal(_) => "NotImplementedType",
             Self::Blueprint(_) | Self::KindOf(_) | Self::OctetKind { .. } => "type",
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
+            Self::Member(_, operation) if operation == "__next__" => "method-wrapper",
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Wrapped(130, _) => "function",
+            Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
-            Self::Wrapped(120, _) => "wrapper_descriptor",
+            Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
+            Self::Wrapped(133, _) => "method_descriptor",
+            Self::Wrapped(134, _) => "builtin_function_or_method",
+            Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _))) => "builtin_function_or_method",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
+            Self::Wrapped(143, _) => "function",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
+            Self::Wrapped(3, _) => "method-wrapper",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
@@ -182,23 +197,28 @@ impl Value {
                 return Self::text(&letters).hash_number();
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
+            Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
+            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut total = i64::from(*tag);
+                for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
+                total
+            }
+            Self::Wrapped(4..=7, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
-            Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
+            Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => {
                 let lies = match parts.get(1) { Some(Self::Thing(thing)) => std::rc::Rc::as_ptr(thing) as usize / 16, Some(other) => other.hash_number()? as usize, None => 0 };
                 parts[0].hash_number()? ^ lies as i64
             }
+            Self::Wrapped(9, kept) => (std::rc::Rc::as_ptr(kept) as usize / 16) as i64,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             Self::Wrapped(8, names) => return names.first().and_then(|word| word.hash_number()),
-            Self::OctetKind { changeable, .. } => {
-                let word: &str = if *changeable { "bytearray" } else { "bytes" };
-                return Self::text(word).hash_number();
-            }
+
             // The bounds folded one after another, as a tuple's parts are,
             // with no length folded in after them.
             Self::Span(bounds) => {
@@ -270,6 +290,17 @@ impl Value {
                 let integer = self.as_big().ok()?;
                 let residue = (integer.abs() % BigInt::from(2_305_843_009_213_693_951u64)).to_i64()?;
                 if integer.is_negative() { -residue } else { residue }
+            }
+            // A loose member descriptor hashes by the kind's word and the
+            // member's name it is kept as, so two readings of the same
+            // member, and of the same member on the same kind, hash alike.
+            Self::Wrapped(60, parts) => {
+                let mut code = 0_i64;
+                for part in parts.iter() {
+                    let lane = part.hash_number()? as u64;
+                    code = code.wrapping_mul(1_000_003) ^ lane as i64;
+                }
+                code
             }
             _ => return None,
         };
