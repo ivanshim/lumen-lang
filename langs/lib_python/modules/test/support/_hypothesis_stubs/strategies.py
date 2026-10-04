@@ -1,4 +1,3 @@
-# CPython v3.14.8 / 8e6e75d9102e; PSF License. Source preserved unchanged below.
 import functools
 
 from ._helpers import StubClass, stub_factory

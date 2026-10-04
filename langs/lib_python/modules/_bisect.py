@@ -1,3 +1,5 @@
+# Runtime adapter derived from CPython Lib/bisect.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# Python implementation of the accelerator interface.
 """Bisection algorithms."""
 
 
@@ -107,12 +109,6 @@ def bisect_left(a, x, lo=0, hi=None, *, key=None):
     return lo
 
 
-# Overwrite above definitions with a fast C implementation
-try:
-    from _bisect import *
-except ImportError:
-    pass
 
-# Create aliases
 bisect = bisect_right
 insort = insort_right

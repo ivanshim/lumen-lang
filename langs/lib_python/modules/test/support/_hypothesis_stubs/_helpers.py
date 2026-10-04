@@ -1,4 +1,3 @@
-# CPython v3.14.8 / 8e6e75d9102e; PSF License. Source preserved unchanged below.
 # Stub out only the subset of the interface that we actually use in our tests.
 class StubClass:
     def __init__(self, *args, **kwargs):

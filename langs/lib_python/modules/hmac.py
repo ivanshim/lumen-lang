@@ -1,5 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/hmac.py.
-# PSF License; see tests/python/LICENSE. Source below is unchanged.
 """HMAC (Keyed-Hashing for Message Authentication) module.
 
 Implements the HMAC algorithm as described by RFC 2104.

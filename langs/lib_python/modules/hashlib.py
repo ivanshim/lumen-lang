@@ -1,5 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/hashlib.py.
-# PSF License; see tests/python/LICENSE. Source below is unchanged.
 #.  Copyright (C) 2005-2010   Gregory P. Smith (greg@krypto.org)
 #  Licensed to PSF under a Contributor Agreement.
 #

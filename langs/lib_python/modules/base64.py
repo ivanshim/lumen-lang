@@ -1,4 +1,3 @@
-# CPython v3.14.8 / 8e6e75d9102e; PSF License. Source preserved unchanged below.
 """Base16, Base32, Base64 (RFC 4648), Base85 and Ascii85 data encodings"""
 
 # Modified 04-Oct-1995 by Jack Jansen to use binascii module

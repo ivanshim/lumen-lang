@@ -1,5 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/secrets.py.
-# PSF License; see tests/python/LICENSE. Source below is unchanged.
 """Generate cryptographically strong pseudo-random numbers suitable for
 managing secrets such as account authentication, tokens, and similar.
 

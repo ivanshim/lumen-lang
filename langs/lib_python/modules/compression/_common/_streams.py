@@ -1,6 +1,3 @@
-# CPython v3.14.8 (8e6e75d9102e), Lib/compression/_common/_streams.py.
-# Copyright Python Software Foundation; PSF License (tests/python/LICENSE).
-
 """Internal classes used by compression modules"""
 
 import io

@@ -380,6 +380,7 @@ pub enum Prim {
     BinaryFormat,
     BinaryAscii,
     HeapNative,
+    ContextStore,
     ReduceNative,
     ProductStep,
     RebuildNative,

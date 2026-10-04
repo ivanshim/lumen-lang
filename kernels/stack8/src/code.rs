@@ -756,6 +756,7 @@ pub enum Builtin {
     StructNative,
     BinAscii,
     HeapNative,
+    ContextNative,
     ReduceNative,
     RebuildNative,
     CharAtIndex,

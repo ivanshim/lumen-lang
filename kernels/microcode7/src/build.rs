@@ -8502,7 +8502,9 @@ impl<'a> Builder<'a> {
                 // name of the builder's own making.
                 for cell in &in_cells {
                     let slot = self.address_to_write(cell);
-                    steps.push(Form::Forget(slot));
+                    steps.push(if self.table.flag("ext.op.arithmetic.python_numbers") {
+                        Form::Release(slot)
+                    } else { Form::Forget(slot) });
                 }
                 if gives_back {
                     steps.push(self.read(&holding));

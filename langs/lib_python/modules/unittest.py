@@ -243,6 +243,9 @@ class TestCase:
     def shortDescription(self):
         return None
 
+    def assertNotIsSubclass(self, cls, superclass, msg=None):
+        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
+
     def assertIsSubclass(self, cls, superclass, msg=None):
         self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
 
@@ -408,7 +411,7 @@ class _Skip:
         raise SkipTest(self.reason)
 
     def decorate(self, function):
-        if isinstance(function, type):
+        if isinstance(function, type) or getattr(function, '_test_case', False):
             setattr(function, '__unittest_skip__', True)
             setattr(function, '__unittest_skip_why__', self.reason)
             return function
@@ -467,6 +470,7 @@ def expectedFailure(function):
 class TestSuite:
     def __init__(self, tests=None):
         self.class_ = None
+        self.module_namespace = None
         self.tests = []
         if tests is not None:
             self.tests = list(tests)
@@ -486,6 +490,21 @@ class TestSuite:
 
     def __call__(self, result):
         return self.run(result)
+    def _module_fixture(self, name, result):
+        if self.module_namespace is None:
+            return True
+        fixture = doModuleCleanups if name == 'doModuleCleanups' else self.module_namespace.get(name)
+        if fixture is None:
+            return True
+        outcome = _host_call_outcome(fixture)
+        if outcome[0]:
+            return True
+        entry = [name, _message(outcome[1], outcome[2]), self.module_namespace.get('__name__', '')]
+        if isinstance(outcome[1], SkipTest):
+            result.skipped = [*result.skipped, entry]
+        else:
+            result.errors = [*result.errors, entry]
+        return False
 
     def _fixture(self, name, result):
         if self.class_ is None or getattr(self.class_, '__unittest_skip__', False):
@@ -504,12 +523,7 @@ class TestSuite:
         return False
 
     def run(self, result):
-        if self._fixture('setUpClass', result):
-            try:
-                for test in self.tests:
-                    test.run(result)
-            finally:
-                self._fixture('tearDownClass', result)
+        TextTestRunner(verbosity=0)._run(self, result)
         return result
 
 class _FailedTest(TestCase):
@@ -583,6 +597,7 @@ class TestLoader:
             names = {name: getattr(module, name) for name in dir(module)}
             module_name = _class_name(module)
         suite = self.suiteClass()
+        suite.module_namespace = names
         for name in _ordered(list(names)):
             # The host's main frame also contains private compiler bindings.
             if module_name == '__main__' and (name.startswith('#') or name.startswith('\0')):
@@ -912,14 +927,23 @@ class TextTestRunner:
 
     def _run(self, test, result):
         if isinstance(test, TestSuite):
-            if test._fixture('setUpClass', result):
+            if not test._module_fixture('setUpModule', result):
+                test._module_fixture('doModuleCleanups', result)
+                return None
+            try:
+                if test._fixture('setUpClass', result):
+                    try:
+                        for member in test.tests:
+                            self._run(member, result)
+                            if self.failfast and not result.wasSuccessful():
+                                break
+                    finally:
+                        test._fixture('tearDownClass', result)
+            finally:
                 try:
-                    for member in test.tests:
-                        self._run(member, result)
-                        if self.failfast and not result.wasSuccessful():
-                            break
+                    test._module_fixture('tearDownModule', result)
                 finally:
-                    test._fixture('tearDownClass', result)
+                    test._module_fixture('doModuleCleanups', result)
             return None
         failures = len(result.failures)
         errors = len(result.errors)
@@ -1025,8 +1049,32 @@ def _class_name(value):
     return name
 
 
-def enterModuleContext(context):
-    raise 'NotImplementedError: module context cleanup is not supported'
+_module_cleanups = []
+
+def addModuleCleanup(function, /, *args, **kwargs):
+    _module_cleanups.append((function, args, kwargs))
+
+def enterModuleContext(cm):
+    cls = type(cm)
+    try:
+        enter = cls.__enter__
+        exit = cls.__exit__
+    except AttributeError:
+        raise TypeError("'" + cls.__module__ + '.' + cls.__qualname__ + "' object does not support the context manager protocol") from None
+    result = enter(cm)
+    addModuleCleanup(exit, cm, None, None, None)
+    return result
+
+def doModuleCleanups():
+    errors = []
+    while _module_cleanups:
+        function, args, kwargs = _module_cleanups.pop()
+        try:
+            function(*args, **kwargs)
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        raise errors[0]
 
 
 def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
@@ -1036,8 +1084,10 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     suite = loader.loadTestsFromModule(module)
     only = _only_classes()
     if only is not None:
+        namespace = suite.module_namespace
         selected = _select_tests(suite, only)
         suite = TestSuite() if selected is None else selected
+        suite.module_namespace = namespace
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)

@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 Lib/encodings/aliases.py; PSF License.
 """ Encoding Aliases Support
 
     This module is used by the encodings package search function to

@@ -95,6 +95,7 @@ fn watch_host_signals() {
 }
 
 pub struct Engine<'a> {
+    contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
     running_routine: Option<Rc<Routine>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
@@ -1266,6 +1267,7 @@ impl<'a> Engine<'a> {
             kind_directory_cache: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
+            contexts: crate::context::ContextStore::default(),
             lang,
             world,
             data: Vec::new(),
@@ -7281,6 +7283,14 @@ impl<'a> Engine<'a> {
                     let snapshot = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: object.class_now().clone(), fields: RefCell::new(fields), mark: object.mark }));
                     return Ok(snapshot.display(&self.wording()));
                 }
+                if !representation && !self.stands_on(&object.class_now(), 36) {
+                    let row = object.fields.borrow().iter().find(|(key, _)| key == "\0arguments").map(|(_, v)| v.clone());
+                    if let Some(Value::Tuple(row)) = row {
+                        if row.len() == 1 && Self::holds_object(&row[0]) {
+                            return self.special_text(&row[0], self.stands_on(&object.class_now(), 7));
+                        }
+                    }
+                }
                 let words = self.wording();
                 return Ok(if representation { value.repr(&words) } else { value.display(&words) });
             }
@@ -12067,6 +12077,10 @@ impl<'a> Engine<'a> {
     }
 
     fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
+        // PyTuple_Check accepts subclasses: their stored tuple supplies the
+        // positional fields, rather than formatting the instance as one field.
+        let tuple = Self::worth_of(arguments).map(|v| v.contents()).filter(|v| matches!(v, Value::Tuple(_)));
+        let arguments = tuple.as_ref().unwrap_or(arguments);
         if self.lang.format_builtin.is_empty() { return self.rem_text(template, arguments); }
         let native_tuple = Self::worth_of(arguments).filter(|held| matches!(held.contents(), Value::Tuple(_)));
         let arguments = native_tuple.as_ref().unwrap_or(arguments);
@@ -18672,17 +18686,25 @@ impl<'a> Engine<'a> {
             Builtin::Clock => {
                 #[cfg(target_os = "linux")]
                 if self.lang.clock_parts && args.len() == 2 {
-                    let [Value::Flag(steady), Value::Flag(true)] = args.as_slice() else {
+                    let [Value::Flag(steady), Value::Flag(resolution_only)] = args.as_slice() else {
                         return Err(self.lang.module_helper_amiss.clone());
                     };
                     #[repr(C)]
                     struct Resolution { seconds: i64, nanos: i64 }
-                    extern "C" { fn clock_getres(clock: i32, result: *mut Resolution) -> i32; }
+                    extern "C" {
+                        fn clock_getres(clock: i32, result: *mut Resolution) -> i32;
+                        fn clock_gettime(clock: i32, result: *mut Resolution) -> i32;
+                    }
                     let mut resolution = Resolution { seconds: 0, nanos: 0 };
                     // Linux CLOCK_REALTIME is zero, CLOCK_MONOTONIC is one.
-                    if unsafe { clock_getres(i32::from(*steady), &mut resolution) } != 0 {
+                    let status = unsafe {
+                        if *resolution_only { clock_getres(i32::from(*steady), &mut resolution) }
+                        else { clock_gettime(i32::from(*steady), &mut resolution) }
+                    };
+                    if status != 0 {
                         return Err("OSError: clock resolution is unavailable".to_string());
                     }
+                    if !*resolution_only { return Ok(Value::of_big(BigInt::from(resolution.seconds) * 1_000_000_000u64 + resolution.nanos)); }
                     return Ok(crate::value::real_of(resolution.seconds as f64 + resolution.nanos as f64 / 1e9,
                         self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)));
                 }
@@ -18784,6 +18806,7 @@ impl<'a> Engine<'a> {
                     return Ok(result);
                 }
                 let wants = match working.as_str() {
+                    "vector_norm" if self.lang.math_floating => args.len() - 1,
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
                     "ldexp_plain" | "fsum_partial" | "fsum_finite" | "dist_float" if self.lang.math_floating => 2,
                     "fma" => 3,
@@ -20076,7 +20099,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -20771,7 +20794,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -21569,7 +21592,7 @@ impl Engine<'_> {
         // one: the value is kept before its cell is opened.
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
-        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative) {
+        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
                 if b == Builtin::Dict && value.core_kind() == "mappingproxy" { *value = value.proxy_dictionary(); continue; }
@@ -21753,6 +21776,11 @@ impl Engine<'_> {
                 arity(2, 5)?;
                 if self.lang.binascii_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
                 self.binary_ascii(&args)?
+            }
+            Builtin::ContextNative => {
+                arity(1, 5)?;
+                if self.lang.context_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                self.contexts.perform(&args)?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;
@@ -22498,6 +22526,10 @@ impl Engine<'_> {
             self.importing.remove(path); self.embedded_names.remove(path);
             self.modules.remove(path); self.refresh_module_cache(path); return Err(fault);
         }
+        // Module code may replace its own entry in the Python import cache.
+        // CPython returns that replacement after the module body completes.
+        let module = self.module_cache_value(path).unwrap_or(module);
+        self.modules.insert(path.to_string(), module.clone());
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
