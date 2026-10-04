@@ -198,12 +198,21 @@ supports_follow_symlinks = set()
 def fspath(path):
     if isinstance(path, (str, bytes)):
         return path
-    method = getattr(type(path), '__fspath__', None)
-    if method is None:
-        raise TypeError('expected str, bytes or os.PathLike object, not ' + type(path).__name__)
-    result = method(path)
+    path_type = type(path)
+    for base in path_type.__mro__:
+        namespace = vars(base)
+        if '__fspath__' in namespace:
+            descriptor = namespace['__fspath__']
+            break
+    else:
+        raise TypeError('expected str, bytes or os.PathLike object, not ' + path_type.__name__)
+    if descriptor is None:
+        raise TypeError('expected str, bytes or os.PathLike object, not ' + path_type.__name__)
+    getter = getattr(type(descriptor), '__get__', None)
+    method = getter(descriptor, path, path_type) if getter is not None else descriptor
+    result = method()
     if not isinstance(result, (str, bytes)):
-        raise TypeError('expected __fspath__() to return str or bytes, not ' + type(result).__name__)
+        raise TypeError('expected ' + path_type.__name__ + '.__fspath__() to return str or bytes, not ' + type(result).__name__)
     return result
 
 def fsdecode(filename):

@@ -8113,6 +8113,10 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
             _ => return None,
         };
+        if self.names_in_calls && self.detail("descriptor.get") == name {
+            if word == "function" { return Some(Value::Wrapped(31, Rc::new(Vec::new()).into())); }
+            if matches!(word.as_str(), "classmethod" | "staticmethod") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+        }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));
         }
@@ -15720,8 +15724,16 @@ impl<'a> Machine<'a> {
         let not_mapping = |value: &Value| !matches!(value, Value::Window(_, 'm'));
         if matches!(op, Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::Minus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
             && v.iter().any(|value| matches!(value, Value::Window(..))) && v.iter().all(not_mapping) {
+            let accepts_iterable = self.names_in_calls
+                && matches!(op, Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::Minus)
+                && v.iter().any(|value| matches!(value, Value::Window(_, 'k' | 'i')));
             let mut as_sets = Vec::new();
             for value in v {
+                if accepts_iterable {
+                    let source = if matches!(value, Value::Window(..)) { value.settled() } else { value.clone() };
+                    as_sets.push(Value::Set(Rc::new(RefCell::new(self.gather_set(Some(&source))?))));
+                    continue;
+                }
                 as_sets.push(match value {
                     Value::Window(..) => Value::Set(Rc::new(RefCell::new(self.gather_set(Some(&value.settled()))?))),
                     other => other.clone(),
@@ -17558,7 +17570,17 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
-            Prim::Posix => crate::posix::perform(v)?,
+            Prim::Posix => {
+                let pathname = v.get(1).filter(|value| matches!(value, Value::Thing(_))).and_then(Self::underlying);
+                match pathname {
+                    Some(Value::Text(content)) => {
+                        let mut request = v.to_vec();
+                        request[1] = Value::Text(content);
+                        crate::posix::perform(&request)?
+                    }
+                    _ => crate::posix::perform(v)?,
+                }
+            },
             Prim::Subprocess => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;

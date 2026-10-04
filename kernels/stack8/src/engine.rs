@@ -6180,6 +6180,13 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        if self.lang.bind_names && name == self.class_word("descriptor.get") {
+            match word.as_ref() {
+                "function" => return Some(Self::adapter(15, vec![])),
+                "staticmethod" | "classmethod" => return Some(Self::adapter(79, vec![])),
+                _ => {},
+            }
+        }
         if word.as_ref() == "function" && [self.class_word("code"), self.class_word("globals")].contains(&name) {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
         }
@@ -7736,9 +7743,11 @@ impl<'a> Engine<'a> {
         let not_mapping = |v: &Value| !matches!(v, Value::View(w) if w.1 == "mapping");
         if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub | Action::Lt | Action::Le | Action::Gt | Action::Ge)
             && (matches!(a, Value::View(_)) || matches!(b, Value::View(_))) && not_mapping(a) && not_mapping(b) {
+            let iterable_sign = self.lang.bind_names && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub)
+                && (matches!(a, Value::View(w) if w.1 == "keys" || w.1 == "items") || matches!(b, Value::View(w) if w.1 == "keys" || w.1 == "items"));
             let turned = |engine: &mut Self, v: &Value| -> Res<Value> {
-                if !matches!(v, Value::View(_)) { return Ok(v.clone()); }
-                let items = match v.contents() { Value::Array(items) => items.as_ref().clone(), _ => Vec::new() };
+                if !matches!(v, Value::View(_)) && !iterable_sign { return Ok(v.clone()); }
+                let items = engine.comprehension_items(v)?;
                 Ok(Value::Set(Rc::new(RefCell::new(engine.set_gathered(items)?))))
             };
             let left = turned(self, a)?;
@@ -17414,7 +17423,11 @@ impl<'a> Engine<'a> {
             // asked reads the two together afterwards.
             Builtin::Posix => {
                 if self.lang.posix_words.is_empty() { return Err(self.special_fault()); }
-                crate::posix::operate(args)?
+                if let Some(text @ Value::Text(_)) = args.get(1).and_then(Self::worth_of) {
+                    let mut plain = args.to_vec();
+                    plain[1] = text;
+                    crate::posix::operate(&plain)?
+                } else { crate::posix::operate(args)? }
             },
             Builtin::Subprocess => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }

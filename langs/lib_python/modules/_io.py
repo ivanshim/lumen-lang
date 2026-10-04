@@ -625,7 +625,7 @@ class TextIOWrapper(_TextIOBase):
         return self._errors
     @property
     def newlines(self):
-        return self._decoder.newlines if self._decoder else None
+        return self._decoder.newlines if self._decoder and self._readuniversal else None
     @property
     def closed(self):
         return self.buffer.closed
@@ -971,7 +971,10 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
-        if isinstance(file, int) or opener is not None:
+        if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode:
+            if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
+                import os
+                file = os.fspath(file)
             binary = 'b' in mode
             if binary and (encoding is not None or errors is not None or newline is not None):
                 raise ValueError("binary mode doesn't take an encoding, errors, or newline argument")

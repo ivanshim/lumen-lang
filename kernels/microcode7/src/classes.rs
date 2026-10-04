@@ -83,6 +83,10 @@ impl<'a> Machine<'a> {
                 kind.shared.borrow_mut().push((self.detail("call").to_owned(), Self::wrap(79, Vec::new())));
             }
         }
+        if self.names_in_calls && word == "function" {
+            let get = self.detail("descriptor.get").to_owned();
+            kind.shared.borrow_mut().push((get, Self::wrap(31, Vec::new())));
+        }
         self.native_kinds.push((word.to_owned(),kind.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for (at, key) in self.rules.lists[147].iter().enumerate() {
@@ -1320,7 +1324,7 @@ impl<'a> Machine<'a> {
                         let [descriptor, instance, rest @ ..] = values.as_slice() else { return Err(self.class_unready()); };
                         let supplied = rest.first().filter(|owner| !matches!(owner.settled(), Value::Nil));
                         if matches!(instance.settled(), Value::Nil) && supplied.is_none() { return Err("TypeError: __get__(None, None) is invalid".to_owned().into()); }
-                        let held = Self::underlying(descriptor).ok_or_else(|| self.class_unready())?;
+                        let held = Self::underlying(descriptor).unwrap_or_else(|| descriptor.settled());
                         let Value::Wrapped(tag, items) = held else { return Err(self.class_unready()); };
                         match tag {
                             4 => Ok(items[0].clone()),
@@ -1368,6 +1372,28 @@ impl<'a> Machine<'a> {
                     }
                     // A binding member's reader, called as the program
                     // calls it: with the thing, or nothing and the class.
+                    31 if kept.is_empty() => {
+                        let (mut positional, named) = self.open_arguments(values)?;
+                        if !named.is_empty() { return Err(String::from("TypeError: wrapper __get__() takes no keyword arguments").into()); }
+                        let Some(function) = positional.first().map(Value::settled) else { return Err(String::from("TypeError: descriptor '__get__' of 'function' object needs an argument").into()) };
+                        let genuine = matches!(&function, Value::Routine(_) | Value::Bound(..)) || matches!(&function, Value::Wrapped(122 | 130, _));
+                        if !genuine { return Err(format!("TypeError: descriptor '__get__' requires a 'function' object but received a '{}'", function.kind_word()).into()); }
+                        let total = positional.len() - 1;
+                        match total {
+                            0 => return Err(String::from("TypeError: __get__ expected at least 1 argument, got 0").into()),
+                            1 | 2 => {},
+                            _ => return Err(format!("TypeError: __get__ expected at most 2 arguments, got {total}").into()),
+                        }
+                        let instance = positional.remove(1);
+                        if matches!(instance.settled(), Value::Nil) {
+                            let absent = positional.get(1).map_or(true, |owner| matches!(owner.settled(), Value::Nil));
+                            if absent { return Err(String::from("TypeError: __get__(None, None) is invalid").into()); }
+                            return Ok(function);
+                        }
+                        let class = match positional.get(1) { Some(Value::Blueprint(class)) => class.clone(), _ => self.common_ancestor() };
+                        if matches!(&function, Value::Routine(_) | Value::Bound(..)) { self.member_binding(function, Some(instance), class) }
+                        else { Ok(Self::wrap(3, vec![function, instance])) }
+                    }
                     31 if matches!(values.len(),1|2)=>{
                         let receiver=match &values[0]{Value::Nil=>None,other=>Some(other.clone())};
                         let owner=match (values.get(1),&receiver) {

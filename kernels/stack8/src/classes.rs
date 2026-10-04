@@ -91,6 +91,9 @@ impl<'a> Engine<'a> {
                 c.shared.borrow_mut().push((self.class_word("call").to_string(), Self::adapter(80, vec![])));
             }
         }
+        if self.lang.bind_names && word == "function" {
+            c.shared.borrow_mut().push((self.class_word("descriptor.get").to_owned(), Self::adapter(15, vec![])));
+        }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for name in self.lang.class_special.iter().enumerate().filter(|(at, _)| *at == 8 || *at == 17 && word != "NoneType").map(|(_, name)| name) {
@@ -1184,7 +1187,7 @@ impl<'a> Engine<'a> {
                     let [descriptor, instance, rest @ ..] = args.as_slice() else { return Err(self.class_refusal()); };
                     let explicit = rest.first().filter(|owner| !matches!(owner.contents(), Value::Null));
                     if matches!(instance.contents(), Value::Null) && explicit.is_none() { return Err("TypeError: __get__(None, None) is invalid".into()); }
-                    let held = Self::worth_of(descriptor).ok_or_else(|| self.class_refusal())?;
+                    let held = Self::worth_of(descriptor).unwrap_or_else(|| descriptor.contents());
                     let Value::Adapter(wrapped) = held else { return Err(self.class_refusal()); };
                     match wrapped.0 {
                         4 => Ok(wrapped.1[0].clone()),
@@ -1221,6 +1224,26 @@ impl<'a> Engine<'a> {
                 // The reader of a member that binds: given the thing, or
                 // nothing and the class, it answers what a read through
                 // that thing or class would.
+                15 if w.1.is_empty() => {
+                    if self.call_items(args.clone())?.iter().any(|(key, _)| key.is_some()) {
+                        return Err("TypeError: wrapper __get__() takes no keyword arguments".into());
+                    }
+                    if args.is_empty() { return Err("TypeError: descriptor '__get__' of 'function' object needs an argument".into()); }
+                    let function = args.remove(0).contents();
+                    if !(matches!(&function, Value::Routine(_)) || matches!(&function, Value::Adapter(part) if matches!(part.0, 129 | 180))) {
+                        return Err(format!("TypeError: descriptor '__get__' requires a 'function' object but received a '{}'", Self::shown_kind(&function)).into());
+                    }
+                    if args.is_empty() { return Err("TypeError: __get__ expected at least 1 argument, got 0".into()); }
+                    if args.len() > 2 { return Err(format!("TypeError: __get__ expected at most 2 arguments, got {}", args.len()).into()); }
+                    let instance = args.remove(0);
+                    if matches!(instance.contents(), Value::Null) {
+                        if args.first().map_or(true, |owner| matches!(owner.contents(), Value::Null)) { return Err("TypeError: __get__(None, None) is invalid".into()); }
+                        return Ok(function);
+                    }
+                    let owner = match args.first() { Some(Value::Class(class)) => class.clone(), _ => self.root_class() };
+                    if matches!(&function, Value::Routine(_)) { self.bind_class_value(function, Some(instance), owner) }
+                    else { Ok(Self::adapter(3, vec![function, instance])) }
+                }
                 15 if !args.is_empty() && args.len() <= 2 => {
                     let thing = match &args[0] { Value::Null => None, other => Some(other.clone()) };
                     let owner = match (args.get(1), &thing) {
