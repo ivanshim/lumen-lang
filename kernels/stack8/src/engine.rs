@@ -9388,6 +9388,18 @@ impl<'a> Engine<'a> {
                 (Value::text(key), value)
             }).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
+            if module {
+                let mut ordered = Vec::new();
+                for (key, value) in extra.iter() {
+                    if let Value::Text(word) = key {
+                        if let Some(at) = entries.iter().position(|(candidate, _)| matches!(candidate, Value::Text(name) if name == word)) {
+                            ordered.push(entries.remove(at));
+                        }
+                    } else { ordered.push((key.clone(), value.clone())); }
+                }
+                ordered.extend(entries);
+                return ordered;
+            }
             entries.extend(extra.iter().cloned());
         }
         entries
@@ -9400,6 +9412,9 @@ impl<'a> Engine<'a> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let mut fields = o.fields.borrow_mut();
         if module {
+            let order: Vec<_> = entries.iter().map(|(key, value)| {
+                (key.clone(), if matches!(key, Value::Text(_)) { Value::Null } else { value.clone() })
+            }).collect();
             let mut remaining = entries;
             for (name, held) in fields.iter_mut().filter(|(name, _)| !name.starts_with('\0')) {
                 let replacement = remaining.iter().position(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == name.as_str()));
@@ -9412,7 +9427,6 @@ impl<'a> Engine<'a> {
                 }
             }
             fields.retain(|(name, _)| name != "\0keys");
-            let mut other_keys = Vec::new();
             for (key, value) in remaining {
                 match key {
                     Value::Text(name) => {
@@ -9423,10 +9437,10 @@ impl<'a> Engine<'a> {
                             fields.push((name.to_string(), Value::Bond(cell)));
                         } else { fields.push((name.to_string(), value)); }
                     }
-                    key => other_keys.push((key, value)),
+                    _ => {},
                 }
             }
-            if !other_keys.is_empty() { fields.push(("\0keys".into(), Value::Map(Rc::new(other_keys.into())))); }
+            if !order.is_empty() { fields.push(("\0keys".into(), Value::Map(Rc::new(order.into())))); }
             return;
         }
         let declared: Vec<String> = fields.iter().filter(|(key, _)| !key.starts_with('\0')).map(|(key, _)| key.clone()).collect();
@@ -23346,6 +23360,15 @@ impl Engine<'_> {
         self.outer_book_made()
     }
 
+    /// String keys alone name module attributes; rendering another key
+    /// cannot make it a binding name.
+    fn globals_key_word(key: &Value) -> Option<String> {
+        let held = match key { Value::Hashed(pair) => pair.0.contents(), other => other.contents() };
+        match Self::worth_of(&held).unwrap_or(held).contents() {
+            Value::Text(word) => Some(word.to_string()),
+            _ => None,
+        }
+    }
     /// The dictionary the module a program was read in as keeps its own
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
@@ -23368,7 +23391,7 @@ impl Engine<'_> {
                             other => matches!(other, Value::Blank),
                         };
                         if blank { continue; }
-                        if !rows.iter().any(|(key, _)| key.plain() == *name) { rows.push((Value::text(name), held.clone())); }
+                        if !rows.iter().any(|(key, _)| Self::globals_key_word(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), held.clone())); }
                     }
                 }
             }
@@ -23404,6 +23427,12 @@ impl Engine<'_> {
     /// name the module never had is bound under a cell both share, the
     /// way a name written through the dictionary is.
     fn module_member_mirror(&mut self, module: &Rc<Instance>, name: &str, value: &Option<Value>) {
+        if value.is_none() {
+            let mut fields = module.fields.borrow_mut();
+            if let Some((_, Value::Map(order))) = fields.iter_mut().find(|(key, _)| key == "\0keys") {
+                Rc::make_mut(order).retain(|(key, _)| !matches!(key, Value::Text(word) if word.as_ref() == name));
+            }
+        }
         let Some(path) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(space) if Rc::ptr_eq(space, module))).map(|(path, _)| path.clone()) else { return };
         let Some(book) = self.module_globals.get(&path).cloned() else { return };
         match value {
@@ -23415,7 +23444,7 @@ impl Engine<'_> {
                 let mut book_mut = book.borrow_mut();
                 if let Value::Map(pairs) = &mut *book_mut {
                     let rows = Rc::make_mut(pairs);
-                    rows.retain(|(key, _)| key.plain() != name);
+                    rows.retain(|(key, _)| Self::globals_key_word(key).as_deref() != Some(name.as_ref()));
                 }
             }
             Some(held_value) => {
@@ -23457,7 +23486,7 @@ impl Engine<'_> {
                 let mut book_mut = book.borrow_mut();
                 if let Value::Map(pairs) = &mut *book_mut {
                     let rows = Rc::make_mut(pairs);
-                    if !rows.iter().any(|(key, _)| key.plain() == name) { rows.push((Value::text(name), Value::Bond(shared))); }
+                    if !rows.iter().any(|(key, _)| Self::globals_key_word(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Bond(shared))); }
                 }
             }
         }
@@ -23469,7 +23498,7 @@ impl Engine<'_> {
         let Some(path) = self.globals_module_of(cell) else { return };
         let Some(Value::Object(module)) = self.modules.get(&path).cloned() else { return };
         let present = match &*cell.borrow() {
-            Value::Map(rows) => rows.iter().map(|(key, _)| key.plain()).collect::<std::collections::HashSet<_>>(),
+            Value::Map(rows) => rows.iter().filter_map(|(key, _)| Self::globals_key_word(key)).collect::<std::collections::HashSet<_>>(),
             _ => return,
         };
         let removed = module.fields.borrow().iter().filter(|(name, _)| !present.contains(name)).map(|(name, _)| name.clone()).collect::<Vec<_>>();
@@ -23480,10 +23509,10 @@ impl Engine<'_> {
             let Value::Map(pairs) = &mut *book_mut else { return };
             let rows = Rc::make_mut(pairs);
             for (key, value) in rows.iter_mut() {
-                let Value::Text(name) = key else { continue };
+                let Some(name) = Self::globals_key_word(key) else { continue };
                 let field_cell = {
                     let mut fields = module.fields.borrow_mut();
-                    match fields.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                    match fields.iter_mut().find(|(n, _)| n == &name) {
                         None => None,
                         // The module's member is brought under a cell if
                         // it has none, so the dictionary's place and the
@@ -23536,7 +23565,7 @@ impl Engine<'_> {
                                 let mut book_mut = cell.borrow_mut();
                                 if let Value::Map(pairs) = &mut *book_mut {
                                     for (key, value) in Rc::make_mut(pairs).iter_mut() {
-                                        if key.plain() == name { *value = Value::Bond(existing.clone()); }
+                                        if Self::globals_key_word(key).as_deref() == Some(name.as_ref()) { *value = Value::Bond(existing.clone()); }
                                     }
                                 }
                             }
@@ -23561,7 +23590,7 @@ impl Engine<'_> {
         let mut book_mut = book.borrow_mut();
         if let Value::Map(pairs) = &mut *book_mut {
             let rows = Rc::make_mut(pairs);
-            if !rows.iter().any(|(key, _)| key.plain() == name) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
+            if !rows.iter().any(|(key, _)| Self::globals_key_word(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
         }
     }
     /// A name written into a module's own dictionary that the module
@@ -23588,7 +23617,7 @@ impl Engine<'_> {
                             let mut book_mut = cell.borrow_mut();
                             if let Value::Map(pairs) = &mut *book_mut {
                                 for (key, value) in Rc::make_mut(pairs).iter_mut() {
-                                    if key.plain() == name { *value = Value::Bond(existing.clone()); }
+                                    if Self::globals_key_word(key).as_deref() == Some(name.as_ref()) { *value = Value::Bond(existing.clone()); }
                                 }
                             }
                         }

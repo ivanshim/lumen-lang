@@ -13600,6 +13600,14 @@ impl<'a> Machine<'a> {
                 (Value::text(name), value)
             }).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
+            if namespace {
+                let mut ordered = extra.iter().filter_map(|(key, value)| match key {
+                    Value::Text(label) => entries.iter().position(|entry| matches!(&entry.0, Value::Text(word) if word == label)).map(|at| entries.remove(at)),
+                    other => Some((other.clone(), value.clone())),
+                }).collect::<Vec<_>>();
+                ordered.append(&mut entries);
+                return ordered;
+            }
             entries.extend(extra.iter().cloned());
         }
         entries
@@ -13610,6 +13618,11 @@ impl<'a> Machine<'a> {
     /// are kept beside them under `\0keys`.
     fn attribute_restore(&self, t: &Rc<Thing>, entries: Vec<(Value, Value)>) {
         if self.namespace_holding(&Value::Thing(t.clone())).is_some() {
+            let mut saved = Vec::with_capacity(entries.len());
+            for (key, item) in &entries {
+                let retained = match key { Value::Text(_) => Value::Nil, _ => item.clone() };
+                saved.push((key.clone(), retained));
+            }
             let mut pending = entries;
             let mut slots = t.holds.borrow_mut();
             for (key, slot) in slots.iter_mut() {
@@ -13622,7 +13635,6 @@ impl<'a> Machine<'a> {
                 } else { *slot = next; }
             }
             slots.retain(|entry| entry.0 != "\0keys");
-            let mut nontext = Vec::new();
             let links = slots.iter().find(|entry| entry.0 == "\0bindings").map(|entry| entry.1.clone());
             slots.extend(pending.into_iter().filter_map(|(key, value)| match key {
                 Value::Text(word) => {
@@ -13633,9 +13645,9 @@ impl<'a> Machine<'a> {
                     let value = if let Some(Value::Shared(cell)) = linked { cell.replace(value); Value::Shared(cell) } else { value };
                     Some((word.to_string(), value))
                 }
-                other => { nontext.push((other, value)); None }
+                _ => None
             }));
-            if !nontext.is_empty() { slots.push((String::from("\0keys"), Value::Dict(Rc::new(nontext.into())))); }
+            if !saved.is_empty() { slots.push((String::from("\0keys"), Value::Dict(Rc::new(saved.into())))); }
             return;
         }
         let mut holds = t.holds.borrow_mut();
@@ -23477,6 +23489,13 @@ impl<'a> Machine<'a> {
         self.world_kept()
     }
 
+    /// Return the text of a namespace key when it is a string. A number
+    /// whose spelling matches a name is still a different key.
+    fn space_dictionary_name(key: &Value) -> Option<String> {
+        let actual = if let Value::Keyed(value, _) = key { value.settled() } else { key.settled() };
+        let text = Self::underlying(&actual).unwrap_or_else(|| actual.clone()).settled();
+        if let Value::Text(word) = text { Some(word.to_string()) } else { None }
+    }
     /// The dictionary the module a program was read in as keeps its own
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
@@ -23494,7 +23513,7 @@ impl<'a> Machine<'a> {
                     for (name, held) in module.holds.borrow().iter() {
                         let empty = match held { Value::Shared(link) => link.try_borrow().map(|inside| matches!(&*inside, Value::Unset)).unwrap_or(false), other => matches!(other, Value::Unset) };
                         if empty { continue; }
-                        if !rows.iter().any(|(key, _)| key.bare() == *name) { rows.push((Value::text(name), held.clone())); }
+                        if !rows.iter().any(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), held.clone())); }
                     }
                 }
             }
@@ -23549,7 +23568,7 @@ impl<'a> Machine<'a> {
                             let mut opened = cell.borrow_mut();
                             if let Value::Dict(pairs) = &mut *opened {
                                 for (key, held) in Rc::make_mut(pairs).iter_mut() {
-                                    if key.bare() == name { *held = Value::Shared(existing.clone()); }
+                                    if Self::space_dictionary_name(key).as_deref() == Some(name.as_ref()) { *held = Value::Shared(existing.clone()); }
                                 }
                             }
                         }
@@ -23567,6 +23586,13 @@ impl<'a> Machine<'a> {
     /// name the space never had is bound under a cell both share, the
     /// way a name written through the dictionary is.
     fn space_member_mirror(&mut self, module: &Rc<Thing>, name: &str, replacement: &Option<Value>) {
+        if replacement.is_none() {
+            let mut members = module.holds.borrow_mut();
+            if let Some((_, Value::Dict(keys))) = members.iter_mut().find(|entry| entry.0 == "\0keys") {
+                let kept = keys.iter().filter(|(key, _)| match key { Value::Text(word) => word.as_ref() != name, _ => true }).cloned().collect::<Vec<_>>();
+                *keys = Rc::new(kept.into());
+            }
+        }
         let Some(path) = self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, module))).map(|(path, _)| path.clone()) else { return };
         let Some(book) = self.space_books.get(&path).cloned() else { return };
         match replacement {
@@ -23579,7 +23605,7 @@ impl<'a> Machine<'a> {
                 let mut opened = book.borrow_mut();
                 if let Value::Dict(pairs) = &mut *opened {
                     let rows = Rc::make_mut(pairs);
-                    rows.retain(|(key, _)| key.bare() != name);
+                    rows.retain(|(key, _)| Self::space_dictionary_name(key).as_deref() != Some(name.as_ref()));
                 }
             }
             Some(item) => {
@@ -23620,7 +23646,7 @@ impl<'a> Machine<'a> {
                 let mut opened = book.borrow_mut();
                 if let Value::Dict(pairs) = &mut *opened {
                     let rows = Rc::make_mut(pairs);
-                    if !rows.iter().any(|(key, _)| key.bare() == name) { rows.push((Value::text(name), Value::Shared(link))); }
+                    if !rows.iter().any(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Shared(link))); }
                 }
             }
         }
@@ -23636,7 +23662,7 @@ impl<'a> Machine<'a> {
         let mut opened = book.borrow_mut();
         if let Value::Dict(pairs) = &mut *opened {
             let rows = Rc::make_mut(pairs);
-            if !rows.iter().any(|(key, _)| key.bare() == name) { rows.push((Value::text(name), Value::Shared(link.clone()))); }
+            if !rows.iter().any(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Shared(link.clone()))); }
         }
     }
     /// A loaded space's dictionary after a write landed in it whole:
@@ -23646,7 +23672,7 @@ impl<'a> Machine<'a> {
         let Some(path) = self.book_space_of(cell) else { return };
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return };
         let keys: Vec<String> = match cell.borrow().clone() {
-            Value::Dict(entries) => entries.iter().map(|(key, _)| key.bare()).collect(),
+            Value::Dict(entries) => entries.iter().filter_map(|(key, _)| Self::space_dictionary_name(key)).collect(),
             _ => return,
         };
         let absent: Vec<String> = module.holds.borrow().iter().filter_map(|(word, _)| (!keys.contains(word)).then(|| word.clone())).collect();
@@ -23657,10 +23683,10 @@ impl<'a> Machine<'a> {
             let Value::Dict(pairs) = &mut *opened else { return };
             let rows = Rc::make_mut(pairs);
             for (key, held) in rows.iter_mut() {
-                let Value::Text(name) = key else { continue };
+                let Some(name) = Self::space_dictionary_name(key) else { continue };
                 let member_link = {
                     let mut holds = module.holds.borrow_mut();
-                    match holds.iter_mut().find(|(entry, _)| entry == name.as_ref()) {
+                    match holds.iter_mut().find(|(entry, _)| entry == &name) {
                         None => None,
                         // The space's member is brought under a cell if
                         // it has none, so the dictionary's place and the
