@@ -1,0 +1,11 @@
+_BytesIOBuffer b'ab'
+True
+True
+(11, 'wait') [Errno 11] wait None None
+(11, 'wait', 3) [Errno 11] wait None 3
+(11, 'wait') [Errno 11] wait: 'f' f None
+(11, 'wait', -2) [Errno 11] wait None -2
+BufferedReader 2 bytearray(b'ab') 2
+ValueError
+BufferedRandom 2 bytearray(b'ab') 2
+ValueError

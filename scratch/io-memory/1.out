@@ -1,0 +1,44 @@
+seek (2, b'c')
+seek (0, b'abc')
+seek (0, b'abc')
+seek ('ValueError', 0)
+seek ('TypeError', 0)
+seek ('TypeError', 0)
+seek (2, b'c')
+seek (3, b'')
+snapshot (b'abc', 'bytes')
+construct TypeError a bytes-like object is required, not 'str'
+write TypeError a bytes-like object is required, not 'str'
+construct TypeError a bytes-like object is required, not 'int'
+write TypeError a bytes-like object is required, not 'int'
+construct b'abc'
+write 3
+construct BufferError memoryview: underlying buffer is not C-contiguous
+write BufferError memoryview: underlying buffer is not C-contiguous
+empty (0, 3, b'a')
+read-size b'abc'
+read-size b'ab'
+read-size TypeError argument should be integer or None, not 'float'
+invalid-read-position 1
+update (1, 'Xbc', b'Xbc')
+write-only (False, True, b'X')
+read-only UnsupportedOperation not writable
+utf-8-ignore-sized ('A', '\n', 'B')
+utf-8-ignore-line 'A\n'
+utf-8-ignore-iter ['A\n', 'B']
+utf-8-replace-sized ('�', 'A', '\nB')
+utf-8-replace-line '�A\n'
+utf-8-replace-iter ['�A\n', 'B']
+ascii-ignore-sized ('A', '\n', 'B')
+ascii-ignore-line 'A\n'
+ascii-ignore-iter ['A\n', 'B']
+ascii-replace-sized ('�', 'A', '\nB')
+ascii-replace-line '�A\n'
+ascii-replace-iter ['�A\n', 'B']
+boundary-ignore 'A\nB'
+boundary-replace '�A\nB'
+newlines 'a\nb\nc\n'
+newlines 'a\r\nb\rc\n'
+newlines 'a\r\nb\rc\n'
+newlines 'a\r\rb\rc\r'
+newlines 'a\r\r\nb\rc\r\n'

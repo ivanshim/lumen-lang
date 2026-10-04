@@ -20,11 +20,31 @@ class Mock:
         self._mock_name = name
         self._mock_wraps = wraps
         self.return_value = return_value
+        self._side_effect = None
         self.side_effect = side_effect
         self.called = False
         self.call_count = 0
         self.call_args = None
         self.call_args_list = []
+
+    @property
+    def side_effect(self):
+        return self._side_effect
+
+    @side_effect.setter
+    def side_effect(self, value):
+        # A fault, or a call, stands as it is given. Anything else that
+        # can be walked stands for one answer per call, drawn in order;
+        # what can neither be called nor walked stands as it is given,
+        # to complain when it is drawn on.
+        if (value is None or isinstance(value, BaseException)
+                or isinstance(value, type) or callable(value)):
+            self._side_effect = value
+            return
+        try:
+            self._side_effect = iter(value)
+        except TypeError:
+            self._side_effect = value
 
     def __repr__(self):
         if self._mock_name is None:
@@ -52,7 +72,12 @@ class Mock:
                 if answer is not DEFAULT:
                     return answer
             else:
-                raise 'NotImplementedError: a side effect that is neither a fault nor a call is not supported'
+                # One answer per call, drawn from the row given; the
+                # row spent, there is nothing left to answer with.
+                answer = next(effect)
+                if isinstance(answer, BaseException):
+                    raise answer
+                return answer
         if self.return_value is DEFAULT:
             if self._mock_wraps is not None:
                 return self._mock_wraps(*args, **kwargs)

@@ -431,9 +431,13 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
-            let mut portions=Vec::new();
-            for item in &row {match item {Value::Text(t)=>portions.push(t.as_ref()),_=>return Err(g.bad("join"))}}
-            Value::text(&portions.join(source))
+            let mut result: Vec<u32> = Vec::new();
+            for (position, item) in row.into_iter().enumerate() {
+                let numbers = item.character_numbers().ok_or_else(|| g.bad("join"))?;
+                if position > 0 { result.extend(source.chars().map(|ch| ch as u32)); }
+                result.extend(numbers);
+            }
+            Value::characters(result)
         }
         TRANSLATE=>{
             let lookup=&g.tail[0];
