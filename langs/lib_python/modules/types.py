@@ -260,6 +260,11 @@ class GenericAlias:
     def __call__(self, *args, **keywords):
         return self.__origin__(*args, **keywords)
 
+    # PEP 560: in a class header the alias stands for the kind it was
+    # made from, the way genericaliasobject.c's ga_mro_entries answers.
+    def __mro_entries__(self, bases):
+        return (self.__origin__,)
+
     def __eq__(self, other):
         if isinstance(other, GenericAlias):
             return self.__origin__ is other.__origin__ and self.__args__ == other.__args__

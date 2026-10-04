@@ -5768,56 +5768,35 @@ impl<'a> Machine<'a> {
                 // for every property, kept value and constant, in the
                 // order the plan names them.
                 let mut given = self.value_list(values, frame)?.into_iter();
+                // Every parent is gathered before any is accepted, so a
+                // parent offering __mro_entries__ can be handed the whole
+                // original row the way the reference hands it over.
+                let mut raw_parents: Vec<Value> = Vec::new();
+                if plan.extends {
+                    match given.next() {
+                        Some(kept) => raw_parents.push(kept.settled()),
+                        None => return Err(String::from("Stack underflow").into()),
+                    }
+                }
+                for _ in 0..plan.answers {
+                    match given.next() {
+                        Some(kept) => raw_parents.push(kept.settled()),
+                        None => return Err(String::from("Stack underflow").into()),
+                    }
+                }
+                let (parents_found, orig_bases) = self.resolve_parent_entries(raw_parents)?;
+                let mut parents_found = parents_found.into_iter();
                 let under = match plan.extends {
                     false => None,
-                    true => match given.next() {
-                        // A class the seal marked unchangeable stands
-                        // as no class's base.
-                        Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
-                        Some(Value::Blueprint(b)) => Some(b),
-                        // The kind primitive, built on: what is being
-                        // made is a metaclass, and the things it makes
-                        // are classes rather than objects.
-                        Some(Value::Intrinsic(_,word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => Some(self.builder_blueprint()),
-                        // A native kind the table lets a class stand on.
-                        Some(Value::Intrinsic(_,word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
-                        // The byte kinds are values in their own right,
-                        // so each is looked up by the word spelling it.
-                        Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
-                            let word = self.octet_kind_word(changeable).to_owned();
-                            Some(self.native_kind(&word))
-                        }
-                        // The property builtin, stood on as a class.
-                        Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
-                        // A parameterized generic stands in the bases
-                        // for the class it was made from, as PEP 560
-                        // spells it.
-                        Some(named) if self.has_class_order() && matches!(named.settled(), Value::Thing(ref alias) if alias.blueprint().name == "GenericAlias") => {
-                            let Value::Thing(alias) = named.settled() else { unreachable!() };
-                            let origin = alias.holds.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
-                            match origin { Some(held) => Some(self.parent_from_type(&held)?), None => return Err(String::from("TypeError: bases must be types").into()) }
-                        }
-                        Some(Value::Intrinsic(_,word)) if self.table.spells("ext.builtin.bool", &word) && self.rules.has_any_ext_builtin_bool_base => {
-                            return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into());
-                        }
-                        _ => return Err(if self.has_class_order(){self.rules.detail_unready.to_owned()}else{format!("Class {} cannot be built on that", plan.name)}.into()),
+                    true => match parents_found.next() {
+                        Some(kept) => Some(self.forge_parent(kept, &plan.name, true)?),
+                        // An answer of no entries at all leaves the class
+                        // on the common ancestor alone.
+                        None => None,
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
-                for _ in 0..plan.answers {
-                    match given.next() {
-                        Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
-                        Some(Value::Blueprint(b)) => answers.push(b),
-                        Some(Value::Intrinsic(_,word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
-                        Some(Value::Intrinsic(_,word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
-                        Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
-                            let word = self.octet_kind_word(changeable).to_owned();
-                            let kind = self.native_kind(&word); answers.push(kind);
-                        }
-                        Some(named) if self.has_class_order() && self.spells_property_kind(&named) => { let kind = self.property_blueprint(); answers.push(kind); }
-                        _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
-                    }
-                }
+                for kept in parents_found { answers.push(self.forge_parent(kept, &plan.name, false)?); }
                 let mut named = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Nil))).collect()
                 };
@@ -5847,6 +5826,13 @@ impl<'a> Machine<'a> {
                                 }
                             }
                         }
+                    }
+                    // The row of parents the header wrote, kept when a
+                    // protocol answer replaced any of them, as the
+                    // reference's build_class sets __orig_bases__.
+                    if let Some(original) = orig_bases {
+                        entries.retain(|(key, _)| key != "__orig_bases__");
+                        entries.push(("__orig_bases__".to_owned(), original));
                     }
                     // Written in the order of the writing, the methods
                     // behind the rest; the class is to hold them in the

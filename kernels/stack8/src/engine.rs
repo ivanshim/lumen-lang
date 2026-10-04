@@ -9597,56 +9597,35 @@ impl<'a> Engine<'a> {
                 // every property, every value of the class's own, and
                 // every constant, in the order the plan names them.
                 let mut given = self.drop_many(argc)?.into_iter();
-                let base = match plan.extends {
-                    false => None,
-                    true => match given.next() {
-                        Some(Value::Class(c)) if Self::class_sealed(&c) => return Err(format!("TypeError: type '{}' is not an acceptable base type", c.name).into()),
-                        Some(Value::Class(c)) => Some(c),
-                        Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
-                        // The kind builtin, stood on: what is being made
-                        // is a metaclass, and the things it makes are
-                        // classes.
-                        Some(Value::Native(Builtin::SortOf, _)) if self.fuller_classes() => Some(self.metaclass_root()),
-                        // A builtin kind the definition lets a class stand on.
-                        Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => Some(self.kind_class(&word)),
-                        // The bytes kinds are values of their own, and
-                        // are found by the word each is spelled with.
-                        Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
-                            let word = self.byte_kind_word(mutable).to_string();
-                            Some(self.kind_class(&word))
-                        }
-                        // The property builtin, read as a class to stand on.
-                        Some(v) if self.fuller_classes() && self.names_property_class(&v) => Some(self.property_class()),
-                        // A parameterized generic stands in the bases for
-                        // the class it was made from, as PEP 560 spells it.
-                        Some(v) if self.fuller_classes() && matches!(v.contents(), Value::Object(ref alias) if alias.class_now().name == "GenericAlias") => {
-                            let Value::Object(alias) = v.contents() else { unreachable!() };
-                            if alias.class_now().name == "GenericAlias" {
-                                let origin = alias.fields.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
-                                match origin { Some(held) => Some(self.type_base(&held)?), None => return Err("TypeError: bases must be types".into()) }
-                            } else {
-                                return Err(self.class_word("unready").to_string().into());
-                            }
-                        }
-                        Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
-                        None => return Err("Stack underflow".to_string().into()),
-                    },
-                };
-                let mut answers = Vec::with_capacity(plan.answers);
-                for _ in 0..plan.answers {
+                // Every base is gathered before any is accepted, so a
+                // base that answers __mro_entries__ can be handed the
+                // whole original row the way the reference hands it.
+                let mut raw_bases: Vec<Value> = Vec::new();
+                if plan.extends {
                     match given.next() {
-                        Some(Value::Class(c)) => answers.push(c),
-                        Some(Value::Native(Builtin::SortOf, _)) if self.fuller_classes() => { let maker = self.metaclass_root(); answers.push(maker); }
-                        Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => { let kind = self.kind_class(&word); answers.push(kind); }
-                        Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
-                            let word = self.byte_kind_word(mutable).to_string();
-                            let kind = self.kind_class(&word); answers.push(kind);
-                        }
-                        Some(v) if self.fuller_classes() && self.names_property_class(&v) => { let class = self.property_class(); answers.push(class); }
-                        Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
+                        Some(value) => raw_bases.push(value.contents()),
                         None => return Err("Stack underflow".to_string().into()),
                     }
                 }
+                for _ in 0..plan.answers {
+                    match given.next() {
+                        Some(value) => raw_bases.push(value.contents()),
+                        None => return Err("Stack underflow".to_string().into()),
+                    }
+                }
+                let (base_values, orig_bases) = self.resolve_base_entries(raw_bases)?;
+                let mut base_values = base_values.into_iter();
+                let base = match plan.extends {
+                    false => None,
+                    true => match base_values.next() {
+                        Some(value) => Some(self.forge_base(value, &plan.name, true)?),
+                        // A protocol answer of no entries at all leaves
+                        // the class standing on the root alone.
+                        None => None,
+                    },
+                };
+                let mut answers = Vec::with_capacity(plan.answers);
+                for value in base_values { answers.push(self.forge_base(value, &plan.name, false)?); }
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Null))).collect()
                 };
@@ -9671,6 +9650,13 @@ impl<'a> Engine<'a> {
                                 }
                             }
                         }
+                    }
+                    // The row of bases the header wrote, kept when a
+                    // protocol answer replaced any of them, as the
+                    // reference's build_class sets __orig_bases__.
+                    if let Some(original) = orig_bases {
+                        members.retain(|(named, _)| named != "__orig_bases__");
+                        members.push(("__orig_bases__".to_string(), original));
                     }
                     // The values arrive in the order the body wrote
                     // them, the methods last of all; the namespace the

@@ -185,9 +185,15 @@ impl<'a> Engine<'a> {
                     Some(word) => keywords.push((word, value)), None => raw_bases.push(value),
                 }
             }
+            // A header read as a call row is asked the way the
+            // reference's build_class asks it: __mro_entries__ answers
+            // before the metaclass is chosen, and the row it replaced
+            // is kept for __orig_bases__.
+            let (raw_bases, orig_bases) = self.resolve_base_entries(raw_bases)?;
             if let Some(factory) = maker.filter(|v| !matches!(v, Value::Native(Builtin::SortOf, _))) {
-                let entries = members.iter().filter(|(_, value)| !matches!(value, Value::Blank))
+                let mut entries = members.iter().filter(|(_, value)| !matches!(value, Value::Blank))
                     .map(|(word, value)| (Value::text(word), value.clone())).collect::<Vec<_>>();
+                if let Some(original) = orig_bases { entries.push((Value::text("__orig_bases__"), original)); }
                 let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
                 let mut given = vec![Value::text(&name), Value::tuple(raw_bases), namespace];
                 given.extend(keywords.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
@@ -195,6 +201,7 @@ impl<'a> Engine<'a> {
             }
             bases.clear();
             for value in raw_bases { bases.push(self.type_base(&value)?); }
+            if let Some(original) = orig_bases { members.push(("__orig_bases__".to_string(), original)); }
             members.extend(keywords.into_iter().map(|(word, value)| (format!("\0keyword:{word}"), value)));
         }
         if bases.is_empty() { bases.push(self.root_class()); }
@@ -247,10 +254,12 @@ impl<'a> Engine<'a> {
         let title = self.type_title(&plain[1])?;
         let mut parents = Vec::new();
         let (Value::Tuple(listed) | Value::Array(listed)) = plain[2].contents() else { return Err(self.class_refusal()) };
+        let (listed, orig_bases) = self.resolve_base_entries(listed.iter().map(Value::contents).collect())?;
         for b in listed.iter() { parents.push(self.type_base(b)?); }
         if parents.is_empty() { parents.push(self.root_class()); }
         let Value::Map(entries) = plain[3].contents() else { return Err(self.class_refusal()) };
-        let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
+        let mut members: Vec<(String, Value)> = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
+        if let Some(original) = orig_bases { members.push(("__orig_bases__".to_string(), original)); }
         self.forge_class(title, parents, members, by, named, plain[1].contents())
     }
     fn type_argument_kind(value: &Value) -> String {
@@ -2340,13 +2349,82 @@ impl<'a> Engine<'a> {
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),
             Value::Native(_, name) if Lang::spells(&self.lang.builtin_bases, &name) => Ok(self.kind_class(&name)),
-            Value::Object(object) if object.class_now().name == "GenericAlias" => {
-                // A parameterized generic stands in the bases for the
-                // class it was made from, the way PEP 560 spells it.
-                let origin = object.fields.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
-                match origin { Some(value) => self.type_base(&value), None => Err("TypeError: bases must be types".to_string().into()) }
-            }
             _ => Err("TypeError: bases must be types".to_string().into()),
+        }
+    }
+
+    /// The `__mro_entries__` a would-be base answers with, where it
+    /// answers at all: its class's member bound to the value, or the
+    /// pair the value holds for itself, the way the reference's
+    /// update_bases asks the plain attribute. The flag says whether the
+    /// value stands before the call's arguments.
+    pub(super) fn mro_entries_member(&self, value: &Value) -> Option<(Value, bool)> {
+        let Value::Object(object) = value.contents() else { return None; };
+        if let Some(found) = self.class_value(&object.class_now(), "__mro_entries__") {
+            return Some((found, true));
+        }
+        let held = object.fields.borrow().iter().find(|(name, _)| name == "__mro_entries__").map(|(_, kept)| (kept.clone(), false));
+        held
+    }
+
+    /// PEP 560, the way Python/bltinmodule.c's update_bases spells it:
+    /// a base that is no class and answers __mro_entries__ is asked,
+    /// handed the whole original row of bases, what it stands for, and
+    /// its tuple answer takes its place; the answer's own entries are
+    /// not asked in turn. The original row comes back beside the
+    /// resolved one when anything was replaced, for the class's
+    /// __orig_bases__. Python classes alone do this; other languages
+    /// keep the bases they were given.
+    pub(super) fn resolve_base_entries(&mut self, bases: Vec<Value>) -> Flow<(Vec<Value>, Option<Value>)> {
+        if !self.fuller_classes() { return Ok((bases, None)); }
+        let original = Value::tuple(bases.clone());
+        let mut resolved: Vec<Value> = Vec::new();
+        let mut replaced = false;
+        for base in bases.into_iter() {
+            let stands_plain = matches!(base.contents(), Value::Class(_) | Value::Native(..) | Value::ByteKind(..));
+            let member = match stands_plain { true => None, false => self.mro_entries_member(&base) };
+            match member {
+                None => resolved.push(base),
+                Some((entry, bound)) => {
+                    let mut args = vec![original.clone()];
+                    if bound { args.insert(0, base.clone()); }
+                    let answer = self.class_apply(entry, args)?;
+                    let Value::Tuple(entries) = answer.contents() else {
+                        return Err("TypeError: __mro_entries__ must return a tuple".to_string().into());
+                    };
+                    replaced = true;
+                    resolved.extend(entries.iter().map(Value::contents));
+                }
+            }
+        }
+        Ok((resolved, if replaced { Some(original) } else { None }))
+    }
+
+    /// The class one base of a class being forged stands for: the
+    /// acceptance the forge gives a base however it was arrived at,
+    /// with `first` only choosing which refusal wording a base no
+    /// protocol claimed is named with.
+    pub(super) fn forge_base(&mut self, value: Value, name: &str, first: bool) -> Flow<Rc<Class>> {
+        match value {
+            Value::Class(c) if Self::class_sealed(&c) => Err(format!("TypeError: type '{}' is not an acceptable base type", c.name).into()),
+            Value::Class(c) => Ok(c),
+            Value::Native(Builtin::Bool, _) if self.lang.bool_base.is_some() => Err(self.lang.bool_base.clone().unwrap_or_default().into()),
+            // The kind builtin, stood on: what is being made is a
+            // metaclass, and the things it makes are classes.
+            Value::Native(Builtin::SortOf, _) if self.fuller_classes() => Ok(self.metaclass_root()),
+            // A builtin kind the definition lets a class stand on.
+            Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, &word) => Ok(self.kind_class(&word)),
+            // The bytes kinds are values of their own, and are found by
+            // the word each is spelled with.
+            Value::ByteKind(mutable, _) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
+                let word = self.byte_kind_word(mutable).to_string();
+                Ok(self.kind_class(&word))
+            }
+            // The property builtin, read as a class to stand on.
+            v if self.fuller_classes() && self.names_property_class(&v) => Ok(self.property_class()),
+            v => Err(if self.fuller_classes() { self.class_word("unready").to_string() }
+                else if first { format!("Class {} cannot stand on {}", name, v.plain()) }
+                else { format!("Class {} cannot answer to {}", name, v.plain()) }.into()),
         }
     }
     pub(super) fn class_type(&mut self,args:Vec<Value>)->Flow<Value> {
@@ -2386,6 +2464,17 @@ impl<'a> Engine<'a> {
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
             [Value::Adapter(w)] if matches!(w.0,7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
+                // type() takes its bases as they stand: one that is no
+                // class and answers __mro_entries__ is refused where a
+                // class statement would ask it, the way the reference
+                // names types.new_class() instead.
+                if self.fuller_classes() {
+                    for b in bases.iter() {
+                        if self.mro_entries_member(b).is_some() {
+                            return Err("TypeError: type() doesn't support MRO entry resolution; use types.new_class()".to_string().into());
+                        }
+                    }
+                }
                 let mut parents=vec![];for b in bases.iter(){parents.push(self.type_base(b)?);}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
                 self.form_named_class(original_title.unwrap_or_else(|| Value::text(name)),parents,own)

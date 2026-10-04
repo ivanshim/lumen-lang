@@ -272,11 +272,17 @@ impl<'a> Machine<'a> {
                 if self.table.spells("ext.stmt.class.metaclass", &key) { factory = Some(item); }
                 else { extra.push((key, item)); }
             }
+            // A header read as a call row is asked the way the
+            // reference's build_class asks it: __mro_entries__ answers
+            // before the factory is picked, and the row it replaced is
+            // kept for __orig_bases__.
+            let (positional, orig_bases) = self.resolve_parent_entries(positional)?;
             match factory {
                 Some(callable) if !matches!(callable, Value::Intrinsic(Prim::SortOf, _)) => {
-                    let pairs = entries.iter().filter_map(|(key, item)| {
+                    let mut pairs = entries.iter().filter_map(|(key, item)| {
                         (!matches!(item, Value::Unset)).then(|| (Value::text(key), item.clone()))
                     }).collect::<Vec<_>>();
+                    if let Some(original) = orig_bases { pairs.push((Value::text("__orig_bases__"), original)); }
                     let mapping = Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs.into())))), true);
                     let mut supplied = vec![Value::text(&title), Value::tuple(positional), mapping];
                     for (key, item) in extra { supplied.push(Value::Couple(Rc::new((Value::text(&key), item)))); }
@@ -284,6 +290,7 @@ impl<'a> Machine<'a> {
                 }
                 _ => {
                     parents = positional.iter().map(|item| self.parent_from_type(item)).collect::<Result<_, _>>()?;
+                    if let Some(original) = orig_bases { entries.push(("__orig_bases__".to_owned(), original)); }
                     for (key, item) in extra { entries.push((format!("\0handed:{key}"), item)); }
                 }
             }
@@ -332,10 +339,12 @@ impl<'a> Machine<'a> {
         let name=self.checked_type_name(&plain[1])?;
         let mut ancestors=Vec::new();
         let (Value::Tuple(listed)|Value::Vector(listed))=plain[2].settled() else{return Err(self.class_unready())};
+        let (listed, orig_bases) = self.resolve_parent_entries(listed.iter().map(|item| item.settled()).collect())?;
         for p in listed.iter(){ancestors.push(self.parent_from_type(p)?);}
         if ancestors.is_empty(){ancestors.push(self.common_ancestor());}
         let Value::Dict(pairs)=plain[3].settled() else{return Err(self.class_unready())};
-        let body=pairs.iter().map(|(k,v)|(k.bare(),v.clone())).collect();
+        let mut body: Vec<(String, Value)> = pairs.iter().map(|(k,v)|(k.bare(),v.clone())).collect();
+        if let Some(original) = orig_bases { body.push(("__orig_bases__".to_owned(), original)); }
         let keywords=named.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k),v)))).collect();
         self.assemble_class(name,ancestors,body,by,keywords,plain[1].settled())
     }
@@ -2474,15 +2483,83 @@ impl<'a> Machine<'a> {
             if *operation == Prim::SortOf { return Ok(self.builder_blueprint()); }
             if *operation != Prim::Truthful && self.table.spells("ext.stmt.class.builtin", word) { return Ok(self.native_kind(word)); }
         }
-        if let Value::Thing(thing) = &settled {
-            if thing.blueprint().name == "GenericAlias" {
-                // A parameterized generic stands in the bases for the
-                // class it was made from, the way PEP 560 spells it.
-                let origin = thing.holds.borrow().iter().find(|(name, _)| name == "__origin__").map(|(_, held)| held.clone());
-                return match origin { Some(value) => self.parent_from_type(&value), None => Err("TypeError: bases must be types".to_owned().into()) };
+        Err("TypeError: bases must be types".to_owned().into())
+    }
+
+    /// What a would-be parent offers for `__mro_entries__`, where it
+    /// offers anything: the blueprint's entry with the value leading
+    /// the call, or the pair the value keeps for itself called as it
+    /// is -- the plain attribute question the reference's update_bases
+    /// asks of every parent that is no class.
+    pub(super) fn mro_entries_offer(&self, parent: &Value) -> Option<(Value, bool)> {
+        let Value::Thing(thing) = parent.settled() else { return None; };
+        if let Some(entry) = self.inherited_entry(&thing.blueprint(), "__mro_entries__") {
+            return Some((entry, true));
+        }
+        let offered = thing.holds.borrow().iter().find(|(key, _)| key == "__mro_entries__").map(|(_, kept)| (kept.settled(), false));
+        offered
+    }
+
+    /// PEP 560 as CPython's update_bases spells it: a parent that is no
+    /// class and offers __mro_entries__ is asked -- the entire original
+    /// row handed over -- what it stands for, and that tuple answer
+    /// stands in its place, its own entries asked no further. The
+    /// replaced row rides along for __orig_bases__ when anything
+    /// changed. Languages without Python's class order keep the
+    /// parents they were written with.
+    pub(super) fn resolve_parent_entries(&mut self, parents: Vec<Value>) -> Res<(Vec<Value>, Option<Value>)> {
+        if !self.has_class_order() { return Ok((parents, None)); }
+        let original = Value::tuple(parents.clone());
+        let mut settled_parents: Vec<Value> = Vec::new();
+        let mut swapped = false;
+        for parent in parents.into_iter() {
+            let ready_made = matches!(parent.settled(), Value::Blueprint(_) | Value::Intrinsic(..) | Value::OctetKind { .. });
+            let offer = if ready_made { None } else { self.mro_entries_offer(&parent) };
+            match offer {
+                None => settled_parents.push(parent),
+                Some((entry, leads)) => {
+                    let mut arguments = vec![original.clone()];
+                    if leads { arguments.insert(0, parent.clone()); }
+                    let answer = self.apply_class_member(entry, arguments)?;
+                    let Value::Tuple(items) = answer.settled() else {
+                        return Err("TypeError: __mro_entries__ must return a tuple".to_owned().into());
+                    };
+                    swapped = true;
+                    settled_parents.extend(items.iter().map(|item| item.settled()));
+                }
             }
         }
-        Err("TypeError: bases must be types".to_owned().into())
+        Ok((settled_parents, if swapped { Some(original) } else { None }))
+    }
+
+    /// The blueprint one parent of a class being built stands for: the
+    /// same acceptance however the parent was arrived at, with
+    /// `leading` only picking the refusal wording a parent no protocol
+    /// claimed is named with.
+    pub(super) fn forge_parent(&mut self, parent: Value, title: &str, leading: bool) -> Res<Rc<Blueprint>> {
+        match parent.settled() {
+            Value::Blueprint(b) if Self::sealed(&b) => Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
+            Value::Blueprint(b) => Ok(b),
+            // The kind primitive, built on: what is being made is a
+            // metaclass, and the things it makes are classes.
+            Value::Intrinsic(_, word) if self.has_class_order() && self.table.prims.get(word.as_ref()) == Some(&Prim::SortOf) => Ok(self.builder_blueprint()),
+            // A native kind the table lets a class stand on.
+            Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", &word) => Ok(self.native_kind(&word)),
+            // The byte kinds are values in their own right, so each is
+            // looked up by the word spelling it.
+            Value::OctetKind { changeable, .. } if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
+                let word = self.octet_kind_word(changeable).to_owned();
+                Ok(self.native_kind(&word))
+            }
+            // The property builtin, stood on as a class.
+            other if self.has_class_order() && self.spells_property_kind(&other) => Ok(self.property_blueprint()),
+            Value::Intrinsic(_, word) if self.table.spells("ext.builtin.bool", &word) && self.rules.has_any_ext_builtin_bool_base => {
+                Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into())
+            }
+            _ => Err(if self.has_class_order() { self.rules.detail_unready.to_owned() }
+                else if leading { format!("Class {} cannot be built on that", title) }
+                else { format!("Class {} cannot answer to that", title) }.into()),
+        }
     }
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let title_object=values.first().map(Value::settled);
@@ -2520,6 +2597,17 @@ impl<'a> Machine<'a> {
             return Ok(self.kind_builder_word());}}
         if let [Value::Text(title),sequence,Value::Dict(entries)]=values.as_slice(){
             let bases=match sequence{Value::Tuple(v)=>v,_=>return Err("TypeError: type() requires a name, a tuple of bases, and a dict".to_owned().into())};
+            // type() takes its bases as they stand: one that is no
+            // class and offers __mro_entries__ is turned away where a
+            // class statement would ask it, naming types.new_class()
+            // the way the reference does.
+            if self.has_class_order() {
+                for c in bases.iter() {
+                    if self.mro_entries_offer(c).is_some() {
+                        return Err("TypeError: type() doesn't support MRO entry resolution; use types.new_class()".to_owned().into());
+                    }
+                }
+            }
             let mut parents=Vec::new();for c in bases.iter(){parents.push(self.parent_from_type(c)?);}
             let mut own=Vec::new();for (k,v) in entries.iter(){if let Value::Text(key)=k{own.push((key.to_string(),v.clone()));}else{return Err("TypeError: type() requires a name, a tuple of bases, and a dict".to_owned().into());}}
             return self.build_named_class(title_object.unwrap_or_else(|| Value::text(title)),parents,own);
