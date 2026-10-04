@@ -13895,6 +13895,11 @@ impl<'a> Machine<'a> {
                 return Err(self.operands_refused(&sign, left, right));
             }
         }
+        if matches!(operation, Prim::Eq | Prim::Ne) {
+            if let Some(equal) = self.native_sequence_equal(operation, operands)? {
+                return Ok(Some(Value::Flag(equal != (operation == Prim::Ne))));
+            }
+        }
         // A thing over a native worth is written into through that
         // worth, answers an absent key through the method the table
         // names for it, and for whatever its blueprint did not answer
@@ -14644,6 +14649,41 @@ impl<'a> Machine<'a> {
             [before, between, and, after] => format!("{before}{sign}{between}{}{and}{}{after}", one.kind_word(), two.kind_word()),
             _ => String::new(),
         }
+    }
+
+    // Native sequence members use rich equality, even when nested in a
+    // subclass. The reference checks list lengths first, but walks tuples
+    // before comparing their lengths; identity avoids a member callback.
+    fn native_sequence_equal(&mut self, operation: Prim, pair: &[Value]) -> Result<Option<bool>, String> {
+        if !self.table.spells("ext.stmt.class.builtin", "tuple") { return Ok(None); }
+        let [left, right] = pair else { return Ok(None); };
+        let slot = if operation == Prim::Ne { 3 } else { 2 };
+        let a = self.underlying_unless(left, &[slot]).unwrap_or_else(|| left.clone()).settled();
+        let b = self.underlying_unless(right, &[slot]).unwrap_or_else(|| right.clone()).settled();
+        let (a, b) = match (a, b) {
+            (Value::Tuple(x), Value::Tuple(y)) => (x, y),
+            (Value::Vector(x), Value::Vector(y)) => {
+                if x.len() != y.len() { return Ok(Some(false)); }
+                (x, y)
+            }
+            _ => return Ok(None),
+        };
+        if self.recursion_ceiling().is_some_and(|ceiling| self.standing >= ceiling) {
+            if let Some(message) = self.table.single("ext.system.recursion.exceeded") {
+                return Err(format!("\0{message}"));
+            }
+        }
+        self.standing += 1;
+        let compared = (|| -> Result<bool, String> {
+            for (x, y) in a.iter().zip(b.iter()) {
+                if x.one_place(y) { continue; }
+                let result = self.prim(Prim::Eq, "", &[x.clone(), y.clone()])?;
+                if !self.object_truth(&result)? { return Ok(false); }
+            }
+            Ok(a.len() == b.len())
+        })();
+        self.standing -= 1;
+        compared.map(Some)
     }
 
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
@@ -18399,7 +18439,10 @@ impl<'a> Machine<'a> {
             Prim::Eq | Prim::Ne if self.rules.unordered_maps => {
                 let alike = match (&v[0], &v[1]) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
-                    _ => self.equal_contents(&v[0], &v[1]),
+                    _ => match self.native_sequence_equal(op, v)? {
+                        Some(equal) => equal,
+                        None => self.equal_contents(&v[0], &v[1]),
+                    },
                 };
                 Value::Flag(alike != (op == Prim::Ne))
             }
@@ -23655,6 +23698,13 @@ impl Machine<'_> {
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
         if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
         if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
+        // Native Python bases supply their iterator before the sequence
+        // fallback. An explicit iteration slot on the subclass still wins.
+        if !self.table.strings("ext.stmt.class.detail.native.protocols").is_empty() {
+            if let Some(storage) = self.underlying_unless(source, &[15]).filter(|value| Self::walk_named(value).is_some()) {
+                return self.iterated_value(&storage);
+            }
+        }
         match source {
             // A walk is its own walk, and so is a suspended program: a
             // walk taken of either is the very one, not a copy of what
