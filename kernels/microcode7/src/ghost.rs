@@ -81,7 +81,8 @@ thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static LISTENING: Cell<usize> = const { Cell::new(0) };
     static LISTENERS: RefCell<Vec<Rc<Dim>>> = const { RefCell::new(Vec::new()) };
-    static STIRRED: Cell<bool> = const { Cell::new(false) };
+    // Queued work, anchored finalizers, and polled method listeners.
+    static STIRRED: Cell<u8> = const { Cell::new(0) };
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
@@ -139,6 +140,7 @@ pub fn anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         if !all.iter().any(|item| Rc::ptr_eq(item, thing)) { all.push(thing.clone()); }
+        let _ = STIRRED.try_with(|state| state.set(state.get() | 2));
     });
 }
 
@@ -147,11 +149,16 @@ pub fn anchored_values() -> Vec<Knot> {
 }
 
 pub fn release_anchor(thing: &Rc<Thing>) {
-    let _ = ANCHORED.try_with(|all| all.borrow_mut().retain(|item| !Rc::ptr_eq(item, thing)));
+    let _ = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        all.retain(|item| !Rc::ptr_eq(item, thing));
+        if all.is_empty() { let _ = STIRRED.try_with(|state| state.set(state.get() & !2)); }
+    });
 }
 
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+    let _ = STIRRED.try_with(|state| state.set(state.get() & !2));
 }
 
 fn anchor_ready() -> bool {
@@ -170,14 +177,17 @@ pub fn bidding() -> bool {
 }
 
 /// Whether the machine has anything to attend to before its next step.
+#[inline(always)]
 pub fn stirred() -> bool {
-    let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
+    let status = STIRRED.try_with(Cell::get).unwrap_or(0);
+    if status == 0 { return false; }
+    let gone_method = status & 4 != 0 && LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
     if gone_method { anything_departing(); }
-    STIRRED.try_with(|s| s.get()).unwrap_or(false) || anchor_ready()
+    status & 1 != 0 || gone_method || (status & 2 != 0 && anchor_ready())
 }
 
 fn stir() {
-    let _ = STIRRED.try_with(|s| s.set(true));
+    let _ = STIRRED.try_with(|s| s.set(s.get() | 1));
 }
 
 /// Something a listener might be listening for has gone.
@@ -238,11 +248,12 @@ pub fn walk_departing(again: Rc<RefCell<Suspension>>) {
 /// is cleared; more may gather while the machine works, so it asks
 /// again until nothing comes back.
 pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
-    let _ = STIRRED.try_with(|s| s.set(false));
+    let _ = STIRRED.try_with(|s| s.set(s.get() & !1));
     let mut farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
+        let _ = STIRRED.try_with(|state| state.set(if kept.is_empty() { state.get() & !2 } else { state.get() | 2 }));
         *all = kept;
         ready
     }).unwrap_or_default();
@@ -268,6 +279,8 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
             still.reverse();
+            let methods = still.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)));
+            let _ = STIRRED.try_with(|state| state.set(if methods { state.get() | 4 } else { state.get() & !4 }));
             *all = still;
         });
     }
@@ -306,6 +319,9 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
         refs.push(Rc::downgrade(&held));
     });
     if wants_telling {
+        if matches!(held.ghost, Ghost::WrappedMethod(_)) {
+            let _ = STIRRED.try_with(|state| state.set(state.get() | 4));
+        }
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
     }
