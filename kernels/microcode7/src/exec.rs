@@ -9700,7 +9700,7 @@ impl<'a> Machine<'a> {
         if self.object_truth(&Self::recipe_member(owner, "done")?)? { return Ok(false); }
         if !self.object_truth(&Self::recipe_member(owner, "ready")?)? {
             let source = Self::recipe_member(owner, "source")?;
-            match self.next_value(&source)? {
+            match self.advance_object(&source)? {
                 None => { Self::recipe_replace(owner, "done", Value::Flag(true)); return Ok(false); }
                 Some(value) => {
                     Self::recipe_replace(owner, "current", value.clone());
