@@ -14992,6 +14992,13 @@ impl<'a> Machine<'a> {
         // answers to as a set does, needs the view whole to tell that
         // apart from a view of its values, which answers to no set
         // working at all.
+        // A window over a mapping answers a key from the mapping, not a
+        // place from the pairs it would read as.
+        if matches!(op, Prim::At) {
+            if let [Value::Window(owner, 'm'), key] = v {
+                return self.element(&owner.settled(), key, Reading::Plain);
+            }
+        }
         let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
@@ -18971,6 +18978,9 @@ impl<'a> Machine<'a> {
                 }
             };
         }
+        // A window over a mapping answers a key from the mapping, not a
+        // place from the pairs it would read as.
+        if let Value::Window(owner, 'm') = target { return self.element(&owner.settled(), at, how); }
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;

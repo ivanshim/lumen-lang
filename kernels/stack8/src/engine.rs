@@ -10205,11 +10205,8 @@ impl<'a> Engine<'a> {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(Rc::from(Value::predicate_text(&row).as_str()), op, name.clone())
                 }
-                Value::Complex(z) => {
-                    if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { crate::complex::real(z.real) }
-                    else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { crate::complex::real(z.imag) }
-                    else { return Err(crate::complex::fault(self.lang, "unready").into()); }
-                }
+                Value::Complex(z) if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) => crate::complex::real(z.real),
+                Value::Complex(z) if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) => crate::complex::real(z.imag),
                 Value::ValueMethod(bound) if name.as_ref() == self.class_word("qualified") => Value::text(&format!("{}.{}", bound.0.core_kind(), bound.1)),
                 Value::ValueMethod(bound) if name.as_ref() == self.class_word("name") => Value::text(&bound.1),
                 Value::ValueMethod(bound) if !self.lang.class_special.is_empty() && name.as_ref() == self.class_word("receiver") => bound.0.clone(),
@@ -11932,6 +11929,13 @@ impl<'a> Engine<'a> {
         // as a set does under the set signs; elsewhere it stands for
         // its items.
         if matches!(a, Value::View(_)) || matches!(b, Value::View(_)) {
+            // The reading of the map itself by a key answers from the
+            // map, as the map would answer it.
+            if matches!(op, Action::At) {
+                if let Value::View(view) = a {
+                    if view.1 == "mapping" { return self.element(&view.0.contents(), b, Reading::Plain); }
+                }
+            }
             // The reading of the map itself answers `==` as the map
             // does: every key with its very value, not merely its keys.
             if matches!(op, Action::Eq | Action::Ne) && (matches!(a, Value::View(w) if w.1 == "mapping") || matches!(b, Value::View(w) if w.1 == "mapping")) {
@@ -13176,6 +13180,11 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        // A view over a mapping answers a key from the mapping, not a
+        // place from the pairs it would read as.
+        if let Value::View(view) = target {
+            if view.1 == "mapping" { return self.element(&view.0.contents(), at, how); }
+        }
         if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Some(cell) = self.walked_set(target)? {
             let held = cell.borrow();

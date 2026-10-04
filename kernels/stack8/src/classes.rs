@@ -1780,7 +1780,8 @@ impl<'a> Engine<'a> {
                 // its line and its namespace stand there as properties.
                 if matches!(&held, Value::Native(Builtin::SortOf, _)) && !self.class_word("mro").is_empty() {
                     let maker=self.metaclass_root();
-                    return Ok(Self::namespace(&maker.shared.borrow()));
+                    let book=Self::namespace(&maker.shared.borrow());
+                    return Ok(Value::View(Rc::new((book,"mapping".to_string()))));
                 }
                 let mut listed=self.kind_special_names(&word);
                 listed.push(name.to_string());

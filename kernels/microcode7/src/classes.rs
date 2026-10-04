@@ -2237,7 +2237,8 @@ impl<'a> Machine<'a> {
                 // its line and its namespace stand there as properties.
                 if matches!(&settled, Value::Intrinsic(Prim::SortOf, _)) && !self.detail("mro").is_empty() {
                     let maker=self.builder_blueprint();
-                    return Ok(Self::member_map(&maker.shared.borrow()));
+                    let book=Self::member_map(&maker.shared.borrow());
+                    return Ok(Value::Window(Rc::new(book),'m'));
                 }
                 let mut names=self.kind_member_names(&word);
                 names.push(key.to_owned());
