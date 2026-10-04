@@ -960,9 +960,10 @@ impl<'a> Machine<'a> {
             holds.push((String::from("filename2"), second_file));
             if progress_argument.is_none() && row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
         }
-        let values = Value::Arguments(crate::tuples::Sequence::plain(row));
+        let shared = crate::tuples::Sequence::plain(row);
+        let values = Value::Arguments(shared.clone());
         let seeded = [
-            ("ext.builtin.exceptions.args", values.clone()), ("ext.builtin.exceptions.cause", because),
+            ("ext.builtin.exceptions.args", Value::Tuple(shared.clone())), ("ext.builtin.exceptions.cause", because),
             ("ext.builtin.exceptions.context", Value::Nil), ("ext.builtin.exceptions.suppress", Value::Flag(false)),
         ];
         for (label, value) in seeded {

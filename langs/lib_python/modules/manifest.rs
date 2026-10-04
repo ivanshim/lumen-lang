@@ -182,6 +182,9 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.test_json.test_speedups", include_str!("test/test_json/test_speedups.py"), "test/test_json/test_speedups.py"),
     ("test.test_json.test_tool", include_str!("test/test_json/test_tool.py"), "test/test_json/test_tool.py"),
     ("test.test_json.test_unicode", include_str!("test/test_json/test_unicode.py"), "test/test_json/test_unicode.py"),
+    ("colorsys", include_str!("colorsys.py"), "colorsys.py"),
+    ("graphlib", include_str!("graphlib.py"), "graphlib.py"),
+    ("quopri", include_str!("quopri.py"), "quopri.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.
@@ -235,4 +238,7 @@ pub static MODULE_ALIASES: &[(&str, &str)] = &[
     ("test.test_json.test_speedups", include_str!("test/test_json/test_speedups.py"), "test/test_json/test_speedups.py"),
     ("test.test_json.test_tool", include_str!("test/test_json/test_tool.py"), "test/test_json/test_tool.py"),
     ("test.test_json.test_unicode", include_str!("test/test_json/test_unicode.py"), "test/test_json/test_unicode.py"),
+    ("colorsys", include_str!("colorsys.py"), "colorsys.py"),
+    ("graphlib", include_str!("graphlib.py"), "graphlib.py"),
+    ("quopri", include_str!("quopri.py"), "quopri.py"),
 ];
