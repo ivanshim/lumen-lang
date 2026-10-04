@@ -215,12 +215,12 @@ def fsencode(filename):
     return filename.encode('utf-8', 'surrogateescape') if isinstance(filename, str) else filename
 
 def _posix_call(operation, path, *args):
-    result, error = _host_posix(operation, path if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty') else fsdecode(path), *args)
+    result, error = _host_posix(operation, path if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty', 'get_inheritable', 'set_inheritable', 'pipe') else fsdecode(path), *args)
     if error is not None:
         number, message = error
         message = message.split(' (os error')[0]
         error_type = {11: BlockingIOError, 1: PermissionError, 2: FileNotFoundError, 13: PermissionError, 17: FileExistsError, 20: NotADirectoryError, 21: IsADirectoryError}.get(number, OSError)
-        if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty'):
+        if operation in ('close', 'read', 'write', 'seek', 'truncate', 'fd_flags', 'isatty', 'get_inheritable', 'set_inheritable', 'pipe'):
             raise error_type(number, message)
         raise error_type(number, message, path)
     return result
@@ -388,3 +388,43 @@ class PathLike(abc.ABC):
 
     __class_getitem__ = classmethod(GenericAlias)
 
+
+def read(fd, n):
+    from operator import index
+    fd, n = index(fd), index(n)
+    if n < 0:
+        raise OSError(22, 'Invalid argument')
+    return _posix_call('read', fd, n)
+
+def write(fd, data):
+    from operator import index
+    from _io import _buffer
+    return _posix_call('write', index(fd), _buffer(data))
+
+def lseek(fd, position, whence):
+    from operator import index
+    return _posix_call('seek', index(fd), index(position), index(whence))
+
+def ftruncate(fd, length):
+    from operator import index
+    return _posix_call('truncate', index(fd), index(length))
+
+def fdopen(fd, *args, **kwargs):
+    import io
+    if not isinstance(fd, int):
+        raise TypeError('invalid fd type (' + type(fd).__name__ + ', expected integer)')
+    return io.open(fd, *args, **kwargs)
+
+
+def get_inheritable(fd):
+    from operator import index
+    return _posix_call('get_inheritable', index(fd))
+
+
+def set_inheritable(fd, inheritable):
+    from operator import index
+    return _posix_call('set_inheritable', index(fd), bool(inheritable))
+
+
+def pipe():
+    return _posix_call('pipe', 0)

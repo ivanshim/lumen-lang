@@ -62,7 +62,7 @@ pub(crate) fn perform(values: &[Value]) -> Result<Value, String> {
                 };
                 got.map(|amount| {
                     bytes.truncate(amount);
-                    Value::Octets { cell: std::rc::Rc::new(std::cell::RefCell::new(bytes)), changeable: false, lead: std::rc::Rc::from("bytes") }
+                    Value::Octets { cell: std::rc::Rc::new(std::cell::RefCell::new(bytes)), changeable: false, lead: std::rc::Rc::from("b") }
                 })
             } else if step == "write" {
                 let buffer = values.get(2).ok_or("TypeError: missing write data")?.settled();
@@ -95,6 +95,30 @@ pub(crate) fn perform(values: &[Value]) -> Result<Value, String> {
             extern "C" { fn fcntl(descriptor: std::ffi::c_int, request: std::ffi::c_int, ...) -> std::ffi::c_int; }
             let bits = unsafe { fcntl(integer(1)?, 3) };
             if bits == -1 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(bits.into())) }
+        }
+        "get_inheritable" | "set_inheritable" => {
+            extern "C" { fn fcntl(handle: std::ffi::c_int, action: std::ffi::c_int, ...) -> std::ffi::c_int; }
+            let handle = integer(1)?;
+            let current = unsafe { fcntl(handle, 1) };
+            match current {
+                -1 => Err(std::io::Error::last_os_error()),
+                bits if step == "get_inheritable" => Ok(Value::Flag(bits & 1 != 1)),
+                bits => {
+                    let wanted = values.get(2).ok_or("TypeError: missing inheritable flag")?.is_true();
+                    let changed = (bits & !1) | i32::from(!wanted);
+                    match unsafe { fcntl(handle, 2, changed) } {
+                        0 => Ok(Value::Nil), _ => Err(std::io::Error::last_os_error()),
+                    }
+                }
+            }
+        }
+        "pipe" => {
+            extern "C" { fn pipe2(handles: *mut std::ffi::c_int, options: std::ffi::c_int) -> std::ffi::c_int; }
+            let mut handles = [0, 0];
+            match unsafe { pipe2(handles.as_mut_ptr(), 0x80000) } {
+                0 => Ok(Value::tuple(vec![Value::Small(handles[0].into()), Value::Small(handles[1].into())])),
+                _ => Err(std::io::Error::last_os_error()),
+            }
         }
         "isatty" => {
             extern "C" { fn isatty(descriptor: std::ffi::c_int) -> std::ffi::c_int; }

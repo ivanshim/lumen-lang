@@ -57,7 +57,7 @@ pub(crate) fn operate(args: &[Value]) -> Result<Value, String> {
                     };
                     count.map(|used| {
                         buffer.truncate(used);
-                        Value::Bytes(std::rc::Rc::new(std::cell::RefCell::new(buffer)), false, std::rc::Rc::from("bytes"))
+                        Value::Bytes(std::rc::Rc::new(std::cell::RefCell::new(buffer)), false, std::rc::Rc::from("b"))
                     })
                 }
                 "write" => {
@@ -88,6 +88,24 @@ pub(crate) fn operate(args: &[Value]) -> Result<Value, String> {
             let fd = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;
             let flags = unsafe { fcntl(fd, 3) };
             if flags < 0 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Small(i64::from(flags))) }
+        }
+        "get_inheritable" | "set_inheritable" => {
+            extern "C" { fn fcntl(fd: i32, operation: i32, ...) -> i32; }
+            let fd = file.parse::<i32>().map_err(|_| "TypeError: descriptor must be an integer")?;
+            let old = unsafe { fcntl(fd, 1) };
+            if old < 0 { Err(std::io::Error::last_os_error()) }
+            else if command == "get_inheritable" { Ok(Value::Flag(old & 1 == 0)) }
+            else {
+                let inherit = args.get(2).ok_or("TypeError: inheritance flag is required")?.is_true();
+                let bits = if inherit { old & !1 } else { old | 1 };
+                if unsafe { fcntl(fd, 2, bits) } < 0 { Err(std::io::Error::last_os_error()) } else { Ok(Value::Null) }
+            }
+        }
+        "pipe" => {
+            extern "C" { fn pipe2(descriptors: *mut i32, flags: i32) -> i32; }
+            let mut pair = [-1; 2];
+            if unsafe { pipe2(pair.as_mut_ptr(), 524288) } < 0 { Err(std::io::Error::last_os_error()) }
+            else { Ok(Value::tuple(pair.into_iter().map(|fd| Value::Small(i64::from(fd))).collect())) }
         }
         "isatty" => {
             extern "C" { fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int; }
