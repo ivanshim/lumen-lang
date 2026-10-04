@@ -1733,6 +1733,7 @@ impl<'a> Compiler<'a> {
         }
         let surrounding_names = self.comprehension_names.clone();
         let surrounding_targets = self.comprehension_targets.clone();
+        if !matches!(name, "<comprehension>" | "<genexpr>") { self.comprehension_targets.clear(); }
         if self.lang.closes_over {
             let own = self.piece().idents.clone();
             self.comprehension_names.retain(|(name, _)| !own.contains(name));

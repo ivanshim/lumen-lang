@@ -1823,6 +1823,8 @@ impl<'a> Builder<'a> {
             }
         }
         let earlier_gathering = self.gather_names.clone();
+        let earlier_targets = self.gather_targets.clone();
+        if !matches!(name, "<gathering>" | "<genexpr>") { self.gather_targets.clear(); }
         if holds == Holds::Every && self.table.flag("ext.stmt.function.closes_over") {
             let own = &self.layers.last().unwrap().idents;
             self.gather_names.retain(|pair| !own.contains(&pair.0));
@@ -1838,6 +1840,7 @@ impl<'a> Builder<'a> {
         self.finally_nesting = previous_finally;
         self.declarations = outer_declarations;
         self.gather_names = earlier_gathering;
+        self.gather_targets = earlier_targets;
         let generator = holds == Holds::Every && self.generator_seen && self.table.flag("ext.stmt.yield.suspends");
         if holds == Holds::Every {
             if self.generator_seen && !generator {
