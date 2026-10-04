@@ -25879,7 +25879,6 @@ impl Machine<'_> {
                     Value::Dict(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Attributes(owner) => Rc::as_ptr(owner) as usize as u64,
-                    Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
                     Value::Method(_, _, handle) => Rc::as_ptr(handle) as usize as u64,
 
                     Value::Wrapped(35, items) => {

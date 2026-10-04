@@ -11,11 +11,6 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
-<<<<<<< HEAD
-=======
-| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, `test_strtod.py` (the correctly rounded decimal-to-float and float-to-repr tests), the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, and the support data they read (`mathdata/`) | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
-| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
->>>>>>> d5760f1de
 
 ## CPython 3.14.8 suite
 
@@ -25,9 +20,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 | Directory | Source | Release / tag | Commit / release date | License |
 |---|---|---|---|---|
-| `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_genericpath.py`, `test_posixpath.py`, `test_stat.py`, and support data (`mathdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
-| `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper,socket_helper}.py` and `Lib/test/test_genericpath.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
-| `../langs/lib_python/modules/{os,stat,genericpath,posixpath,_collections_abc}.py` | `Lib/` sources; unchanged beneath the two-line provenance header. Native operations follow `Modules/posixmodule.c` and `Modules/_stat.c` at the same tag. | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, and support data (`mathdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. The embedded runtime support
@@ -47,12 +41,6 @@ The only removed files were the two copies of
 `Lib/test/test_import/data/syntax_warnings.py`, which has no v3.14.8 counterpart.
 Detailed working inventories and measurements stay in the ignored worker
 scratch area rather than the repository.
-
-The runtime `test.support.subTests` helper retains the v3.14.8 synchronous
-and asynchronous wrappers, parameter materialization, and cleanup handling.
-Coroutine detection in the `inspect` adapter follows that release's partial
-and partial-method unwrapping, using the runtime's actual callable kinds.
-These are partial adapters, separate from the unchanged support source copy.
 
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the

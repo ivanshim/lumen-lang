@@ -4492,11 +4492,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
-| `ext.builtin.at_end` | - | - | `__at_end` | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.at_end` | - | - | `__at_end__` | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
+| `ext.builtin.binascii_native` | - | - | `__binascii_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
+| `ext.builtin.buffer.hooks` | - | - | `__buffer__` `__release_buffer__` | - | - | - | - | - | - | - |
 | `ext.builtin.build_class` | - | - | `__build_class__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
@@ -4522,6 +4524,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | `__warning_calls` | - | `__calls` | - | - | - | - | - |
+| `ext.builtin.cell.repr` | - | - | `<cell at 0x` `: ` ` object at 0x` `>` `empty` | - | - | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
@@ -4551,6 +4554,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.context_native` | - | - | `__context_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
 | `ext.builtin.core.abs.type` | - | - | `TypeError: bad operand type for abs(): '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
@@ -4589,6 +4593,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.crypto` | - | - | `__crypto` | - | - | - | - | - | - | - |
 | `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
@@ -4599,6 +4604,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.dir.list` | - | - | `__list_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make` | - | - | `__make_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make_one` | - | - | `__make_dir_one` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.remove` | - | - | `__remove_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.remove_tree` | - | - | `__remove_tree` | - | - | - | - | - | - | - |
 | `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -4609,7 +4615,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` `ChildProcessError` `ConnectionError` `ConnectionAbortedError` `ConnectionRefusedError` `ConnectionResetError` `InterruptedError` `ProcessLookupError` `TimeoutError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4641,9 +4647,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
+| `ext.builtin.file.link` | - | - | `__file_link` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.file_read.bytes` | - | - | `__file_read_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.frame.module` | - | - | `__frame_module` | - | - | - | - | - | - | - |
@@ -4897,9 +4905,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.storage.get` | - | - | `__storage_get` | - | - | - | - | - | - | - |
 | `ext.builtin.storage.set` | - | - | `__storage_set` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
+| `ext.builtin.struct_native` | - | - | `__struct_native` | - | - | - | - | - | - | - |
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
@@ -4985,7 +4995,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
-| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits.state` | - | - | `sys` `_int_max_str_digits` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
@@ -5016,6 +5026,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.strict` | - | - | `strict` | - | - | - | - | - | - | - |
+| `ext.builtin.zlib_native` | - | - | `__zlib_native__` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |
@@ -5313,7 +5324,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
-| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
@@ -5360,6 +5371,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.getter` | - | - | `getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.is_abstract` | - | - | `__isabstractmethod__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.readonly` | - | - | `AttributeError: readonly attribute` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.undeletable` | - | - | `AttributeError: property` ` of '` `' object has no deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.unreadable` | - | - | `AttributeError: property` ` of '` `' object has no getter` | - | - | - | - | - | - | - |
@@ -5451,6 +5463,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.packages` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |

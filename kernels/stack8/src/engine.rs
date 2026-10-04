@@ -7264,6 +7264,7 @@ impl<'a> Engine<'a> {
                     },
                     None => format!("{}{}{}{}{}", words[0], one, words[1], words[4], words[3]),
                 });
+            }
         }
         if matches!(value, Value::Class(_)) {
             let first = if representation { 1 } else { 0 };
@@ -10752,7 +10753,7 @@ impl<'a> Engine<'a> {
                 // program's own __import__ answered with answers through
                 // the protocol it answers to.
                 let module = self.data.last().cloned().ok_or_else(|| "Stack underflow".to_string())?;
-                let absolute = self.relative_module_name(path)?;
+                let absolute = self.import_path(path)?;
                 let path = absolute.as_str();
                 if self.is_builtin_module(&module, path) {
                     self.import_member(&module, path, name)?
@@ -18114,7 +18115,6 @@ impl<'a> Engine<'a> {
                     _ => return Err("NotImplementedError: unsupported cryptographic operation".into()),
                 }
             }
-            }
             Builtin::PosixCall => {
                 match args.first().map(Value::contents) {
                     Some(Value::Text(op)) if op.as_ref() == "fspath" => { arity(2)?; self.filesystem_path(args[1].clone())? },
@@ -18313,7 +18313,6 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
-,
             Builtin::AsciiSpan => {
                 arity(4)?;
                 let begin = as_index(&args[1])?;
@@ -22024,7 +22023,6 @@ impl Engine<'_> {
                         std::hash::Hash::hash(&Value::sort_called(*kind), &mut digest);
                         std::hash::Hasher::finish(&digest)
                     },
-                    Value::Adapter(holder) => Rc::as_ptr(holder) as usize as u64,
                     _ => return Err(self.core_fault("core.unready", name)),
                 };
                 let filed = format!("{}:{}", args[0].core_kind(), id);
@@ -22567,6 +22565,8 @@ impl Engine<'_> {
         let answer = match invoked { Ok(value) => value, Err(fault) => {self.carried = Some(fault); return Err(self.special_fault());} };
         if acceptable(&answer.contents()) { return Ok(answer); }
         Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", Self::shown_kind(&path), Self::shown_kind(&answer)))
+    }
+
     fn import_path(&self, written: &str) -> Res<String> {
         if !written.starts_with('.') { return Ok(written.to_string()); }
         let Some((_, owner)) = self.module_slots.get(&self.source) else {

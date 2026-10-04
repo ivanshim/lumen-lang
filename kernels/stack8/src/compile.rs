@@ -5920,7 +5920,7 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().spelling()) || Lang::spells(&lang.type_alias_words, &self.look().spelling())
+        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(self.look().spelling()) || Lang::spells(&lang.type_alias_words, &self.look().spelling())
             || Lang::spells(&lang.match_words, &self.look().spelling()) || Lang::spells(&lang.match_cases, &self.look().spelling()))
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).spelling()) {
             // A keyword before the mark (`try:`) heads a statement

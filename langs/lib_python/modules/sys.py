@@ -428,3 +428,12 @@ def _getframemodulename(depth=0):
 
 # Names supplied by the native importer and its source-backed adapters.
 builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
+
+
+def getfilesystemencoding():
+    return "utf-8"
+
+
+def getfilesystemencodeerrors():
+    return "surrogateescape"
+

@@ -4533,7 +4533,7 @@ impl<'a> Builder<'a> {
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
             } else if self.look().shape == Shape::Bare
-                && (!table.keywords.contains(&self.look().spelling()) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().spelling())))
+                && (!table.keywords.contains(self.look().spelling()) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().spelling())))
                 && table.spells("ext.stmt.annotation", &self.glance(1).spelling()) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
