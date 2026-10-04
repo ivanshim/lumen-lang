@@ -2746,7 +2746,7 @@ impl<'a> Machine<'a> {
         let told = told.trim_start_matches('\0');
         if self.rules.has_any_ext_builtin_exceptions {
             for kind in self.table.strings("ext.builtin.exceptions") {
-                if told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
+                if told == kind.as_str() || told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
             }
             let label = if self.table.single("ext.stmt.catch.invalid") == Some(told) { Some("ext.system.fault.class.kind") }
                 else if told.starts_with("Undefined variable") { Some("ext.system.fault.class.name") }
@@ -7231,7 +7231,18 @@ impl<'a> Machine<'a> {
         let name = word.to_string();
         Some((|| {
             let mut values = self.value_list(args, frame)?;
-            if let Prim::ClassWork(which) = op { if self.has_class_order() { return self.work_on_class(which, values); } }
+            if let Prim::ClassWork(which) = op { if self.has_class_order() {
+                // A class question that may take spread subjects reaches
+                // its tool with them opened; the other class tools keep
+                // their markers and read them as they always have, so
+                // `property(fget=...)` still finds its named member.
+                if which <= 1 && self.names_in_calls {
+                    let (mut positions, names) = self.open_arguments(values)?;
+                    if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
+                    values = positions;
+                }
+                return self.work_on_class(which, values);
+            } }
             if op == Prim::ClassWork(11) && self.has_class_order() && !self.rules.detail_descriptor_get.is_empty() { return self.work_on_class(11, values); }
             if matches!(stands, Value::Intrinsic(..) | Value::OctetKind { .. }) && self.names_in_calls {
                 let (mut positions, names) = self.open_arguments(values)?;
@@ -13868,7 +13879,13 @@ impl<'a> Machine<'a> {
             if operation == Prim::Plus && matches!(left, Value::Octets { .. }) && self.table.has_any("ext.builtin.bytes") {
                 return Ok(None);
             }
-            if forward >= 18 && (bare(left) || bare(right)) {
+            // A union of kinds beside a further kind is joined below by
+            // the primitive's own union reading and must not be refused
+            // here first as two bare things.
+            let joining_kinds = operation == Prim::BitsEither
+                && self.union_member(left) && self.union_member(right)
+                && (self.union_anchor(left) || self.union_anchor(right));
+            if forward >= 18 && !joining_kinds && (bare(left) || bare(right)) {
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));
             }
@@ -24037,6 +24054,12 @@ impl Machine<'_> {
     }
 
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
+        // Where the language keeps the fuller class line, the kind
+        // questions go the one road the class tools use, so that unions,
+        // `__class__` overrides and `__bases__` lines answer alike.
+        if self.has_class_order() {
+            return self.is_beneath(item, expected, false).map_err(|e| self.suspension_fault(e));
+        }
         if matches!(expected.settled(), Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned());
         }

@@ -3673,7 +3673,102 @@ impl<'a> Machine<'a> {
         let told=self.core_complaint(key,"");
         if told.is_empty(){self.class_unready()}else{told.into()}
     }
-    fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+    /// The entry a value keeps under a name where it keeps one, a
+    /// missing entry read as the plain absence the reference reads and
+    /// any other fault passed on as it stands.
+    fn member_if_any(&mut self,value:&Value,key:&str)->Result<Option<Value>,Escape>{
+        if key.is_empty(){return Ok(None);}
+        match self.read_class_member(value.clone(),key,false){
+            Ok(found)=>Ok(Some(found.settled())),
+            Err(escape)=>{
+                // A reading that raised parks the value while words stand
+                // in for it; those words must not be taken for an absent
+                // entry, and the parked value is lifted again here.
+                if let Some(away)=self.got_away.take(){return Err(away);}
+                if self.missing_member_escape(&escape){return Ok(None);}
+                Err(escape)
+            }
+        }
+    }
+    /// The `__bases__` a value lies under where it keeps a tuple of
+    /// them, the reference's own reading of a class a value may stand
+    /// for without being a class itself. An entry that is absent, or is
+    /// no tuple, ends the walk with nothing.
+    fn value_bases(&mut self,value:&Value)->Result<Option<Vec<Value>>,Escape>{
+        let key=self.detail("bases").to_owned();
+        Ok(match self.member_if_any(value,&key)?{
+            Some(Value::Tuple(parts))=>Some(parts.to_vec()),
+            _=>None,
+        })
+    }
+    /// The class a value names through its own `__class__`, whether or
+    /// not that is the class it was made by.
+    fn value_class_named(&mut self,value:&Value)->Result<Option<Value>,Escape>{
+        let key=self.detail("kind").to_owned();
+        self.member_if_any(value,&key)
+    }
+    /// The kind word a value names where it names one: an intrinsic
+    /// word, the blueprint standing for a kind, or an octet kind.
+    fn kind_name(&self,value:&Value)->Option<String>{
+        match value{
+            Value::Intrinsic(op,word) if op.names_a_kind()=>Some(word.to_string()),
+            Value::Wrapped(8,parts)=>match &parts[0]{Value::Text(word)=>Some(word.to_string()),_=>None},
+            Value::Blueprint(b)=>Self::native_word(b),
+            Value::OctetKind{changeable,..}=>Some(self.octet_kind_word(*changeable).to_owned()),
+            _=>None,
+        }
+    }
+    /// Whether two values are the very one thing, which is how a
+    /// `__bases__` line is followed: the same blueprint, the same thing,
+    /// the same intrinsic under whatever spelling, or the same worth.
+    fn same_thing(&self,a:&Value,b:&Value)->bool{
+        match (a,b){
+            (Value::Blueprint(x),Value::Blueprint(y))=>Rc::ptr_eq(x,y),
+            (Value::Thing(x),Value::Thing(y))=>Rc::ptr_eq(x,y),
+            (Value::Intrinsic(x,xw),Value::Intrinsic(y,yw))=>x==y&&xw==yw,
+            (Value::Nil,Value::Nil)=>true,
+            _=>match (self.kind_name(a),self.kind_name(b)){
+                (Some(one),Some(two))=>one==two,
+                _=>a.equals(b),
+            },
+        }
+    }
+    /// The reference's walk along a `__bases__` line from `derived`
+    /// towards the very `wanted`: one base is stepped along and does not
+    /// grow the count, two or more are each walked, and the whole is
+    /// guarded so an endless line raises as the reference's own does.
+    fn bases_walk(&mut self,mut derived:Value,wanted:&Value)->Result<bool,Escape>{
+        loop{
+            if self.same_thing(&derived,wanted){return Ok(true);}
+            let Some(bases)=self.value_bases(&derived)? else{return Ok(false);};
+            if bases.is_empty(){return Ok(false);}
+            if bases.len()==1{derived=bases.into_iter().next().unwrap();continue;}
+            self.deeper()?;
+            let mut answer=Ok(false);
+            for base in bases.iter(){
+                match self.bases_walk(base.clone(),wanted){
+                    Ok(true)=>{answer=Ok(true);break;}
+                    Ok(false)=>{}
+                    Err(escape)=>{answer=Err(escape);break;}
+                }
+            }
+            self.standing-=1;
+            return answer;
+        }
+    }
+    /// A value that is no class of its own but keeps the question's own
+    /// entry answers it, as the reference asks before falling back on
+    /// class lines; this is how a stub kind carries its own checking.
+    fn member_answers(&mut self,choice:&Value,given:&Value,class_only:bool)->Result<Option<bool>,Escape>{
+        let Value::Thing(thing)=choice else{return Ok(None);};
+        let holder=thing.blueprint();
+        let Some(key)=self.table.strings("ext.stmt.class.special").get(if class_only{77}else{76}).cloned() else{return Ok(None);};
+        let Some(entry)=self.inherited_entry(&holder,&key) else{return Ok(None);};
+        let bound=self.member_binding(entry,Some(choice.clone()),holder)?;
+        let told=self.apply_class_member(bound,vec![given.clone()])?;
+        Ok(Some(told.is_true()))
+    }
+    pub(super) fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let Value::Mutable(cell, _) | Value::Shared(cell) = subject { let held = cell.borrow().clone(); return self.is_beneath(&held, choice, class_only); }
         if let Value::Mutable(cell, _) | Value::Shared(cell) = choice { let held = cell.borrow().clone(); return self.is_beneath(subject, &held, class_only); }
         if matches!(choice, Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union")) {
@@ -3684,6 +3779,7 @@ impl<'a> Machine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
+        if let Some(told)=self.member_answers(choice,subject,class_only)?{return Ok(told);}
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
@@ -3694,7 +3790,23 @@ impl<'a> Machine<'a> {
         // each of the two has its own words, as the reference has.
         let amiss=if class_only{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         match choice {
-            Value::Tuple(options)|Value::Vector(options)=>{for option in options.iter(){if self.is_beneath(subject,option,class_only)?{return Ok(true);}}Ok(false)},
+            Value::Tuple(options)|Value::Vector(options)=>{
+                // A tuple of kinds is walked member by member, and the
+                // walk is guarded so a tuple nested without end raises
+                // as the reference's own reading does.
+                let members: Vec<Value> = options.to_vec();
+                self.deeper()?;
+                let mut answer=Ok(false);
+                for option in members.iter(){
+                    match self.is_beneath(subject,option,class_only){
+                        Ok(true)=>{answer=Ok(true);break;}
+                        Ok(false)=>{}
+                        Err(escape)=>{answer=Err(escape);break;}
+                    }
+                }
+                self.standing-=1;
+                answer
+            },
             // A union built by `|` carries a bare `Nil` for the
             // `NoneType` member, the very value `None` itself is, so
             // a chained union reads it back this way rather than
@@ -3702,8 +3814,12 @@ impl<'a> Machine<'a> {
             Value::Nil=>Ok(if class_only{matches!(subject,Value::KindOf(Kind::Nothing))}else{matches!(subject,Value::Nil)}),
             Value::Blueprint(c)=>{
                 // What is asked about must be a class wherever a class
-                // is what is asked about.
-                if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
+                // is what is asked about; a subject that keeps its own
+                // `__bases__` may stand as one all the same.
+                if class_only && !self.counts_as_class(subject){
+                    if self.value_bases(subject)?.is_some(){return self.bases_walk(subject.clone(),choice);}
+                    return Err(self.not_a_class("core.issubclass.subject"));
+                }
                 // Everything lies under the class everything lies under.
                 if Rc::ptr_eq(c,&self.common_ancestor()){return Ok(true);}
                 match (class_only, subject, Self::native_word(c)) {
@@ -3718,21 +3834,50 @@ impl<'a> Machine<'a> {
                     }
                 }
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.blueprint()),_=>None};
-                Ok(b.map_or(false,|b|Self::fault_descends(b,c)||Self::ancestry_includes(b,c)))
+                if b.map_or(false,|b|Self::fault_descends(b,c)||Self::ancestry_includes(b,c)){return Ok(true);}
+                // A thing not of the kind may still name a class beneath
+                // it through its own `__class__`, which is read here and
+                // may raise, as the reference asks it.
+                if !class_only {
+                    if let Some(Value::Blueprint(held))=self.value_class_named(subject)? {
+                        if !Rc::ptr_eq(&held,c) { return Ok(Self::fault_descends(&held,c)||Self::ancestry_includes(&held,c)); }
+                    }
+                }
+                Ok(false)
             }
             Value::Wrapped(8,names)=>{
                 let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
                 let Some(op)=self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else{return Err(self.not_a_class(amiss));};
                 if class_only{
                     if let Value::Blueprint(b)=subject{return Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref()));}
-                    let Some(under)=self.kind_spelling(subject) else{return Err(self.not_a_class("core.issubclass.subject"));};
-                    return Ok(self.kind_under(&under,word));
+                    if let Some(under)=self.kind_spelling(subject){return Ok(self.kind_under(&under,word));}
+                    // A subject that stands as no class still may stand
+                    // as one through the `__bases__` it keeps.
+                    if self.value_bases(subject)?.is_some(){return self.bases_walk(subject.clone(),choice);}
+                    return Err(self.not_a_class("core.issubclass.subject"));
                 }
                 // A thing of a blueprint standing on the kind is of the kind.
-                if let Value::Thing(t)=subject{return Ok(Self::native_beneath(&t.blueprint()).as_deref()==Some(word.as_ref()));}
+                if let Value::Thing(t)=subject{
+                    if Self::native_beneath(&t.blueprint()).as_deref()==Some(word.as_ref()){return Ok(true);}
+                    if let Some(Value::Blueprint(held))=self.value_class_named(subject)? {
+                        return Ok(Self::native_beneath(&held).as_deref()==Some(word.as_ref()));
+                    }
+                    return Ok(false);
+                }
                 Ok(self.kind_covers(&op,word,subject))
             },
             _=>{
+                // The kind may name no class of its own and still stand
+                // as one through its `__bases__`; and the subject may
+                // stand as one the same way.
+                if self.value_bases(choice)?.is_some(){
+                    if class_only{
+                        if self.value_bases(subject)?.is_none(){return Err(self.not_a_class("core.issubclass.subject"));}
+                        return self.bases_walk(subject.clone(),choice);
+                    }
+                    let Some(named)=self.value_class_named(subject)? else{return Ok(false);};
+                    return self.bases_walk(named,choice);
+                }
                 if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
                 Err(self.not_a_class(amiss))
             }

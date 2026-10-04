@@ -1,16 +1,55 @@
 # Stub: hints carry no checks at run time and keep no supplied parameters.
+# The container hints still answer isinstance/issubclass through the class
+# they stand for, and join with `|` into a hint of their own, since the
+# reference tests ask them so.
 class _Hint:
+    def __init__(self, name="", target=None, members=None):
+        self._name = name
+        self._target = target
+        self._members = members
+
     def __getitem__(self, parameters):
         return self
 
-Any = _Hint()
-Optional = _Hint()
-Union = _Hint()
-List = _Hint()
-Dict = _Hint()
-Tuple = _Hint()
-Set = _Hint()
-Callable = _Hint()
+    def __or__(self, other):
+        return _Hint("Union", None, _hint_members(self) + _hint_members(other))
+
+    def __ror__(self, other):
+        return _Hint("Union", None, _hint_members(other) + _hint_members(self))
+
+    def __instancecheck__(self, instance):
+        if self._target is not None:
+            return isinstance(instance, self._target)
+        if self._members is not None:
+            return any(isinstance(instance, member) for member in self._members)
+        return False
+
+    def __subclasscheck__(self, cls):
+        if cls is self:
+            return True
+        if self._target is not None:
+            return issubclass(cls, self._target)
+        if self._members is not None:
+            return any(issubclass(cls, member) for member in self._members)
+        return False
+
+
+def _hint_members(hint):
+    if isinstance(hint, _Hint):
+        if hint._members is not None:
+            return list(hint._members)
+        return [hint]
+    return [hint]
+
+
+Any = _Hint("Any")
+Optional = _Hint("Optional")
+Union = _Hint("Union")
+List = _Hint("List", list)
+Dict = _Hint("Dict", dict)
+Tuple = _Hint("Tuple", tuple)
+Set = _Hint("Set", set)
+Callable = _Hint("Callable")
 
 class Protocol:
     def __getitem__(cls, parameters):
