@@ -12974,7 +12974,7 @@ impl<'a> Machine<'a> {
         let word = names.get(index)?;
         if let Value::Blueprint(class) = subject {
             let maker = Self::builder_over(class)?;
-            return self.inherited_entry(&maker, word);
+            return self.inherited_entry(&maker, word).filter(|entry| index != 8 || !matches!(entry, Value::Wrapped(60, _)));
         }
         let Value::Thing(thing) = subject else { return None };
         let actual=thing.blueprint();
@@ -13066,6 +13066,8 @@ impl<'a> Machine<'a> {
             if let Some(factory) = factory {
                 let entry = self.rules.specials.get(index).and_then(|word| self.inherited_entry(&factory, word));
                 if let Some(entry) = entry {
+                    // The inherited native hash slot must use the class identity fallback.
+                    if index == 8 && matches!(&entry, Value::Wrapped(60, _)) { return Ok(None); }
                     let call = self.member_binding(entry, Some(subject.clone()), factory).and_then(|bound| self.apply_class_member(bound, tail.to_vec()));
                     return call.map(Some).map_err(|escape| self.carried_native_fault(escape));
                 }

@@ -6032,7 +6032,7 @@ impl<'a> Engine<'a> {
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
         if let Value::Class(class) = value {
             let maker = Self::maker_beneath(class)?;
-            return self.class_value(&maker, self.lang.class_special.get(place)?);
+            return self.class_value(&maker, self.lang.class_special.get(place)?).filter(|method| place != 8 || !matches!(method, Value::Adapter(slot) if slot.0 == 29));
         }
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
@@ -7082,6 +7082,8 @@ impl<'a> Engine<'a> {
             let Some(maker) = Self::maker_beneath(class) else { return Ok(None); };
             let Some(word) = self.lang.class_special.get(place) else { return Ok(None); };
             let Some(method) = self.class_value(&maker, word) else { return Ok(None); };
+            // The inherited native hash slot must use the class identity fallback.
+            if place == 8 && matches!(&method, Value::Adapter(slot) if slot.0 == 29) { return Ok(None); }
             let answer = self.bind_class_value(method, Some(value.clone()), maker).and_then(|bound| self.class_apply(bound, args));
             return match answer {
                 Ok(held) => Ok(Some(held)), Err(Fault::Note(words)) => Err(words),
@@ -8796,6 +8798,7 @@ impl<'a> Engine<'a> {
                 } else {
                     match &args[0] {
                         Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
+                        Value::Class(_) => Value::Small(args[0].core_hash().ok_or_else(|| self.special_fault())?),
                         Value::Small(_) | Value::Huge(_) => args[0].clone(),
                         Value::Flag(flag) => Value::Small(i64::from(*flag)),
                         // A loose member descriptor hashes by what it is
