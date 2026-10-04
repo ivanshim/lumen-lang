@@ -496,6 +496,8 @@ pub struct Machine<'a> {
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     wildcard_site: RefCell<Option<(Rc<str>, bool)>>,
     wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
+    revised_namespaces: std::collections::HashSet<Rc<str>>,
+    displaced_primitives: std::collections::BTreeSet<String>,
     loaded_spaces: HashMap<Rc<str>, String>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
@@ -1856,6 +1858,8 @@ impl<'a> Machine<'a> {
             namespace_places: RefCell::new(None),
             wildcard_site: RefCell::new(None),
             wildcard_names: HashMap::new(),
+            revised_namespaces: std::collections::HashSet::new(),
+            displaced_primitives: std::collections::BTreeSet::new(),
             loaded_spaces: HashMap::new(),
             within_spare: false,
             world_book: None,
@@ -5476,7 +5480,7 @@ impl<'a> Machine<'a> {
         if let Some((source, answer)) = self.wildcard_site.borrow().as_ref() {
             if Rc::ptr_eq(source, &self.written_in) { return *answer; }
         }
-        let answer = self.wildcard_names.contains_key(&self.written_in);
+        let answer = self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
         *self.wildcard_site.borrow_mut() = Some((self.written_in.clone(), answer));
         answer
     }
@@ -22738,6 +22742,16 @@ fn suspension_within(form: &Form) -> bool {
 
 impl Machine<'_> {
     fn spread_value(&self, word: &str) -> Option<Value> {
+        if self.revised_namespaces.contains(&self.written_in) {
+            let namespace = self.loaded_spaces.get(&self.written_in).and_then(|id| self.imported.get(id));
+            if let Some(Value::Thing(module)) = namespace {
+                let holds = module.holds.borrow();
+                if let Some((_, binding)) = holds.iter().find(|entry| entry.0 == word) {
+                    let live = binding.settled();
+                    if !matches!(live, Value::Unset) { return Some(live); }
+                }
+            }
+        }
         // Library helpers keep their own native operations even when
         // the calling module has imported a replacement for that word.
         if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }

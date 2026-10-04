@@ -3170,6 +3170,21 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        // A late module binding also replaces a compiled builtin in its code.
+        if self.lang.shadow_builtins && self.lang.builtins.contains_key(name) {
+            if let Some(owner) = self.module_holding(&subject) {
+                if self.lang.names_module.first().is_some_and(|word| word == &owner) {
+                    let native = self.lang.builtins.get(name);
+                    let restored = value.as_ref().is_some_and(|held| matches!(held.contents(), Value::Native(op, _) if Some(&op) == native));
+                    if restored { self.changed_builtins.remove(name); }
+                    else { self.changed_builtins.insert(name.to_string()); }
+                }
+                for (source, (_, module)) in &self.module_slots {
+                    if module == &owner { self.changed_builtin_scopes.insert(source.clone()); }
+                }
+                self.wildcard_file = None;
+            }
+        }
         if let Value::Object(instance) = &subject {
             if let Some(kind) = Self::own_kind(&instance.class_now()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if name == "__name__" || (kind == "ParamSpec" && name == "__bound__") { return Err("AttributeError: readonly attribute".into()); }

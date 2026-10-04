@@ -3502,6 +3502,21 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        // Native lowering must still honor namespace changes made after import.
+        if self.rules.names_shadow_builtins && self.table.prims.contains_key(key) {
+            if let Some(module) = self.namespace_holding(&subject) {
+                if self.rules.lists[215].first().is_some_and(|id| id == &module) {
+                    let original = self.table.prims.get(key).copied();
+                    match replacement.as_ref().map(Value::settled) {
+                        Some(Value::Intrinsic(op, _)) if Some(op) == original => { self.displaced_primitives.remove(key); }
+                        _ => { self.displaced_primitives.insert(key.to_owned()); }
+                    }
+                }
+                self.revised_namespaces.extend(self.loaded_spaces.iter()
+                    .filter(|(_, owner)| *owner == &module).map(|(site, _)| site.clone()));
+                self.wildcard_site.borrow_mut().take();
+            }
+        }
         if let Value::Thing(object) = &subject {
             if let Some(kind) = Self::native_word(&object.blueprint()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if key == "__name__" || kind == "ParamSpec" && key == "__bound__" { return Err(String::from("AttributeError: readonly attribute").into()); }

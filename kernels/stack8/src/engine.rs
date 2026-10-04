@@ -163,6 +163,8 @@ pub struct Engine<'a> {
     // an empty table leaves ordinary builtin calls on their fast path.
     wildcard_file: Option<Rc<str>>,
     wildcard_active: bool,
+    changed_builtin_scopes: std::collections::HashSet<Rc<str>>,
+    changed_builtins: std::collections::HashSet<String>,
     wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
     module_slots: HashMap<Rc<str>, (usize, String)>,
     /// Names now under construction: a module reading its own name back
@@ -1370,6 +1372,8 @@ impl<'a> Engine<'a> {
             module_addresses_ready: std::cell::Cell::new(false),
             wildcard_file: None,
             wildcard_active: false,
+            changed_builtin_scopes: std::collections::HashSet::new(),
+            changed_builtins: std::collections::HashSet::new(),
             native_stack_start: &lang as *const &Lang as usize,
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
@@ -6199,7 +6203,7 @@ impl<'a> Engine<'a> {
             return names;
         }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
-        let inventory = format!("{}:{}", held.core_kind(), match family { Kindred::Bytes(true) | Kindred::Set(true) | Kindred::View(true) => 1, _ => 0 });
+        let inventory = format!("{}:{}", sample.core_kind(), match family { Kindred::Bytes(true) | Kindred::Set(true) | Kindred::View(true) => 1, _ => 0 });
         if let Some(saved) = self.native_names.borrow().get(&inventory) { return saved.clone(); }
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
@@ -22286,13 +22290,23 @@ impl Engine<'_> {
     fn wildcard_in_scope(&mut self) -> bool {
         let changed = self.wildcard_file.as_ref().map_or(true, |file| !Rc::ptr_eq(file, &self.source));
         if changed {
-            self.wildcard_active = self.wildcard_slots.contains_key(&self.source);
+            self.wildcard_active = self.wildcard_slots.contains_key(&self.source) || self.changed_builtin_scopes.contains(&self.source) || !self.changed_builtins.is_empty();
             self.wildcard_file = Some(self.source.clone());
         }
         self.wildcard_active
     }
 
     fn wildcard_value(&self, name: &str) -> Option<Value> {
+        if self.changed_builtin_scopes.contains(&self.source) {
+            if let Some((_, owner)) = self.module_slots.get(&self.source) {
+                if let Some(Value::Object(namespace)) = self.modules.get(owner) {
+                    if let Some((_, held)) = namespace.fields.borrow().iter().find(|(key, _)| key == name) {
+                        let value = held.contents();
+                        if !matches!(value, Value::Blank) { return Some(value); }
+                    }
+                }
+            }
+        }
         let at = self.wildcard_slots.get(&self.source)?.get(name)?;
         let held = match self.world.get(*at)? {
             Value::Bond(cell) => cell.borrow().clone(),
