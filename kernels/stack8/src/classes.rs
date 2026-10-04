@@ -805,7 +805,9 @@ impl<'a> Engine<'a> {
         }
     }
     fn own_class_value(c: &Class, name: &str) -> Option<Value> {
-        if let Some((_,v)) = c.shared.borrow().iter().find(|(n,_)| n == name) { return Some(v.clone()); }
+        if let Some((_,v)) = c.shared.borrow().iter().find(|(n,_)| n == name) {
+            return if matches!(v.contents(), Value::Blank | Value::Gap) { None } else { Some(v.clone()) };
+        }
         c.methods.iter().find(|(n,_)| n == name).map(|(_,p)| Value::Routine(p.clone()))
             .or_else(|| c.constants.iter().find(|(n,_)| n == name).map(|(_,v)| v.clone()))
     }
@@ -1493,7 +1495,7 @@ impl<'a> Engine<'a> {
                 if let Some(f) = init {
                     let bound=self.bind_class_value(f,Some(object.clone()),o.class_now().clone())?;
                     let answer = self.class_apply(bound,args)?;
-                    if !matches!(answer,Value::Null) { return Err(self.class_refusal()); }
+                    if !matches!(answer.contents(),Value::Null) { return Err(self.class_refusal()); }
                 } else if let Some(worth @ Value::Set(_)) = Self::worth_of(&object).filter(|v| !v.set_fixed()) {
                     let mut positional = Vec::new();
                     let mut keywords = Vec::new();
@@ -1778,7 +1780,14 @@ impl<'a> Engine<'a> {
         }
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
-                let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
+                let dynamic = match receiver {
+                    Value::Object(o) => o.class_now().clone(),
+                    Value::Class(c) => {
+                        if std::iter::once(c).chain(c.lineage.iter()).any(|base| Rc::ptr_eq(base, owner)) { c.clone() }
+                        else { Self::maker_beneath(c).unwrap_or_else(|| c.clone()) }
+                    }
+                    _ => return Err(self.class_refusal()),
+                };
                 let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.iter().cloned()).collect();
                 if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
                     for class in &order[start + 1..] {
@@ -1788,7 +1797,25 @@ impl<'a> Engine<'a> {
                             }
                         }
                         if let Some(value) = Self::own_class_value(class, name) {
-                            return self.bind_class_value(value, Some(receiver.clone()), dynamic);
+                            return self.bind_class_value(value, if name == self.class_word("allocate") { None } else { Some(receiver.clone()) }, dynamic);
+                        }
+                        if Self::own_kind(class).is_some() || self.exception_class(class) {
+                            let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");
+                            let native_method = match Self::worth_of(receiver) {
+                                Some(worth) => matches!(self.builtin_member(&worth, name)?, Some(Value::ValueMethod(_))),
+                                None => false,
+                            };
+                            if constructing || native_method {
+                                return Ok(Self::adapter(44, vec![receiver.clone(), Value::text(&owner.name), Value::text(name)]));
+                            }
+                        }
+                        if Self::own_class_value(class, self.class_word("module")).is_none() {
+                            let base_value = Self::own_kind(class).and_then(|word| self.spelled_kind(&word)).unwrap_or_else(|| Value::Class(class.clone()));
+                            match self.class_get(base_value, name, false) {
+                                Ok(value) => return Ok(if matches!(&value, Value::Adapter(payload) if [2, 10, 11, 12, 19, 29, 30, 41].contains(&payload.0)) { Self::adapter(3, vec![value, receiver.clone()]) } else { value }),
+                                Err(fault) if self.attribute_fault(&fault) => (),
+                                Err(fault) => return Err(fault),
+                            }
                         }
                         if Self::own_kind(class).is_some() {
                             if let Some(descriptor) = self.loose_kind_member(&Value::Class(class.clone()), name) {
@@ -2050,6 +2077,10 @@ impl<'a> Engine<'a> {
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
+                if self.is_metaclass_root(c) {
+                    if name == self.class_word("allocate") { return Ok(Self::adapter(40, Vec::new())); }
+                    if name == self.class_word("call") { return Ok(Self::adapter(41, Vec::new())); }
+                }
                 if !self.class_word("name").is_empty() {
                     if let Some(maker) = Self::maker_beneath(c) {
                         if let Some(member) = self.class_value(&maker, name).filter(|member| self.takes_writes(member) && (matches!(member, Value::Adapter(w) if matches!(w.0, 6 | 16 | 28)) || self.descriptor_hook(member, "descriptor.get").is_some())) {
@@ -2252,6 +2283,7 @@ impl<'a> Engine<'a> {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
                 if name == self.class_word("kind") {
+                    if self.module_holding(&subject).is_some() { return Ok(self.named_kind(&subject)); }
                     let actual = o.class_now().clone();
                     if let Some(overridden) = self.class_value(&actual, name) {
                         return self.bind_class_value(overridden, Some(subject.clone()), actual);
@@ -3030,7 +3062,7 @@ impl<'a> Engine<'a> {
                 // A module's members are its own bindings, written through
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
-                let module=self.modules.values().any(|held|matches!(held,Value::Object(space) if Rc::ptr_eq(space,o)));
+                let module=self.module_holding(&subject).is_some();
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {

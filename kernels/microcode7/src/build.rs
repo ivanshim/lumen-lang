@@ -683,6 +683,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
+                        if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
                         stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
                     }
                 }
@@ -2147,6 +2148,7 @@ impl<'a> Builder<'a> {
             _ => return None,
         };
         if self.tokens.get(named)?.shape != Shape::Bare { return None; }
+        if head == "type" && !word(named).chars().next().is_some_and(|letter| letter.is_alphabetic() || letter == '_') { return None; }
         let mut cursor = named + 1;
         let has_types = word(cursor) == "[";
         if has_types {
@@ -2975,7 +2977,7 @@ impl<'a> Builder<'a> {
             if self.key("stmt.for") {
                 return self.for_stmt();
             }
-            if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+            if self.key("ext.stmt.type_alias") && self.glance(1).lexeme.chars().next().is_some_and(|letter| letter.is_alphabetic() || letter == '_') {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
                 self.advance();
                 let alias = self.need_word("as the type alias")?;
@@ -8024,7 +8026,11 @@ impl<'a> Builder<'a> {
         self.place_depth += usize::from(writing);
         let enclosing_mark = self.kind_mark.take();
         if boundary { self.kind_mark = self.declaration_mark(); }
-        let read = self.expr_at(0, false);
+        let read = if self.kind_mark == Some(began + 1) && self.look().shape == Shape::Bare {
+            let name = self.advance().lexeme;
+            self.claim(&name);
+            Ok(Form::Read(self.address_to_write(&name)))
+        } else { self.expr_at(0, false) };
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let mut expr = read?;

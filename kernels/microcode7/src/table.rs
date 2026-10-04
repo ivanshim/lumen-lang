@@ -106,6 +106,9 @@ pub struct Table {
     /// asks this, so it is a field rather than a name built afresh and
     /// looked into at each one.
     pub has_class_order: bool,
+    pub quoted_letters: Vec<char>,
+    pub quoted_prefixes: Vec<(char, u8)>,
+    pub quoted_terminators: Vec<Vec<char>>,
 }
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.
@@ -230,7 +233,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 306] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 308] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -474,6 +477,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 306] = [
     ("ext.builtin.dir.make_one", Prim::DirOne), ("ext.builtin.dir.change", Prim::DirStep),
     ("ext.builtin.shell", Prim::Shelled), ("ext.builtin.net.ask", Prim::Reached), ("ext.builtin.wait", Prim::Bided),
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid), ("ext.builtin.subprocess", Prim::Subprocess), ("ext.builtin.posix", Prim::Posix),
+    ("ext.builtin.json.scanstring", Prim::JsonStringScan), ("ext.builtin.text.scan_ascii", Prim::AsciiRun),
     ("ext.builtin.signal", Prim::Signal),
 ];
 
@@ -550,8 +554,18 @@ impl Table {
             keywords: HashSet::new(),
             signs: Vec::new(),
             has_class_order: false,
+            quoted_letters: Vec::new(), quoted_prefixes: Vec::new(), quoted_terminators: Vec::new(),
         };
         table.has_class_order = table.single("ext.stmt.class.detail.root").map_or(false, |s| !s.is_empty());
+        table.quoted_letters = table.letters("lexical.string_quotes");
+        table.quoted_terminators = table.strings("ext.lexical.string.long").iter().map(|word| word.chars().collect()).collect();
+        for (category, part) in ["raw", "bytes", "plain", "format", "template"].iter().enumerate() {
+            for character in table.letters(&format!("ext.lexical.string.prefix.{part}")) {
+                if !table.quoted_prefixes.iter().any(|(letter, _)| *letter == character) {
+                    table.quoted_prefixes.push((character, category as u8));
+                }
+            }
+        }
         if !matches!(table.lone("system.real.render"), Some("library" | "shortest")) {
             return Err(String::from("The real rendering is neither 'library' nor 'shortest'"));
         }

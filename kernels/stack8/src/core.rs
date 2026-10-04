@@ -261,8 +261,6 @@ impl Value {
                 }
                 Some(if h == u64::MAX { 1546275796 } else { h as i64 })
             }
-            Value::Native(_, spelling) => Value::text(spelling).core_hash(),
-            Value::ByteKind(changeable, _) => Some(i64::from(*changeable)),
             _ => None,
         }
     }

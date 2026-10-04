@@ -92,6 +92,8 @@
   "ext.builtin.host.info": [
     "__host_info"
   ],
+  "ext.builtin.text.scan_ascii": ["__text_scan_ascii"],
+  "ext.builtin.json.scanstring": ["__json_string_scan"],
   "ext.builtin.subprocess": [
     "__subprocess"
   ],
@@ -890,7 +892,8 @@
     "BlockingIOError",
     "PermissionError",
     "FileExistsError",
-    "NotADirectoryError"
+    "NotADirectoryError",
+    "BrokenPipeError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -2780,6 +2783,9 @@
   ],
   "ext.stmt.class.detail.bases": [
     "__bases__"
+  ],
+  "ext.stmt.class.detail.base": [
+    "__base__"
   ],
   "ext.stmt.class.detail.call": [
     "__call__"

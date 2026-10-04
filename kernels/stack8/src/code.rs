@@ -638,6 +638,9 @@ pub enum Builtin {
     /// word that is told which step it is on. Only a language spelling
     /// this may run a second interpreter beside itself and read its
     /// writing back.
+
+    AsciiSpan,
+    JsonString,
     Subprocess,
     Posix,
     /// The host's own signals, one word told which step it is on

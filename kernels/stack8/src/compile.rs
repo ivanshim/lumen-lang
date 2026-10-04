@@ -2116,6 +2116,7 @@ impl<'a> Compiler<'a> {
         } else if !["def", "class", "type"].contains(&first) { return None; }
         if self.tokens.get(name_at)?.shape != Shape::Instr { return None; }
         let alias = first == "type";
+        if alias && !spelling(name_at).chars().next().is_some_and(|c| c == '_' || c.is_alphabetic()) { return None; }
         let mut at = name_at + 1;
         let generic = spelling(at) == "[";
         if generic {
@@ -2691,7 +2692,7 @@ impl<'a> Compiler<'a> {
                     else { "SyntaxError: 'continue' not properly in loop" }.into());
             }
         }
-        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
+        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).lexeme.chars().next().is_some_and(|c| c == '_' || c.is_alphabetic()) {
             let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.take();
             let alias = self.want_name("as the type alias")?;
@@ -8182,7 +8183,13 @@ impl<'a> Compiler<'a> {
         let saved_place = std::mem::replace(&mut self.writing_place, writing_target);
         let outer_annotation = self.annotation_target;
         self.annotation_target = if starts_here { self.statement_annotation() } else { None };
-        let expression = self.expr_at(0, false);
+        let expression = if self.annotation_target == Some(target_at + 1) && self.look().shape == Shape::Instr {
+            let named = self.take().lexeme;
+            self.claim(&named);
+            let target = self.cell_to_write(&named);
+            self.put(Instr::Read(target));
+            Ok(())
+        } else { self.expr_at(0, false) };
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;

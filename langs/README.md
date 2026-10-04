@@ -2658,7 +2658,9 @@ only. The extension labels so far, all from PHP:
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
-  file, two for a directory, nought for neither.
+  file, two for a directory, nought for neither. A second boolean argument
+  requests POSIX stat fields, following symlinks when true; a failed query
+  returns its host errno and message.
 - `ext.builtin.dir.list`, `.make` and `.remove_tree`: builtins that
   reach outside the run alongside the file ones above — a directory's
   own entries, by name alone; a fresh directory made under one already
@@ -4597,6 +4599,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
 | `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BrokenPipeError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4661,6 +4664,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.iter.stop_value` | - | - | - | - | - | - | - | - | - | - |
 | `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.itertools.product_step` | - | - | `__itertools_product_step` | - | - | - | - | - | - | - |
+| `ext.builtin.json.scanstring` | - | - | `__json_string_scan` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
@@ -4816,6 +4820,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.re.shortcut` | - | - | `__re_shortcut` | - | - | - | - | - | - | - |
 | `ext.builtin.rebuild_native` | - | - | `__rebuild_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.reduce_native` | - | - | `__reduce_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
@@ -4955,6 +4960,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.rpartition` | - | - | `rpartition` `str.rpartition` | - | - | - | - | - | - | - |
 | `ext.builtin.text.rsplit` | - | - | `rsplit` `str.rsplit` | - | - | - | - | - | - | - |
 | `ext.builtin.text.rstrip` | - | - | `rstrip` `str.rstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.text.scan_ascii` | - | - | `__text_scan_ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.text.split` | - | - | `split` `str.split` | - | - | - | - | - | - | - |
 | `ext.builtin.text.splitlines` | - | - | `splitlines` `str.splitlines` | - | - | - | - | - | - | - |
 | `ext.builtin.text.startswith` | - | - | `startswith` `str.startswith` | - | - | - | - | - | - | - |
@@ -5945,3 +5951,40 @@ The class-seal helper also seals completed instance storage against all subseque
 `ext.stmt.class.detail.module.path` names the search-path attribute of imported source packages, initialized to the directory containing their initializer.
 
 `ext.stmt.class.detail.module.spec` names the import specification slot of native source namespaces. It starts empty; the Python import machinery installs the specification when it creates a module through a finder. Source discovery accepts packages and searches a child within its parent package path.
+### Python JSON and command-line library sources
+
+The JSON package, pathlib package, argparse, gettext, difflib, locale,
+encodings initializer and aliases, dataclasses, glob, stat, genericpath, _colorize,
+posixpath, ntpath, and _collections_abc are copied from CPython commit
+3b564385e4c9 under the PSF License. Each source retains its original bytes
+after the first provenance comment. The os.path manifest alias embeds the
+same posixpath source.
+
+The separate _json module implements the scanner, string escaping and
+encoder interfaces independently in Python, including callback validation,
+circular-reference detection and serialization notes. Its functions are
+defined in that module; the JSON fallback functions remain unchanged.
+_locale, _codecs, _os_pathlike, and the existing interpreter adapters supply
+the host and object-model interfaces used by the copied libraries. Terminal
+size fallback and abstract-method updates retain the corresponding CPython
+functions in the adapter modules.
+
+The command line accepts Python -c source and -m module/package execution,
+and subprocesses invoke this interpreter through sys.executable.
+
+`ext.stmt.class.detail.base` names a class's primary base, selected by its
+native instance layout when multiple bases are present.
+
+`ext.builtin.json.scanstring` provides a native JSON string scanner. It
+returns a decoded string and ending code-point offset for a valid UTF-8
+string, or no result so the separate scanner adapter handles unpaired
+surrogates, permissive controls, and precise error diagnostics.
+
+`ext.builtin.text.scan_ascii` scans the bounded ASCII span accepted by a
+character set and returns its ending code-point index. The regular-expression
+adapter uses it for repeated atoms and captured spans, retaining its Unicode
+matching rules when the scan reaches a non-ASCII character.
+
+`ext.builtin.re.shortcut` computes the existing regular-expression adapter's
+ASCII atom sets and capture endpoints/groups. Unsupported input shapes
+return no result and retain the adapter's existing Unicode and object paths.
