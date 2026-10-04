@@ -6255,15 +6255,15 @@ impl<'a> Engine<'a> {
 
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
-        if let Some((_, owner)) = o.fields.borrow().iter().find(|(name, _)| name == "\0module-owner") {
-            if let Value::Text(path) = owner.contents() { return Some(path.to_string()); }
-        }
         let own = o.class_now();
         if !own.direct.is_empty() && Self::kind_beneath(&own).as_deref() != Some("module") { return None; }
         if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
+        let fields = o.fields.try_borrow().ok()?;
+        if let Some((_, owner)) = fields.iter().find(|(name, _)| name == "\0module-owner") {
+            if let Value::Text(path) = owner.contents() { return Some(path.to_string()); }
+        }
         let class = o.class_now();
         if class.direct.is_empty() && class.base.is_none() && class.python_names.borrow().is_none() {
-            let fields = o.fields.borrow();
             for (key, held) in fields.iter() {
                 if self.lang.module_names.contains(key) {
                     if let Value::Text(name) = held.contents() { return Some(name.to_string()); }
@@ -6271,7 +6271,6 @@ impl<'a> Engine<'a> {
             }
         }
         if !self.lang.module_names.is_empty() && Self::kind_beneath(&o.class_now()).as_deref() == Some("module") {
-            let fields = o.fields.borrow();
             return fields.iter().find_map(|(key, held)| {
                 if !self.lang.module_names.contains(key) { return None; }
                 match held.contents() { Value::Text(word) => Some(word.to_string()), _ => None }
