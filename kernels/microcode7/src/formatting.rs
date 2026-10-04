@@ -29,11 +29,25 @@ type Answer = Result<String, String>;
 pub enum NumberAnswer {
     Whole(Value),
     Missing(String),
+    /// A known character-format type label, including a valid empty label.
+    CharacterType(String),
     BadMethod(String),
 }
 
 impl Layout<'_> {
     pub fn complain(&self, label: &str, inserts: &[&str]) -> String {
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.character" && inserts.len() == 3 {
+            let required = if inserts[1] == "an integer or a unicode character" { "an int or a unicode character" } else { inserts[1] };
+            return format!("TypeError: %c requires {}, not {}", required, inserts[2]);
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(label, "ext.op.rem.format.number" | "ext.op.rem.format.real") && inserts.len() == 3 {
+            let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
+            return format!("TypeError: %{} format: a real number is required, not {}", inserts[1], kind);
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.integer" && inserts.len() == 3 {
+            let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
+            return format!("TypeError: %{} format: an integer is required, not {}", inserts[1], kind);
+        }
         self.table.strings(label).iter().enumerate().map(|(n, word)| {
             let mut fragment = word.clone();
             fragment.push_str(inserts.get(n).copied().unwrap_or(""));
@@ -573,6 +587,11 @@ impl Layout<'_> {
                         _ => match asked.value_numbered(item, conversion)? {
                             NumberAnswer::Whole(whole) => self.character(&whole, of_bytes)
                                 .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                            NumberAnswer::CharacterType(name) => {
+                                let required = if of_bytes { "an integer in range(256) or a single byte" }
+                                    else { "an integer or a unicode character" };
+                                return Err(self.complain("ext.op.rem.format.character", &[&location, required, &name]));
+                            },
                             NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
                                 let expected = if of_bytes { "an integer in range(256) or a single byte" }
                                     else { "an integer or a unicode character" };
@@ -614,6 +633,7 @@ impl Layout<'_> {
                                 let named = if name.is_empty() { item.kind_word() } else { name };
                                 return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
                             }
+                            NumberAnswer::CharacterType(_) => unreachable!(),
                         }
                     }
                     if accepts_real {
@@ -668,6 +688,10 @@ impl Layout<'_> {
     }
 
     fn unsupported(&self, letter: char, start: usize, at: usize, is_bytes: bool) -> String {
+        if self.table.flag("ext.op.arithmetic.python_numbers") {
+            let number = u32::from(letter);
+            return format!("ValueError: unsupported format character '{letter}' (0x{number:x}) at index {at}");
+        }
         if letter.is_ascii_alphanumeric() {
             return self.complain("ext.op.rem.format.code", &[&letter.to_string(), &start.to_string()]);
         }

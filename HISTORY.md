@@ -2318,3 +2318,145 @@ normal relative-path helper. No Python test or input fixture is weakened.
 The merged count is 2620 on both kernels, up from 2619. Complete final
 build-machine fallbacks retain microcode7 math, str and long at 82, 127
 and 35 where Lambda times out.
+
+### 1av. Batch 20t merged as #527; batch 20u: speed, with nothing else changed
+
+Batch 20u folds three speed branches, written by GPT-6.1 Sol workers and integrated by another: fix/perf-mc7-core
+(microcode7's instruction dispatch and call path), fix/perf-mc7-data (microcode7's dict, set, string and object data
+operations) and fix/perf-s8-lookup (stack8's attribute, method and name lookup). Their rule was speed with behaviour
+exactly unchanged: an independent read-only review accepted all three, and the merged full check shows no count change
+at all — every progress line of the fifty files is identical, 1180 scratch programs agree, and every gate passes.
+
+Measured on the build machine (debug builds): microcode7 runs test_str 2.09× faster (624.9 → 299.3 s), test_math 1.45×
+faster (706.5 → 485.9 s) and a set/string probe 1.89× faster; a stack8 lookup probe runs 1.31× faster. microcode7's
+MathTests and StrTest classes now finish inside AWS Lambda's 870-second limit (725 s and 513 s), so their counts no
+longer need whole-file runs on the build machine.
+
+Merged, the fifty files still count 2620 on both kernels.
+
+### 1aw. Batch 20u merged as #528; batch 20v: Python arithmetic and the first standard-library tests
+
+Batch 20v folds six reviewed branches, integrated by a GPT-6.1 Sol worker. fix/python-floor-final (GPT-6.1 Sol) gives
+Python its own floor division, modulo sign and round-half-even behind Python labels: binop, builtin, float, fractions,
+long, math, pow and range gain 14 passes between them. fix/class-doc-name (GPT-6.1 Sol) adds two builtin passes from
+class metadata lookup; fix/startup-cleanup (DeepSeek V4 Pro) one from orderly interpreter shutdown;
+fix/with-signals-inferencenet (Kimi K3) one test_with pass from signal delivery inside with-blocks.
+
+The other two start the deployability track: CPython 3.14's own test files added byte for byte from commit
+3b564385e4c9, with the library they test. fix/stdlib-functools (GPT-6.1 Sol) adds test_functools and test_operator and
+the unchanged test.support files they import; fix/stdlib-text (DeepSeek V4 Pro) adds test_textwrap, test_fnmatch and
+test_shlex. Measured on both kernels: test_functools 152/340, test_operator 49/110, test_textwrap 68/68, test_fnmatch
+24/24, test_shlex 30/46.
+
+The Lambda checker now splits test_long by class and the slowest classes by method, finding inherited test methods with
+Python's own parser (a regex had dropped 45 StrTest methods). The merged full check completes every file on Lambda
+except one MathTests part past the 870-second limit on both kernels, whose 83/88 was counted whole on the build
+machine. No pass is lost anywhere; 1180 scratch programs agree; every gate passes.
+
+Merged, the fifty-five files count 2961 of 3390 on both kernels (2620 of 2802 on fifty files before).
+
+### 1ax. Batch 20v merged as #529; batch 20w: builtins, four small modules and itertools
+
+Batch 20w folds eight reviewed branches, integrated by a GPT-6.1 Sol worker. fix/python-floor-final's ord continuation
+(GPT-6.1 Sol) keeps ord_chr.py genuine Python and gains one builtin pass; fix/builtins-mapping (DeepSeek V4 Pro) two,
+from mapping globals and from-import resolution through custom import hooks; fix/async-code-flags (GPT-6.1 Sol) one, from
+coroutine code flags; fix/dir-traceback (GPT-6.1 Sol) one, from interpreter positions recorded in tracebacks;
+fix/math-sumprod (GPT-6.1 Sol) one test_math pass, from a native sumprod and package-relative imports.
+fix/stdlib-small (GPT-6.1 Sol) adds CPython's test_bisect, test_copy, test_heapq and test_keyword with their library;
+fix/stdlib-itertools (GPT-6.1 Sol) adds test_itertools with a faithful itertools; fix/perf-startup (DeepSeek V4 Pro)
+caches the language definition's extension roster, making stack8's debug start-up about five times faster with no
+change in behaviour.
+
+Measured on both kernels: test_builtin 112 → 117, test_functools 152 → 156, test_math 83 → 84; new files test_bisect
+46/46, test_copy 83/83, test_heapq 69/69, test_itertools 111/136, test_keyword 11/11. The merged full check agrees on
+1180 scratch programs and passes every gate; no pass is lost. One MathTests part still exceeds Lambda's 870-second
+limit on both kernels, and microcode7 needs more than 870 seconds for test_heapq whole: both were counted whole on the
+build machine.
+
+A correction to §1aw: the reference suite's pinned CPython commit, 3b564385e4c9 (2026-09-07), is the development
+branch — version 3.16.0a0 — not CPython 3.14 as §1aw said. The next batch re-pins the suite and every copied library
+file to the CPython 3.14.8 release (tag v3.14.8, commit 8e6e75d9102e).
+
+Merged, the sixty files count 3291 of 3735 on both kernels (2961 of 3390 on fifty-five files before).
+
+### 1ay. Batch 20w merged as #530; the reference suite re-pinned to the CPython 3.14.8 release
+
+Until now every CPython file in the repository — the reference tests, their support files and data, and the library
+modules copied from CPython — came from commit 3b564385e4c9 of 2026-09-07, which is CPython's development branch,
+version 3.16.0a0 (§1aw and §1ax corrected the earlier description of it as 3.14). The owner decided to pin the
+project to a release instead: CPython 3.14.8 (tag v3.14.8, commit 8e6e75d9102e, 2026-09-30), the newest release of the
+version people run. One GPT-6.1 Sol worker did the re-pin; an independent review accepted it.
+
+Every CPython-derived file was inventoried (120 entries) and replaced by its v3.14.8 counterpart, byte for byte, each
+checked by SHA-256: 105 release bodies (72 test and support files, 20 library sources, 13 scratch copies), of which 58
+changed. Two fixtures with no counterpart in 3.14.8 were removed (test_import/data/syntax_warnings.py, in the tests and
+in the library's test package). Library adapters that are not CPython copies now live apart from the copied files.
+Python reports itself as 3.14.8 through sys and platform, and the post-release features the kernels had followed —
+explicit lazy imports, starred comprehensions, newer builtins and math functions, gi_state and iterator keywords — are
+switched off for Python by label; PHP and Lumen are unchanged.
+
+Because the tests themselves changed, the counts move once: 138 previously passing tests do not exist in 3.14.8; five
+tests now fail because 3.14.8 asks for different behaviour (a syntax-error caret span, warning attribution for a
+deprecated reduce keyword, writable generator frame locals, rebuilding a generator expression from its code object,
+list equality while an operand mutates), left failing honestly for later work; four tests new in 3.14.8 fail. Every
+other replaced-file regression was fixed. tests/README.md records the pin and the per-file provenance.
+
+Measured on both kernels, the sixty files count 3218 of 3596 against the CPython 3.14.8 suite (3291 of 3735 against
+the 3.16.0a0 snapshot before). The merged full check agrees on 1182 scratch programs and passes every gate; the one
+MathTests part that exceeds Lambda's 870-second limit and microcode7's slowest itertools class were counted separately.
+
+### 1az. The re-pin merged as #531; batch 20x: PEP 649 and 695 in both kernels, native type bases, frozen exec, generator resurrection
+
+The first batch measured against the CPython 3.14.8 suite (§1ay) is kernel work. Five branches, each certified on its
+own tip by a full check with no scratch mismatch and every gate passing:
+
+- fix/perf-mc7-slow: microcode7 speed for the slowest suites. Native float math inputs dispatch directly, binary
+  summation keeps its partials in the math backend, and list writes no longer copy snapshots; test_heapq now completes
+  on microcode7 (69/69 on both kernels). No count change; it removes timeouts.
+- fix/pep649-695: deferred annotations (PEP 649) and type-parameter syntax (PEP 695) compiled lazily in both kernels,
+  with native annotation and type-parameter objects and one shared Generic class for the public and native sides.
+- fix/type-base: native classes honour stored module metadata, Python C3 lookup respects native protocol entries, and
+  descriptor wrappers refuse keywords with CPython's wording.
+- fix/frozen-exec: stored Python descriptor values are called without interpreting strings, and native set methods bind
+  to their callable operations.
+- fix/generator-resurrection: suspended generators are refused in the default reduction paths, and list subclasses
+  respect an overridden allocation.
+
+GPT-6.1 Sol workers wrote the branches and the integration. An independent integration review by GPT-6 Astra found one
+interaction the sixty counted files could not see: the class-builder path from fix/frozen-exec returned before the
+implicit Generic base that fix/pep649-695 inserts, so `class C[T]: pass` kept its `__type_params__` but lost its
+Generic ancestry and inherited subscription. The repair carries the generic-class context into both kernels' Python
+class builders and appends the real shared Generic base after any explicit bases, leaving metaclass selection and
+custom `__build_class__` dispatch to ordinary construction; the PEP branch's identity, scope and subscription probes
+again print CPython's output on both kernels.
+
+The pull request's own CI then caught what the checks had not: stack8 printed the right traceback for
+`a, b = forever()` (an infinite generator) and then overflowed its stack while finalizing the abandoned generator, a
+crash from fix/generator-resurrection. The Lambda checker compared only a crashing program's first error line, so it
+now also treats a death by signal as a mismatch, and an earlier build was swept for other crashes (none). stack8 now
+closes a suspended generator once, while the engine is alive, and never rebuilds one during teardown; every
+generators-* scratch program exits with its expected status on both kernels. microcode7 still skips some finalizers at
+shutdown while exiting cleanly; that is left for later work.
+
+Measured on both kernels, the sixty files count 3224 of 3596 (3218 before): test_builtin 108 to 112, test_functools 152
+to 153, test_generators 54 to 55; no passing test was lost. The merged full check agrees on 1182 scratch programs with
+no mismatch and passes every gate (lumen 522/522, PHP 318/318, Python 128/128); kernel independence reports no problem.
+
+### 1ba. Batch 20x merged as #532; Python release selection
+
+The owner asked for lumen to say which CPython release it is identical with, and to keep the reference tests per
+release. One GPT-6.1 Sol worker built it; an independent review accepted it, and after 20x merged it was brought up
+to date and checked again.
+
+- `langs/python/versions.json` is the release table: each supported minor series (now 3.14) names its pinned release
+  (3.14.8: tag, commit, date), its test folder and its library and label overlays. The window is two minor versions.
+- The reference suite now lives in `tests/python-3.14.8/`, named by the full release, byte for byte as before; scripts,
+  counts and saved measurements are bound to the full release they measured.
+- `--python` on the command line, then `LUMEN_PYTHON`, then the configuration, then the newest release choose the
+  version. No version gives the newest; `x.y` gives that series' pinned release; an exact `x.y.z` that is pinned
+  runs silently; another micro release of a supported series runs the pinned one with a warning; anything else is an
+  error and lumen exits.
+
+Measured on both kernels, the sixty files count 3224 of 3596, identical file by file to batch 20x: the move changes no
+result. The full check agrees on 1182 scratch programs with no mismatch and passes every gate; kernel independence
+reports no problem.

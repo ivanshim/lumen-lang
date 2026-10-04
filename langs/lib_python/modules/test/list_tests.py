@@ -1,21 +1,14 @@
-# From CPython 3.14, Lib/test/list_tests.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/test/list_tests.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """
 Tests common to list and UserList.UserList
 """
 
 import sys
-# Trim: the absent comparison-key helper is fetched by its tests.
+from functools import cmp_to_key
 
 from test import seq_tests
 from test.support import ALWAYS_EQ, NEVER_EQ, run_with_limited_c_stack
 from test.support import skip_emscripten_stack_overflow, skip_wasi_stack_overflow
-
-
-def cmp_to_key(function):
-    from functools import cmp_to_key as convert
-    return convert(function)
 
 
 class CommonTest(seq_tests.CommonTest):
@@ -68,12 +61,9 @@ class CommonTest(seq_tests.CommonTest):
         self.assertEqual(str(a2), "[0, 1, 2, [...], 3]")
         self.assertEqual(repr(a2), "[0, 1, 2, [...], 3]")
 
-    # Trim: class method decorators cannot yet be carried here.
-    # @run_with_limited_c_stack(200_000) is an identity in this runtime.
-    # Trim: class method decorators cannot yet be carried here.
-    # @skip_wasi_stack_overflow() is an identity in this runtime.
-    # Trim: class method decorators cannot yet be carried here.
-    # @skip_emscripten_stack_overflow() is an identity in this runtime.
+    @run_with_limited_c_stack(200_000)
+    @skip_wasi_stack_overflow()
+    @skip_emscripten_stack_overflow()
     def test_repr_deep(self):
         a = self.type2test([])
         for i in range(200_000):

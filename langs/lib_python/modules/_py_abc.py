@@ -1,7 +1,4 @@
-# CPython's Lib/_py_abc.py, byte for byte from python/cpython commit
-# 3b564385e4c9 (the commit the reference suite in tests/python is
-# taken from), under the PSF licence (tests/python/LICENSE).
-
+# Source: CPython Lib/_py_abc.py at v3.14.8 / 8e6e75d9102e; PSF License.
 from _weakrefset import WeakSet
 
 

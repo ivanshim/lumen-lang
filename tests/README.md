@@ -11,12 +11,36 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
-| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, the standard-library test files the definitions have grown into (`test_contextlib.py`, `test_abc.py`), and the support data they read (`mathdata/`, `test_import/data/syntax_warnings.py`, and the directories `data/` and `archivetestdata/` that `test_contextlib.py` changes into, each by its README alone) | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
+
+## CPython 3.14.8 suite
+
+The supported pins and directories come from
+[`langs/python/versions.json`](../langs/python/versions.json). One release per
+series is retained, in a window of two series; only 3.14 is registered today.
+
+| Directory | Source | Release / tag | Commit / release date | License |
+|---|---|---|---|---|
+| `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_contextlib.py`, `test_abc.py`, and support data (`mathdata/`, and the directories `data/` and `archivetestdata/` that `test_contextlib.py` changes into, each by its README alone) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
+The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
+are also preserved byte for byte at that commit. The embedded runtime support
+modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
-`unittest` module; none can run yet, and each stops at the first construct
-the definition or a kernel does not know, which the report records.
+`unittest` module. The suite measures released CPython 3.14.8 semantics;
+unsupported behaviour remains visible as a failure or error.
+The release repin covered 120 source/provenance entries: 73 test/support
+files, 34 library source/adapter files, and 13 full scratch copies. SHA-256
+verification matched 105 release bodies (72 tests/support files, 20 complete
+library sources, and 13 scratch copies); thirteen documented partial runtime
+adapters remain separate. Complete library sources are unchanged beneath
+release provenance headers, with native bridges in `runtime_adapters/`.
+The only removed files were the two copies of
+`Lib/test/test_import/data/syntax_warnings.py`, which has no v3.14.8 counterpart.
+Detailed working inventories and measurements stay in the ignored worker
+scratch area rather than the repository.
 
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the
@@ -32,3 +56,11 @@ The suites are not part of `test.sh`: they measure distance, they do not gate. R
 python3 scripts/reference_tests.py            # both full kernels
 python3 scripts/reference_tests.py --kernel microcode7
 ```
+
+The report runs every registered suite with its exact `--python` pin. To select
+one suite, pass `--python 3.14`; `--binary target/debug/lumen-lang --no-build`
+uses an existing debug build. Count tools accept the same `--python` option,
+then `LUMEN_PYTHON`, then the newest registered release. Never edit a reference
+file. A bugfix refresh uses `git mv` on its full-release directory and replaces
+the table pin; it does not keep an older micro release. Add a provenance table
+here for each newly registered series.

@@ -6,11 +6,14 @@ _host_stream_write = __stream_write
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# Nothing stands here by default, since nothing outside the library
-# this run carries is on the way until a program puts it there.
-path = [argv[0].rsplit('/', 1)[0] if '/' in argv[0] else '']
+# The isolated default contains the library's own source location.
+# Callers add other directories explicitly; a program's directory is not
+# placed ahead of the embedded library merely because it contains a script.
+path = [__file__.rsplit('/', 1)[0]]
 maxsize = 9223372036854775807
-version_info = (3, 14, 0, 'final', 0)
+version_info = (3, 14, 8, 'final', 0)
+version = '3.14.8 (Lumen)'
+hexversion = 0x030e08f0
 platform = 'linux'
 # Which Python this is. A test that reaches for the internals of the
 # reference implementation asks the name here first, and the honest

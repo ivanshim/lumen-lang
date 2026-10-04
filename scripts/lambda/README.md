@@ -21,7 +21,7 @@ The results match the same checks run on the build machine exactly.
 1. On the build machine (reached by `ssh $LUMEN_BOX`), the worktree's own
    debug build is stripped and packed with the machine's dynamic loader and C
    library (Lambda's own C library is older), the handler, and the tree's
-   `scratch/`, `langs/`, `examples/` and `tests/python/`.
+   `scratch/`, `langs/`, `examples/` and the suite directories from `langs/python/versions.json`.
 2. A short-lived function `lumen-v-<label>` (Python 3.12 runtime, arm64,
    1,769 MB = one vCPU, 15-minute limit) is created from the package.
 3. `sweep.py` applies CI's scratch rule (exact stdout for `.out` records, the
@@ -57,3 +57,6 @@ looks for its library at the path it was built in).
   scratch directory for packages and counts (default /tmp/lumen-lambda).
 
 A sweep costs about US$0.27; gates and a count about US$0.50 more.
+
+Reference counts use one output directory per full release and pass that
+release via `--python`; count names include `CPython x.y.z suite`.

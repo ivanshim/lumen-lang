@@ -39,6 +39,8 @@ thread_local! {
 struct ClassParts {
     lexical_members: Vec<String>,
     completed_class: Address,
+    needs_class_cell: bool,
+    class_cell_protocol: bool,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
@@ -90,6 +92,7 @@ const MET_ANNOTATED: u8 = 2;
 struct Layer {
     permits_async: bool,
     async_walk_seen: bool,
+    return_value_at: Option<usize>,
     gathering_kind: Option<&'static str>,
     expression_targets: Vec<String>,
     comprehension: bool,
@@ -288,7 +291,12 @@ pub struct Builder<'a> {
     outside_lambda: Vec<String>,
     loop_depth: usize,
     range_end: Option<(usize, u32)>,
+    annotation_lookup: bool,
+    annotation_owner: Option<(String, Vec<String>)>,
+    generic_class_body: bool,
+    annotations_as_strings: bool,
     annotation_sites: Vec<(String, usize)>,
+    module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
     declarations: Vec<(usize, String, bool)>,
 }
@@ -534,7 +542,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { async_walk_seen: false, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
+    let top = Layer { async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -545,7 +553,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() });
     }
     let outer_layers = layers.len();
     if read_in && outer_layers > 1 {
@@ -564,7 +572,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -671,7 +679,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
             if opening && own_line && within.is_none() {
-                let first = match &stmt { Form::OnLine(_, inner) => inner.as_ref(), other => other };
+                let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
@@ -691,11 +699,25 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         sequence(ahead)
     };
     let body = if r.module_sites.is_empty() { body } else {
-        r.annotation_sites = std::mem::take(&mut r.module_sites);
-        let annotation = r.build_annotator()?.expect("module annotations");
-        let name = annotation.ident.clone();
-        let bind = r.write(&name, constant(Value::Routine(annotation)));
-        sequence(vec![body, bind])
+        let sites = std::mem::take(&mut r.module_sites);
+        let flags = r.module_site_flags.values().cloned().collect::<Vec<_>>();
+        let bind = if r.annotations_as_strings {
+            let member = r.table.single("ext.stmt.class.annotations").unwrap_or_default().to_owned();
+            r.write(&member, prim_call(Prim::MakeMap, Vec::new()))
+        } else {
+            let environment = r.routine("<annotation environment>", Holds::Every, Traps::Yields, flags.clone(), flags.len(), |b| {
+                b.annotation_sites = sites;
+                let generated = b.build_annotator()?.expect("module annotator");
+                Ok(constant(Value::Routine(generated)))
+            })?;
+            let captured = flags.iter().map(|flag| r.read(flag)).collect();
+            let evaluator = Form::Apply(Callee::Code(Box::new(environment)), captured);
+            let name = r.table.strings("ext.stmt.class.detail.code.fields")[10].clone();
+            r.write(&name, evaluator)
+        };
+        let mut initialization = flags.into_iter().map(|flag| r.write(&flag, prim_call(Prim::MakeArray, vec![constant(Value::Flag(false))]))).collect::<Vec<_>>();
+        initialization.extend([bind, body]);
+        sequence(initialization)
     };
     // What the reading itself remarked on was noticed before a single
     // statement ran, so it is said ahead of the whole body.
@@ -715,7 +737,9 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let mut body = body;
+    if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
+    let program = Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -1112,6 +1136,9 @@ impl<'a> Builder<'a> {
     }
 
     fn need_word(&mut self, why: &str) -> Res<String> {
+        if self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme) {
+            return Err(String::from("SyntaxError: invalid syntax"));
+        }
         if self.table.has_any("ext.builtin.exceptions.syntax") && ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.key(label)) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
@@ -1473,6 +1500,7 @@ impl<'a> Builder<'a> {
             return Form::Read(book);
         }
         let seed = self.class_names_map();
+        let seed = if self.table.has_any("ext.stmt.class.builder") { prim_call(Prim::ClassWork(15), vec![seed]) } else { seed };
         let book = self.gensym("locals");
         self.parts().book = Some(book.clone());
         sequence(vec![Form::Write(book.clone(), Box::new(seed)), Form::Read(book)])
@@ -1496,7 +1524,7 @@ impl<'a> Builder<'a> {
         let key = constant(Value::text(word));
         let value = Form::Read(place.clone());
         let target = self.read_to_write(&book.ident.to_string());
-        Some(prim_call(Prim::Replace, vec![target, key, value]))
+        Some(prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(19) } else { Prim::Replace }, vec![target, key, value]))
     }
 
     /// The companion of `mirror_member` for `del name` read in a class
@@ -1510,7 +1538,7 @@ impl<'a> Builder<'a> {
         let book = self.parts().book.clone()?;
         let target = self.read_to_write(&book.ident.to_string());
         let key = constant(Value::text(word));
-        let erased = prim_call(Prim::Erase, vec![target, key]);
+        let erased = prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
         Some(self.write(&book.ident.to_string(), erased))
     }
 
@@ -1551,6 +1579,33 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if let Some((class, entries)) = &self.annotation_owner {
+            if self.annotation_lookup && entries.iter().any(|entry| entry == name) {
+                let class = class.clone();
+                let receiver = Form::Read(self.address_to_read(&class));
+                let outside = self.routine("<annotation fallback>", Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
+                    let at = match b.layers[0].idents.iter().position(|word| word == name) {
+                        Some(at) => at, None => { b.layers[0].idents.push(name.to_owned()); b.layers[0].idents.len() - 1 },
+                    };
+                    let up = b.layers[1..].iter().filter(|layer| layer.holds != Holds::Nothing).count();
+                    Ok(Form::Read(Address { ident: Rc::from(name), up, at, fallback: None }))
+                }).expect("fallback name lookup is syntactically complete");
+                let helper = constant(Value::Wrapped(74, Rc::new(Vec::new()).into()));
+                return Form::Apply(Callee::Code(Box::new(helper)), vec![receiver, constant(Value::text(name)), outside]);
+            }
+        }
+
+        if self.table.has_any("ext.stmt.class.builder") && !self.annotation_lookup && self.place_depth == 0 && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
+            if let Some(book) = self.parts().book.clone() {
+                let found = self.gensym("class_lookup");
+                let read = prim_call(Prim::ClassWork(18), vec![Form::Read(book), constant(Value::text(name))]);
+                let present = prim_call(Prim::At, vec![Form::Read(found.clone()), constant(Value::Small(0))]);
+                let value = prim_call(Prim::At, vec![Form::Read(found.clone()), constant(Value::Small(1))]);
+                let fallback = self.read_fallback(name);
+                let selected = self.choose(present, value, fallback);
+                return sequence(vec![Form::Write(found, Box::new(read)), selected]);
+            }
+        }
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
                 if let Some(slot) = names.get(name).cloned() {
@@ -1574,7 +1629,7 @@ impl<'a> Builder<'a> {
         // that dictionary, a name it does not know at compile time is
         // asked of it first, and only falls through to the ordinary
         // reading below where the dictionary does not have it either.
-        if self.in_class_body() && !name.starts_with('#') {
+        if !self.annotation_lookup && self.in_class_body() && !name.starts_with('#') {
             if let Some(book) = self.parts().book.clone() {
                 let test = prim_call(Prim::Membership, vec![constant(Value::text(name)), Form::Read(book.clone())]);
                 let found = prim_call(Prim::At, vec![Form::Read(book), constant(Value::text(name))]);
@@ -1667,6 +1722,7 @@ impl<'a> Builder<'a> {
         let local = self.table.single("ext.stmt.class.detail.locals").unwrap_or("");
         let mut path = self.within.as_ref().map(|(c, _)| format!("{c}.")).unwrap_or_default();
         for (outer, afresh) in self.naming.iter().zip(&self.named_afresh).skip(self.named_before) {
+            if outer.starts_with("<type ") { continue; }
             if *afresh { path.clear(); }
             path.push_str(outer); path.push('.'); path.push_str(local); path.push('.');
         }
@@ -1685,7 +1741,11 @@ impl<'a> Builder<'a> {
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         let type_params = std::mem::take(&mut self.pending_types);
-        let annotator = self.build_annotator()?;
+        let annotator = self.build_annotator()?.map(|code| {
+            let mut child = (*code).clone();
+            child.qualification = format!("{}.__annotate__", self.full_name_of(name));
+            Rc::new(child)
+        });
         let began = self.pos;
         let mut start = self.pos;
         while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
@@ -1720,7 +1780,7 @@ impl<'a> Builder<'a> {
         let param_slots = (0..params.len()).collect();
         let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>" | "<genexpr>"))
             && self.layers.last().map_or(false, |scope| scope.permits_async);
-        self.layers.push(Layer { async_walk_seen: false, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
@@ -1787,11 +1847,34 @@ impl<'a> Builder<'a> {
         let mut literals = vec![doc.as_ref().map_or(Value::Nil, |s| Value::text(s))];
         let mut referenced = Vec::new();
         let mut suspension = false;
+        if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
-        if scope.permits_async && suspension { flags = (flags & !128) | 512; }
-        Ok(constant(Value::Routine(Rc::new(Routine { annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
+        if scope.permits_async && suspension {
+            if let Some(at) = scope.return_value_at {
+                self.pos = at;
+                return Err("SyntaxError: 'return' with value in async generator".to_owned());
+            }
+            flags = (flags & !128) | 512;
+        }
+        Ok(constant(Value::Routine(Rc::new(Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
+    fn annotation_spelling(&self, first: usize, last: usize) -> String {
+        let mut pieces: Vec<String> = Vec::new();
+        for word in &self.tokens[first..last] {
+            if matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close) { continue; }
+            let spelling = match word.shape {
+                Shape::Quote => format!("'{}'", word.lexeme.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n")),
+                _ => word.lexeme.clone(),
+            };
+            let left = pieces.last().map(String::as_str).unwrap_or("");
+            let gap = !pieces.is_empty() && !matches!(spelling.as_str(), "." | "," | ":" | ")" | "]" | "}" | "(" | "[")
+                && !matches!(left, "." | "(" | "[" | "{");
+            if gap { pieces.push(String::from(" ")); }
+            pieces.push(spelling);
+        }
+        pieces.concat()
+    }
     fn build_annotator(&mut self) -> Res<Option<Rc<Routine>>> {
         let sites = std::mem::take(&mut self.annotation_sites);
         if sites.len() == 0 { return Ok(None); }
@@ -1800,8 +1883,19 @@ impl<'a> Builder<'a> {
         let kinds = std::mem::take(&mut self.formal_kinds);
         let title = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
         self.pos = sites[0].1;
+        let outer_owner = self.annotation_owner.clone();
+        if self.in_class_body() && self.annotation_owner.is_none() {
+            self.parts().needs_class_cell = true;
+        let class = self.parts().completed_class.ident.to_string();
+            let entries = self.parts().lexical_members.clone();
+            self.address_to_write(&class);
+            self.annotation_owner = Some((class, entries));
+        }
+        let module = sites.iter().any(|site| self.module_site_flags.contains_key(&site.1));
         let made = self.routine(&title, Holds::Every, Traps::Yields, vec!["format".to_owned()], 1, |b| {
+            let map = b.gensym("module_annotations");
             let mut pairs = Vec::new();
+            if module { pairs.push(b.write(&map.ident, prim_call(Prim::MakeMap, Vec::new()))); }
             for (mut word, at) in sites {
                 if let Some((owner, _)) = &b.within {
                     let owner = owner.split('.').next_back().unwrap_or(owner).trim_start_matches('_');
@@ -1810,16 +1904,35 @@ impl<'a> Builder<'a> {
                     }
                 }
                 b.pos = at;
+                let outer = b.annotation_lookup;
+                b.annotation_lookup = true;
                 let expression = b.expr_at(0, false)?;
-                pairs.push(prim_call(Prim::Couple, vec![constant(Value::text(&word)), expression]));
+                b.annotation_lookup = outer;
+                let expression = if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(at, b.pos))) } else { expression };
+                if module {
+                    let target = b.read_to_write(&map.ident);
+                    let put = prim_call(Prim::Replace, vec![target, constant(Value::text(&word)), expression]);
+                    let put = if let Some(flag) = b.module_site_flags.get(&at).cloned() {
+                        let flag = b.read(&flag);
+                        let ran = prim_call(Prim::At, vec![flag, constant(Value::Small(0))]);
+                        b.choose(ran, put, constant(Value::Nil))
+                    } else { put };
+                    pairs.push(put);
+                } else { pairs.push(prim_call(Prim::Couple, vec![constant(Value::text(&word)), expression])); }
             }
-            Ok(prim_call(Prim::MakeMap, pairs))
+            Ok(if module { pairs.push(b.read(&map.ident)); sequence(pairs) } else { prim_call(Prim::MakeMap, pairs) })
         });
+        self.annotation_owner = outer_owner;
         self.pos = resume;
         self.taking = taking;
         self.formal_kinds = kinds;
         match made? {
-            Form::Const(Value::Routine(r)) => Ok(Some(r)),
+            Form::Const(Value::Routine(r)) => {
+                let mut generated = (*r).clone();
+                generated.annotation_protocol = true;
+                generated.taking = Some(vec!['p']);
+                Ok(Some(Rc::new(generated)))
+            },
             _ => unreachable!(),
         }
     }
@@ -1838,7 +1951,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -2508,7 +2621,7 @@ impl<'a> Builder<'a> {
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
-            return Ok(Form::OnLine(row, Box::new(made)));
+            return Ok(Form::OnLine(row, 0, Box::new(made)));
         }
         self.plain_or_kind()
     }
@@ -2869,6 +2982,27 @@ impl<'a> Builder<'a> {
                 if self.table.has_any("ext.builtin.exceptions.syntax") && alias == "__debug__" {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
                 }
+                if self.on_any("ext.stmt.type_params.open") {
+                    let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
+                        let (mut forms, names) = reader.declare_type_objects()?;
+                        reader.need_assign("after the type alias")?;
+                        let value = reader.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |inner| {
+                            let outer = inner.annotation_lookup;
+                            inner.annotation_lookup = true;
+                            let value = if inner.table.has_any("ext.op.tuple") { inner.comma_value() } else { inner.expr(0) };
+                            inner.annotation_lookup = outer;
+                            value
+                        })?;
+                        let parameters = names.iter().map(|name| reader.read(name)).collect();
+                        let tuple = prim_call(Prim::MakeTuple, parameters);
+                        let maker = constant(Value::Wrapped(45, Rc::new(Vec::new()).into()));
+                        forms.push(Form::Apply(Callee::Code(Box::new(maker)), vec![value, tuple]));
+                        Ok(sequence(forms))
+                    })?;
+                    self.forbids_await = earlier;
+                    let value = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
+                    return Ok(self.write(&alias, value));
+                }
                 self.type_names()?;
                 self.pending_types.clear();
                 self.need_assign("after the type alias")?;
@@ -2876,15 +3010,20 @@ impl<'a> Builder<'a> {
                 // is asked for, since names in it need not mean anything
                 // yet: the name is bound to a routine answering it.
                 let made = self.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+                    let outer = b.annotation_lookup;
+                    b.annotation_lookup = true;
                     let worth = if b.table.has_any("ext.op.tuple") { b.comma_value()? } else { b.expr(0)? };
+                    b.annotation_lookup = outer;
                     Ok(prim_call(Prim::Yield, vec![worth]))
                 });
                 self.forbids_await = earlier;
                 let thunk = made?;
-                return Ok(self.write(&alias, thunk));
+                let alias_value = Form::Apply(Callee::Code(Box::new(constant(Value::Wrapped(45, Rc::new(Vec::new()).into())))), vec![thunk]);
+                return Ok(self.write(&alias, alias_value));
             }
             if self.key("stmt.return") {
                 self.note_finally_word("return");
+                let return_at = self.pos;
                 self.advance();
                 // A routine giving back a cell answers with the cell of
                 // whatever it names, so a name tied to the answer and
@@ -2899,6 +3038,9 @@ impl<'a> Builder<'a> {
                 } else {
                     vec![if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? }]
                 };
+                if !value.is_empty() && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    self.layers.last_mut().unwrap().return_value_at.get_or_insert(return_at);
+                }
                 return Ok(prim_call(Prim::Yield, value));
             }
             if self.key("stmt.break") {
@@ -2950,7 +3092,7 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.throw") {
                 self.advance();
                 if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
-                    return Err("SyntaxError: did you forget an expression between 'raise' and 'from'?".to_owned());
+                    return Err("SyntaxError: invalid syntax".to_owned());
                 }
                 if self.table.single("ext.stmt.throw.from").is_some()
                     && (matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.on_any("stmt.terminator"))
@@ -3077,32 +3219,12 @@ impl<'a> Builder<'a> {
         let mut path = String::new();
         if taking_names {
             let start = self.pos;
-            let mut last_dot = None;
             while self.on_any("op.pipe") || self.on_any("ext.op.index.slice.ellipsis") {
-                last_dot = Some(self.look().clone());
                 path.push_str(&self.look().lexeme);
-                self.advance();
-            }
-            // A relative import written `from . lazy import`, the lazy
-            // word after the dots and set off by a space or a break, is
-            // the older order; the reference warns and reads it as the
-            // same import without the word.
-            if !self.in_lazy_from && self.pos != start && self.look().lexeme == "lazy"
-                && self.glance(1).shape == Shape::Bare && self.table.spells("ext.stmt.import", &self.glance(1).lexeme)
-                && last_dot.map_or(false, |dot: Token| {
-                    let flush = dot.column + dot.lexeme.chars().count();
-                    self.look().row != dot.row || self.look().column != flush
-                }) {
-                let at = self.look().clone();
-                let noticed = (format!("did you mean 'lazy from {path} import'?"), at.row, at.column);
-                if !self.warnings.contains(&noticed) { self.warnings.push(noticed); }
                 self.advance();
             }
             if self.pos == start || !self.key("ext.stmt.import") {
                 path.push_str(&self.module_path(true)?);
-            }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "lazy" {
-                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".to_owned());
             }
             if self.key("ext.stmt.import") {
                 self.advance();
@@ -3136,9 +3258,10 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             if self.table.flag("ext.stmt.import.value") {
-                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::Nil), constant(Value::Flag(false))])]));
+                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::tuple(vec![Value::text("*")]))])]));
             }
         } else {
+            let mut gathered: Vec<(String, String, bool)> = Vec::new();
             loop {
                 let named_at = self.pos;
                 let original = self.module_path(!taking_names)?;
@@ -3175,13 +3298,8 @@ impl<'a> Builder<'a> {
                     let complaint = match original.as_str() { "braces" => "not a chance".to_owned(), name => format!("future feature {name} is not defined") };
                     return Err(format!("SyntaxError: {complaint}"));
                 }
-                let worth = if self.table.flag("ext.stmt.import.value") {
-                    prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
-                } else { constant(Value::Nil) };
-                self.claim(&local);
-                self.importing = true;
-                writes.push(self.write(&local, worth));
-                self.importing = false;
+                if future && original == "annotations" { self.annotations_as_strings = true; }
+                gathered.push((original, local, alias));
                 if !self.on_any("syntax.call.separator") {
                     break;
                 }
@@ -3192,6 +3310,45 @@ impl<'a> Builder<'a> {
                 }
                 if enclosed && self.on_any("syntax.group.close") {
                     break;
+                }
+            }
+            if self.table.flag("ext.stmt.import.value") {
+                if taking_names {
+                    if !gathered.is_empty() {
+                        let module_slot = self.gensym("import");
+                        let fromlist = Value::tuple(gathered.iter().map(|(name, _, _)| Value::text(name)).collect());
+                        writes.push(Form::Write(module_slot.clone(), Box::new(prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(fromlist)]))));
+                        for (name, local, _) in &gathered {
+                            let member = prim_call(Prim::ImportMember, vec![Form::Read(module_slot.clone()), constant(Value::text(&path)), constant(Value::text(name))]);
+                            self.claim(local);
+                            self.importing = true;
+                            writes.push(self.write(local, member));
+                            self.importing = false;
+                        }
+                        writes.push(Form::Forget(module_slot));
+                    }
+                } else {
+                    for (name, local, alias) in &gathered {
+                        let mut worth = prim_call(Prim::BringModule, vec![constant(Value::text(name)), constant(Value::Nil)]);
+                        if *alias && name.contains('.') {
+                            let parts: Vec<&str> = name.split('.').collect();
+                            for at in 1..parts.len() {
+                                let head = parts[..at].join(".");
+                                worth = prim_call(Prim::ImportMember, vec![worth, constant(Value::text(&head)), constant(Value::text(parts[at]))]);
+                            }
+                        }
+                        self.claim(local);
+                        self.importing = true;
+                        writes.push(self.write(local, worth));
+                        self.importing = false;
+                    }
+                }
+            } else {
+                for (_, local, _) in &gathered {
+                    self.claim(local);
+                    self.importing = true;
+                    writes.push(self.write(local, constant(Value::Nil)));
+                    self.importing = false;
                 }
             }
         }
@@ -3449,6 +3606,7 @@ impl<'a> Builder<'a> {
             let name = stored.ident.to_string();
             steps.push(Form::Write(stored, Box::new(part)));
             steps.extend(self.with_target(&name)?);
+            if self.table.has_any("ext.builtin.exceptions.syntax") { steps.push(Form::Forget(self.address_to_write(&name))); }
             if self.on_any("syntax.call.separator") { self.advance(); }
         }
         Ok(steps)
@@ -3489,6 +3647,7 @@ impl<'a> Builder<'a> {
                 let item = prim_call(Prim::At, vec![value, constant(Value::Small(position))]);
                 forms.push(Form::Write(part, Box::new(item)));
                 forms.extend(self.with_target(&part_name)?);
+                if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&part_name))); }
                 position += 1;
                 if !self.on_any("syntax.call.separator") { break; }
                 self.advance();
@@ -4092,9 +4251,14 @@ impl<'a> Builder<'a> {
             targets.push(begins..*sign);
             begins = sign + 1;
         }
+        if !self.divided_at(self.pos, signs[0], "ext.stmt.annotation").is_empty() { return Ok(None); }
         let mut gathered = Vec::new();
-        if targets.iter().any(|span| !self.target_words(span.clone(), &mut gathered)) { return Ok(None); }
-        if gathered.is_empty() { return Ok(None); }
+        if !self.table.has_any("ext.stmt.class.builder") {
+            if targets.iter().any(|span| !self.target_words(span.clone(), &mut gathered)) { return Ok(None); }
+            if gathered.is_empty() { return Ok(None); }
+        }
+        // Actual destinations are registered by distribute, not by words
+        // found inside the expressions supplying their objects and keys.
         // The value is worked out while the words still stand for what
         // the body bound earlier, so that `a, b = a + 1, 2` reads the
         // member `a` held rather than the place about to replace it.
@@ -4250,6 +4414,21 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             return Ok(true);
         }
+        if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+            let alias = self.glance(1).lexeme.clone();
+            let place = self.member_address(&alias, "alias");
+            self.member_noted(&alias, place.clone());
+            self.parts().needs_class_cell = true;
+        let class = self.parts().completed_class.ident.to_string();
+            let entries = self.parts().lexical_members.clone();
+            self.address_to_write(&class);
+            let outer = self.annotation_owner.replace((class, entries));
+            setup.push(self.stmt()?);
+            self.annotation_owner = outer;
+            if let Some(mirror) = self.mirror_member(&alias, &place) { setup.push(mirror); }
+            self.skip_line_ends();
+            return Ok(false);
+        }
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
             self.advance();
@@ -4264,6 +4443,21 @@ impl<'a> Builder<'a> {
             self.advance();
             let method_name = self.need_word("as the method name")?;
             let title = self.original_words[self.pos - 1].lexeme.clone();
+            if self.on_any("ext.stmt.type_params.open") {
+                let owner = self.parts().completed_class.ident.to_string();
+                let entries = self.parts().lexical_members.clone();
+                self.address_to_write(&owner);
+                let enclosing = self.annotation_owner.replace((owner, entries));
+                let mut expression = self.func(method_name.clone(), false)?;
+                self.annotation_owner = enclosing;
+                while let Some(wrapper) = wrappers.pop() { expression = Form::Apply(Callee::Code(Box::new(Form::Read(wrapper))), vec![expression]); }
+                let slot = self.member_address(&method_name, "generic_method");
+                setup.push(Form::Write(slot.clone(), Box::new(expression)));
+                self.member_noted(&method_name, slot.clone());
+                if let Some(mirror) = self.mirror_member(&method_name, &slot) { setup.push(mirror); }
+                self.skip_line_ends();
+                return Ok(false);
+            }
             let body = self.method(&title)?;
             self.parts().methods.retain(|(old, _)| old != &method_name);
             if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
@@ -4347,7 +4541,10 @@ impl<'a> Builder<'a> {
                 // itself among them -- is bound.
                 let deferred = self.annotation_routine()?;
                 let key = self.private_key(&member);
-                self.parts().annotated_names.push((constant(Value::text(&key)), deferred));
+                let location = self.gensym("annotation_expression");
+                setup.push(Form::Write(location.clone(), Box::new(deferred)));
+                let captured = Form::Glance(location.clone());
+                self.parts().annotated_names.push((constant(Value::text(&key)), captured));
                 if self.on_assign() {
                     self.advance();
                     let value = self.comma_value()?;
@@ -4425,7 +4622,7 @@ impl<'a> Builder<'a> {
             let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "stmt.for.in");
             let mut words = Vec::new();
             let of_words = cuts.first().map_or(false, |&at| self.target_words(self.pos + 1..at, &mut words));
-            if !of_words {
+            if !of_words && !self.table.has_any("ext.stmt.class.builder") {
                 let read = self.stmt()?;
                 self.parts().cannot = true;
                 return Ok(read);
@@ -4448,7 +4645,16 @@ impl<'a> Builder<'a> {
             .map(|at| &self.tokens[at])
             .take_while(|word| !matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close))
             .any(|word| word.shape == Shape::Sign && table.spells("op.mul", &word.lexeme));
+        let before = self.class_bindings.last().expect("class namespace").1.clone();
         let brought = self.stmt()?;
+        let bound = self.class_bindings.last().expect("class namespace").1.clone();
+        let mut steps = vec![brought];
+        for (word, place) in bound {
+            if table.has_any("ext.stmt.class.builder") && !before.contains_key(&word) {
+                if let Some(mirror) = self.mirror_member(&word, &place) { steps.push(mirror); }
+            }
+        }
+        let brought = sequence(steps);
         if starred { self.parts().cannot = true; }
         Ok(brought)
     }
@@ -4515,7 +4721,7 @@ impl<'a> Builder<'a> {
                 };
                 let target = self.read_to_write(&book.ident.to_string());
                 let key = constant(Value::text(&word));
-                let erased = prim_call(Prim::Erase, vec![target, key]);
+                let erased = prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
                 steps.push(self.write(&book.ident.to_string(), erased));
                 continue;
             };
@@ -4679,7 +4885,147 @@ impl<'a> Builder<'a> {
         Ok((word, address))
     }
 
+    fn python_class(&mut self, generic: bool) -> Res<(Form, bool)> {
+        let builder = self.gensym("class_builder");
+        let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
+        self.advance();
+        let title = self.original_words[self.pos].lexeme.clone();
+        let named = self.need_word("as the class name")?;
+        if named == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
+        let mut args = if self.table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
+            self.advance();
+            if self.ahead_in_item("ext.op.comprehension.for").is_some() { return Err("SyntaxError: invalid syntax".into()); }
+            self.args("syntax.call.close", "syntax.call.separator")?
+        } else { Vec::new() };
+        if generic {
+            let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
+            args.push(Form::Apply(Callee::Code(Box::new(maker)), Vec::new()));
+        }
+        let header = self.gensym("class_header");
+        setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
+        let full_name = self.full_name_of(&title);
+        let mut namespace = None;
+        let mut cannot = false;
+        let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone())?;
+            namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
+        })?;
+        let Form::Const(Value::Routine(code)) = body else { unreachable!() };
+        let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !3;
+        let made = prim_call(Prim::ClassWork(16), vec![Form::Read(builder), constant(Value::Routine(Rc::new(code))), constant(Value::text(&title)), Form::Read(header)]);
+        if self.in_class_body() {
+            let slot = self.gensym("inner_class");
+            self.class_bindings.last_mut().expect("outer class").1.insert(named.clone(), slot.clone());
+            setup.push(Form::Write(slot.clone(), Box::new(made)));
+            if let Some(mirror) = self.mirror_member(&named, &slot) { setup.push(mirror); }
+        } else { setup.push(self.write(&named, made)); }
+        Ok((sequence(setup), cannot))
+    }
+
+    fn python_class_body(&mut self, class_title: String, full_name: String) -> Res<(Form, String, Option<String>, bool, bool)> {
+        let table = self.table;
+        let parent: Option<Address> = None;
+        let cannot = false;
+        let mut setup = Vec::new();
+        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
+        let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
+        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
+        self.need_intro()?;
+        let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
+        if !on_one_line {
+            self.skip_line_ends();
+            if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
+            self.advance();
+            self.skip_line_ends();
+        }
+        let body_source = self.pos;
+        let lexical_members = self.surveyed.get(&body_source).map(|scope| scope.bound.clone()).unwrap_or_default();
+        self.class_bindings.push((self.layers.len(), HashMap::new()));
+        self.class_globals.push((self.layers.len(), Vec::new()));
+        self.class_met.push(Vec::new());
+        let completed_class = self.gensym("completed_class");
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+            ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
+            book: None, book_tracked: HashSet::new() });
+        // The body uses the metaclass's actual mapping from its first statement.
+        if table.has_any("ext.stmt.class.builder") || self.class_body_names_locals(self.pos, on_one_line) {
+            let made = self.class_book();
+            setup.push(made);
+        }
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+        // Seed documentation only when the body starts with a docstring.
+        if let Some(word) = table.single("ext.stmt.class.detail.doc") {
+            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
+        }
+        let book = self.parts().book.clone().expect("class namespace");
+        let module_name = table.single("ext.system.module.name").unwrap_or_default();
+        let module_value = self.read(module_name);
+        let module_word = table.single("ext.stmt.class.detail.module").unwrap_or_default();
+        let target = self.read_to_write(book.ident.as_ref());
+        setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(module_word)), module_value]));
+        let seed = self.class_names_map();
+        // Copy the body metadata through the prepared mapping's real setter.
+        let seeded = prim_call(Prim::ClassWork(15), vec![seed]);
+        setup.push(Form::Write(book.clone(), Box::new(seeded)));
+        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
+            if on_one_line && self.on_stmt_end() { break; }
+            if self.class_item(&mut setup)? { continue; }
+            if on_one_line {
+                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+                    self.advance();
+                }
+            } else { self.skip_line_ends(); }
+        }
+        if !on_one_line {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.advance();
+        }
+        if self.survey {
+            let bound = self.parts().lexical_members.clone();
+            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
+        }
+        self.class_bindings.pop();
+        self.class_globals.pop();
+        self.class_met.pop();
+        self.within = previous;
+        self.named_before = named_outside;
+        let parts = self.under_way.pop().expect("class body");
+        if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
+            let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
+            let book = parts.book.as_ref().expect("class namespace");
+            let target = self.read_to_write(book.ident.as_ref());
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), prim_call(Prim::MakeArray, row)]));
+            let target = self.read_to_write(book.ident.as_ref());
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text("\0string_annotations")), constant(Value::Flag(self.annotations_as_strings))]));
+            for (_, routine) in &parts.annotated_names { if let Form::Glance(address) = routine { setup.push(Form::Forget(address.clone())); } }
+
+        }
+        if parts.cannot { setup.push(self.class_not_ready()); }
+        setup.push(constant(Value::Nil));
+        Ok((sequence(setup), parts.book.expect("class namespace").ident.to_string(), parts.needs_class_cell.then(|| parts.completed_class.ident.to_string()), parts.class_cell_protocol, parts.cannot))
+    }
+
     fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
+        let nested = std::mem::take(&mut self.generic_class_body);
+        if !nested && self.table.spells("ext.stmt.type_params.open", &self.glance(2).lexeme) {
+            let beginning = self.pos;
+            let name = self.glance(1).lexeme.clone();
+            self.pos += 2;
+            let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
+                let (mut forms, names) = reader.declare_type_objects()?;
+                reader.pos = beginning;
+                reader.generic_class_body = true;
+                forms.push(reader.class_with_receiver()?.0);
+                forms.push(reader.give_type_parameters(&name, &names));
+                forms.push(reader.read(&name));
+                Ok(sequence(forms))
+            })?;
+            let value = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
+            return Ok((self.write(&name, value), false));
+        }
+        if self.table.has_any("ext.stmt.class.builder") { return self.python_class(nested); }
         self.advance();
         let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
@@ -4759,6 +5105,13 @@ impl<'a> Builder<'a> {
             self.need_sign(end, "after the bases")?;
             }
         }
+        if nested {
+            let generic = self.gensym("generic_parent");
+            let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
+            let value = Form::Apply(Callee::Code(Box::new(maker)), Vec::new());
+            setup.push(Form::Write(generic.clone(), Box::new(value)));
+            if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
+        }
         let full_name = self.full_name_of(&class_title);
         let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
         let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
@@ -4777,7 +5130,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -4823,7 +5176,7 @@ impl<'a> Builder<'a> {
         self.class_met.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let ClassParts { completed_class, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -4831,12 +5184,17 @@ impl<'a> Builder<'a> {
         // The routines answering what the body annotated, carried under
         // a hidden name until the class's annotations are asked for; a
         // body that annotated nothing leaves the class without them.
+        let mut annotation_slots = Vec::new();
         if table.has_any("ext.stmt.class.annotations") && !annotated_names.is_empty() {
+            annotation_slots.extend(annotated_names.iter().filter_map(|(_, value)| if let Form::Glance(address) = value { Some(address.clone()) } else { None }));
             // Keys and routines alternate in one row, made as the body runs.
             ranking.push(crate::data::ANNOTATE_WORD.to_owned());
             attributes.push(crate::data::ANNOTATE_WORD.to_owned());
             let row: Vec<Form> = annotated_names.into_iter().flat_map(|(key, routine)| [key, routine]).collect();
             held.push(prim_call(Prim::MakeArray, row));
+            ranking.push(String::from("\0string_annotations"));
+            attributes.push(String::from("\0string_annotations"));
+            held.push(constant(Value::Flag(self.annotations_as_strings)));
         }
         // The header's keywords ride along as entries under their hidden
         // names, for the building of the class to hand on.
@@ -4850,7 +5208,7 @@ impl<'a> Builder<'a> {
         // once the class holds what it found, so that a class statement
         // read a second time — one standing in a loop — does not find
         // what the pass before it left behind.
-        let mut emptied = Vec::new();
+        let mut emptied = annotation_slots;
         for (at, word) in attributes.iter().enumerate() {
             if !uncertain.iter().any(|n| n == word) { continue; }
             if let Form::Read(place) = held[at].clone() {
@@ -5803,8 +6161,8 @@ impl<'a> Builder<'a> {
             let mut rest: Option<(usize, String)> = None;
             while !self.on_any("syntax.map.close") {
                 if let Some((start, _)) = &rest {
-                    self.pos = *start;
-                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern".to_owned() } else { self.bad_case() };
+                    if !table.flag("ext.op.arithmetic.python_numbers") { self.pos = *start; }
+                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
                     return Err(words);
                 }
                 if self.on_any("op.pow") {
@@ -6089,6 +6447,69 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn declare_type_objects(&mut self) -> Res<(Vec<Form>, Vec<String>)> {
+        self.advance();
+        let mut setup = Vec::new();
+        let mut names = Vec::new();
+        loop {
+            let kind = if self.on_any("ext.stmt.function.carries.pairs") { self.advance(); "ParamSpec" }
+                else if self.on_any("ext.stmt.function.carries") { self.advance(); "TypeVarTuple" } else { "TypeVar" };
+            let name = self.need_word("among type parameters")?;
+            names.push(name.clone());
+            self.address_to_write(&name);
+            let mut constraints = false;
+            let bound = if self.on_any("ext.stmt.annotation") {
+                self.advance();
+                if self.sign("(") {
+                    let mut opened = Vec::new();
+                    for token in &self.tokens[self.pos..] {
+                        match token.lexeme.as_str() {
+                            "(" | "[" | "{" => opened.push(token.lexeme.as_str()),
+                            ")" | "]" | "}" => { opened.pop(); if opened.is_empty() { break; } },
+                            "," if opened.len() == 1 => constraints = true,
+                            _ => {},
+                        }
+                    }
+                }
+                self.routine("<type bound>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
+                    let outer = reader.annotation_lookup;
+                    reader.annotation_lookup = true;
+                    let expression = reader.expr_at(0, false);
+                    reader.annotation_lookup = outer;
+                    expression
+                })?
+            } else { constant(Value::Nil) };
+            let fallback = if self.on_assign() {
+                self.advance();
+                self.routine("<type default>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
+                    let outer = reader.annotation_lookup;
+                    reader.annotation_lookup = true;
+                    let starred = kind == "TypeVarTuple" && reader.sign("*");
+                    if starred { reader.advance(); }
+                    let expression = reader.expr_at(0, false).map(|value| if starred {
+                        prim_call(Prim::NextItem, vec![prim_call(Prim::Iterator, vec![value])])
+                    } else { value });
+                    reader.annotation_lookup = outer;
+                    expression
+                })?
+            } else { constant(Value::Nil) };
+            let constructor = constant(Value::Wrapped(46, Rc::new(Vec::new()).into()));
+            let object = Form::Apply(Callee::Code(Box::new(constructor)), vec![constant(Value::text(&name)), constant(Value::text(kind)), bound, fallback, constant(Value::Flag(constraints))]);
+            setup.push(self.write(&name, object));
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+            if self.on_any("ext.stmt.type_params.close") { break; }
+        }
+        self.need_sign(self.table.single("ext.stmt.type_params.close").unwrap(), "after type parameters")?;
+        Ok((setup, names))
+    }
+    fn give_type_parameters(&mut self, name: &str, parameters: &[String]) -> Form {
+        let values = parameters.iter().map(|parameter| self.read(parameter)).collect();
+        let row = prim_call(Prim::MakeTuple, values);
+        let object = self.read(name);
+        let member = self.table.single("ext.stmt.class.detail.type_params").unwrap_or_default().to_owned();
+        prim_call(Prim::SetMember, vec![object, constant(Value::text(&member)), row])
+    }
     fn type_names(&mut self) -> Res<bool> {
         if !self.table.flag("ext.stmt.type_parameters") || !self.on_any("op.index.open") { return Ok(false); }
         let earlier = std::mem::replace(&mut self.forbids_await, true);
@@ -6125,7 +6546,7 @@ impl<'a> Builder<'a> {
     }
 
     fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
-        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, Box::new(expression)) }
+        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, 0, Box::new(expression)) }
         else { expression }
     }
 
@@ -6290,11 +6711,11 @@ impl<'a> Builder<'a> {
         while !self.sign(&close) && !self.exhausted() {
             let mut manner = if beyond { 'n' } else { 'b' };
             if bind {
-                if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameters cannot follow var-keyword parameter".to_owned() } else { wrong() }); }
+                if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { wrong() }); }
                 let word = self.look().lexeme.clone();
                 if table.spells("ext.stmt.function.positional_only", &word) {
                     if slash || beyond || params.is_empty() {
-                        let complaint = if slash { "/ may appear only once" } else if beyond { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        let complaint = if slash { "/ may appear only once" } else if beyond { "/ must be ahead of *" } else { "at least one argument must precede /" };
                         return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {complaint}") } else { wrong() });
                     }
                     for before in &mut manners { *before = 'p'; }
@@ -6313,7 +6734,7 @@ impl<'a> Builder<'a> {
                     manner = 'k';
                     self.advance();
                 } else if table.spells("ext.stmt.function.carries", &word) || table.spells("ext.stmt.function.keyword_only", &word) {
-                    if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * may appear only once".to_owned() } else { wrong() }); }
+                    if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { wrong() }); }
                     if self.table.has_any("ext.builtin.exceptions.syntax") && (self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close) {
                         return Err("SyntaxError: named arguments must follow bare *".to_string());
                     }
@@ -6394,7 +6815,7 @@ impl<'a> Builder<'a> {
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => {
                         let kind = if manner == 'v' { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { wrong() });
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { wrong() });
                     }
                     (true, 'b') => optional = true,
                     (false, 'b') if optional => {
@@ -6485,7 +6906,34 @@ impl<'a> Builder<'a> {
         let ident = self.table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
         // A plain expression: an equals sign after it gives the member its
         // value and is no assignment within the annotation.
-        self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.expr_at(0, false))
+        self.parts().needs_class_cell = true;
+        let class = self.parts().completed_class.ident.to_string();
+        let entries = self.parts().lexical_members.clone();
+        self.address_to_write(&class);
+        let outer_owner = self.annotation_owner.replace((class, entries));
+        let original = self.class_bindings.last().cloned();
+        if let Some((level, bindings)) = self.class_bindings.last_mut() {
+            *level += 1;
+            for address in bindings.values_mut() { address.up += 1; }
+        }
+        let result = self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
+            let first = b.pos;
+            let outer = b.annotation_lookup;
+            b.annotation_lookup = true;
+            let expression = b.expr_at(0, false)?;
+            b.annotation_lookup = outer;
+            Ok(if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(first, b.pos))) } else { expression })
+        });
+        if let Some(original) = original { *self.class_bindings.last_mut().unwrap() = original; }
+        self.annotation_owner = outer_owner;
+        result.map(|form| match form {
+            Form::Const(Value::Routine(code)) => {
+                let mut scalar = (*code).clone();
+                scalar.annotation_is_text = self.annotations_as_strings;
+                constant(Value::Routine(Rc::new(scalar)))
+            }
+            other => other,
+        })
     }
 
     /// The key a blueprint carries a member's annotation under: a name
@@ -6591,12 +7039,44 @@ impl<'a> Builder<'a> {
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
         if bound && self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
-        let title = match self.pos.checked_sub(1).and_then(|at| self.original_words.get(at)) {
-            Some(word) if word.shape == Shape::Bare && self.tokens[self.pos - 1].lexeme == name => word.lexeme.clone(),
+        let mut source_name = self.pos.saturating_sub(1);
+        if self.table.spells("ext.stmt.type_params.close", &self.tokens[source_name].lexeme) {
+            let mut brackets = 0usize;
+            for index in (0..=source_name).rev() {
+                let word = &self.tokens[index].lexeme;
+                if self.table.spells("ext.stmt.type_params.close", word) { brackets += 1; }
+                if self.table.spells("ext.stmt.type_params.open", word) {
+                    brackets -= 1;
+                    if brackets == 0 { source_name = index.saturating_sub(1); break; }
+                }
+            }
+        }
+        let title = match self.original_words.get(source_name) {
+            Some(word) if word.shape == Shape::Bare && self.tokens[source_name].lexeme == name => word.lexeme.clone(),
             _ => name.clone(),
         };
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
+        if self.on_any("ext.stmt.type_params.open") {
+            let saved_owner = self.annotation_owner.clone();
+            if self.in_class_body() {
+                self.parts().needs_class_cell = true;
+        let class = self.parts().completed_class.ident.to_string();
+                let entries = self.parts().lexical_members.clone();
+                self.address_to_write(&class);
+                self.annotation_owner = Some((class, entries));
+            }
+            let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
+                let (mut setup, parameters) = reader.declare_type_objects()?;
+                setup.push(reader.func(name.clone(), true)?);
+                setup.push(reader.give_type_parameters(&name, &parameters));
+                setup.push(reader.read(&name));
+                Ok(sequence(setup))
+            })?;
+            self.annotation_owner = saved_owner;
+            let result = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
+            return Ok(if bound { self.write(&name, result) } else { result });
+        }
         self.type_names()?;
         // The type names read here stand aside while the parameters
         // and their defaults are read, so a routine written within one
@@ -6735,12 +7215,12 @@ impl<'a> Builder<'a> {
         let bad = || table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().to_string();
         loop {
             if self.sign(colon) { self.advance(); break; }
-            if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameters cannot follow var-keyword parameter".to_owned() } else { bad() }); }
+            if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { bad() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
                 if table.flag("ext.stmt.function.closes_over") {
                     if positional_mark || named_only || names.is_empty() {
-                        let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one argument must precede /" };
                         return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {reason}") } else { bad() });
                     }
                     positional_mark = true;
@@ -6755,18 +7235,18 @@ impl<'a> Builder<'a> {
                 let mapping = table.spells("op.pow", &self.look().lexeme);
                 let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
-                    if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * may appear only once".to_owned() } else { bad() }); }
+                    if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { bad() }); }
                     self.advance();
                     named_only = true;
                     pairs = mapping;
                     way = if mapping { 'k' } else { 'v' };
                     if many && self.sign(comma) {
                         self.advance();
-                        if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named parameters must follow bare *".to_owned() } else { bad() }); }
+                        if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named arguments must follow bare *".to_owned() } else { bad() }); }
                         continue;
                     }
                     if many && table.has_any("ext.builtin.exceptions.syntax") && self.sign(colon) {
-                        return Err("SyntaxError: named parameters must follow bare *".to_owned());
+                        return Err("SyntaxError: named arguments must follow bare *".to_owned());
                     }
                     gather = Some(names.len());
                 }
@@ -6789,7 +7269,7 @@ impl<'a> Builder<'a> {
                 if self.on_assign() {
                     if many || mapping {
                         let kind = if many { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { bad() });
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { bad() });
                     }
                     if way == 'b' { default_seen = true; }
                     self.advance();
@@ -6952,7 +7432,7 @@ impl<'a> Builder<'a> {
             // call was made from.
             let row = (r.look().row as u32).saturating_sub(r.before);
             let body = r.expr(0)?;
-            items.push(Form::OnLine(row, Box::new(body)));
+            items.push(Form::OnLine(row, 0, Box::new(body)));
             Ok(sequence(items))
         })?;
         let program = match carried.is_empty() {
@@ -7124,20 +7604,42 @@ impl<'a> Builder<'a> {
             if array { break; }
             if !self.divided_at(lo, hi, "ext.op.tuple").is_empty() { break; }
         }
+        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && hi == lo + 1 {
+            let word = &self.tokens[lo].lexeme;
+            if word == "__debug__" || ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, word)) {
+                return Err(format!("SyntaxError: cannot assign to {word}"));
+            }
+            if self.table.keywords.contains(word) && !["ext.stmt.match", "ext.stmt.match.case", "ext.stmt.type_alias"].iter().any(|label| self.table.spells(label, word)) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
+        }
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
-            self.place_depth += 1;
+            if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && hi == lo + 1
+                && self.look().shape == Shape::Bare && !self.declared_outside_class(&self.look().lexeme) {
+                let word = self.advance().lexeme;
+                let place = self.member_address(&word, "attribute");
+                let value = self.read(source);
+                let written = Form::Write(place.clone(), Box::new(value));
+                self.member_noted(&word, place.clone());
+                return Ok(match self.mirror_member(&word, &place) { Some(mirror) => sequence(vec![written, mirror]), None => written });
+            }
+            // Address expressions read their object and keys from the live book.
+            let writing_name = !self.table.has_any("ext.stmt.class.builder") || !self.in_class_body()
+                || hi == lo + 1 && self.look().shape == Shape::Bare;
+            self.place_depth += usize::from(writing_name);
             let reading = if hi == lo + 1 && self.look().shape == Shape::Bare {
                 let word = self.advance().lexeme;
                 if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) {
                     Err("Invalid assignment target before '='".to_string())
                 } else { Ok(self.read(&word)) }
-            } else { self.monadic_expr() };
-            self.place_depth -= 1;
+            } else if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() { self.deletion_place() }
+            else { self.monadic_expr() };
+            self.place_depth -= usize::from(writing_name);
             let place = reading?;
             if self.pos != hi { return Err(bad); }
-            if self.layers.last().unwrap().gathering_kind.is_some() && self.table.has_any("ext.builtin.slice") {
+            if (self.layers.last().unwrap().gathering_kind.is_some() || self.table.has_any("ext.stmt.class.builder") && self.in_class_body()) && self.table.has_any("ext.builtin.slice") {
                 if let Form::Apply(Callee::Prim(Prim::At, _), mut operands) = place {
                     let container = self.gather_name("target_object");
                     let evaluate = self.write(&container, operands.remove(0));
@@ -7179,7 +7681,11 @@ impl<'a> Builder<'a> {
             let item = self.gensym("part").ident.to_string();
             writes.push(self.write(&item, value));
             writes.push(self.distribute(part, &item)?);
+            if self.table.has_any("ext.builtin.exceptions.syntax") {
+                writes.push(Form::Forget(self.address_to_write(&item)));
+            }
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax") { writes.push(Form::Forget(self.address_to_write(&held))); }
         Ok(sequence(writes))
     }
     fn chained_places(&mut self) -> Res<Option<Form>> {
@@ -7205,6 +7711,7 @@ impl<'a> Builder<'a> {
             forms.push(self.distribute(left..sign, &name)?);
             left = sign + 1;
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&name))); }
         self.pos = resume;
         Ok(Some(sequence(forms)))
     }
@@ -7261,15 +7768,32 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        let expression_start = self.pos + 1;
+        let mut site = None;
         if self.layers.len() == 1 && !parenthesized {
             if let Form::Read(slot) = &place {
                 if self.tokens[self.pos - 1].lexeme == slot.ident.as_ref() {
-                    self.module_sites.push((slot.ident.to_string(), self.pos + 1));
+                    let flag = self.gensym("annotation_executed").ident.to_string();
+                    self.module_site_flags.insert(expression_start, flag.clone());
+                    site = Some((slot.ident.to_string(), flag));
+                    self.module_sites.push((slot.ident.to_string(), expression_start));
                 }
             }
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
+        let expression_end = self.pos;
+        let mut execution = Vec::new();
+        if let Some((key, flag)) = site {
+            let flag = self.read(&flag);
+            let record = constant(Value::Wrapped(76, Rc::new(Vec::new()).into()));
+            execution.push(Form::Apply(Callee::Code(Box::new(record)), vec![flag]));
+            if self.annotations_as_strings {
+                let member = table.single("ext.stmt.class.annotations").unwrap_or_default();
+                let target = self.read_to_write(member);
+                execution.push(prim_call(Prim::Replace, vec![target, constant(Value::text(&key)), constant(Value::text(&self.annotation_spelling(expression_start, expression_end)))]));
+            }
+        }
         if self.on_assign() {
             if self.table.has_any("ext.builtin.exceptions.syntax") {
                 if let Some(at) = self.second_sign_ahead() {
@@ -7277,9 +7801,11 @@ impl<'a> Builder<'a> {
                     return Err("SyntaxError: invalid syntax".to_owned());
                 }
             }
-            return self.written(place, false);
+            let written = self.written(place, false)?;
+            execution.insert(0, written);
+            return Ok(sequence(execution));
         }
-        Ok(match place {
+        let bare = match place {
             Form::Read(slot) => {
                 if table.flag("ext.stmt.function.closes_over") && !parenthesized { self.address_to_write(&slot.ident); }
                 constant(Value::Nil)
@@ -7287,7 +7813,9 @@ impl<'a> Builder<'a> {
             Form::Apply(Callee::Prim(Prim::At, _), parts) => sequence(parts),
             Form::Apply(Callee::Prim(Prim::Of, _), mut parts) => parts.remove(0),
             _ => unreachable!("the annotation target was read above"),
-        })
+        };
+        execution.insert(0, bare);
+        Ok(sequence(execution))
     }
 
     /// Seek the kind's sign before reading a statement's place. Marks
@@ -7348,6 +7876,11 @@ impl<'a> Builder<'a> {
     }
 
     fn binding_or_value(&mut self) -> Res<Form> {
+        let forbidden = self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme);
+        let literal = ["literal.true", "literal.false", "literal.null", "ext.stmt.yield"].iter().any(|tag| self.key(tag));
+        if forbidden && !literal && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+            return Err(String::from("SyntaxError: invalid syntax"));
+        }
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
                 let word = self.look();
@@ -7440,7 +7973,15 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let writing = !self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty();
+        let assignments = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
+        let mut writing = !assignments.is_empty();
+        if writing && self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+            let end = self.declaration_mark().unwrap_or(assignments[0]).min(assignments[0]);
+            let names: Vec<_> = self.tokens[began..end].iter().filter(|token| {
+                token.shape != Shape::Sign || !["syntax.group.open", "syntax.group.close"].iter().any(|label| self.table.spells(label, &token.lexeme))
+            }).collect();
+            writing = names.len() == 1 && names[0].shape == Shape::Bare;
+        }
         self.place_depth += usize::from(writing);
         let enclosing_mark = self.kind_mark.take();
         if boundary { self.kind_mark = self.declaration_mark(); }
@@ -7694,6 +8235,29 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
+        // The live class book can supply an object with no writable name.
+        // Keep the evaluated object and key, then perform its actual write.
+        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+            if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
+                if operands.len() == 2 {
+                    let object = self.gensym("target_object");
+                    let key = self.gensym("target_key");
+                    let put = self.gensym("target_value");
+                    let mut steps = Vec::new();
+                    if plain { steps.push(Form::Write(put.clone(), Box::new(value.clone()))); }
+                    steps.push(Form::Write(object.clone(), Box::new(operands[0].clone())));
+                    steps.push(Form::Write(key.clone(), Box::new(operands[1].clone())));
+                    if let Some(operation) = compound {
+                        let current = self.kept_before(prim_call(Prim::At, vec![Form::Read(object.clone()), Form::Read(key.clone())]));
+                        let combined = self.kept_after(prim_call(operation, vec![current, value]));
+                        steps.push(Form::Write(put.clone(), Box::new(combined)));
+                    }
+                    steps.push(prim_call(Prim::Replace, vec![Form::Read(object), Form::Read(key), Form::Read(put.clone())]));
+                    steps.push(if gives_back { Form::Read(put) } else { constant(Value::Nil) });
+                    return Ok(sequence(steps));
+                }
+            }
+        }
         // The value comes before the bounds of a slice assignment.
         let keyed_write = matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) && self.table.has_any("ext.builtin.slice");
         let before_bounds = if plain && (slice_target(&expr) || keyed_write) {
@@ -8486,14 +9050,8 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
-            // An await stands in a class body, and not in a method of
-            // the class: the body is read where the class is read, so a
-            // class begun at or beneath the nearest function around the
-            // await -- a gathering or a routine's -- puts the await in
-            // one.
-            let mut around = self.layers.len() - 1;
-            while self.layers[around].gathering_kind.is_some() { around -= 1; }
-            let class_expression = self.class_bindings.iter().any(|(depth, _)| *depth > around);
+            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1))
+                && (self.in_class_body() || self.layers.last().is_some_and(|scope| scope.gathering_kind.is_some()));
             if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));
@@ -8507,6 +9065,7 @@ impl<'a> Builder<'a> {
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
+            let scope_is_async = self.layers.last().map_or(false, |scope| scope.permits_async);
             let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
             self.advance();
@@ -8558,6 +9117,10 @@ impl<'a> Builder<'a> {
                     self.pos = begins;
                     return Err(format!("SyntaxError: {complaint}"));
                 }
+                if from && scope_is_async {
+                    self.pos = begins;
+                    return Err("SyntaxError: 'yield from' inside async function".to_owned());
+                }
             }
             if table.flag("ext.stmt.yield.suspends") {
                 let value = if comma {
@@ -8586,7 +9149,7 @@ impl<'a> Builder<'a> {
             self.advance();
             let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
-                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), type_names: std::cell::RefCell::new(None),
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
@@ -8759,6 +9322,8 @@ impl<'a> Builder<'a> {
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                        self.parts().needs_class_cell = true;
+                        self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];
                         let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
@@ -8777,6 +9342,8 @@ impl<'a> Builder<'a> {
                             // A member of the forebear read and not
                             // called: the proxy is made and the member
                             // read off it, as a member of anything is.
+                            self.parts().needs_class_cell = true;
+                            self.parts().class_cell_protocol = true;
                             let private = self.parts().completed_class.ident.to_string();
                             let pair = vec![self.read(&private), self.read(&receiver)];
                             let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
@@ -8798,6 +9365,8 @@ impl<'a> Builder<'a> {
                 && !self.layers.last().unwrap().idents.contains(&t.lexeme)
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
+                self.parts().needs_class_cell = true;
+                self.parts().class_cell_protocol = true;
                 let hidden = self.parts().completed_class.ident.to_string();
                 self.read(&hidden)
             }
@@ -9842,17 +10411,23 @@ impl<'a> Builder<'a> {
     fn ahead_in_item(&self, label: &str) -> Option<usize> {
         let table = self.table;
         let mut nesting = Vec::new();
+        let mut awaiting_body = 0usize;
         let pairs = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")];
         for index in self.pos..self.tokens.len() {
             let token = &self.tokens[index];
             if !matches!(token.shape, Shape::Bare | Shape::Sign) { continue; }
             let text = token.lexeme.as_str();
             if nesting.is_empty() {
+                match text {
+                    ":" => awaiting_body = awaiting_body.saturating_sub(1),
+                    _ if table.spells("ext.op.lambda", text) => awaiting_body += 1,
+                    _ => (),
+                }
                 if table.spells(label, text) {
                     let begins = if label == "ext.op.comprehension.for" && index > self.pos && table.spells("ext.op.comprehension.async", &self.tokens[index - 1].lexeme) { index - 1 } else { index };
                     return Some(begins);
                 }
-                if table.spells("syntax.call.separator", text) { return None; }
+                if awaiting_body == 0 && table.spells("syntax.call.separator", text) { return None; }
             }
             if let Some((_, end)) = pairs.iter().find(|(start, _)| table.spells(start, text)) {
                 nesting.push(*end);
@@ -9874,10 +10449,16 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
+            let mut parameter_lists = 0usize;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
-                    if part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
+                    match (part.shape, part.lexeme.as_str()) {
+                        (Shape::Sign, ":") => parameter_lists = parameter_lists.saturating_sub(1),
+                        (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
+                        _ => (),
+                    }
+                    if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
                     if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
                         return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
                     }
@@ -9892,6 +10473,10 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
+            if self.table.flag("ext.op.arithmetic.python_numbers") && self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" }) {
+                let problem = if mapped { "dict unpacking cannot be used in dict comprehension" } else { "iterable unpacking cannot be used in comprehension" };
+                return Err(format!("SyntaxError: {problem}"));
+            }
             return self.gather_comprehension(next, &closing, mapped);
         }
         let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
@@ -10906,7 +11491,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), encountered: Vec::new() });
+            self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), encountered: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
@@ -10917,7 +11502,9 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let mut body = sequence(s);
+            if table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
+            let program = Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -11257,7 +11844,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
     let uses = |address: &Address| names.contains(&address.ident.as_ref());
     match form {
         Form::Read(place) | Form::Glance(place) | Form::Share(place) => uses(place),
-        Form::Write(_, value) | Form::OnLine(_, value) | Form::Located(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
+        Form::Write(_, value) | Form::OnLine(_, _, value) | Form::Located(_, _, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
         Form::Apply(Callee::Code(target), args) => borrows_enclosing(target, names) || args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Apply(_, args) => args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Const(Value::Routine(arm)) if arm.frameless => borrows_enclosing(&arm.body, names),
@@ -11290,7 +11877,7 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
         Form::Const(v) => literal(v, constants),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
-        Form::Write(_, child) | Form::OnLine(_, child) | Form::Located(_, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
         Form::Apply(callee, args) => {
             if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
             match callee {

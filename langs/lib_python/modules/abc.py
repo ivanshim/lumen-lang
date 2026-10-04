@@ -1,7 +1,4 @@
-# CPython's Lib/abc.py, byte for byte from python/cpython commit
-# 3b564385e4c9 (the commit the reference suite in tests/python is
-# taken from), under the PSF licence (tests/python/LICENSE).
-
+# Source: CPython Lib/abc.py at v3.14.8 / 8e6e75d9102e; PSF License.
 # Copyright 2007 Google, Inc. All Rights Reserved.
 # Licensed to PSF under a Contributor Agreement.
 
@@ -40,15 +37,11 @@ class abstractclassmethod(classmethod):
             def my_abstract_classmethod(cls, ...):
                 ...
 
-    .. deprecated-removed: 3.3 3.21
-
     """
 
     __isabstractmethod__ = True
 
     def __init__(self, callable):
-        import warnings
-        warnings._deprecated('abc.abstractclassmethod', remove=(3, 21))
         callable.__isabstractmethod__ = True
         super().__init__(callable)
 
@@ -64,15 +57,11 @@ class abstractstaticmethod(staticmethod):
             def my_abstract_staticmethod(...):
                 ...
 
-    .. deprecated-removed: 3.3 3.21
-
     """
 
     __isabstractmethod__ = True
 
     def __init__(self, callable):
-        import warnings
-        warnings._deprecated('abc.abstractstaticmethod', remove=(3, 21))
         callable.__isabstractmethod__ = True
         super().__init__(callable)
 
@@ -88,22 +77,9 @@ class abstractproperty(property):
             def my_abstract_property(self):
                 ...
 
-    .. deprecated-removed: 3.3 3.21
-
     """
 
     __isabstractmethod__ = True
-
-    def __init__(
-        self,
-        fget=None,
-        fset=None,
-        fdel=None,
-        doc=None,
-    ):
-        import warnings
-        warnings._deprecated('abc.abstractproperty', remove=(3, 21))
-        super().__init__(fget, fset, fdel, doc)
 
 
 try:

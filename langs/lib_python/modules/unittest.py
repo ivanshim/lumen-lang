@@ -147,16 +147,20 @@ class TestCase:
         self._check(isinstance(value, kind), 'value is not an instance of the requested class', msg)
 
     def assertGreater(self, a, b, msg=None):
-        self._check(a > b, str(a) + ' not greater than ' + str(b), msg)
+        if not (a > b):
+            self._check(False, str(a) + ' not greater than ' + str(b), msg)
 
     def assertLess(self, a, b, msg=None):
-        self._check(a < b, str(a) + ' not less than ' + str(b), msg)
+        if not (a < b):
+            self._check(False, str(a) + ' not less than ' + str(b), msg)
 
     def assertGreaterEqual(self, a, b, msg=None):
-        self._check(a >= b, str(a) + ' not greater than or equal to ' + str(b), msg)
+        if not (a >= b):
+            self._check(False, str(a) + ' not greater than or equal to ' + str(b), msg)
 
     def assertLessEqual(self, a, b, msg=None):
-        self._check(a <= b, str(a) + ' not less than or equal to ' + str(b), msg)
+        if not (a <= b):
+            self._check(False, str(a) + ' not less than or equal to ' + str(b), msg)
 
     def assertAlmostEqual(self, a, b, places=None, msg=None, delta=None):
         if delta is not None and places is not None:
@@ -428,6 +432,9 @@ class TestSuite:
 
     def addTest(self, test):
         self.tests = [*self.tests, test]
+
+    def __iter__(self):
+        return iter(self.tests)
 
     def addTests(self, tests):
         for test in tests:
@@ -808,6 +815,12 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
         # in parts. A plain class name selects every method in that class.
         selected = []
         for tests in suite.tests:
+            if not isinstance(tests, TestSuite):
+                if type(tests).__name__ in only or tests.id() in only:
+                    selected.append(tests)
+                continue
+            if tests.class_ is None:
+                continue
             name = tests.class_.__name__
             if name in only:
                 selected.append(tests)

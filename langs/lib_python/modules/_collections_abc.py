@@ -1,7 +1,4 @@
-# CPython's Lib/_collections_abc.py, byte for byte from python/cpython commit
-# 3b564385e4c9 (the commit the reference suite in tests/python is
-# taken from), under the PSF licence (tests/python/LICENSE).
-
+# Source: CPython Lib/_collections_abc.py at v3.14.8 / 8e6e75d9102e; PSF License.
 # Copyright 2007 Google, Inc. All Rights Reserved.
 # Licensed to PSF under a Contributor Agreement.
 
@@ -53,7 +50,7 @@ __all__ = ["Awaitable", "Coroutine",
            "Mapping", "MutableMapping",
            "MappingView", "KeysView", "ItemsView", "ValuesView",
            "Sequence", "MutableSequence",
-           "Buffer",
+           "ByteString", "Buffer",
            ]
 
 # This module has been renamed from collections.abc to _collections_abc to
@@ -71,6 +68,7 @@ __name__ = "collections.abc"
 # are not included on this list.
 bytes_iterator = type(iter(b''))
 bytearray_iterator = type(iter(bytearray()))
+#callable_iterator = ???
 dict_keyiterator = type(iter({}.keys()))
 dict_valueiterator = type(iter({}.values()))
 dict_itemiterator = type(iter({}.items()))
@@ -322,6 +320,7 @@ class Iterator(Iterable):
 
 Iterator.register(bytes_iterator)
 Iterator.register(bytearray_iterator)
+#Iterator.register(callable_iterator)
 Iterator.register(dict_keyiterator)
 Iterator.register(dict_valueiterator)
 Iterator.register(dict_itemiterator)
@@ -825,7 +824,6 @@ class Mapping(Collection):
 
     __reversed__ = None
 
-Mapping.register(frozendict)
 Mapping.register(mappingproxy)
 Mapping.register(framelocalsproxy)
 
@@ -1173,13 +1171,3 @@ class MutableSequence(Sequence):
 
 MutableSequence.register(list)
 MutableSequence.register(bytearray)
-
-_deprecated_ByteString = globals().pop("ByteString")
-
-def __getattr__(attr):
-    if attr == "ByteString":
-        import warnings
-        warnings._deprecated("collections.abc.ByteString", remove=(3, 17))
-        globals()["ByteString"] = _deprecated_ByteString
-        return _deprecated_ByteString
-    raise AttributeError(f"module 'collections.abc' has no attribute {attr!r}")

@@ -16,12 +16,13 @@ use crate::form::{Prim, Routine};
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
+    pub capture_slots: RefCell<HashSet<usize>>,
     pub outer: Option<Rc<Env>>,
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent })
     }
 }
 
@@ -202,6 +203,8 @@ pub enum IteratorKind {
 
 #[derive(Debug)]
 pub struct TraceLink {
+    /// Preorder position of the executing expression in the compiled form tree.
+    pub instruction: i64,
     pub extent: Option<(u32, u32, u32, u32)>,
     pub location: u32,
     pub activation: Rc<Thing>,
@@ -677,10 +680,8 @@ impl Value {
             Value::Text(word) => Ok(format!("text:{word}")),
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
+            Value::Intrinsic(_, name) => Ok(["intrinsic/", name.as_ref()].concat()),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
-            // A builtin word is the one same value wherever the word is
-            // read, so it is addressed by the word, as it is equal by it.
-            Value::Intrinsic(_, word) => Ok(format!("word:{word}")),
             Value::Wrapped(8, names) => Ok(format!("kind/{names:?}")),
             Value::OctetKind { changeable, .. } => Ok(format!("octetkind:{changeable}")),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
@@ -697,6 +698,10 @@ impl Value {
                 if count.is_one() { return Ok(format!("walk:1:{}", sequence.first)); }
                 Ok(format!("walk:{}:{}:{}", count, sequence.first, sequence.stride))
             }
+            // Whole numbers already have a denominator of one, so
+            // their address needs no temporary ratio or reduction.
+            Value::Small(n) => Ok(format!("number:{n}:1")),
+            Value::Huge(n) => Ok(format!("number:{n}:1")),
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
@@ -1306,6 +1311,19 @@ impl Value {
         Some(padded)
     }
 
+    /// Internal storage is a string only when its blueprint descends from str.
+    pub(super) fn type_text(&self) -> Value {
+        let value = self.settled();
+        if let Value::Thing(thing) = &value {
+            let class = thing.blueprint();
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+                .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
+            if string {
+                if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
+            }
+        }
+        value
+    }
     pub fn bare(&self) -> String {
         match self {
             Value::Complex(pair) => crate::complex::written(pair),
@@ -1384,7 +1402,10 @@ impl Value {
             }
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
-            Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            Value::Blueprint(b) => {
+                if let Some(title) = b.python_title() { return format!("<class '{title}'>"); }
+                b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name))
+            },
             // A method or a data member carried by a native kind and
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
@@ -1407,7 +1428,10 @@ impl Value {
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
-            Value::Thing(t) => format!("<object {}>", t.blueprint().name),
+            Value::Thing(t) => match t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display") {
+                Some(entry) => entry.1.bare(),
+                None => format!("<object {}>", t.blueprint().name),
+            },
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
@@ -1544,7 +1568,18 @@ pub enum Reach {
 }
 
 #[derive(Debug)]
+pub struct TypeNames {
+    pub short: Value,
+    pub full: Value,
+    pub module_key: String,
+    /// Original qualification for the inherited string-based super lookup.
+    pub declared: Value,
+}
+
+#[derive(Debug)]
 pub struct Blueprint {
+    /// The mutable names of a Python class, outside its dictionary.
+    pub type_names: RefCell<Option<TypeNames>>,
     pub ancestry: Vec<Rc<Blueprint>>,
     pub parents: Vec<Rc<Blueprint>>,
     pub presentation: Option<String>,
@@ -1565,9 +1600,27 @@ pub struct Blueprint {
     /// program's can reach it: the class takes no write to a member of
     /// it and stands as no class's base.
     pub sealed: Cell<bool>,
+    /// Instance slot storage established when the class was constructed.
+    pub has_slot_storage: bool,
 }
 
 impl Blueprint {
+    pub(super) fn python_title(&self) -> Option<String> {
+        let kept = self.type_names.borrow();
+        let names = kept.as_ref()?;
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.type_text() { text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text.bare()), _ => None });
+        Some(match module { Some(word) if word != "builtins" => format!("{word}.{}", names.full.type_text().bare()), _ => names.short.type_text().bare() })
+    }
+    /// A character-format complaint uses qualification, unlike repr's
+    /// short-name fallback for builtin or non-string modules.
+    pub(super) fn python_qualified_title(&self) -> Option<String> {
+        let kept = self.type_names.borrow();
+        let names = kept.as_ref()?;
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.type_text() { text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text.bare()), _ => None });
+        let full = names.full.type_text().bare();
+        Some(match module { Some(word) if word != "builtins" => format!("{word}.{full}"), _ => full })
+    }
+
     pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p),
@@ -1815,6 +1868,9 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (rest, -1074i64),
         _ => (rest | (1u64 << 52), step - 1075),
     };
+    // Return lowest terms directly, including subnormal mantissas.
+    let cancelled = run.trailing_zeros();
+    let (run, halvings) = (run >> cancelled, halvings + cancelled as i64);
     let mut above = BigInt::from(run);
     if under {
         above = -above;
@@ -2130,6 +2186,11 @@ pub(crate) fn decimal_roundtrip(worth: f64) -> String {
 /// the exact remainder choose the last one. No rounded quotient is used.
 fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let exact_dyadic = above.bits() < 54 && beneath.bits() < 1076
+        && beneath.trailing_zeros().is_some_and(|shift| shift + 1 == beneath.bits());
+    // No quotient or remainder is needed when all bits already fit the
+    // binary format; whole numbers use its integer rounding directly.
+    if exact_dyadic || beneath.is_one() { return nearest_binary(above, beneath); }
     let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
     let positive = above.abs();
     let divisor = beneath.abs();

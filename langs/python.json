@@ -42,7 +42,7 @@
     "NotImplementedError: this complex operation is not supported"
   ],
   "ext.builtin.complex.zero": [
-    "ZeroDivisionError: complex division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.file.exists": [
     "__file_exists"
@@ -92,6 +92,9 @@
   ],
   "ext.builtin.subprocess": [
     "__subprocess"
+  ],
+  "ext.builtin.signal": [
+    "__signal"
   ],
   "ext.builtin.wait": [
     "__wait"
@@ -153,6 +156,7 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
+  "ext.lexical.identifier.reserved": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"],
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -743,6 +747,12 @@
     "TypeError: '",
     "' object is not reversible"
   ],
+  "ext.builtin.core.ord": [
+    "TypeError: ord() expected a character, but string of length ",
+    " found",
+    "TypeError: ord() expected string of length 1, but ",
+    " found"
+  ],
   "ext.builtin.core.chr.range": [
     "ValueError: chr() arg not in range(0x110000)"
   ],
@@ -772,7 +782,7 @@
     "TypeError: vars() argument must have __dict__ attribute"
   ],
   "ext.builtin.core.zero": [
-    "ZeroDivisionError: integer division or modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.default": [
     "default"
@@ -795,6 +805,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -938,7 +949,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "gi_state"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "__unused_python314_generator_state__", "tb_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -1025,6 +1036,8 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.sumprod": true,
+  "ext.system.module.path": ["__path__"],
   "ext.builtin.max": [
     "max"
   ],
@@ -1373,6 +1386,9 @@
   ],
   "ext.builtin.print.separator": [
     "sep"
+  ],
+  "ext.builtin.itertools.product_step": [
+    "__itertools_product_step"
   ],
   "ext.builtin.program.namespace": [
     "__program_namespace"
@@ -2172,6 +2188,7 @@
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
   ],
+  "ext.op.arithmetic.python_numbers": true,
   "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
   "ext.op.arithmetic.strict": true,
@@ -2369,7 +2386,7 @@
     "ZeroDivisionError: 0.0 cannot be raised to a negative power"
   ],
   "ext.op.quot.real_zero": [
-    "ZeroDivisionError: float floor division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.quot.zero": [
     "ZeroDivisionError: division by zero"
@@ -2465,7 +2482,7 @@
   ],
   "ext.op.rem.formats_text": true,
   "ext.op.rem.real_zero": [
-    "ZeroDivisionError: float modulo"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.sequence.assign": [
     "TypeError: '",
@@ -2536,6 +2553,27 @@
   "ext.stmt.async.stop": [
     "StopAsyncIteration"
   ],
+  "ext.stmt.async.generator.escaped": [
+    "RuntimeError: async generator raised StopIteration",
+    "RuntimeError: async generator raised StopAsyncIteration"
+  ],
+  "ext.stmt.async.generator.close.ignored": [
+    "RuntimeError: async generator ignored GeneratorExit"
+  ],
+  "ext.stmt.async.generator.fields": [
+    "ag_code",
+    "ag_frame",
+    "ag_running",
+    "ag_await"
+  ],
+  "ext.stmt.async.generator.methods": [
+    "asend",
+    "athrow",
+    "aclose",
+    "__await__",
+    "__anext__",
+    "__aiter__"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],
@@ -2582,7 +2620,10 @@
     "bytes",
     "bytearray",
     "complex",
-    "enumerate"
+    "enumerate",
+    "zip",
+    "map",
+    "filter"
   ],
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"
@@ -2628,6 +2669,95 @@
     "AttributeError: '",
     "' object attribute '",
     "' is read-only"
+  ],
+  "ext.stmt.class.detail.native.protocols": [
+    "str",
+    "__add__ __contains__ __eq__ __format__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __sizeof__ __str__",
+    "int",
+    "__abs__ __add__ __and__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __index__ __int__ __invert__ __le__ __lshift__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __or__ __pos__ __pow__ __radd__ __rand__ __rdivmod__ __repr__ __rfloordiv__ __rlshift__ __rmod__ __rmul__ __ror__ __round__ __rpow__ __rrshift__ __rshift__ __rsub__ __rtruediv__ __rxor__ __sizeof__ __sub__ __truediv__ __trunc__ __xor__",
+    "bool",
+    "__and__ __invert__ __new__ __or__ __rand__ __repr__ __ror__ __rxor__ __xor__",
+    "float",
+    "__abs__ __add__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getformat__ __getnewargs__ __gt__ __hash__ __int__ __le__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __rdivmod__ __repr__ __rfloordiv__ __rmod__ __rmul__ __round__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__ __trunc__",
+    "complex",
+    "__abs__ __add__ __bool__ __complex__ __eq__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __le__ __lt__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __repr__ __rmul__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__",
+    "list",
+    "__add__ __class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __reversed__ __rmul__ __setitem__ __sizeof__",
+    "tuple",
+    "__add__ __class_getitem__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __rmul__",
+    "dict",
+    "__class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __init__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __setitem__ __sizeof__",
+    "set",
+    "__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iand__ __init__ __ior__ __isub__ __iter__ __ixor__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__",
+    "frozenset",
+    "__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__",
+    "bytes",
+    "__add__ __buffer__ __bytes__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __str__",
+    "bytearray",
+    "__add__ __alloc__ __buffer__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __reduce__ __reduce_ex__ __release_buffer__ __repr__ __rmod__ __rmul__ __setitem__ __sizeof__ __str__",
+    "range",
+    "__bool__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __reduce__ __repr__ __reversed__",
+    "slice",
+    "__eq__ __ge__ __gt__ __hash__ __le__ __lt__ __ne__ __new__ __reduce__ __repr__",
+    "enumerate",
+    "__class_getitem__ __iter__ __new__ __next__ __reduce__",
+    "zip",
+    "__iter__ __new__ __next__ __reduce__ __setstate__",
+    "map",
+    "__iter__ __new__ __next__ __reduce__ __setstate__",
+    "filter",
+    "__iter__ __new__ __next__ __reduce__",
+    "reversed",
+    "__iter__ __length_hint__ __new__ __next__ __reduce__ __setstate__",
+    "list_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "list_reverseiterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "tuple_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "str_ascii_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "str_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "range_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "longrange_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "set_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_keyiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_valueiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_itemiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_reversekeyiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_reversevalueiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_reverseitemiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "bytes_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "bytearray_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "callable_iterator",
+    "__iter__ __next__ __reduce__",
+    "dict_keys",
+    "__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__",
+    "dict_values",
+    "__iter__ __len__ __repr__ __reversed__",
+    "dict_items",
+    "__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__",
+    "mappingproxy",
+    "__class_getitem__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __str__",
+    "generator",
+    "__class_getitem__ __del__ __iter__ __next__ __repr__ __sizeof__",
+    "iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__"
+  ],
+  "ext.stmt.class.detail.base": [
+    "__base__"
   ],
   "ext.stmt.class.detail.bases": [
     "__bases__"
@@ -2818,6 +2948,7 @@
     "() requires a code object with ",
     " free vars, not "
   ],
+  "ext.stmt.class.detail.classcell": ["__classcell__"],
   "ext.stmt.class.detail.cell.contents": [
     "cell_contents"
   ],
@@ -3058,7 +3189,7 @@
     "SyntaxError: invalid parameter list"
   ],
   "ext.stmt.function.parameters.duplicate": [
-    "SyntaxError: duplicate parameter '",
+    "SyntaxError: duplicate argument '",
     "' in function definition"
   ],
   "ext.stmt.function.positional_only": [
@@ -3083,14 +3214,13 @@
   "ext.stmt.import.from": [
     "from"
   ],
-  "ext.stmt.import.lazy": [
-    "lazy"
-  ],
+  "ext.stmt.import.lazy": [],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",
     "' from '",
     "'"
   ],
+  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
@@ -3258,13 +3388,6 @@
     "TypeError: instance exception may not have a separate value",
     "TypeError: throw() third argument must be a traceback object",
     "TypeError: calling exception class should have returned an instance of BaseException"
-  ],
-  "ext.stmt.yield.asyncgen": [
-    "asend",
-    "athrow",
-    "aclose",
-    "__anext__",
-    "__aiter__"
   ],
   "ext.stmt.yield.throw.warning": [
     "warnings",
@@ -3527,7 +3650,7 @@
     "unsupported operand types"
   ],
   "ext.system.fault.modulo": [
-    "ZeroDivisionError: integer modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.system.fault.name": [
     "name '",
@@ -3554,6 +3677,9 @@
   "ext.system.module.doc": [
     "__doc__"
   ],
+  "ext.builtin.build_class": ["__build_class__"],
+  "ext.stmt.class.builder": ["__build_class__", "NameError: __build_class__ not found"],
+  "ext.system.module.kind": ["types", "ModuleType"],
   "ext.system.module.builtins": [
     "__builtins__"
   ],
@@ -3693,6 +3819,6 @@
   "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
   "ext.lexical.escape.named.unknown": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name"],
   "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."],
-  "ext.builtin.iter.stop_value": ["stop_value"],
-  "ext.builtin.iter.stop_exception": ["stop_exception"]
+  "ext.builtin.iter.stop_value": [],
+  "ext.builtin.iter.stop_exception": []
 }
