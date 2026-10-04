@@ -120,6 +120,8 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("hmac", include_str!("hmac.py"), "hmac.py"),
     ("http", include_str!("http/__init__.py"), "http/__init__.py"),
     ("http.client", include_str!("http/client.py"), "http/client.py"),
+    ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
+    ("importlib", include_str!("importlib.py"), "importlib.py"),
     ("inspect", include_str!("inspect.py"), "inspect.py"),
     ("io", include_str!("io.py"), "io.py"),
     ("ipaddress", include_str!("ipaddress.py"), "ipaddress.py"),
@@ -237,5 +239,6 @@ pub static MODULES: &[(&str, &str, &str)] = &[
 
 // Non-package aliases initialize real source with their embedded parent.
 pub static MODULE_ALIASES: &[(&str, &str)] = &[
+    ("importlib.util", "util"),
     ("os.path", "path"),
 ];

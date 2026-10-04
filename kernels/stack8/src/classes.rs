@@ -698,7 +698,7 @@ impl<'a> Engine<'a> {
         for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
         if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26, vec![]))); }
-        for part in ["property.fget", "property.fset", "property.fdel", "doc"] {
+        for part in ["property.fget", "property.fset", "property.fdel", "doc", "property.is_abstract"] {
             members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
@@ -710,7 +710,7 @@ impl<'a> Engine<'a> {
     /// Where a property keeps each accessor among its own members, under
     /// names no program can spell.
     fn accessor_place(part: &str) -> &'static str {
-        match part { "property.fget" => "\0fget", "property.fset" => "\0fset", "property.fdel" => "\0fdel", "doc" => "\0doc", _ => "\0name" }
+        match part { "property.fget" => "\0fget", "property.fset" => "\0fset", "property.fdel" => "\0fdel", "doc" => "\0doc", "property.is_abstract" => "\0abstract", _ => "\0name" }
     }
     /// Whether a value read as a class names the property class: the
     /// builtin's word, read before anything was written to that name.
@@ -791,14 +791,32 @@ impl<'a> Engine<'a> {
     }
     /// What a property's kept accessor reads as: the accessor itself, or
     /// for its first string, the one it was given, else its getter's.
-    fn property_reading(&self, property: &Instance, place: &str) -> Value {
-        if let Some(v) = Self::property_accessor(property, place) { return v; }
+    fn property_reading(&mut self, property: &Instance, place: &str) -> Flow<Value> {
+        // Whether the property stands for a question nobody has
+        // answered: a plain yes or no, taken from the marks on its
+        // getter, its setter and its deleter alike. What a mark holds
+        // is weighed as any truth is, and a complaint other than a
+        // mark simply not being there travels on.
+        if place == "\0abstract" {
+            let word = self.class_word("property.is_abstract").to_string();
+            for accessor in ["\0fget", "\0fset", "\0fdel"] {
+                let Some(held) = Self::property_accessor(property, accessor) else { continue };
+                let marked = match self.class_get(held, &word, false) {
+                    Ok(v) => v,
+                    Err(fault) if self.attribute_fault(&fault) => continue,
+                    Err(fault) => return Err(fault),
+                };
+                if self.special_truth(&marked)? { return Ok(Value::Flag(true)); }
+            }
+            return Ok(Value::Flag(false));
+        }
+        if let Some(v) = Self::property_accessor(property, place) { return Ok(v); }
         if place == "\0doc" {
             if let Some(Value::Routine(getter)) = Self::property_accessor(property, "\0fget") {
-                return getter.doc.clone().map_or(Value::Null, |s| Value::text(&s));
+                return Ok(getter.doc.clone().map_or(Value::Null, |s| Value::text(&s)));
             }
         }
-        Value::Null
+        Ok(Value::Null)
     }
     /// The hook a class member answers the protocol with, where the
     /// member is a thing whose class furnishes one.
@@ -1831,7 +1849,7 @@ impl<'a> Engine<'a> {
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
                 20..=27 | 30 | 79..=80 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
+                28 => match subject { Some(Value::Object(o)) => self.property_reading(&o, &w.1[0].plain()), _ => Ok(value) },
                 _ => Ok(value),
             };
         }
@@ -2621,7 +2639,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
                 if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
-                if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
+                if name==self.class_word("doc") {let fresh=f.doc.clone().map_or(Value::Null,|s|Value::text(&s));return Ok(self.routine_held(&subject,name,fresh));}
                 if name==self.class_word("module") {let home=self.routine_module(f);return Ok(self.routine_held(&subject,name,home));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();

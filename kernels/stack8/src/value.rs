@@ -1053,6 +1053,24 @@ impl Value {
             if length.is_one() { return Ok(format!("span1/{}", span.start)); }
             return Ok(format!("span{}/{}/{}", length, span.start, span.step));
         }
+        // A complex is keyed by the two numbers it stands for, and one
+        // whose imaginary part is nought is the very real number it
+        // equals, taking that number's key so the two meet as one. A
+        // pair holding a value no number answers to keeps its own
+        // place, shared with nothing, as a real no number answers to
+        // does.
+        if let Value::Complex(z) = self {
+            if z.real.is_nan() || z.imag.is_nan() { return Ok(format!("apart{:p}", Rc::as_ptr(z))); }
+            if z.imag == 0.0 {
+                if let Some((p, q)) = crate::arith::parts(&crate::complex::real(z.real)) {
+                    if q.is_zero() { return Err(""); }
+                    let common = p.gcd(&q);
+                    return Ok(format!("n{}/{}", p / &common, q / common));
+                }
+            }
+            let near = |n: f64| if n == 0.0 { "0".to_string() } else { format!("{n:?}") };
+            return Ok(format!("c{}/{}", near(z.real), near(z.imag)));
+        }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);

@@ -790,10 +790,16 @@ fn unique_directory_name() -> String {
     String::from_utf8(out).unwrap()
 }
 
+/// The frame a name's address reaches from the one a call stands in:
+/// as far up as the address says, and no farther than the frames go,
+/// since a routine answered bare reaches the outermost one.
 fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
     let mut f = frame;
     for _ in 0..depth {
-        f = f.outer.as_ref().expect("a frame above");
+        match f.outer.as_ref() {
+            Some(above) => f = above,
+            None => break,
+        }
     }
     f
 }
@@ -6290,6 +6296,15 @@ impl<'a> Machine<'a> {
                     // order in which the body named them.
                     let rank=|key:&String|plan.ranking.iter().position(|name|name==key).unwrap_or(usize::MAX);
                     entries.sort_by_key(|(key,_)|rank(key));
+                    // The module the class was written in stands in its
+                    // namespace before the body ever runs, unless the
+                    // body named one of its own.
+                    let module_word=self.detail("module").to_owned();
+                    if !module_word.is_empty()&&entries.iter().all(|(named,_)|*named!=module_word) {
+                        let named=self.loaded_spaces.get(self.written_in.as_ref())
+                            .cloned().unwrap_or_else(||self.detail("main").to_owned());
+                        entries.insert(0,(module_word,Value::text(&named)));
+                    }
                     let mut parents=Vec::new();parents.extend(under);parents.extend(answers);
                     return self.build_class_value(plan.name.clone(),parents,entries);
                 }
@@ -13295,6 +13310,27 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        // A whole number is written out only where it holds no more
+        // figures than the table allows, whichever way of writing it
+        // -- plain, quoted or shown within a collection -- asked.
+        if matches!(subject.settled(), Value::Huge(_)) { self.figures_allowed(subject)?; }
+        // A cell a closure keeps a name in is shown the way the
+        // reference shows it: the identity of the cell and of what it
+        // holds there, or its emptiness before it holds anything.
+        if let Value::Wrapped(35, items) = subject {
+            let words = self.table.strings("ext.builtin.cell.repr");
+            if words.len() < 5 { return Ok(subject.render(self.wording())); }
+            let here = self.core_primitive(Prim::IdentityOf, "id", vec![subject.clone()], Vec::new())?;
+            let one = match here { Value::Small(n) => format!("{n:x}"), other => other.bare() };
+            return Ok(match self.cell_contents(items) {
+                Some(held) => {
+                    let at = self.core_primitive(Prim::IdentityOf, "id", vec![held.clone()], Vec::new())?;
+                    let two = match at { Value::Small(n) => format!("{n:x}"), other => other.bare() };
+                    format!("{}{}{}{}{}{}{}", words[0], one, words[1], held.kind_word(), words[2], two, words[3])
+                },
+                None => format!("{}{}{}{}{}", words[0], one, words[1], words[4], words[3]),
+            });
+        }
         if matches!(subject, Value::Blueprint(_)) {
             let mut text = self.ask_special(subject, usize::from(quoted), &[])?;
             if text.is_none() && !quoted { text = self.ask_special(subject, 1, &[])?; }
@@ -17777,6 +17813,14 @@ impl<'a> Machine<'a> {
                 let w = self.wording();
                 Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
             }
+            // Whether the name given is a link standing for somewhere
+            // else: asked of the link itself, and not of whatever
+            // stands at its far end.
+            Prim::Linked => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::symlink_metadata(v[0].render(w)).map(|m| m.file_type().is_symlink()).unwrap_or(false))
+            }
             // A directory's own entries, sorted so a run answers the
             // same way twice: the bare name of each, nothing before it.
             Prim::DirEntries => {
@@ -17818,6 +17862,14 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
+            }
+            // A single directory lifted away from the place named,
+            // where nothing stands under it: false where it still
+            // holds anything or no such directory stood there.
+            Prim::DirDrop => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_dir(v[0].render(w)).is_ok())
             }
             // A single directory raised at the place named: true
             // when it stands there afterwards, false when it stood
@@ -25621,6 +25673,16 @@ impl Machine<'_> {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
             Quoted => {
                 require(1, 1)?;
+                // A whole number is quoted only where it holds no more
+                // figures than the table allows.
+                if matches!(input[0].settled(), Value::Huge(_)) { self.figures_allowed(&input[0])?; }
+                // A closure's cell keeps its value in a frame, so it is
+                // written by the engine's own walk, which can open that
+                // frame; the plain quoting cannot reach it.
+                if matches!(input[0], Value::Wrapped(35, _)) {
+                    let rendered = self.object_words(&input[0], true)?;
+                    return Ok(Value::text(&rendered));
+                }
                 if portion.is_none() && matches!(input[0], Value::Vector(_) | Value::Tuple(_)) {
                     let rendered = self.object_words(&input[0], true)?;
                     return Ok(Value::text(&rendered));
@@ -25747,6 +25809,11 @@ impl Machine<'_> {
                     Value::Attributes(owner) => Rc::as_ptr(owner) as usize as u64,
                     Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
                     Value::Method(_, _, handle) => Rc::as_ptr(handle) as usize as u64,
+
+                    Value::Wrapped(35, items) => {
+                        let (room, at) = self.cell_place(items).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                        (Rc::as_ptr(&room) as usize as u64).rotate_left(11) ^ (at as u64)
+                    }
                     Value::Wrapped(_, payload) => Rc::as_ptr(payload) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Octets { cell, .. } => Rc::as_ptr(cell) as usize as u64,
@@ -26204,7 +26271,19 @@ impl Machine<'_> {
                         if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
                         return Err(told);
                     }
-                    let found = self.attribute(standing.as_ref().unwrap_or(&input[0]), &word);
+                    let mut found = self.attribute(standing.as_ref().unwrap_or(&input[0]), &word);
+                    // A name the kind keeps no entry under may still be
+                    // one the value answers as a plain read of the name
+                    // does; the two ways of asking never disagree. A
+                    // complaint other than the name simply not being
+                    // there travels on, as it does through the plain
+                    // read itself.
+                    if found.is_none() && matches!(op, GetMember | HasAttribute) {
+                        match self.member_for_case(&input[0], &word) {
+                            Ok(held) => found = held,
+                            Err(told) => return Err(told),
+                        }
+                    }
                     if op == HasAttribute { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found {
                         return match member {

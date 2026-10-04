@@ -6817,6 +6817,10 @@ impl<'a> Compiler<'a> {
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].spelling());
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
+        // The type parameters read here stand aside while the
+        // parameters and their defaults are read, so a routine written
+        // within one of those is not handed them instead.
+        let typed = std::mem::take(&mut self.pending_types);
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -6840,6 +6844,7 @@ impl<'a> Compiler<'a> {
                 self.annotation_expression(&lang.block_intros)?;
             }
         }
+        self.pending_types = typed;
         // A method may be named and not written out, in a class of
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.

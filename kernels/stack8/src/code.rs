@@ -594,6 +594,7 @@ pub enum Builtin {
     FileRead,
     FileWrite,
     FileThere,
+    FileLink,
     FileGone,
     /// A directory's own entries, by name alone; a fresh directory made
     /// under one already there, named uniquely from a prefix and a
@@ -602,6 +603,9 @@ pub enum Builtin {
     DirList,
     DirMake,
     DirGone,
+    /// One directory taken away where it stands, but only where
+    /// nothing stands under it (ext.builtin.dir.remove).
+    DirRemove,
     /// One directory made to stand where the path given says, with
     /// none made along the way to it (ext.builtin.dir.make_one).
     DirMakeOne,

@@ -51,6 +51,9 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.file.link": [
+    "__file_link"
+  ],
   "ext.builtin.weak.make": [
     "__weak_make"
   ],
@@ -84,6 +87,16 @@
   ],
   "ext.builtin.dir.change": [
     "__change_dir"
+  ],
+  "ext.builtin.cell.repr": [
+    "<cell at 0x",
+    ": ",
+    " object at 0x",
+    ">",
+    "empty"
+  ],
+  "ext.builtin.dir.remove": [
+    "__remove_dir"
   ],
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
@@ -1903,7 +1916,7 @@
   ],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
-    " digits) for integer string conversion"
+    " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"
   ],
   "ext.builtin.to_int.infinity": [
     "OverflowError: cannot convert float infinity to integer"
@@ -2960,6 +2973,9 @@
   ],
   "ext.stmt.class.detail.property.fget": [
     "fget"
+  ],
+  "ext.stmt.class.detail.property.is_abstract": [
+    "__isabstractmethod__"
   ],
   "ext.stmt.class.detail.property.fset": [
     "fset"

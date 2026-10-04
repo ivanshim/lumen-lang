@@ -828,7 +828,7 @@ impl<'a> Machine<'a> {
         }
         if let Some(word)=self.table.single("ext.stmt.class.property.setter"){entries.push((word.to_owned(),Self::wrap(54,Vec::new())));}
         if let Some(word)=self.table.single("ext.stmt.class.constructor"){entries.push((word.to_owned(),Self::wrap(56,Vec::new())));}
-        for part in ["property.fget","property.fset","property.fdel","doc"] {
+        for part in ["property.fget","property.fset","property.fdel","doc","property.is_abstract"] {
             entries.push((self.detail(part).to_owned(),Self::wrap(58,vec![Value::text(Self::accessor_key(part))])));
         }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
@@ -840,7 +840,7 @@ impl<'a> Machine<'a> {
     /// The keys a property keeps its accessors under, out of reach of
     /// any name a program can write.
     fn accessor_key(part:&str)->&'static str {
-        match part {"property.fget"=>"\0fget","property.fset"=>"\0fset","property.fdel"=>"\0fdel","doc"=>"\0doc",_=>"\0name"}
+        match part {"property.fget"=>"\0fget","property.fset"=>"\0fset","property.fdel"=>"\0fdel","doc"=>"\0doc","property.is_abstract"=>"\0abstract",_=>"\0name"}
     }
     /// Whether a value stands for the property builtin read as a class:
     /// its word, before anything else was bound to that name.
@@ -863,14 +863,32 @@ impl<'a> Machine<'a> {
     }
     /// What a property's kept accessor shows: itself; or, for the first
     /// string, the one given, else the getter's own.
-    fn accessor_shown(&self,property:&Thing,key:&str)->Value {
-        if let Some(v)=Self::kept_accessor(property,key){return v;}
+    fn accessor_shown(&mut self,property:&Thing,key:&str)->Res {
+        // Whether the property stands for a question nobody has
+        // answered: a plain yes or no, taken from the marks on its
+        // getter, its setter and its deleter alike. What a mark holds
+        // is weighed as any truth is, and a complaint other than a
+        // mark simply not being there travels on.
+        if key=="\0abstract" {
+            let word=self.detail("property.is_abstract").to_owned();
+            for accessor in ["\0fget","\0fset","\0fdel"] {
+                let Some(held)=Self::kept_accessor(property,accessor) else { continue };
+                let marked=match self.read_class_member(held,&word,false) {
+                    Ok(worth)=>worth,
+                    Err(escape) if self.missing_member_escape(&escape)=>continue,
+                    Err(escape)=>return Err(escape),
+                };
+                if self.object_truth(&marked)? { return Ok(Value::Flag(true)); }
+            }
+            return Ok(Value::Flag(false));
+        }
+        if let Some(v)=Self::kept_accessor(property,key){return Ok(v);}
         if key=="\0doc" {
             if let Some(Value::Routine(getter)|Value::Bound(getter,_))=Self::kept_accessor(property,"\0fget") {
-                return getter.doc.as_ref().map_or(Value::Nil,|d|Value::text(d));
+                return Ok(getter.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));
             }
         }
-        Value::Nil
+        Ok(Value::Nil)
     }
     /// The workings of the property blueprint. Each is handed the
     /// property first, then whatever the program gave.
@@ -1927,7 +1945,7 @@ impl<'a> Machine<'a> {
             // property, is tied to it; a kept accessor reads at once.
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(36 | 50..=57 | 78..=79,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(58,items)=>return Ok(match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>entry}),
+            Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
         // A member whose blueprint furnishes a reader answers through it,
@@ -3243,7 +3261,7 @@ impl<'a> Machine<'a> {
             }
             if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
             if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
-            if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
+            if key==self.detail("doc"){let fresh=code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d));return Ok(self.routine_kept(&value,key,fresh));}
             if key==self.detail("module"){let place=self.routine_module(&code);return Ok(self.routine_kept(&value,key,place));}
             if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
