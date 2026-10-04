@@ -4,7 +4,31 @@ use super::*;
 
 impl<'a> Engine<'a> {
     pub(super) fn class_word(&self, part: &str) -> &str {
-        self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str)
+        match part {
+            "name" => self.member_words[0],
+            "qualified" => self.member_words[1],
+            "module" => self.member_words[2],
+            "kind" => self.member_words[3],
+            "get" => self.member_words[4],
+            "set" => self.member_words[5],
+            "remove" => self.member_words[6],
+            "call" => self.member_words[7],
+            "namespace" => self.member_words[8],
+            "root" => self.member_words[9],
+            "allocate" => self.member_words[10],
+            "descriptor.get" => self.member_words[11],
+            "descriptor.set" => self.member_words[12],
+            "descriptor.delete" => self.member_words[13],
+            "doc" => self.member_words[14],
+            "defaults" => self.member_words[15],
+            "base" => self.member_words[16],
+            "bases" => self.member_words[17],
+            "mro" => self.member_words[18],
+            "order" => self.member_words[19],
+            "receiver" => self.member_words[20],
+            "unready" => self.member_words[21],
+            _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
+        }
     }
     // Read once when the language itself was read, since no program
     // still running can change which words a class stands under: every
