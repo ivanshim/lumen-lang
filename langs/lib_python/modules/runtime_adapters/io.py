@@ -20,7 +20,7 @@ class BytesIO:
     def read(self, size=-1):
         self._check()
         if size is None or size < 0:
-            size = len(self._buffer) - self._pos
+            size = max(0, len(self._buffer) - self._pos)
         value = self._buffer[self._pos:self._pos + size]
         self._pos += len(value)
         return value
@@ -30,6 +30,8 @@ class BytesIO:
 
     def readline(self, size=-1):
         self._check()
+        if self._pos >= len(self._buffer):
+            return b''
         nl = self._buffer.find(b'\n', self._pos)
         if nl == -1:
             end = len(self._buffer)
@@ -58,6 +60,10 @@ class BytesIO:
     def write(self, data):
         self._check()
         data = bytes(data)
+        # A write whose cursor stands past the end zero-fills the gap
+        # first, the way the C bytesio's write grows the buffer.
+        if self._pos > len(self._buffer):
+            self._buffer = self._buffer + b'\x00' * (self._pos - len(self._buffer))
         head = self._buffer[:self._pos]
         tail = self._buffer[self._pos + len(data):]
         self._buffer = head + data + tail
@@ -71,9 +77,11 @@ class BytesIO:
         elif whence == 2:
             offset += len(self._buffer)
         elif whence != 0:
-            raise ValueError('invalid whence')
+            raise ValueError('invalid whence (%s, should be 0, 1 or 2)' % whence)
         if offset < 0:
-            raise ValueError('negative seek position')
+            if whence == 0:
+                raise ValueError('negative seek value %s' % offset)
+            offset = 0
         self._pos = offset
         return offset
 
@@ -81,13 +89,15 @@ class BytesIO:
         self._check()
         return self._pos
 
+    # Truncate shortens the buffer but never moves the cursor, and a
+    # negative size is refused, as the C bytesio's truncate does.
     def truncate(self, size=None):
         self._check()
         if size is None:
             size = self._pos
+        if size < 0:
+            raise ValueError('negative size value %s' % size)
         self._buffer = self._buffer[:size]
-        if self._pos > size:
-            self._pos = size
         return size
 
     def flush(self):
@@ -148,6 +158,9 @@ class TextIOWrapper:
 
     def _load(self):
         if self._text is None:
+            # The text stands from the buffer's front however far the
+            # writes ahead of it took the buffer's own cursor.
+            self._buffer.seek(0)
             data = self._buffer.read()
             text = data.decode(self._encoding, self._errors)
             if self._newline is None:
@@ -194,15 +207,28 @@ class TextIOWrapper:
     def write(self, text):
         self._check()
         data = text.encode(self._encoding, self._errors)
-        return self._buffer.write(data)
+        self._buffer.write(data)
+        return len(text)
 
-    def seek(self, offset, whence=0):
+    def seek(self, cookie, whence=0):
         self._check()
-        if whence != 0 or offset != 0:
-            raise OSError('cannot do nonzero cur-relative seeks')
+        if whence == 1:
+            if cookie != 0:
+                raise OSError("can't do nonzero cur-relative seeks")
+            return self.tell()
+        if whence == 2:
+            if cookie != 0:
+                raise OSError("can't do nonzero end-relative seeks")
+            self._load()
+            self._pos = len(self._text)
+            return self.tell()
+        if whence != 0:
+            raise ValueError('invalid whence (%s, should be 0, 1 or 2)' % whence)
+        if cookie < 0:
+            raise ValueError('negative seek position %s' % cookie)
         self._load()
-        self._pos = offset
-        return offset
+        self._pos = cookie
+        return cookie
 
     def tell(self):
         self._check()

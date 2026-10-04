@@ -59,32 +59,64 @@ def mktemp(suffix='', prefix=template, dir=None):
     raise FileExistsError(17, 'File exists', name)
 
 
-class _TemporaryFileWrapper:
-    def __init__(self, file, name, delete):
-        self._file = file
+class _TemporaryFileCloser:
+    # delete_on_close asks for removal when the file is closed; delete
+    # asks for removal when the wrapper is let go of at all, context
+    # exit included. They are kept apart, as CPython keeps them.
+    def __init__(self, file, name, delete=True, delete_on_close=True):
+        self.file = file
         self.name = name
-        self._delete = delete
+        self.delete = delete
+        self.delete_on_close = delete_on_close
+        self.cleanup_called = False
+        self.close_called = False
 
-    def write(self, data):
-        return self._file.write(data)
+    def cleanup(self):
+        if not self.cleanup_called:
+            self.cleanup_called = True
+            try:
+                if not self.close_called:
+                    self.close_called = True
+                    self.file.close()
+            finally:
+                if self.delete:
+                    try:
+                        os.unlink(self.name)
+                    except OSError:
+                        pass
 
     def close(self):
-        if not self._file.closed:
-            self._file.close()
-            if self._delete:
-                try:
-                    os.unlink(self.name)
-                except OSError:
-                    pass
+        if not self.close_called:
+            self.close_called = True
+            try:
+                self.file.close()
+            finally:
+                if self.delete and self.delete_on_close:
+                    self.cleanup()
+
+
+class _TemporaryFileWrapper:
+    def __init__(self, file, name, delete=True, delete_on_close=True):
+        self.file = file
+        self.name = name
+        self._closer = _TemporaryFileCloser(file, name, delete, delete_on_close)
+
+    def write(self, data):
+        return self.file.write(data)
+
+    def close(self):
+        self._closer.close()
 
     def __getattr__(self, name):
-        return getattr(self._file, name)
+        return getattr(self.file, name)
 
     def __enter__(self):
         return self
 
     def __exit__(self, kind, value, traceback):
-        self.close()
+        # The context leaving always cleans up, whether the file was
+        # already closed or not, as CPython's wrapper guarantees.
+        self._closer.cleanup()
 
 
 _name_counter = 0
@@ -112,9 +144,9 @@ def NamedTemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None, su
             raise OSError(made, None, name)
     else:
         raise FileExistsError(17, 'File exists', name)
-    file = open(name, mode, encoding=encoding, errors=errors)
+    file = open(name, mode, buffering=buffering, encoding=encoding, errors=errors, newline=newline)
     if delete:
-        return _TemporaryFileWrapper(file, name, delete_on_close)
+        return _TemporaryFileWrapper(file, name, delete, delete_on_close)
     return file
 
 

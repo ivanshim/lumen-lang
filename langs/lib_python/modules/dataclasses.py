@@ -21,6 +21,19 @@ class field:
 # What a call of field() makes: the factory and the type are one here.
 Field = field
 
+# The exact classes a frozen decoration made. CPython's
+# _frozen_get_del_attr closes over the decorated class itself: on that
+# class every attribute write is refused, while a subclass that was not
+# itself decorated frozen keeps the inherited fields frozen but may
+# grow attributes of its own.
+_frozen_exact = []
+
+def _is_frozen_exact(cls):
+    for known in _frozen_exact:
+        if known is cls:
+            return True
+    return False
+
 class _Record:
     def __init__(self, *args, **keywords):
         names = self._fields
@@ -50,19 +63,26 @@ class _Record:
                     value = specification.default
                 else:
                     raise 'TypeError: missing dataclass argument'
-            setattr(self, name, value)
+            if getattr(type(self), '_frozen', False):
+                # A frozen record's initializer writes past the frozen
+                # setters, the way CPython's generated __init__ calls
+                # object.__setattr__ for each field.
+                object.__setattr__(self, name, value)
+            else:
+                setattr(self, name, value)
         post = getattr(self, '__post_init__', None)
         if post is not None:
             post()
-        self._frozen_sealed = True
 
     def __setattr__(self, name, value):
-        if getattr(self, '_frozen_sealed', False) and getattr(type(self), '_frozen', False) and name in self._fields:
-            raise FrozenInstanceError("cannot assign to field '" + name + "'")
+        frozen_fields = getattr(type(self), '_frozen_fields', None)
+        if frozen_fields is not None and (_is_frozen_exact(type(self)) or name in frozen_fields):
+            raise FrozenInstanceError('cannot assign to field ' + repr(name))
         object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        if getattr(self, '_frozen_sealed', False) and getattr(type(self), '_frozen', False) and name in self._fields:
+        frozen_fields = getattr(type(self), '_frozen_fields', None)
+        if frozen_fields is not None and (_is_frozen_exact(type(self)) or name in frozen_fields):
             raise FrozenInstanceError('cannot delete field ' + repr(name))
         object.__delattr__(self, name)
 
@@ -127,33 +147,76 @@ def dataclass(cls=None, frozen=False, **options):
         if isinstance(annotation, str) and (annotation == 'ClassVar' or annotation.startswith('ClassVar[') or annotation == 'typing.ClassVar' or annotation.startswith('typing.ClassVar[')):
             continue
         names.append(name)
-    defaults = []
-    kw_only = []
-    optional = len(base_defaults) > 0 and any(
-        s.default is not MISSING or s.default_factory is not MISSING for s in base_defaults)
+    # A field an ancestor declared keeps the place it was first
+    # declared at; declaring the name again puts the new specification
+    # at that old place, the way CPython's _process_class overrides.
+    merged = {}
+    order = []
+    for i in range(len(base_fields)):
+        merged[base_fields[i]] = base_defaults[i]
+        order.append(base_fields[i])
+    kw_only = list(base_kw_only)
+    # The default-ordering rule watches the fields taken positionally
+    # alone; keyword-only fields are free of it, ordered or not.
+    optional = False
+    last_defaulted = None
+    for i in range(len(base_fields)):
+        if base_fields[i] in base_kw_only:
+            continue
+        s = base_defaults[i]
+        if s.default is not MISSING or s.default_factory is not MISSING:
+            optional = True
+            last_defaulted = base_fields[i]
     for name in names:
         value = getattr(cls, name, MISSING)
         specification = value if isinstance(value, field) else field(default=value)
         supplied = specification.default is not MISSING or specification.default_factory is not MISSING
-        if optional and not supplied:
-            raise 'TypeError: non-default argument follows default argument'
-        optional = optional or supplied
+        is_kw_only = kw_only_class or specification.kw_only is True
+        if not is_kw_only:
+            if optional and not supplied:
+                raise 'TypeError: non-default argument ' + repr(name) + ' follows default argument ' + repr(last_defaulted)
+            if supplied:
+                optional = True
+                last_defaulted = name
         specification.name = name
-        defaults.append(specification)
-        if kw_only_class or specification.kw_only is True:
+        if name in merged:
+            merged[name] = specification
+            if name in kw_only:
+                kw_only.remove(name)
+        else:
+            order.append(name)
+            merged[name] = specification
+        if is_kw_only:
             kw_only.append(name)
+    defaults = [merged[name] for name in order]
     dataclass_fields = {}
-    for i in range(len(names)):
-        dataclass_fields[names[i]] = defaults[i]
-    namespace = {'_fields': base_fields + names, '_defaults': base_defaults + defaults,
-                 '_kw_only_fields': base_kw_only + kw_only, '_record_name': cls.__name__,
+    for name in order:
+        dataclass_fields[name] = merged[name]
+    namespace = {'_fields': order, '_defaults': defaults,
+                 '_kw_only_fields': kw_only, '_record_name': cls.__name__,
                  '_record_token': _Missing(), '__name__': cls.__name__,
                  '__annotations__': getattr(cls, '__annotations__', {}),
                  '__dataclass_fields__': dataclass_fields,
                  '__init__': _Record.__init__, '__setattr__': _Record.__setattr__,
                  '__delattr__': _Record.__delattr__, '__repr__': _Record.__repr__,
                  '__eq__': _Record.__eq__, '__replace__': _Record.__replace__, '_frozen': frozen}
-    return __derive_class(cls.__name__, cls, namespace)
+    if frozen:
+        namespace['_frozen_fields'] = order
+    made = __derive_class(cls.__name__, cls, namespace)
+    if frozen:
+        _frozen_exact.append(made)
+    return made
+
+def fields(class_or_instance):
+    # The field specifications in declaration order, as CPython's
+    # fields() answers them; anything that is no record is refused.
+    cls = class_or_instance if isinstance(class_or_instance, type) else type(class_or_instance)
+    kept = getattr(cls, '_fields', None)
+    if kept is None:
+        raise 'TypeError: must be called with a dataclass type or instance'
+    held = getattr(cls, '__dataclass_fields__', {})
+    return tuple(held[name] for name in kept)
+
 
 def asdict(obj):
     if getattr(type(obj), '_record_token', None) is None:
