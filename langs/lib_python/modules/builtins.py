@@ -435,13 +435,13 @@ class memoryview:
             self._readonly = object._readonly
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
-            self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
+            self._offsets = range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
         elif isinstance(object, array):
             self._source = object
-            self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
+            self._offsets = range(0, len(object.data) * object.itemsize, object.itemsize)
             self._format = object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
@@ -504,6 +504,8 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
+        if isinstance(self._offsets, range):
+            return len(self._offsets) == 1 or self._offsets.step == self._itemsize
         if not self._offsets:
             return True
         return all(at == self._offsets[0] + i * self._itemsize for i, at in enumerate(self._offsets))
@@ -599,13 +601,9 @@ class memoryview:
             raise TypeError('memoryview: multi-dimensional casts are not supported')
         if format not in ('B', 'b', 'i', 'I'):
             raise TypeError('memoryview: destination format must be a native single character format')
-        if self._offsets:
-            start = self._offsets[0]
-            for index, offset in enumerate(self._offsets):
-                if offset != start + index * self._itemsize:
-                    raise TypeError('memoryview: casts are restricted to C-contiguous views')
-        else:
-            start = 0
+        if not self.c_contiguous:
+            raise TypeError('memoryview: casts are restricted to C-contiguous views')
+        start = self._offsets[0] if self._offsets else 0
         width = 4 if format in ('i', 'I') else 1
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
@@ -614,7 +612,7 @@ class memoryview:
         result = memoryview(self)
         result._format = format
         result._itemsize = width
-        result._offsets = list(range(start, start + self.nbytes, width))
+        result._offsets = range(start, start + self.nbytes, width)
         return result
 
     def __del__(self):
