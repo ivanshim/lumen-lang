@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/shutil.py; PSF License.
 """Utility functions for copying and archiving files and directory trees.
 
 XXX The functions here don't copy the resource fork or other metadata on Mac.

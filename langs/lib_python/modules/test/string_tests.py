@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/test/string_tests.py; PSF License.
 """
 Common tests shared by test_unicode, test_userstring and test_bytes.
 """

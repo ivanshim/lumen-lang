@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/string/templatelib.py; PSF License.
 """Support for template string literals (t-strings)."""
 
 t = t"{0}"

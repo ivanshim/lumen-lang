@@ -162,7 +162,7 @@ def _reduce_native(value):
     if getattr(value, "__reduce_ex__", None) is None and getattr(value, "__reduce__", None) is None:
         raise Error("un(shallow)copyable object of type %s" % type(value))
     reduction = _pickle._reduce(value, 4)
-    if len(reduction) > 2 and not hasattr(value, "__dict__"):
+    if len(reduction) > 2 and not hasattr(value, "__dict__") and _pickle._reduction_hook(value, "__getstate__") is None:
         state = reduction[2]
         if isinstance(state, tuple) and len(state) == 2:
             reduction = (*reduction[:2], (None, state[1]), *reduction[3:])

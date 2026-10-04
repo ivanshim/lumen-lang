@@ -128,7 +128,35 @@ def set_int_max_str_digits(maxdigits):
 # of a real terminal, whatever the host's own stdio happens to be, so
 # isatty() always answers no and a test that only runs against a tty
 # takes its own skip road instead of finding an attribute missing.
+class _BinaryInput:
+    def read(self, size=-1):
+        return _host_stream_read(size, False, True)
+    def readline(self, size=-1):
+        return _host_stream_read(size, True, True)
+    def readlines(self, hint=-1):
+        return list(self)
+    def __iter__(self):
+        return self
+    def __next__(self):
+        line = self.readline()
+        if not line:
+            raise StopIteration
+        return line
+    def isatty(self):
+        return False
+
+class _BinaryOutput:
+    def __init__(self, error=False):
+        self.error = error
+    def write(self, data):
+        return _host_stream_write(data, self.error, True)
+    def flush(self):
+        pass
+    def isatty(self):
+        return False
+
 class _Output:
+    buffer = _BinaryOutput()
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -141,6 +169,7 @@ class _Output:
         return False
 
 class _Error:
+    buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -153,6 +182,7 @@ class _Error:
         return False
 
 class _Input:
+    buffer = _BinaryInput()
     def read(self, size=-1):
         return _host_stream_read(size, False)
 
@@ -410,3 +440,11 @@ def addaudithook(hook):
     except RuntimeError:
         return
     _audit_hooks.append(hook)
+
+def _getframemodulename(depth=0):
+    if not isinstance(depth, int):
+        raise TypeError('an integer is required')
+    return __frame_module(max(depth, 0) + 1)
+
+# Names supplied by the native importer and its source-backed adapters.
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')

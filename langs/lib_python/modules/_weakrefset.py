@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/_weakrefset.py; PSF License.
 # Access WeakSet through the weakref module.
 # This code is separated-out because it is needed
 # by abc.py to load everything else at startup.
