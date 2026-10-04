@@ -699,7 +699,7 @@ impl<'a> Engine<'a> {
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
         if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26, vec![]))); }
         members.push((self.class_word("name").to_string(), Self::adapter(31, vec![])));
-        members.push(("__isabstractmethod__".to_string(), Self::adapter(32, vec![])));
+        if let Some(word) = &self.lang.property_abstract { members.push((word.clone(), Self::adapter(32, vec![]))); }
         for part in ["property.fget", "property.fset", "property.fdel", "doc"] {
             members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
         }
@@ -803,8 +803,10 @@ impl<'a> Engine<'a> {
                 let mut getter_doc = false;
                 let doc_word = self.class_word("doc").to_string();
                 if matches!(doc, Value::Null) && !matches!(kept[0], Value::Null) {
-                    if let Ok(found) = self.class_get(kept[0].clone(), &doc_word, false) {
-                        if !matches!(found.contents(), Value::Null) { doc = found; getter_doc = true; }
+                    match self.class_get(kept[0].clone(), &doc_word, false) {
+                        Ok(found) => { if !matches!(found.contents(), Value::Null) { doc = found; getter_doc = true; } }
+                        Err(fault) if self.attribute_fault(&fault) => {}
+                        Err(fault) => return Err(fault),
                     }
                 }
                 let plain = self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &property.class_now()));
@@ -863,34 +865,60 @@ impl<'a> Engine<'a> {
     /// A traceback built by hand, as `types.TracebackType` builds one:
     /// what it follows, the frame it stands in, and where in that frame.
     fn traceback_from_parts(&mut self, args: Vec<Value>) -> Flow<Value> {
-        let given = self.call_items(args)?;
-        if given.iter().any(|(key, _)| key.is_some()) {
-            return Err("TypeError: traceback() takes no keyword arguments".into());
+        let parts = ["tb_next", "tb_frame", "tb_lasti", "tb_lineno"];
+        let mut slots: [Option<Value>; 4] = [None, None, None, None];
+        let mut at = 0usize;
+        for (key, value) in self.call_items(args)? {
+            let slot = match key {
+                Some(key) => parts.iter().position(|part| *part == key).ok_or_else(|| format!("TypeError: traceback() got an unexpected keyword argument '{key}'"))?,
+                None => { let slot = at; at += 1; if slot >= 4 { return Err(format!("TypeError: traceback() takes at most 4 arguments ({} given)", at).into()); } slot }
+            };
+            if slots[slot].replace(value).is_some() { return Err(format!("TypeError: traceback() got multiple values for argument '{}'", parts[slot]).into()); }
         }
-        let plain: Vec<Value> = given.into_iter().map(|(_, value)| value).collect();
-        let [next, frame, lasti, lineno] = plain.as_slice() else {
-            return Err(format!("TypeError: traceback() takes exactly 4 arguments ({} given)", plain.len()).into());
+        let mut take = |slot: usize| -> Flow<Value> {
+            slots[slot].take().ok_or_else(|| format!("TypeError: traceback() missing required argument '{}' (pos {})", parts[slot], slot + 1).into())
         };
+        let next = take(0)?;
+        let frame = take(1)?;
+        let lasti = take(2)?;
+        let lineno = take(3)?;
         let link = match next.contents() {
             Value::Null => Value::Null,
             Value::Trace(_) => next.clone(),
             other => return Err(format!("TypeError: expected traceback object or None, got '{}'", other.core_kind()).into()),
         };
         let Value::Object(holder) = frame.contents() else {
-            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(frame)).into());
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(&frame)).into());
         };
         if self.frame_class.as_ref().map_or(false, |kind| !Rc::ptr_eq(&holder.class_now(), kind)) {
-            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(frame)).into());
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(&frame)).into());
         }
-        let instruction = match lasti.contents() {
-            Value::Small(n) => n,
-            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
-        };
-        let line = match lineno.contents() {
-            Value::Small(n) => n as u32,
-            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
-        };
+        let instruction = self.traceback_number(&lasti)?;
+        let line = self.traceback_number(&lineno)?;
         Ok(Value::Trace(Rc::new(crate::value::Traceback { instruction, location: None, line, frame: holder.clone(), next: RefCell::new(link) })))
+    }
+    /// A traceback's position or line: a whole number through `__index__`,
+    /// which must fit where the reference keeps it.
+    fn traceback_number(&mut self, value: &Value) -> Flow<i64> {
+        let number = match value.contents() {
+            Value::Small(n) => n,
+            Value::Flag(flag) => i64::from(flag),
+            Value::Huge(_) => match self.special_index(value)? {
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                _ => return Err("OverflowError: Python int too large to convert to C int".into()),
+            },
+            Value::Object(_) => match self.special_index(value)? {
+                Some(Value::Small(n)) => n,
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.core_kind()).into()),
+                None => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.core_kind()).into()),
+            },
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
+        };
+        if number < i32::MIN as i64 || number > i32::MAX as i64 {
+            return Err("OverflowError: Python int too large to convert to C int".into());
+        }
+        Ok(number)
     }
     /// Whether a property subclass can keep a docstring on the thing
     /// itself: a class laying out slots keeps one only where a slot
@@ -898,16 +926,22 @@ impl<'a> Engine<'a> {
     /// dictionary for a subclass.
     fn property_keeps_doc(&self, class: &Rc<Class>) -> bool {
         let Some(property) = &self.property_class else { return true };
-        if Rc::ptr_eq(class, property) { return true; }
         let slots_word = self.class_word("slots");
         let doc_word = self.class_word("doc");
         let names = self.class_word("namespace");
-        match Self::own_class_value(class, &slots_word) {
-            Some(slots) => {
-                let listed = match slots.contents() { Value::Array(v) | Value::Tuple(v) => v.to_vec(), _ => Vec::new() };
-                listed.iter().any(|s| matches!(s.contents(), Value::Text(t) if t.as_ref() == doc_word || t.as_ref() == names))
+        let names_it = |listed: &[Value]| listed.iter().any(|s| matches!(s.contents(), Value::Text(t) if t.as_ref() == doc_word || t.as_ref() == names));
+        let mut current = class.clone();
+        loop {
+            if Rc::ptr_eq(&current, property) { return false; }
+            match Self::own_class_value(&current, &slots_word) {
+                Some(slots) => {
+                    let listed: Vec<Value> = match slots.contents() { Value::Array(v) | Value::Tuple(v) => v.to_vec(), other => vec![other] };
+                    if names_it(&listed) { return true; }
+                }
+                None => return true,
             }
-            None => true,
+            let Some(base) = current.base.clone() else { return false };
+            current = base;
         }
     }
     /// A property's name: the one a class gave it at taking, else the
@@ -927,9 +961,10 @@ impl<'a> Engine<'a> {
     /// Whether a property is abstract: it is where any of its accessors
     /// says so, each asked as the reference asks it.
     fn property_abstract(&mut self, property: &Instance) -> Flow<Value> {
+        let abstract_word = self.lang.property_abstract.clone().unwrap_or_default();
         for place in ["\0fget", "\0fset", "\0fdel"] {
             let Some(accessor) = Self::property_accessor(property, place) else { continue };
-            let held = match self.class_get(accessor, "__isabstractmethod__", false) {
+            let held = match self.class_get(accessor, &abstract_word, false) {
                 Ok(held) => held,
                 Err(fault) if self.attribute_fault(&fault) => continue,
                 Err(fault) => return Err(fault),
@@ -2079,6 +2114,10 @@ impl<'a> Engine<'a> {
                             if let Some(word) = Self::own_kind(class) {
                                 if word != self.class_word("root") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
                             }
+                            // An exception's making is the root's making,
+                            // unbound, so a super's making may be handed
+                            // the class it is to make.
+                            if self.exception_class(class) { return Ok(Self::adapter(1, Vec::new())); }
                         }
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, if name == self.class_word("allocate") { None } else { Some(receiver.clone()) }, dynamic);
@@ -2190,11 +2229,11 @@ impl<'a> Engine<'a> {
         }
         if let Value::Trace(trace) = &subject {
             return match self.lang.trace_fields.iter().position(|key| key == name) {
-                Some(1) => Ok(Value::Small(trace.line as i64)),
+                Some(1) => Ok(Value::Small(trace.line)),
                 Some(2) => Ok(trace.next.borrow().clone()),
                 Some(3) => Ok(Value::Object(trace.frame.clone())),
                 Some(26) => Ok(Value::Small(trace.instruction)),
-                Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64)),
+                Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2 as i64))),
                 Some(17) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64))),
                 Some(18) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64))),
                 _ => Err(self.missing_member(&subject, name)),
@@ -4301,6 +4340,10 @@ impl<'a> Engine<'a> {
             if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
             if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
                 if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }
+            }
+            // An exception's making, asked of a base, is the root's making.
+            if self.exception_class(c) && name == self.class_word("allocate") {
+                return self.class_apply(Self::adapter(1, Vec::new()), args);
             }
             if c.name==self.class_word("root") && name==self.class_word("allocate"){let allocator=self.class_get(Value::Class(c.clone()),name,true)?;return self.class_apply(allocator,args);}
             if c.name==self.class_word("root") {

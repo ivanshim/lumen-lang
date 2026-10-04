@@ -1471,6 +1471,9 @@
   "ext.builtin.property": [
     "property"
   ],
+  "ext.builtin.property.is_abstract": [
+    "__isabstractmethod__"
+  ],
   "ext.builtin.range.index": [
     "IndexError: range object index out of range"
   ],

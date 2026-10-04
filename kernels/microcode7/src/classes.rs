@@ -832,7 +832,7 @@ impl<'a> Machine<'a> {
             entries.push((self.detail(part).to_owned(),Self::wrap(58,vec![Value::text(Self::accessor_key(part))])));
         }
         entries.push((self.detail("name").to_owned(),Self::wrap(58,vec![Value::text("\0name")])));
-        entries.push(("__isabstractmethod__".to_owned(),Self::wrap(58,vec![Value::text("\0abstract")])));
+        if let Some(word)=self.table.single("ext.builtin.property.is_abstract"){entries.push((word.to_owned(),Self::wrap(58,vec![Value::text("\0abstract")])));}
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
@@ -850,11 +850,23 @@ impl<'a> Machine<'a> {
     /// namespace for a subclass.
     fn property_keeps_doc(&self,class:&Rc<Blueprint>)->bool {
         let Some(property)=&self.property_kind else { return true };
-        if Rc::ptr_eq(class,property){return true;}
-        let Some(declared)=Self::own_entry(class,self.detail("slots")) else { return true };
-        let slots=declared.settled();
-        let matching=|x:&Value| matches!(x,Value::Text(s) if s.as_ref()==self.detail("doc") || s.as_ref()==self.detail("namespace"));
-        match &slots { Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching), v=>matching(v) }
+        let slots_word=self.detail("slots");
+        let doc_word=self.detail("doc");
+        let names=self.detail("namespace");
+        let names_it=|listed:&[Value]| listed.iter().any(|s| matches!(s.settled(),Value::Text(t) if t.as_ref()==doc_word || t.as_ref()==names));
+        let mut current=class.clone();
+        loop {
+            if Rc::ptr_eq(&current,property){return false;}
+            match Self::own_entry(&current,slots_word) {
+                Some(declared)=>{
+                    let listed:Vec<Value>=match declared.settled(){Value::Tuple(v)|Value::Vector(v)=>v.to_vec(),other=>vec![other]};
+                    if names_it(&listed){return true;}
+                }
+                None=>return true,
+            }
+            let Some(base)=current.under.clone() else { return false };
+            current=base;
+        }
     }
     /// Whether a value stands for the property builtin read as a class:
     /// its word, before anything else was bound to that name.
@@ -880,6 +892,7 @@ impl<'a> Machine<'a> {
     /// class gave it, else the getter's; whether it is abstract any of
     /// its accessors says.
     fn accessor_shown(&mut self,property:&Thing,key:&str)->Res {
+        let abstract_word=self.table.single("ext.builtin.property.is_abstract").unwrap_or_default().to_owned();
         if let Some(v)=Self::kept_accessor(property,key){return Ok(v);}
         if key=="\0doc" {
             if let Some(Value::Routine(getter)|Value::Bound(getter,_))=Self::kept_accessor(property,"\0fget") {
@@ -902,7 +915,7 @@ impl<'a> Machine<'a> {
         if key=="\0abstract" {
             for part in ["\0fget","\0fset","\0fdel"] {
                 let Some(accessor)=Self::kept_accessor(property,part) else { continue };
-                let held=match self.read_class_member(accessor,"__isabstractmethod__",false) {
+                let held=match self.read_class_member(accessor,&abstract_word,false) {
                     Ok(held)=>held,
                     Err(escaped) if self.missing_member_escape(&escaped)=>continue,
                     Err(escaped)=>return Err(escaped),
@@ -979,8 +992,10 @@ impl<'a> Machine<'a> {
                 let mut getter_doc=false;
                 if matches!(doc,Value::Nil) && !matches!(taken[0],Value::Nil) {
                     let doc_word=self.detail("doc").to_owned();
-                    if let Ok(found)=self.read_class_member(taken[0].clone(),&doc_word,false) {
-                        if !matches!(found.settled(),Value::Nil) { doc=found; getter_doc=true; }
+                    match self.read_class_member(taken[0].clone(),&doc_word,false) {
+                        Ok(found)=>{ if !matches!(found.settled(),Value::Nil){ doc=found; getter_doc=true; } }
+                        Err(escaped) if self.missing_member_escape(&escaped)=>{}
+                        Err(escaped)=>return Err(escaped),
                     }
                 }
                 let plain=self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(known,&property.blueprint()));
@@ -2729,11 +2744,11 @@ impl<'a> Machine<'a> {
         }
         if let Value::Backtrace(link) = &value {
             let names = self.table.strings("ext.builtin.exceptions.traceback");
-            if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location as i64)); }
+            if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location)); }
             if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.borrow().clone()); }
             if names.get(3).map_or(false, |n| n == key) { return Ok(Value::Thing(link.activation.clone())); }
             if names.get(26).map_or(false, |n| n == key) { return Ok(Value::Small(link.instruction)); }
-            for (index, offset) in [(16, link.extent.map_or(Some(link.location), |x| Some(x.2))), (17, link.extent.map(|x| x.1)), (18, link.extent.map(|x| x.3))] {
+            for (index, offset) in [(16, link.extent.map_or(Some(link.location as u32), |x| Some(x.2))), (17, link.extent.map(|x| x.1)), (18, link.extent.map(|x| x.3))] {
                 if names.get(index).map_or(false, |word| word == key) { return Ok(offset.map(|n| Value::Small(n as i64)).unwrap_or(Value::Nil)); }
             }
             return Err(self.absent_attribute(&value, key));
@@ -4499,6 +4514,10 @@ impl<'a> Machine<'a> {
             if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
                 if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
+            }
+            // A fault's making, asked of a base, is the root's making.
+            if self.is_fault_kind(b) && key == self.detail("allocate") {
+                return self.apply_class_member(Self::wrap(1, Vec::new()), args);
             }
             if b.name==self.detail("root") && key==self.detail("allocate"){let f=self.read_class_member(Value::Blueprint((*b).clone()),key,true)?;return self.apply_class_member(f,args);}
             if b.name==self.detail("root") {

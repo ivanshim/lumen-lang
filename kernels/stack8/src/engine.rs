@@ -1227,9 +1227,22 @@ impl<'a> Engine<'a> {
                 // way the reference makes any class, and what it hands back
                 // must still be an exception: a stand-in is refused.
                 if let Some(new) = self.class_value(&class, self.class_word("allocate")) {
+                    // The class is called the way the reference calls it: its
+                    // making, then its initializer when what came back is one
+                    // of the class, and the result must still be an exception.
                     let made = self.class_apply(new, vec![Value::Class(class.clone())])?;
-                    if matches!(&made, Value::Object(object) if self.exception_class(&object.class_now())) {
-                        return Ok(made);
+                    if let Value::Object(object) = &made {
+                        if self.exception_class(&object.class_now()) {
+                            let belongs = Rc::ptr_eq(&object.class_now(), &class) || object.class_now().lineage.iter().any(|base| Rc::ptr_eq(base, &class));
+                            if belongs {
+                                if let Some(init) = self.lang.constructor.clone().and_then(|key| self.class_value(&object.class_now(), &key)) {
+                                    let class = object.class_now().clone();
+                                    let bound = self.bind_class_value(init, Some(made.clone()), class)?;
+                                    self.class_apply(bound, Vec::new())?;
+                                }
+                            }
+                            return Ok(made);
+                        }
                     }
                     return Err(format!("TypeError: calling <class '{}'> should have returned an instance of BaseException, not <class '{}'>", class.name, made.core_kind()).into());
                 }
@@ -5065,7 +5078,7 @@ impl<'a> Engine<'a> {
         if matches!(prior, Value::Null) {
             crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
         }
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame, next: RefCell::new(prior) }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line as i64, frame, next: RefCell::new(prior) }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -10694,6 +10707,14 @@ impl<'a> Engine<'a> {
                 // for on, as reading one is: a name a place was taken
                 // out of stands for its cell from then on.
                 let held = { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } };
+                // A super's member is known by whether reading it would
+                // answer, so that a call through the proxy takes the
+                // ordinary road rather than the language's fallback.
+                if matches!(&held, Value::Adapter(w) if w.0 == 9 && w.1.len() == 2) {
+                    let known = self.class_get(held, name, false).is_ok();
+                    self.data.push(Value::Flag(known));
+                    return Ok(());
+                }
                 if self.fuller_classes() && name.as_ref() == self.class_word("kind") {
                     self.data.push(Value::Flag(true)); return Ok(());
                 }
@@ -10820,11 +10841,11 @@ impl<'a> Engine<'a> {
                 }
                 Value::Trace(trace) => {
                     match self.lang.trace_fields.iter().position(|field| field == name.as_ref()) {
-                        Some(1) => Value::Small(trace.line as i64),
+                        Some(1) => Value::Small(trace.line),
                         Some(2) => trace.next.borrow().clone(),
                         Some(3) => Value::Object(trace.frame.clone()),
                         Some(26) => Value::Small(trace.instruction),
-                        Some(16) => Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64),
+                        Some(16) => Value::Small(trace.location.map_or(trace.line, |p| p.2 as i64)),
                         Some(17) => trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64)),
                         Some(18) => trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64)),
                         _ => return Err(format!("AttributeError: 'traceback' object has no attribute '{}'", name).into()),
@@ -11467,7 +11488,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line as i64, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }

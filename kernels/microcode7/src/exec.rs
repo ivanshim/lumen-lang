@@ -1480,11 +1480,24 @@ impl<'a> Machine<'a> {
                 // way the reference makes any class, and what it hands back
                 // must still be a fault: a stand-in is refused.
                 if self.allocation_changed(&kind) {
+                    // The kind is called the way the reference calls it: its
+                    // making, then its initializer when what came back is one
+                    // of the kind, and the result must still be a fault.
                     let key = self.detail("allocate");
                     let Some(new) = self.inherited_entry(&kind, &key) else { unreachable!() };
                     let made = self.apply_class_member(new, vec![Value::Blueprint(kind.clone())])?;
-                    if matches!(made.settled(), Value::Thing(object) if self.is_fault_kind(&object.blueprint())) {
-                        return Ok(made);
+                    if let Value::Thing(object) = made.settled() {
+                        if self.is_fault_kind(&object.blueprint()) {
+                            let belongs = Rc::ptr_eq(&object.blueprint(), &kind) || object.blueprint().ancestry.iter().any(|base| Rc::ptr_eq(base, &kind));
+                            if belongs {
+                                if let Some(init) = self.table.single("ext.stmt.class.constructor").and_then(|word| self.inherited_entry(&object.blueprint(), word)) {
+                                    let owner = object.blueprint().clone();
+                                    let bound = self.member_binding(init, Some(made.clone()), owner)?;
+                                    self.apply_class_member(bound, Vec::new())?;
+                                }
+                            }
+                            return Ok(made);
+                        }
                     }
                     return Err(format!("TypeError: calling <class '{}'> should have returned an instance of BaseException, not <class '{}'>", kind.name, made.settled().kind_word()).into());
                 }
@@ -5191,7 +5204,7 @@ impl<'a> Machine<'a> {
         if matches!(following, Value::Nil) {
             crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(raised)));
         }
-        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation), extent: self.extent, location: self.row, activation, following: RefCell::new(following) };
+        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation), extent: self.extent, location: self.row as i64, activation, following: RefCell::new(following) };
         let mut fields = raised.holds.borrow_mut();
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
@@ -8440,11 +8453,27 @@ impl<'a> Machine<'a> {
     /// A traceback built by hand, as `types.TracebackType` builds one:
     /// what it follows, the frame it stands in, and where in that frame.
     fn traceback_from_parts(&mut self, args: Vec<Value>) -> Res<Value> {
-        let (plain, named) = self.open_arguments(args)?;
-        if !named.is_empty() { return Err("TypeError: traceback() takes no keyword arguments".to_owned().into()); }
-        let [next, frame, lasti, lineno] = plain.as_slice() else {
-            return Err(format!("TypeError: traceback() takes exactly 4 arguments ({} given)", plain.len()).into());
+        let parts = ["tb_next", "tb_frame", "tb_lasti", "tb_lineno"];
+        let (positional, named) = self.open_arguments(args)?;
+        let mut slots: [Option<Value>; 4] = [None, None, None, None];
+        let mut at = 0usize;
+        for value in positional {
+            if at >= 4 { return Err(format!("TypeError: traceback() takes at most 4 arguments ({} given)", at + 1).into()); }
+            slots[at] = Some(value); at += 1;
+        }
+        for (key, value) in named {
+            let Some(slot) = parts.iter().position(|part| *part == key) else {
+                return Err(format!("TypeError: traceback() got an unexpected keyword argument '{key}'").into());
+            };
+            if slots[slot].replace(value).is_some() { return Err(format!("TypeError: traceback() got multiple values for argument '{key}'").into()); }
+        }
+        let mut take = |slot: usize| -> Result<Value, Escape> {
+            slots[slot].take().ok_or_else(|| Escape::Error(format!("TypeError: traceback() missing required argument '{}' (pos {})", parts[slot], slot + 1)))
         };
+        let next = take(0)?;
+        let frame = take(1)?;
+        let lasti = take(2)?;
+        let lineno = take(3)?;
         let following = match next.settled() {
             Value::Nil => Value::Nil,
             Value::Backtrace(_) => next.clone(),
@@ -8453,15 +8482,34 @@ impl<'a> Machine<'a> {
         let Value::Thing(holder) = frame.settled() else {
             return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", frame.settled().kind_word()).into());
         };
-        let instruction = match lasti.settled() {
-            Value::Small(n) => n,
-            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word()).into()),
-        };
-        let location = match lineno.settled() {
-            Value::Small(n) => n as u32,
-            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word()).into()),
-        };
+        if let Some(kind) = &self.activation_kind {
+            if !Rc::ptr_eq(&holder.blueprint(), kind) {
+                return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", frame.settled().kind_word()).into());
+            }
+        }
+        let instruction = self.traceback_number(&lasti)?;
+        let location = self.traceback_number(&lineno)?;
         Ok(Value::Backtrace(Rc::new(crate::data::TraceLink { instruction, extent: None, location, activation: holder.clone(), following: RefCell::new(following) })))
+    }
+    /// A traceback's position or line: a whole number through `__index__`,
+    /// which must fit where the reference keeps it.
+    fn traceback_number(&mut self, value: &Value) -> Res<i64> {
+        let number = match value.settled() {
+            Value::Small(n) => n,
+            Value::Flag(flag) => i64::from(flag),
+            Value::Huge(_) => return Err("OverflowError: Python int too large to convert to C int".to_owned().into()),
+            Value::Thing(_) => match self.ask_special(value, 43, &[])? {
+                Some(Value::Small(n)) => n,
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| Escape::Error("OverflowError: Python int too large to convert to C int".to_owned()))?,
+                Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.kind_word()).into()),
+                None => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.settled().kind_word()).into()),
+            },
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word()).into()),
+        };
+        if number < i32::MIN as i64 || number > i32::MAX as i64 {
+            return Err("OverflowError: Python int too large to convert to C int".to_owned().into());
+        }
+        Ok(number)
     }
     fn paired_call(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
         if !self.spelled_stands {
@@ -14569,7 +14617,7 @@ impl<'a> Machine<'a> {
                     Some(2) => Ok(Some(link.following.borrow().clone())),
                     Some(3) => Ok(Some(Value::Thing(link.activation.clone()))),
                     Some(26) => Ok(Some(Value::Small(link.instruction))),
-                    Some(16) => Ok(Some(Value::Small(link.extent.map_or(link.location, |x| x.2) as i64))),
+                    Some(16) => Ok(Some(Value::Small(link.extent.map_or(link.location, |x| x.2 as i64)))),
                     Some(17) => Ok(Some(link.extent.map(|x| Value::Small(x.1 as i64)).unwrap_or(Value::Nil))),
                     Some(18) => Ok(Some(link.extent.map(|x| Value::Small(x.3 as i64)).unwrap_or(Value::Nil))),
                     _ => Err(format!("AttributeError: 'traceback' object has no attribute '{}'", member)),

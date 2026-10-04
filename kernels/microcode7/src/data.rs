@@ -212,7 +212,7 @@ pub struct TraceLink {
     /// Preorder position of the executing expression in the compiled form tree.
     pub instruction: i64,
     pub extent: Option<(u32, u32, u32, u32)>,
-    pub location: u32,
+    pub location: i64,
     pub activation: Rc<Thing>,
     pub following: RefCell<Value>,
 }

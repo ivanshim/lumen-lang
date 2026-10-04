@@ -1575,7 +1575,9 @@ only. The extension labels so far, all from PHP:
   by `__dir__` when present; its default directory uses the namespace and
   inherited members appropriate to the value.
   `ext.builtin.staticmethod`, `ext.builtin.classmethod` and
-  `ext.builtin.property` make the corresponding member wrappers.
+  `ext.builtin.property` make the corresponding member wrappers, and
+  `ext.builtin.property.is_abstract` names the member a property answers
+  for whether its accessors are abstract.
   These labels each take a list of builtin words.
   The indented definition's ancestry and base lists are immutable tuples;
   the ancestry call also yields a tuple at this stage. Ordinary tuple
@@ -4820,6 +4822,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
+| `ext.builtin.property.is_abstract` | - | - | `__isabstractmethod__` | - | - | - | - | - | - | - |
 | `ext.builtin.random.words` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
