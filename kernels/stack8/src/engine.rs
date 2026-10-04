@@ -11377,7 +11377,8 @@ impl<'a> Engine<'a> {
                 };
                 let this = given[3].contents();
                 let class = match &callable { Value::Class(c) => c.clone(), _ => self.kind_class("super") };
-                let made = self.super_made(class, vec![Value::Class(owner), this])?;
+                let shown = self.public_class(owner);
+                let made = self.super_made(class, vec![shown, this])?;
                 self.data.push(made);
                 return Ok(());
             }
