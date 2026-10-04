@@ -3529,7 +3529,7 @@ impl<'a> Engine<'a> {
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
-        if let Value::Array(v)|Value::Tuple(v)=wanted {
+        if let Value::Tuple(v)=wanted {
             // A tuple of kinds is walked member by member, and the walk
             // is guarded so a tuple nested without end raises as the
             // reference's own recursion does rather than running on.

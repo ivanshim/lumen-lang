@@ -3790,7 +3790,7 @@ impl<'a> Machine<'a> {
         // each of the two has its own words, as the reference has.
         let amiss=if class_only{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         match choice {
-            Value::Tuple(options)|Value::Vector(options)=>{
+            Value::Tuple(options)=>{
                 // A tuple of kinds is walked member by member, and the
                 // walk is guarded so a tuple nested without end raises
                 // as the reference's own reading does.
