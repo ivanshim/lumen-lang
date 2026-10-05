@@ -67,6 +67,7 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
+            Value::ValueMethod(method) if method.1 == "classmethod_bind" => "method-wrapper",
             Value::ValueMethod(method) if Self::loose_member_descriptor(&method.0.core_kind(), &method.1).is_some_and(|(_, form)| form == "wrapper_descriptor") => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own

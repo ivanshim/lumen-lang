@@ -33,6 +33,16 @@ def get_clock_info(name):
         return _ClockInfo(False)
     raise ValueError('unknown clock')
 
+# Integer nanoseconds from the same host clocks, without a float round trip.
+def time_ns():
+    return __clock(False, False)
+
+def monotonic_ns():
+    return __clock(True, False)
+
+def perf_counter_ns():
+    return __clock(True, False)
+
 struct_time = _host_clock('struct_time')
 
 def localtime(seconds=None):

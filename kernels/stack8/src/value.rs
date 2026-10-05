@@ -1053,6 +1053,24 @@ impl Value {
             if length.is_one() { return Ok(format!("span1/{}", span.start)); }
             return Ok(format!("span{}/{}/{}", length, span.start, span.step));
         }
+        // A complex is keyed by the two numbers it stands for, and one
+        // whose imaginary part is nought is the very real number it
+        // equals, taking that number's key so the two meet as one. A
+        // pair holding a value no number answers to keeps its own
+        // place, shared with nothing, as a real no number answers to
+        // does.
+        if let Value::Complex(z) = self {
+            if z.real.is_nan() || z.imag.is_nan() { return Ok(format!("apart{:p}", Rc::as_ptr(z))); }
+            if z.imag == 0.0 {
+                if let Some((p, q)) = crate::arith::parts(&crate::complex::real(z.real)) {
+                    if q.is_zero() { return Err(""); }
+                    let common = p.gcd(&q);
+                    return Ok(format!("n{}/{}", p / &common, q / common));
+                }
+            }
+            let near = |n: f64| if n == 0.0 { "0".to_string() } else { format!("{n:?}") };
+            return Ok(format!("c{}/{}", near(z.real), near(z.imag)));
+        }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);
@@ -1277,7 +1295,7 @@ impl Value {
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
             (Value::Words(a, x), Value::Words(b, y)) => x == y && a == b,
-            (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| matches!(v,Value::Text(t) if s.as_str()==t.as_ref())),
+            (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| Value::text(s.as_str()).equals(v)),
             (Value::Codepoints(a), Value::Codepoints(b)) => a == b,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,

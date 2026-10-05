@@ -24,6 +24,9 @@ pub mod faint;
 mod core;
 mod posix;
 mod complex;
+mod structpack;
+mod crypto;
+mod context;
 pub mod tuples;
 
 use lang::Lang;
@@ -553,5 +556,5 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
 }
 mod sre;
 
-mod structpack;
+
 mod statistics;

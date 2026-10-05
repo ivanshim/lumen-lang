@@ -2,6 +2,7 @@
 _host_file_exists = __file_exists
 _host_file_kind = __file_kind
 _host_file_read = __file_read
+_host_file_read_bytes = __file_read_bytes
 _host_file_write = __file_write
 
 # The names a program reaches without naming a module at all.
@@ -214,6 +215,7 @@ class _HostFile:
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
         self.errors = errors if errors is not None else 'strict'
         self.closed = False
+        self._descriptor = None
         self._pos = 0
         self._dirty = False
         # Line-at-a-time reading is what both the reference tests and
@@ -229,10 +231,16 @@ class _HostFile:
         self._lines_at = 0
         self._lines_pos = 0
         reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
-        writing = 'w' in mode
+        writing = 'w' in mode or 'x' in mode
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
+        if writing:
+            import posix
+            flags = posix.O_WRONLY | posix.O_CREAT
+            flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
+            fd = posix.open(name, flags, 0o666)
+            posix.close(fd)
         if writing:
             self._dirty = True
             if _host_file_exists(name) and _host_file_kind(name) == 2:
@@ -242,8 +250,8 @@ class _HostFile:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read(name, self._binary)
-                self._buffer = brought if brought is not False else (b'' if self._binary else '')
+                brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
+                self._buffer = brought if brought is not False else b'' if self._binary else ''
             else:
                 self._buffer = b'' if self._binary else ''
             self._pos = len(self._buffer)
@@ -253,7 +261,7 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name, self._binary)
+            brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
@@ -266,13 +274,30 @@ class _HostFile:
         return 'r' in self.mode or '+' in self.mode
 
     def writable(self):
-        return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
+        return 'w' in self.mode or 'x' in self.mode or 'a' in self.mode or '+' in self.mode
+
+    def _read_host(self, name):
+        if not self._binary:
+            return _host_file_read(name)
+        import posix
+        fd = posix.open(name, posix.O_RDONLY)
+        try:
+            data = b''
+            while True:
+                piece = posix.read(fd, 65536)
+                if not piece:
+                    return data
+                data += piece
+        finally:
+            posix.close(fd)
 
     def _carried(self, text):
         return text if not self._binary or isinstance(text, bytes) else text.encode('utf-8')
 
     def read(self, size=-1):
         self._open()
+        if not self.readable():
+            raise OSError('File not open for reading')
         if size is None or size < 0:
             size = len(self._buffer) - self._pos
         value = self._buffer[self._pos:self._pos + size]
@@ -282,7 +307,13 @@ class _HostFile:
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
-            self._lines = self._buffer[self._pos:].splitlines(keepends=True)
+            if self._binary:
+                parts = self._buffer[self._pos:].split(b'\n')
+                self._lines = [part + b'\n' for part in parts[:-1]]
+                if parts[-1]:
+                    self._lines.append(parts[-1])
+            else:
+                self._lines = self._buffer[self._pos:].splitlines(True)
             self._lines_at = 0
             self._lines_pos = self._pos
 
@@ -291,7 +322,7 @@ class _HostFile:
         if size is not None and size >= 0:
             start = self._pos
             limit = min(len(self._buffer), start + size)
-            found = self._buffer.find('\n', start, limit)
+            found = self._buffer.find(b'\n' if self._binary else '\n', start, limit)
             stop = limit if found < 0 else found + 1
             self._pos = stop
             self._lines = None
@@ -363,16 +394,43 @@ class _HostFile:
     def flush(self):
         self._open()
         if self._dirty:
-            wrote = _host_file_write(self.name, self._buffer)
+            if self._binary:
+                import posix
+                descriptor = posix.open(self.name, posix.O_WRONLY | posix.O_CREAT | posix.O_TRUNC, 0o666)
+                try:
+                    pending = self._buffer
+                    while pending:
+                        written = posix.write(descriptor, pending)
+                        pending = pending[written:]
+                    wrote = len(self._buffer)
+                finally:
+                    posix.close(descriptor)
+            else:
+                wrote = _host_file_write(self.name, self._buffer)
             if wrote is False:
                 raise FileNotFoundError(2, 'No such file or directory', self.name)
             self._dirty = False
+
+    def fileno(self):
+        self._open()
+        self.flush()
+        import posix
+        if self._descriptor is None:
+            flags = posix.O_RDWR if '+' in self.mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
+            self._descriptor = posix.open(self.name, flags)
+        position = self._pos if self._binary else len(self._buffer[:self._pos].encode(self.encoding, self.errors))
+        posix.lseek(self._descriptor, position, 0)
+        return self._descriptor
 
     def close(self):
         if self.closed:
             return
         if self.writable():
             self.flush()
+        if self._descriptor is not None:
+            import posix
+            posix.close(self._descriptor)
+            self._descriptor = None
         self.closed = True
 
     def __enter__(self):
@@ -466,23 +524,26 @@ class memoryview:
             self._format = object._format
             self._itemsize = object._itemsize
             self._readonly = object._readonly
+            self._shape = object._shape
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
             self._offsets = range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
+            self._shape = (len(self._offsets),)
         elif isinstance(object, array):
             self._source = object
-            self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
-            self._format = object.typecode
+            self._offsets = list(range(0, len(object._buffer), object.itemsize))
+            self._format = "w" if object.typecode in "uw" else object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
+            self._shape = (len(self._offsets),)
         else:
             raise TypeError(error_prefix + "a bytes-like object is required, not '" + type(object).__name__ + "'")
         self._stride = object._stride if isinstance(object, memoryview) else self._itemsize
         self._released = False
-        self._export = _export(self._source) if isinstance(self._source, bytearray) else None
+        self._export = _export(self._source._buffer) if isinstance(self._source, array) else _export(self._source) if isinstance(self._source, bytearray) else None
 
     @property
     def ndim(self):
@@ -511,9 +572,7 @@ class memoryview:
     def _byte(self, offset):
         from array import array
         if isinstance(self._source, array):
-            if self._source.typecode in ('B', 'b'):
-                return self._source.data[offset] & 255
-            return self._source.tobytes()[offset]
+            return self._source._buffer[offset]
         if isinstance(self._source, bytes):
             return bytes.__getitem__(self._source, offset)
         return bytearray.__getitem__(self._source, offset)
@@ -521,17 +580,8 @@ class memoryview:
     def _put_byte(self, offset, value):
         from array import array
         if isinstance(self._source, array):
-            if self._source.typecode in ('B', 'b'):
-                self._source.data[offset] = value - 256 if self._source.typecode == 'b' and value >= 128 else value
-            else:
-                source = self._source
-                index = offset // source.itemsize
-                start = index * source.itemsize
-                data = bytearray(source.tobytes()[start:start + source.itemsize])
-                data[offset % source.itemsize] = value
-                element = array(source.typecode)
-                element.frombytes(data)
-                source.data[index] = element.data[0]
+            storage = self._source._buffer
+            storage[offset] = value
         else:
             self._source[offset] = value
 
@@ -574,18 +624,37 @@ class memoryview:
 
     @property
     def nbytes(self):
-        return len(self) * self.itemsize
+        self._check()
+        return len(self._offsets) * self.itemsize
+
+    @property
+    def ndim(self):
+        self._check()
+        return len(self._shape)
+
+    @property
+    def shape(self):
+        self._check()
+        return self._shape
+
+    @property
+    def c_contiguous(self):
+        self._check()
+        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
 
     def __len__(self):
         self._check()
-        return len(self._offsets)
+        return self._shape[0]
 
     def __getitem__(self, key):
         self._check()
+        if self.ndim != 1:
+            raise NotImplementedError('multi-dimensional sub-views are not implemented')
         if isinstance(key, slice):
             child = memoryview(self)
             child._offsets = self._offsets[key]
             child._stride = self._stride * (key.step or 1)
+            child._shape = (len(child._offsets),)
             return child
         try:
             first = self._offsets[key]
@@ -594,17 +663,22 @@ class memoryview:
         except TypeError:
             raise TypeError('memoryview: invalid slice key')
         raw = bytes([self._byte(first + i) for i in range(self._itemsize)])
-        return int.from_bytes(raw, 'little', signed=self._format in ('b', 'i'))
+        import struct
+        if self._format == 'w':
+            raise NotImplementedError('memoryview: format w not supported')
+        format = self._format[1:] if self._format.startswith('@') else self._format
+        return struct.unpack('@' + format, raw[:struct.calcsize('@' + format)])[0]
 
     def __setitem__(self, key, value):
         self._check()
+        format = self._format[1:] if self._format.startswith('@') else self._format
         if self._readonly:
             raise TypeError('cannot modify read-only memory')
         if isinstance(key, slice):
             places = self._offsets[key]
             if not isinstance(value, (bytes, bytearray, memoryview)):
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
-            if self._format not in ('B', 'b'):
+            if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
             raw = value.tobytes() if isinstance(value, memoryview) else bytes(value)
             if len(places) != len(raw):
@@ -622,11 +696,32 @@ class memoryview:
                 raise IndexError('index out of bounds on dimension 1')
             except TypeError:
                 raise TypeError('memoryview: invalid slice key')
+            if format == 'w':
+                raise NotImplementedError('memoryview: format w not supported')
+            if format == 'c':
+                if not isinstance(value, bytes) or len(value) != 1:
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+            elif format == '?':
+                value = bool(value)
+            elif format in 'efd':
+                if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+                value = float(value)
+            else:
+                if not isinstance(value, int) and not hasattr(type(value), '__index__'):
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+                import operator
+                value = operator.index(value)
+            import struct
             try:
-                raw = value.to_bytes(self._itemsize, 'little', signed=self._format in ('b', 'i'))
+                raw = struct.pack('@' + format, value)
+            except struct.error:
+                raise ValueError("memoryview: invalid value for format '" + format + "'")
             except OverflowError:
-                raise ValueError("memoryview: invalid value for format '" + self._format + "'")
-            for i in range(self._itemsize):
+                if format != 'f':
+                    raise
+                raw = struct.pack('@f', float('-inf') if value < 0 else float('inf'))
+            for i in range(len(raw)):
                 self._put_byte(first + i, raw[i])
 
     def tolist(self):
@@ -667,26 +762,47 @@ class memoryview:
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
+        if not isinstance(format, str):
+            raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
-        if shape is not None and (not isinstance(shape, (list, tuple)) or len(shape) != 1):
-            raise TypeError('memoryview: multi-dimensional casts are not supported')
-        if format not in ('B', 'b', 'i', 'I'):
-            raise TypeError('memoryview: destination format must be a native single character format')
         if self._offsets:
             start = self._offsets[0]
             if not self.c_contiguous:
                 raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
-        width = 4 if format in ('i', 'I') else 1
+        if shape is not None and not isinstance(shape, (list, tuple)):
+            raise TypeError('shape must be a list or a tuple')
+        format.encode('ascii')
+        destination = format[1:] if format.startswith('@') else format
+        if len(destination) != 1 or destination not in 'cbBhHiIlLqQnNfde?P':
+            raise ValueError("memoryview: destination format must be a native single character format prefixed with an optional '@'")
+        source = self._format[1:] if self._format.startswith('@') else self._format
+        if source not in ('b', 'B', 'c') and destination not in ('b', 'B', 'c'):
+            raise TypeError('memoryview: cannot cast between two non-byte formats')
+        import struct
+        width = struct.calcsize('@' + destination)
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
-        if shape is not None and shape[0] != self.nbytes // width:
-            raise TypeError('memoryview: product(shape) * itemsize != buffer size')
+        dimensions = (self.nbytes // width,)
+        if shape is not None:
+            product = 1
+            if not shape or len(shape) > 64:
+                raise ValueError('memoryview: number of dimensions must not exceed 64')
+            for length in shape:
+                if not isinstance(length, int):
+                    raise TypeError('memoryview.cast(): elements of shape must be integers')
+                if length <= 0:
+                    raise ValueError('memoryview.cast(): elements of shape must be integers > 0')
+                product *= length
+            if product != self.nbytes // width:
+                raise TypeError('memoryview: product(shape) * itemsize != buffer size')
+            dimensions = tuple(shape)
         result = memoryview(self)
         result._format = format
         result._itemsize = width
-        result._offsets = range(start, start + self.nbytes, width)
+        result._offsets = list(range(start, start + self.nbytes, width))
+        result._shape = dimensions
         return result
 
     def __del__(self):
@@ -759,3 +875,19 @@ def _buffer_view(source, flags, error_prefix="memoryview: "):
     view = object.__new__(memoryview)
     view._init_buffer(source, flags, error_prefix)
     return view
+# IndentationError and TabError.
+
+# POSIX error kinds supplied by the native exception hierarchy.
+BlockingIOError = BlockingIOError
+BrokenPipeError = BrokenPipeError
+ChildProcessError = ChildProcessError
+ConnectionError = ConnectionError
+ConnectionAbortedError = ConnectionAbortedError
+ConnectionRefusedError = ConnectionRefusedError
+ConnectionResetError = ConnectionResetError
+FileExistsError = FileExistsError
+InterruptedError = InterruptedError
+NotADirectoryError = NotADirectoryError
+PermissionError = PermissionError
+ProcessLookupError = ProcessLookupError
+TimeoutError = TimeoutError

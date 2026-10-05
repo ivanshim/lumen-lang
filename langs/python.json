@@ -53,6 +53,9 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.file.link": [
+    "__file_link"
+  ],
   "ext.builtin.weak.make": [
     "__weak_make"
   ],
@@ -87,11 +90,24 @@
   "ext.builtin.dir.change": [
     "__change_dir"
   ],
+  "ext.builtin.cell.repr": [
+    "<cell at 0x",
+    ": ",
+    " object at 0x",
+    ">",
+    "empty"
+  ],
+  "ext.builtin.dir.remove": [
+    "__remove_dir"
+  ],
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
   "ext.builtin.at_end": [
     "__at_end"
+  ],
+  "ext.builtin.crypto": [
+    "__crypto"
   ],
   "ext.builtin.host.info": [
     "__host_info"
@@ -208,6 +224,7 @@
     "with",
     "yield"
   ],
+  "ext.lexical.identifier.normalized": true,
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -872,8 +889,27 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.file_read.bytes": [
+    "__file_read_bytes"
+  ],
+  "ext.builtin.struct_native": [
+    "__struct_native"
+  ],
+  "ext.builtin.buffer.hooks": [
+    "__buffer__",
+    "__release_buffer__"
+  ],
+  "ext.builtin.binascii_native": [
+    "__binascii_native__"
+  ],
+  "ext.builtin.zlib_native": [
+    "__zlib_native__"
+  ],
   "ext.builtin.heap_native": [
     "__heap_native__"
+  ],
+  "ext.builtin.context_native": [
+    "__context_native__"
   ],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
@@ -1683,6 +1719,7 @@
   "ext.builtin.staticmethod": [
     "staticmethod"
   ],
+  "ext.builtin.stream.binary": true,
   "ext.builtin.stream.amiss": [
     "TypeError: invalid stream arguments"
   ],
@@ -1991,7 +2028,7 @@
   ],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
-    " digits) for integer string conversion"
+    " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"
   ],
   "ext.builtin.to_int.infinity": [
     "OverflowError: cannot convert float infinity to integer"
@@ -2817,7 +2854,8 @@
     "co_flags",
     "co_filename",
     "co_firstlineno",
-    "__annotate__"
+    "__annotate__",
+    "co_freevars"
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
@@ -3018,6 +3056,9 @@
   "ext.builtin.inline_values": [
     "_has_inline_values"
   ],
+  "ext.builtin.type_descriptors.clear": [
+    "__clear_type_descriptors"
+  ],
   "ext.stmt.class.detail.flags": [
     "__flags__"
   ],
@@ -3061,6 +3102,9 @@
   ],
   "ext.stmt.class.detail.property.fget": [
     "fget"
+  ],
+  "ext.stmt.class.detail.property.is_abstract": [
+    "__isabstractmethod__"
   ],
   "ext.stmt.class.detail.property.fset": [
     "fset"
@@ -3411,6 +3455,7 @@
     "ModuleNotFoundError: No module named '",
     "'"
   ],
+  "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
     "NotImplementedError: relative imports require a package context"
   ],

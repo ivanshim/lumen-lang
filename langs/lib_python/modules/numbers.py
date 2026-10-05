@@ -1,250 +1,427 @@
-# The numeric tower: each kind stands on the one above it, and a kind
-# declares the operations a number of that kind answers to. A class
-# claimed for a kind through register belongs to that kind and to every
-# kind above it, which is how the builtin numbers below join the tower.
-from abc import ABC, abstractmethod
+# Copyright 2007 Google, Inc. All Rights Reserved.
+# Licensed to PSF under a Contributor Agreement.
 
-__all__ = ['Number', 'Complex', 'Real', 'Rational', 'Integral']
+"""Abstract Base Classes (ABCs) for numbers, according to PEP 3141.
+
+TODO: Fill out more detailed documentation on the operators."""
+
+############ Maintenance notes #########################################
+#
+# ABCs are different from other standard library modules in that they
+# specify compliance tests.  In general, once an ABC has been published,
+# new methods (either abstract or concrete) cannot be added.
+#
+# Though classes that inherit from an ABC would automatically receive a
+# new mixin method, registered classes would become non-compliant and
+# violate the contract promised by ``isinstance(someobj, SomeABC)``.
+#
+# Though irritating, the correct procedure for adding new abstract or
+# mixin methods is to create a new ABC as a subclass of the previous
+# ABC.
+#
+# Because they are so hard to change, new ABCs should have their APIs
+# carefully thought through prior to publication.
+#
+# Since ABCMeta only checks for the presence of methods, it is possible
+# to alter the signature of a method by adding optional arguments
+# or changing parameter names.  This is still a bit dubious but at
+# least it won't cause isinstance() to return an incorrect result.
+#
+#
+#######################################################################
+
+from abc import ABCMeta, abstractmethod
+
+__all__ = ["Number", "Complex", "Real", "Rational", "Integral"]
+
+class Number(metaclass=ABCMeta):
+    """All numbers inherit from this class.
+
+    If you just want to check if an argument x is a number, without
+    caring what kind, use isinstance(x, Number).
+    """
+    __slots__ = ()
+
+    # Concrete numeric types must provide their own hash implementation
+    __hash__ = None
 
 
-class Number(ABC):
-    # CPython makes a number unhashable by default, by giving the kind
-    # no hash at all. The reader has no way to take a hash away, so the
-    # kind's own hash refuses instead.
-    def __hash__(self):
-        raise NotImplementedError('__hash__')
-
+## Notes on Decimal
+## ----------------
+## Decimal has all of the methods specified by the Real abc, but it should
+## not be registered as a Real because decimals do not interoperate with
+## binary floats (i.e.  Decimal('3.14') + 2.71828 is undefined).  But,
+## abstract reals are expected to interoperate (i.e. R1 + R2 should be
+## expected to work if R1 and R2 are both Reals).
 
 class Complex(Number):
+    """Complex defines the operations that work on the builtin complex type.
+
+    In short, those are: a conversion to complex, .real, .imag, +, -,
+    *, /, **, abs(), .conjugate, ==, and !=.
+
+    If it is given heterogeneous arguments, and doesn't have special
+    knowledge about them, it should fall back to the builtin complex
+    type as described below.
+    """
+
+    __slots__ = ()
+
     @abstractmethod
     def __complex__(self):
-        raise NotImplementedError('__complex__')
+        """Return a builtin complex instance. Called for complex(self)."""
 
     def __bool__(self):
+        """True if self != 0. Called for bool(self)."""
         return self != 0
 
     @property
     @abstractmethod
     def real(self):
-        raise NotImplementedError('real')
+        """Retrieve the real component of this number.
+
+        This should subclass Real.
+        """
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def imag(self):
-        raise NotImplementedError('imag')
+        """Retrieve the imaginary component of this number.
+
+        This should subclass Real.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def __add__(self, other):
-        return NotImplemented
+        """self + other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __radd__(self, other):
-        return NotImplemented
+        """other + self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __neg__(self):
-        raise NotImplementedError('__neg__')
+        """-self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __pos__(self):
-        raise NotImplementedError('__pos__')
+        """+self"""
+        raise NotImplementedError
 
     def __sub__(self, other):
+        """self - other"""
         return self + -other
 
     def __rsub__(self, other):
+        """other - self"""
         return -self + other
 
     @abstractmethod
     def __mul__(self, other):
-        return NotImplemented
+        """self * other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rmul__(self, other):
-        return NotImplemented
+        """other * self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __truediv__(self, other):
-        return NotImplemented
+        """self / other: Should promote to float when necessary."""
+        raise NotImplementedError
 
     @abstractmethod
     def __rtruediv__(self, other):
-        return NotImplemented
+        """other / self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __pow__(self, exponent):
-        return NotImplemented
+        """self ** exponent; should promote to float or complex when necessary."""
+        raise NotImplementedError
 
     @abstractmethod
     def __rpow__(self, base):
-        return NotImplemented
+        """base ** self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __abs__(self):
-        raise NotImplementedError('__abs__')
+        """Returns the Real distance from 0. Called for abs(self)."""
+        raise NotImplementedError
 
     @abstractmethod
     def conjugate(self):
-        raise NotImplementedError('conjugate')
+        """(x+y*i).conjugate() returns (x-y*i)."""
+        raise NotImplementedError
 
     @abstractmethod
     def __eq__(self, other):
-        return NotImplemented
+        """self == other"""
+        raise NotImplementedError
+
+Complex.register(complex)
 
 
 class Real(Complex):
+    """To Complex, Real adds the operations that work on real numbers.
+
+    In short, those are: a conversion to float, trunc(), divmod,
+    %, <, <=, >, and >=.
+
+    Real also provides defaults for the derived operations.
+    """
+
+    __slots__ = ()
+
     @abstractmethod
     def __float__(self):
-        raise NotImplementedError('__float__')
+        """Any Real can be converted to a native float object.
+
+        Called for float(self)."""
+        raise NotImplementedError
 
     @abstractmethod
     def __trunc__(self):
-        raise NotImplementedError('__trunc__')
+        """trunc(self): Truncates self to an Integral.
+
+        Returns an Integral i such that:
+          * i > 0 iff self > 0;
+          * abs(i) <= abs(self);
+          * for any Integral j satisfying the first two conditions,
+            abs(i) >= abs(j) [i.e. i has "maximal" abs among those].
+        i.e. "truncate towards 0".
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def __floor__(self):
-        raise NotImplementedError('__floor__')
+        """Finds the greatest Integral <= self."""
+        raise NotImplementedError
 
     @abstractmethod
     def __ceil__(self):
-        raise NotImplementedError('__ceil__')
+        """Finds the least Integral >= self."""
+        raise NotImplementedError
 
     @abstractmethod
-    def __round__(self, digits=None):
-        raise NotImplementedError('__round__')
+    def __round__(self, ndigits=None):
+        """Rounds self to ndigits decimal places, defaulting to 0.
+
+        If ndigits is omitted or None, returns an Integral, otherwise
+        returns a Real. Rounds half toward even.
+        """
+        raise NotImplementedError
 
     def __divmod__(self, other):
+        """divmod(self, other): The pair (self // other, self % other).
+
+        Sometimes this can be computed faster than the pair of
+        operations.
+        """
         return (self // other, self % other)
 
     def __rdivmod__(self, other):
+        """divmod(other, self): The pair (other // self, other % self).
+
+        Sometimes this can be computed faster than the pair of
+        operations.
+        """
         return (other // self, other % self)
 
     @abstractmethod
     def __floordiv__(self, other):
-        return NotImplemented
+        """self // other: The floor() of self/other."""
+        raise NotImplementedError
 
     @abstractmethod
     def __rfloordiv__(self, other):
-        return NotImplemented
+        """other // self: The floor() of other/self."""
+        raise NotImplementedError
 
     @abstractmethod
     def __mod__(self, other):
-        return NotImplemented
+        """self % other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rmod__(self, other):
-        return NotImplemented
+        """other % self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __lt__(self, other):
-        return NotImplemented
+        """self < other
+
+        < on Reals defines a total ordering, except perhaps for NaN."""
+        raise NotImplementedError
 
     @abstractmethod
     def __le__(self, other):
-        return NotImplemented
+        """self <= other"""
+        raise NotImplementedError
 
+    # Concrete implementations of Complex abstract methods.
     def __complex__(self):
-        return complex(float(self), 0.0)
+        """complex(self) == complex(float(self), 0)"""
+        return complex(float(self))
 
     @property
     def real(self):
+        """Real numbers are their real component."""
         return +self
 
     @property
     def imag(self):
+        """Real numbers have no imaginary component."""
         return 0
 
     def conjugate(self):
+        """Conjugate is a no-op for Reals."""
         return +self
+
+Real.register(float)
 
 
 class Rational(Real):
+    """To Real, Rational adds numerator and denominator properties.
+
+    The numerator and denominator values should be in lowest terms,
+    with a positive denominator.
+    """
+
+    __slots__ = ()
+
     @property
     @abstractmethod
     def numerator(self):
-        raise NotImplementedError('numerator')
+        """The numerator of a rational number in lowest terms."""
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def denominator(self):
-        raise NotImplementedError('denominator')
+        """The denominator of a rational number in lowest terms.
 
+        This denominator should be positive.
+        """
+        raise NotImplementedError
+
+    # Concrete implementation of Real's conversion to float.
     def __float__(self):
+        """float(self) = self.numerator / self.denominator
+
+        It's important that this conversion use the integer's "true"
+        division rather than casting one side to float before dividing
+        so that ratios of huge integers convert without overflowing.
+
+        """
         return int(self.numerator) / int(self.denominator)
 
 
 class Integral(Rational):
+    """Integral adds methods that work on integral numbers.
+
+    In short, these are conversion to int, pow with modulus, and the
+    bit-string operations.
+    """
+
+    __slots__ = ()
+
     @abstractmethod
     def __int__(self):
-        raise NotImplementedError('__int__')
+        """int(self)"""
+        raise NotImplementedError
 
     def __index__(self):
+        """Called whenever an index is needed, such as in slicing"""
         return int(self)
 
     @abstractmethod
     def __pow__(self, exponent, modulus=None):
-        return NotImplemented
+        """self ** exponent % modulus, but maybe faster.
+
+        Accept the modulus argument if you want to support the
+        3-argument version of pow(). Raise a TypeError if exponent < 0
+        or any argument isn't Integral. Otherwise, just implement the
+        2-argument version described in Complex.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def __lshift__(self, other):
-        return NotImplemented
+        """self << other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rlshift__(self, other):
-        return NotImplemented
+        """other << self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rshift__(self, other):
-        return NotImplemented
+        """self >> other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rrshift__(self, other):
-        return NotImplemented
+        """other >> self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __and__(self, other):
-        return NotImplemented
+        """self & other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rand__(self, other):
-        return NotImplemented
+        """other & self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __xor__(self, other):
-        return NotImplemented
+        """self ^ other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __rxor__(self, other):
-        return NotImplemented
+        """other ^ self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __or__(self, other):
-        return NotImplemented
+        """self | other"""
+        raise NotImplementedError
 
     @abstractmethod
     def __ror__(self, other):
-        return NotImplemented
+        """other | self"""
+        raise NotImplementedError
 
     @abstractmethod
     def __invert__(self):
-        raise NotImplementedError('__invert__')
+        """~self"""
+        raise NotImplementedError
 
+    # Concrete implementations of Rational and Real abstract methods.
     def __float__(self):
+        """float(self) == float(int(self))"""
         return float(int(self))
 
     @property
     def numerator(self):
+        """Integers are their own numerators."""
         return +self
 
     @property
     def denominator(self):
+        """Integers have a denominator of 1."""
         return 1
 
-
-# The builtin numbers, claimed for the kinds they answer to. CPython
-# has a truth value stand under int, and so needs no claim for one; the
-# reader keeps the two kinds apart, so a truth value is claimed here.
 Integral.register(int)
-Integral.register(bool)
-Real.register(float)
-Complex.register(complex)
