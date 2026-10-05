@@ -678,10 +678,12 @@ class memoryview:
             from array import array
             start = offsets.start
             span = start + len(offsets) * self._itemsize
-            if isinstance(self._source, array):
-                return bytes(self._source._buffer[start:span])
-            raw = self._source[start:span]
-            return raw if isinstance(raw, bytes) else bytes(raw)
+            source = self._source
+            if isinstance(source, array):
+                return bytes(source._buffer[start:span])
+            if isinstance(source, bytes):
+                return bytes.__getitem__(source, slice(start, span))
+            return bytes(bytearray.__getitem__(source, slice(start, span)))
         return bytes([self._byte(at + i) for at in offsets for i in range(self._itemsize)])
 
     def __bytes__(self):
