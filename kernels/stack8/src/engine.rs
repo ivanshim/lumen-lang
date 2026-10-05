@@ -954,6 +954,11 @@ impl<'a> Engine<'a> {
             let [protocol] = args else { return Err(self.lang.method_errors["arguments"].clone().into()) };
             self.reduction_protocol(protocol)?;
             let reduce = self.lang.reduce_method.clone().unwrap_or_default();
+            let owner = object.class_now().clone();
+            if let Some(overridden) = self.class_value(&owner, &reduce) {
+                let bound = self.bind_class_value(overridden, Some(Value::Object(object)), owner)?;
+                return self.class_apply(bound, Vec::new());
+            }
             return self.exception_method(object, &reduce, &[]);
         }
 

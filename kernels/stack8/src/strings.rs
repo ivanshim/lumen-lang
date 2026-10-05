@@ -265,9 +265,46 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         if args.len() != 1 { return Err(fault(lang,"arguments")); }
         return Ok(Value::text(&repr(&args[0],words)));
     }
-    if args.iter().any(|value|matches!(value,Value::Codepoints(_))) {
+    if args.iter().any(|value| matches!(value, Value::Codepoints(_)) || matches!(value, Value::Tuple(row) if row.iter().any(|item| matches!(item, Value::Codepoints(_))))) {
         let codes=match args.first(){Some(Value::Codepoints(row))=>row.clone(),Some(Value::Text(word))=>Rc::new(word.chars().map(u32::from).collect()),_=>return Err(fault(lang,"receiver"))};
         let code_row=|value:&Value| -> Result<Vec<u32>,String> {match value {Value::Text(text)=>Ok(text.chars().map(u32::from).collect()),Value::Codepoints(row)=>Ok(row.to_vec()),_=>Err(format!("TypeError: must be str, not {}",value.core_kind()))}};
+        if matches!(op, Strip | Lstrip | Rstrip) {
+            let word = match op { Strip => "strip", Lstrip => "lstrip", _ => "rstrip" };
+            if args.len() > 2 { return Err(format!("TypeError: {word} expected at most 1 argument, got {}", args.len() - 1)); }
+            let chosen = match args.get(1) { None | Some(Value::Null) => None, Some(value) => Some(code_row(value).map_err(|_| format!("TypeError: {word} arg must be None or str"))?) };
+            let discarded = |number: u32| chosen.as_ref().map_or_else(|| char::from_u32(number).is_some_and(|letter| letter.is_whitespace() || matches!(letter, '\u{1c}'..='\u{1f}')), |row| row.contains(&number));
+            let mut start = 0; let mut end = codes.len();
+            if op != Rstrip { while start < end && discarded(codes[start]) { start += 1; } }
+            if op != Lstrip { while end > start && discarded(codes[end - 1]) { end -= 1; } }
+            return Ok(Value::from_codes(codes[start..end].to_vec()));
+        }
+        if matches!(op, Count | Find | Rfind | Index | Rindex | Startswith | Endswith) {
+            if !(2..=4).contains(&args.len()) { return Err(fault(lang, "arguments")); }
+            let adjust = |value: Option<&Value>, default: i64| -> Result<usize, String> {
+                let n = match value { None | Some(Value::Null) => default, Some(v) => integer(v, lang)? };
+                Ok(if n < 0 { (codes.len() as i64).saturating_add(n).max(0) as usize } else { n as usize })
+            };
+            let start = adjust(args.get(2), 0)?;
+            let end = adjust(args.get(3), codes.len() as i64)?.min(codes.len());
+            let valid = start <= end;
+            let window = if valid { &codes[start..end] } else { &[] };
+            if matches!(op, Startswith | Endswith) {
+                let choices = match &args[1] { Value::Tuple(row) => row.to_vec(), Value::Words(row, true) => row.iter().map(|word| Value::text(word)).collect(), v @ (Value::Text(_) | Value::Codepoints(_)) => vec![v.clone()], other => return Err(format!("TypeError: {} first arg must be str or a tuple of str, not {}", if op == Startswith { "startswith" } else { "endswith" }, other.core_kind())) };
+                for choice in choices { let wanted = code_row(&choice).map_err(|_| format!("TypeError: tuple for {} must only contain str, not {}", if op == Startswith { "startswith" } else { "endswith" }, choice.core_kind()))?; if valid && if op == Startswith { window.starts_with(&wanted) } else { window.ends_with(&wanted) } { return Ok(Value::Flag(true)); } }
+                return Ok(Value::Flag(false));
+            }
+            let word = match op { Count => "count", Find => "find", Rfind => "rfind", Index => "index", _ => "rindex" };
+            let needle = code_row(&args[1]).map_err(|_| format!("TypeError: {word}() argument 1 must be str, not {}", args[1].core_kind()))?;
+            let positions: Vec<usize> = if valid && needle.len() <= window.len() { (0..=window.len() - needle.len()).filter(|at| window[*at..].starts_with(&needle)).collect() } else { Vec::new() };
+            if op == Count {
+                let mut next = 0; let mut count = 0;
+                for at in positions { if at >= next { count += 1; next = at + needle.len().max(1); } }
+                return Ok(Value::Small(count));
+            }
+            let found = if matches!(op, Rfind | Rindex) { positions.last() } else { positions.first() };
+            if found.is_none() && matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
+            return Ok(Value::Small(found.map_or(-1, |at| (start + at) as i64)));
+        }
         if op==Length && args.len()==1{return Ok(Value::Small(codes.len() as i64))}
         if op==Replace {
             if !(3..=4).contains(&args.len()){return Err(fault(lang,"arguments"))}

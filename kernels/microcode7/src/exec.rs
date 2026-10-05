@@ -1281,6 +1281,11 @@ impl<'a> Machine<'a> {
             if given.len() != 1 { return Err(self.method_fault("arguments").into()); }
             self.check_reduction_protocol(&given[0])?;
             let word = self.table.single("ext.builtin.exceptions.reduce").unwrap_or_default().to_owned();
+            if let Some(entry) = self.inherited_entry(&thing.blueprint(), &word) {
+                let factory = thing.blueprint().clone();
+                return self.member_binding(entry, Some(Value::Thing(thing)), factory)
+                    .and_then(|method| self.apply_class_member(method, vec![]));
+            }
             return self.fault_method(thing, &word, &[]);
         }
 

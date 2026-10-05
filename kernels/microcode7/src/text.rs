@@ -244,10 +244,57 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
-    if input.iter().any(|operand|matches!(operand,Value::Unpaired(_))) {
+    if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
         let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
         let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
+        if matches!(work, STRIP | LSTRIP | RSTRIP) {
+            let method = if work == STRIP { "strip" } else if work == LSTRIP { "lstrip" } else { "rstrip" };
+            if input.len() >= 3 { return Err(format!("TypeError: {method} expected at most 1 argument, got {}", input.len() - 1)); }
+            let selected = match input.get(1) { None | Some(Value::Nil) => None, Some(item) => Some(unpack(item).map_err(|_| format!("TypeError: {method} arg must be None or str"))?) };
+            let ignores = |point: &u32| match &selected { Some(points) => points.contains(point), None => char::from_u32(*point).map_or(false, blank) };
+            let left = if work == RSTRIP { 0 } else { numbers.iter().take_while(|point| ignores(point)).count() };
+            let tail = &numbers[left..];
+            let right = if work == LSTRIP { tail.len() } else { tail.len() - tail.iter().rev().take_while(|point| ignores(point)).count() };
+            return Ok(Value::characters(tail[..right].to_vec()));
+        }
+        if matches!(work, STARTSWITH | ENDSWITH | COUNT | INDEX | RINDEX | FIND | RFIND) {
+            if input.len() < 2 || input.len() > 4 { return Err(complaint(table, "arguments")); }
+            let limits = [0, numbers.len() as i64];
+            let mut bounds = [0usize; 2];
+            for (place, fallback) in limits.into_iter().enumerate() {
+                let index = match input.get(place + 2) { None | Some(Value::Nil) => fallback, Some(item) => count(item)? };
+                bounds[place] = if index >= 0 { index as usize } else { (index.saturating_add(numbers.len() as i64)).max(0) as usize };
+            }
+            bounds[1] = bounds[1].min(numbers.len());
+            let usable = bounds[0] <= bounds[1];
+            let span = if usable { &numbers[bounds[0]..bounds[1]] } else { &[] };
+            if work == STARTSWITH || work == ENDSWITH {
+                let options = match &input[1] {
+                    Value::Tuple(items) => items.to_vec(),
+                    Value::TextRow(items, true) => items.iter().map(|word| Value::text(word)).collect(),
+                    Value::Text(_) | Value::Unpaired(_) => vec![input[1].clone()],
+                    item => return Err(format!("TypeError: {} first arg must be str or a tuple of str, not {}", if work == STARTSWITH { "startswith" } else { "endswith" }, item.kind_word())),
+                };
+                for option in options {
+                    let candidate = unpack(&option).map_err(|_| format!("TypeError: tuple for {} must only contain str, not {}", if work == STARTSWITH { "startswith" } else { "endswith" }, option.kind_word()))?;
+                    if usable && match work { STARTSWITH => span.starts_with(&candidate), _ => span.ends_with(&candidate) } { return Ok(Value::Flag(true)); }
+                }
+                return Ok(Value::Flag(false));
+            }
+            let method = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", _ => "count" };
+            let pattern = unpack(&input[1]).map_err(|_| format!("TypeError: {method}() argument 1 must be str, not {}", input[1].kind_word()))?;
+            let matches = |offset: usize| usable && pattern.len() <= span.len().saturating_sub(offset) && span[offset..].starts_with(&pattern);
+            if work == COUNT {
+                let mut cursor = 0; let mut total = 0;
+                while cursor <= span.len() { if matches(cursor) { total += 1; cursor += pattern.len().max(1); } else { cursor += 1; } }
+                return Ok(Value::Small(total));
+            }
+            let offsets = 0..=span.len();
+            let position = if work == RINDEX || work == RFIND { offsets.rev().find(|at| matches(*at)) } else { offsets.into_iter().find(|at| matches(*at)) };
+            if let Some(position) = position { return Ok(Value::Small((bounds[0] + position) as i64)); }
+            return if work == INDEX || work == RINDEX { Err(complaint(table, "missing")) } else { Ok(Value::Small(-1)) };
+        }
         if work==LENGTH && input.len()==1 {return Ok(Value::Small(numbers.len() as i64))}
         if work==REPLACE {
             if input.len()<3||input.len()>4{return Err(complaint(table,"arguments"))}
