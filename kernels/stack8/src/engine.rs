@@ -23028,6 +23028,11 @@ impl Engine<'_> {
             if !fields.iter().any(|(name, _)| name == word) { fields.push((word.clone(), search)); }
         }
         if self.lang.module_path.is_some() && !fields.iter().any(|(name, _)| name == "__package__") { fields.push(("__package__".into(), Value::text(package_owner))); }
+        if !self.lang.module_names.is_empty() {
+            for word in ["__spec__", "__loader__", "__cached__"] {
+                if !fields.iter().any(|(name, _)| name == word) { fields.push((word.to_owned(), Value::Null)); }
+            }
+        }
         fields.push(("\0module-owner".into(), Value::text(path)));
         // The builtins word stands among the module's own names, as the
         // reference keeps it in every module's dictionary.

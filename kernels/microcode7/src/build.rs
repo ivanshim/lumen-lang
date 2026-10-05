@@ -8971,10 +8971,10 @@ impl<'a> Builder<'a> {
             return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
         }
         if floor == 0 && !blocked && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).spelling()) {
+            let shown = self.original_words.get(self.pos).map(|token| token.lexeme.clone()).unwrap_or_else(|| self.look().lexeme.clone());
             let taken = self.advance();
             let word = taken.lexeme.clone();
             let spelled = taken.spelling().to_string();
-            let shown = spelled.clone();
             if table.has_any("ext.builtin.exceptions.syntax") {
                 if table.spells("literal.true", &spelled) || table.spells("literal.false", &spelled) || table.spells("literal.null", &spelled) {
                     return Err(format!("SyntaxError: cannot use assignment expressions with {spelled}"));

@@ -4378,7 +4378,8 @@ impl<'a> Engine<'a> {
                     let class=module.class_now();
                     let module_kind=Self::kind_beneath(&class).as_deref() == Some("module");
                     let class_directory=self.lang.class_special.get(75)
-                        .and_then(|word| self.class_value(&class,word)).is_some();
+                        .and_then(|word| std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+                            .find_map(|base| Self::own_class_value(base, word))).is_some();
                     if (module_kind || self.module_holding(&one).is_some()) && !class_directory {
                         let namespace_name = self.class_word("namespace").to_string();
                         let namespace = self.class_get(one.clone(), &namespace_name, false)?;

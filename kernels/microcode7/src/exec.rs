@@ -23198,6 +23198,11 @@ impl Machine<'_> {
         for word in self.table.strings("ext.system.module.builtins") {
             if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::Shared(natives.clone()))); }
         }
+        if self.table.has_any("ext.system.module.name") {
+            for word in ["__spec__", "__loader__", "__cached__"] {
+                if !members.iter().any(|(name, _)| name == word) { members.push((word.to_owned(), Value::Nil)); }
+            }
+        }
         // Every name the text can reach keeps its own cell under this
         // hidden map, so a binding taken away and put back reaches the
         // very slot the module's own code reads through.
