@@ -5,7 +5,8 @@
     "urllib": "urllib/__init__.py"
   },
   "aliases": {
-    "os.path": "path"
+    "os.path": "path",
+    "importlib.util": "util"
   },
   "adapters": {
     "copy": "runtime_adapters/copy.py",
@@ -13,6 +14,10 @@
     "heapq": "runtime_adapters/heapq.py",
     "operator": "runtime_adapters/operator.py",
     "json": "runtime_adapters/json.py",
-    "statistics": "runtime_adapters/statistics.py"
+    "statistics": "runtime_adapters/statistics.py",
+    "inspect": "runtime_adapters/inspect.py",
+    "annotationlib": "runtime_adapters/annotationlib.py",
+    "_collections_abc": "runtime_adapters/_collections_abc.py",
+    "importlib": "runtime_adapters/importlib.py"
   }
 }
