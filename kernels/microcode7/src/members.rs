@@ -124,6 +124,10 @@ impl Request<'_> {
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
+            Value::Unpaired(numbers) if matches!(self.operation,"upper"|"lower") => self.case_units(&numbers),
+            Value::Unpaired(numbers) if matches!(self.operation,"find"|"rfind"|"index"|"rindex") => self.seek_units(&numbers),
+            Value::Unpaired(numbers) if self.operation=="replace" => self.swap_units(&numbers),
+            Value::Unpaired(numbers) if self.operation=="split" => self.cut_units(&numbers),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
@@ -332,6 +336,126 @@ impl Request<'_> {
             if fits && in_bounds { return Ok(Value::Flag(true)); }
         }
         Ok(Value::Flag(false))
+    }
+    fn case_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 0)?;
+        let mut raised: Vec<u32> = Vec::with_capacity(units.len());
+        for &unit in units {
+            match char::from_u32(unit) {
+                None => raised.push(unit),
+                Some(letter) => {
+                    let cased: Vec<u32> = if self.operation == "upper" {
+                        letter.to_uppercase().map(u32::from).collect()
+                    } else {
+                        letter.to_lowercase().map(u32::from).collect()
+                    };
+                    raised.extend(cased);
+                }
+            }
+        }
+        Ok(Value::characters(raised))
+    }
+    fn seek_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(1, 3)?;
+        let sought = match self.given[0].settled().character_numbers() {
+            Some(numbers) => numbers,
+            None => return Err(self.fail("arguments")),
+        };
+        let size = units.len() as i64;
+        let mut begin = self.number(1, 0)?;
+        let mut finish = self.number(2, size)?;
+        if begin < 0 { begin = (size + begin).max(0); }
+        if finish < 0 { finish = (size + finish).max(0); }
+        let beyond = begin > size;
+        let begin = begin.clamp(0, size) as usize;
+        let finish = finish.clamp(0, size) as usize;
+        let reverse = matches!(self.operation, "rfind" | "rindex");
+        let mut answer: Option<usize> = None;
+        if begin <= finish {
+            let region = &units[begin..finish];
+            if sought.is_empty() {
+                if !beyond { answer = Some(begin); }
+            } else if sought.len() <= region.len() {
+                let last = region.len() - sought.len();
+                let mut walk: Box<dyn Iterator<Item = usize>> = if reverse { Box::new((0..=last).rev()) } else { Box::new(0..=last) };
+                answer = walk.find(|&at| region[at..at + sought.len()] == sought[..]).map(|at| begin + at);
+            }
+        }
+        if answer.is_none() && matches!(self.operation, "index" | "rindex") { return Err(self.fail("substring")); }
+        Ok(Value::Small(answer.map_or(-1, |at| at as i64)))
+    }
+    fn swap_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(2, 3)?;
+        let sought = match self.given[0].settled().character_numbers() {
+            Some(numbers) => numbers,
+            None => return Err(self.fail("arguments")),
+        };
+        let replacement = match self.given[1].settled().character_numbers() {
+            Some(numbers) => numbers,
+            None => return Err(self.fail("arguments")),
+        };
+        let bound = self.number(2, -1)?;
+        let maximum = if bound < 0 { usize::MAX } else { bound as usize };
+        let mut made: Vec<u32> = Vec::new();
+        if sought.is_empty() {
+            let mut used = 0usize;
+            if used < maximum { made.extend_from_slice(&replacement); used += 1; }
+            for &unit in units {
+                made.push(unit);
+                if used < maximum { made.extend_from_slice(&replacement); used += 1; }
+            }
+        } else {
+            let mut cursor = 0usize;
+            let mut used = 0usize;
+            while cursor < units.len() {
+                let fits = used < maximum && cursor + sought.len() <= units.len() && units[cursor..cursor + sought.len()] == sought[..];
+                if fits { made.extend_from_slice(&replacement); cursor += sought.len(); used += 1; }
+                else { made.push(units[cursor]); cursor += 1; }
+            }
+        }
+        Ok(Value::characters(made))
+    }
+    fn cut_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 2)?;
+        let bound = self.number(1, -1)?;
+        let maximum = if bound < 0 { usize::MAX } else { bound as usize };
+        let mut chunks: Vec<Value> = Vec::new();
+        let delimiter = match self.given.first() {
+            Some(value) if !matches!(value, Value::Nil) => match value.settled().character_numbers() {
+                Some(numbers) => Some(numbers),
+                None => return Err(self.fail("separator")),
+            },
+            _ => None,
+        };
+        match delimiter {
+            None => {
+                let blank = |unit: u32| matches!(unit, 0x1c..=0x1f) || char::from_u32(unit).is_some_and(char::is_whitespace);
+                let mut cursor = 0usize;
+                while cursor < units.len() {
+                    while cursor < units.len() && blank(units[cursor]) { cursor += 1; }
+                    if cursor >= units.len() { break; }
+                    if chunks.len() == maximum { chunks.push(Value::characters(units[cursor..].to_vec())); break; }
+                    let start = cursor;
+                    while cursor < units.len() && !blank(units[cursor]) { cursor += 1; }
+                    chunks.push(Value::characters(units[start..cursor].to_vec()));
+                }
+            }
+            Some(delimiter) => {
+                if delimiter.is_empty() { return Err(self.fail("separator")); }
+                let mut start = 0usize;
+                let mut cursor = 0usize;
+                while cursor + delimiter.len() <= units.len() {
+                    if units[cursor..cursor + delimiter.len()] == delimiter[..] {
+                        if chunks.len() == maximum { break; }
+                        chunks.push(Value::characters(units[start..cursor].to_vec()));
+                        cursor += delimiter.len();
+                        start = cursor;
+                    } else { cursor += 1; }
+                }
+                chunks.push(Value::characters(units[start..].to_vec()));
+            }
+        }
+        Ok(Value::Vector(crate::tuples::Sequence::plain(chunks)).keep(true))
     }
     fn search_text(&self,s:&str)->ResultValue{
         self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;

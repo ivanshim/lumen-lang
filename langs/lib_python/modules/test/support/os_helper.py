@@ -155,6 +155,14 @@ class EnvironmentVarGuard:
     def copy(self):
         return dict(self._environ)
 
+    def clear(self):
+        # MutableMapping.clear's own walk, kept here because this
+        # adapter's guard stands on its own: drop every name in turn,
+        # so the first sight of each one is remembered and put back
+        # when the guard closes.
+        for envvar in list(self._environ):
+            del self[envvar]
+
     def __enter__(self):
         return self
 

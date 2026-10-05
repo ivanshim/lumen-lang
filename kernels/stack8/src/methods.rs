@@ -197,6 +197,122 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             };
             return Ok(Value::Flag(valid));
         }
+        // A text kept apart as bare code points -- a lone half of a
+        // surrogate pair among them -- answers the workings that walk
+        // it one unit at a time. A unit a `char` can spell is re-cased
+        // on its own, and a unit no `char` holds passes through as it
+        // stands, so the answer is built the way the receiver was.
+        Value::Codepoints(row) if op == "upper" || op == "lower" => {
+            arity(0, 0)?;
+            let raised = op == "upper";
+            let mut answer = Vec::with_capacity(row.len());
+            for &unit in row.iter() {
+                let Some(letter) = char::from_u32(unit) else { answer.push(unit); continue };
+                if raised { answer.extend(letter.to_uppercase().map(u32::from)); }
+                else { answer.extend(letter.to_lowercase().map(u32::from)); }
+            }
+            return Ok(Value::from_codes(answer));
+        }
+        // Where a piece stands inside a row of units, counted in units,
+        // its bounds read the way every text search reads them. An
+        // empty piece stands at the near edge of the window.
+        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex") => {
+            arity(1, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
+                match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
+            };
+            let last = row.len() as i64;
+            let mut low = edge(a.get(1), 0)?;
+            let mut high = edge(a.get(2), last)?;
+            if low < 0 { low = (last + low).max(0); }
+            if high < 0 { high = (last + high).max(0); }
+            let past = low > last;
+            let low = low.clamp(0, last) as usize;
+            let high = high.clamp(0, last) as usize;
+            let window: &[u32] = if low <= high { &row[low..high] } else { &[] };
+            let mut place = None;
+            if sought.is_empty() {
+                if low <= high && !past { place = Some(low); }
+            } else if sought.len() <= window.len() {
+                let mut reach: Vec<usize> = (0..=window.len() - sought.len()).collect();
+                if matches!(op, "rfind" | "rindex") { reach.reverse(); }
+                place = reach.into_iter().find(|&at| window[at..at + sought.len()] == sought[..]).map(|at| low + at);
+            }
+            if place.is_none() && matches!(op, "index" | "rindex") { return Err(fault("substring")); }
+            return Ok(Value::Small(place.map_or(-1, |at| at as i64)));
+        }
+        // Every run the pattern matches is swapped for the replacement,
+        // no more often than the count allows; an empty pattern stands
+        // before every unit and once past the last one.
+        Value::Codepoints(row) if op == "replace" => {
+            arity(2, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let instead = a[1].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let limit = match a.get(2).map(Value::contents) { None | Some(Value::Null) => -1, Some(v) => integer(&v, fault)? };
+            let allowed = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut answer = Vec::with_capacity(row.len() + instead.len());
+            let mut swaps = 0usize;
+            if sought.is_empty() {
+                if swaps < allowed { answer.extend_from_slice(&instead); swaps += 1; }
+                for &unit in row.iter() {
+                    answer.push(unit);
+                    if swaps < allowed { answer.extend_from_slice(&instead); swaps += 1; }
+                }
+            } else {
+                let mut at = 0usize;
+                while at < row.len() {
+                    if swaps < allowed && at + sought.len() <= row.len() && row[at..at + sought.len()] == sought[..] {
+                        answer.extend_from_slice(&instead);
+                        at += sought.len();
+                        swaps += 1;
+                    } else {
+                        answer.push(row[at]);
+                        at += 1;
+                    }
+                }
+            }
+            return Ok(Value::from_codes(answer));
+        }
+        // A separator cuts the row into pieces, at most one more piece
+        // than the count allows; with no separator every run of blank
+        // units is a cut. Each piece is handed back as a text of its own.
+        Value::Codepoints(row) if op == "split" => {
+            arity(0, 2)?;
+            let limit = match a.get(1).map(Value::contents) { None | Some(Value::Null) => -1, Some(v) => integer(&v, fault)? };
+            let allowed = if limit < 0 { usize::MAX } else { limit as usize };
+            let blank = |unit: u32| char::from_u32(unit).is_some_and(char::is_whitespace) || (28..=31).contains(&unit);
+            let mut pieces: Vec<Value> = Vec::new();
+            match a.first().map(Value::contents) {
+                None | Some(Value::Null) => {
+                    let mut at = 0usize;
+                    while at < row.len() {
+                        while at < row.len() && blank(row[at]) { at += 1; }
+                        if at >= row.len() { break; }
+                        if pieces.len() == allowed { pieces.push(Value::from_codes(row[at..].to_vec())); break; }
+                        let begin = at;
+                        while at < row.len() && !blank(row[at]) { at += 1; }
+                        pieces.push(Value::from_codes(row[begin..at].to_vec()));
+                    }
+                }
+                Some(other) => {
+                    let sep = other.text_codes().ok_or_else(|| fault("separator"))?;
+                    if sep.is_empty() { return Err(fault("separator")); }
+                    let mut begin = 0usize;
+                    let mut at = 0usize;
+                    while at + sep.len() <= row.len() {
+                        if row[at..at + sep.len()] == sep[..] {
+                            if pieces.len() == allowed { break; }
+                            pieces.push(Value::from_codes(row[begin..at].to_vec()));
+                            at += sep.len();
+                            begin = at;
+                        } else { at += 1; }
+                    }
+                    pieces.push(Value::from_codes(row[begin..].to_vec()));
+                }
+            }
+            return Ok(Value::array(pieces).held(true));
+        }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;
             let number=hex_real(&s).ok_or_else(||fault("hex"))?;
