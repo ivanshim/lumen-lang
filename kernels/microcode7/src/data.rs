@@ -2209,7 +2209,7 @@ fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
     pieces.push(lead.to_owned());
     pieces.push((mark as char).to_string());
     for number in content.iter().copied() {
-        pieces.push(if number == mark || number == 92 {
+        pieces.push(if (number == 39 && changing) || number == mark || number == 92 {
             format!("\\{}", number as char)
         } else if let Some(letter) = match number { 9 => Some('t'), 10 => Some('n'), 13 => Some('r'), _ => None } {
             format!("\\{}", letter)

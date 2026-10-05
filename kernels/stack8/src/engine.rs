@@ -16142,7 +16142,8 @@ impl<'a> Engine<'a> {
         let sought = |value: &Value| -> Res<Vec<u8>> {
             match value {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(vec![self.byte_number(value, false)?]),
-                other => part(other),
+                Value::Bytes(content, ..) => Ok(content.borrow().clone()),
+                other => Err(format!("TypeError: argument should be integer or bytes-like object, not '{}'", other.core_kind())),
             }
         };
         let whole = |value: &Value| -> Res<i64> {
@@ -16171,9 +16172,13 @@ impl<'a> Engine<'a> {
             10 | 22 if (1..=3).contains(&given.len()) => {
                 let (from, upto) = limits(given.get(1), given.get(2))?;
                 let piece = &row[from..upto];
-                let wanted = match &given[0] { Value::Tuple(parts) => parts.as_ref().clone(), one => vec![one.clone()] };
+                let wanted = match &given[0] {
+                    Value::Tuple(parts) => parts.as_ref().clone(),
+                    Value::Bytes(..) => vec![given[0].clone()],
+                    other => return Err(format!("TypeError: {} first arg must be bytes or a tuple of bytes, not {}", if task == 10 { "startswith" } else { "endswith" }, other.core_kind())),
+                };
                 for one in wanted {
-                    let edge = part(&one)?;
+                    let edge = match &one { Value::Bytes(content, ..) => content.borrow().clone(), other => return Err(self.core_fault("core.bytes.like", &other.core_kind())) };
                     if if task == 10 { piece.starts_with(&edge) } else { piece.ends_with(&edge) } { return Ok(Value::Flag(true)); }
                 }
                 Ok(Value::Flag(false))
@@ -16389,7 +16394,19 @@ impl<'a> Engine<'a> {
                 };
                 Ok(Value::Flag(answer))
             }
-            _ => Err(unready()),
+            _ => {
+                let name = match task {
+                    10 => "startswith", 13 => "find", 18 => "count", 19 => "index",
+                    20 => "rfind", 21 => "rindex", 22 => "endswith", 39 => "translate",
+                    _ => return Err(unready()),
+                };
+                if given.is_empty() {
+                    let positional = if task == 39 { " positional" } else { "" };
+                    return Err(format!("TypeError: {name}() takes at least 1{positional} argument (0 given)"));
+                }
+                let most = if task == 39 { 2 } else { 3 };
+                Err(format!("TypeError: {name}() takes at most {most} arguments ({} given)", given.len()))
+            }
         }
     }
 
@@ -16397,7 +16414,7 @@ impl<'a> Engine<'a> {
     /// itself but for the ones the first row names, which stand for the
     /// bytes the second row holds in the same places.
     fn byte_table(&self, from: &[u8], to: &[u8]) -> Res<Value> {
-        if from.len() != to.len() { return Err(self.byte_fault("arguments")); }
+        if from.len() != to.len() { return Err("ValueError: maketrans arguments must have same length".to_string()); }
         let mut table: Vec<u8> = (0..=u8::MAX).collect();
         for (one, other) in from.iter().zip(to.iter()) { table[usize::from(*one)] = *other; }
         Ok(self.byte_make(table, false))

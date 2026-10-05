@@ -11581,7 +11581,7 @@ impl<'a> Machine<'a> {
     /// itself save the ones the first row names, which stand for the
     /// bytes standing in the same places of the second.
     fn octet_mapping(&self, from: &[u8], onto: &[u8]) -> Result<Value, String> {
-        if from.len() != onto.len() { return Err(self.octet_error("arguments")); }
+        if from.len() != onto.len() { return Err(String::from("ValueError: maketrans arguments must have same length")); }
         let mut mapping: Vec<u8> = (0..=u8::MAX).collect();
         for (place, byte) in from.iter().zip(onto.iter()) { mapping[usize::from(*place)] = *byte; }
         Ok(self.octets(mapping, false))
@@ -11940,9 +11940,10 @@ impl<'a> Machine<'a> {
         // What is looked for may be written as one byte's number as
         // readily as a row of bytes.
         let looked_for = |value: &Value| -> Result<Vec<u8>, String> {
-            match value.kind() {
-                Some(Kind::Whole | Kind::Truth) => Ok(vec![self.octet_item(value, false)?]),
-                _ => self.octet_contents(value, false),
+            match value {
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(vec![self.octet_item(value, false)?]),
+                Value::Octets { cell, .. } => Ok(cell.borrow().clone()),
+                other => Err(format!("TypeError: argument should be integer or bytes-like object, not '{}'", other.kind_word())),
             }
         };
         let counted = |value: &Value| -> Result<i64, String> { Ok(self.octet_whole(value)?.to_i64().unwrap_or(i64::MAX)) };
@@ -11971,9 +11972,13 @@ impl<'a> Machine<'a> {
             10 | 22 if (1..=3).contains(&arguments.len()) => {
                 let (opens, closes) = bounds(given(1), given(2))?;
                 let middle = &content[opens..closes];
-                let each = match &arguments[0] { Value::Tuple(row) => row.as_ref().clone(), only => vec![only.clone()] };
+                let each = match &arguments[0] {
+                    Value::Tuple(row) => row.as_ref().clone(),
+                    Value::Octets { .. } => vec![arguments[0].clone()],
+                    other => return Err(format!("TypeError: {} first arg must be bytes or a tuple of bytes, not {}", if operation == 10 { "startswith" } else { "endswith" }, other.kind_word())),
+                };
                 for one in each {
-                    let end = self.octet_contents(&one, false)?;
+                    let end = match &one { Value::Octets { cell, .. } => cell.borrow().clone(), other => return Err(self.core_complaint("core.bytes.like", &other.kind_word())) };
                     let held = if operation == 10 { middle.starts_with(&end) } else { middle.ends_with(&end) };
                     if held { return Ok(Value::Flag(true)); }
                 }
@@ -12171,7 +12176,19 @@ impl<'a> Machine<'a> {
                 let Value::Text(spelling) = &arguments[0] else { return Err(wrong()) };
                 Ok(built(self.octets_from_hex(spelling)?))
             }
-            _ => Err(refusal()),
+            _ => {
+                let name = match operation {
+                    10 => "startswith", 13 => "find", 18 => "count", 19 => "index",
+                    20 => "rfind", 21 => "rindex", 22 => "endswith", 39 => "translate",
+                    _ => return Err(refusal()),
+                };
+                if arguments.is_empty() {
+                    let positional = if operation == 39 { " positional" } else { "" };
+                    return Err(format!("TypeError: {name}() takes at least 1{positional} argument (0 given)"));
+                }
+                let most = if operation == 39 { 2 } else { 3 };
+                Err(format!("TypeError: {name}() takes at most {most} arguments ({} given)", arguments.len()))
+            }
         }
     }
 
