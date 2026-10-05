@@ -8181,6 +8181,7 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Member(receiver, operation) = value {
+            if !self.rules.detail_module.is_empty() && name == self.rules.detail_module { return Some(Value::Nil); }
             if name == self.rules.detail_qualified { return Some(Value::text(&format!("{}.{}", receiver.kind_word(), operation))); }
             if name == self.rules.detail_name { return Some(Value::text(operation)); }
         }
@@ -17712,7 +17713,7 @@ impl<'a> Machine<'a> {
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&v[0], Value::Generator(_)) && self.attribute(&v[0], &word).is_some();
-                Value::Flag(native || of_octets || generator_running || self.native_member(&v[0], &word) || (self.rules.has_any_ext_builtin_exceptions && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.rules.has_any_ext_stmt_class_special && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(native || of_octets || generator_running || self.native_member(&v[0], &word) || (self.rules.has_any_ext_builtin_exceptions && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) && (self.table.strings("ext.builtin.method.error.attribute").is_empty() || self.attribute(&v[0], &word).is_some()) || own || (self.rules.has_any_ext_stmt_class_special && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -17721,7 +17722,9 @@ impl<'a> Machine<'a> {
                 if let Value::Complex(pair) = &v[0] {
                     if self.table.spells("ext.builtin.complex.real", &called) { return Ok(crate::complex::decimal_value(pair.0)); }
                     if self.table.spells("ext.builtin.complex.imag", &called) { return Ok(crate::complex::decimal_value(pair.1)); }
-                    return Err(crate::complex::complaint(self.table, "unready"));
+                    if let Some(property) = self.attribute(&v[0], &called) { return Ok(property); }
+                    let missing = self.member_missing(&v[0], &called);
+                    return Err(if missing.is_empty() { crate::complex::complaint(self.table, "unready") } else { missing });
                 }
                 if matches!(v[0], Value::Unpaired(_)) {
                     if let Some(bound) = self.attribute(&v[0], &called) { return Ok(bound); }
@@ -17731,7 +17734,8 @@ impl<'a> Machine<'a> {
                     // answers for the few members naming it, before the
                     // form that cannot be reached is told of.
                     if let Some(bound) = self.attribute(&v[0], &called) { return Ok(bound); }
-                    return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
+                    let absent = self.member_missing(&v[0], &called);
+                    return Err(if absent.is_empty() { self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned() } else { absent });
                 }
                 // The member that lays a template out is given back
                 // bound to its text, like any other member of a text,

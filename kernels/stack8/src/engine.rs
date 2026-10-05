@@ -6564,6 +6564,10 @@ impl<'a> Engine<'a> {
             }
         }
         let held = value.contents();
+        if matches!(held, Value::ValueMethod(_)) {
+            if !self.class_word("module").is_empty() && name == self.class_word("module") { return Ok(Some(Value::Null)); }
+            if !self.class_word("kind").is_empty() && name == self.class_word("kind") { return Ok(Some(self.named_kind(&held))); }
+        }
         if !self.lang.class_special.is_empty() && name == self.class_word("receiver") {
             if let Value::ValueMethod(method) = &held { return Ok(Some(method.0.clone())); }
         }
@@ -11183,7 +11187,7 @@ impl<'a> Engine<'a> {
                     && (["send", "throw", "close"].contains(&name.as_ref())
                         || [15, 16].iter().any(|place| self.lang.class_special.get(*place).is_some_and(|word| word == name.as_ref()))
                         || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name.as_ref()));
-                Value::Flag(async_awaitable || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(async_awaitable || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) && (self.lang.member_amiss.is_none() || ["name", "qualified", "receiver", "module"].iter().any(|part| name.as_ref() == self.class_word(part))) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -11217,12 +11221,26 @@ impl<'a> Engine<'a> {
                 Value::Complex(z) => {
                     if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { crate::complex::real(z.real) }
                     else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { crate::complex::real(z.imag) }
-                    else { return Err(crate::complex::fault(self.lang, "unready").into()); }
+                    else {
+                        let number = Value::Complex(z);
+                        if let Some(field) = self.builtin_member(&number, name)? { field }
+                        else {
+                            let absent = self.member_amiss(&number, name);
+                            return Err(if absent.is_empty() { crate::complex::fault(self.lang, "unready") } else { absent }.into());
+                        }
+                    }
                 }
                 Value::ValueMethod(bound) if name.as_ref() == self.class_word("qualified") => Value::text(&format!("{}.{}", bound.0.core_kind(), bound.1)),
                 Value::ValueMethod(bound) if name.as_ref() == self.class_word("name") => Value::text(&bound.1),
                 Value::ValueMethod(bound) if !self.lang.class_special.is_empty() && name.as_ref() == self.class_word("receiver") => bound.0.clone(),
-                Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
+                Value::ValueMethod(bound) => {
+                    let method = Value::ValueMethod(bound);
+                    if let Some(field) = self.builtin_member(&method, name)? { field }
+                    else {
+                        let absent = self.member_amiss(&method, name);
+                        return Err(if absent.is_empty() { self.lang.class_unready.first().cloned().unwrap_or_default() } else { absent }.into());
+                    }
+                },
                 // An exception answers its own few methods itself.
                 Value::Object(o) if self.exception_class(&o.class_now()) && (self.exception_method_named(name) || ((self.stands_on(&o.class_now(), 36) || self.stands_on(&o.class_now(), 19)) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
                 subject if self.descriptor_of(&subject, name).is_some() => {
