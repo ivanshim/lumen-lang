@@ -141,6 +141,10 @@ pub struct Builder<'a> {
     within: Option<(String, Option<String>)>,
     receiver: Option<String>,
     class_bindings: Vec<(usize, HashMap<String, Address>)>,
+    /// The layer depth a parameter default being read belongs to: the
+    /// class body the method is written in, whose own names the default
+    /// may see, or none while anything else is read.
+    default_depth: Option<usize>,
     /// The names a class body under way has itself declared `global`,
     /// kept apart from `class_bindings`'s members and from the layer
     /// around the class: the declaration reaches only the body's own
@@ -351,7 +355,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, None, None, false, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, None, None, false, false, &[])
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -360,7 +364,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, false, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, false, false, &[])
         .map_err(|said| (said, at.get(), hard.get(), column.get()))
 }
 
@@ -369,7 +373,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
 /// statement that means one thing in a program of its own and another
 /// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, None, None, true, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, None, None, true, false, &[])
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -387,7 +391,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, None, None, Some((inside, knows)), within, true, false)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, None, None, Some((inside, knows)), within, true, false, &[])
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -403,24 +407,25 @@ pub fn build_within_at(
     within: Option<(String, Option<String>)>,
     value_only: bool,
     origin: Option<Rc<str>>,
+    aliasing: &[(String, String)],
 ) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, None, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get(), column.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, None, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only, aliasing).map_err(|said| (said, at.get(), column.get()))
 }
 
 pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String], origin: Rc<str>, beside: Option<Value>, named: Option<Rc<str>>) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false)
+    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, &[])
         .map_err(|message| (message, line.get(), span.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, true, false).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, true, false, &[]).map_err(|said| (said, at.get()))
 }
 
 /// Text handed over to be read while the run goes: as one expression
@@ -435,25 +440,25 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let mut bound = shadowed.to_vec();
     let mut exports = HashSet::new();
     if table.flag("ext.stmt.function.closes_over") {
-        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive).map_err(|said| (said, at.get(), column.get()))?;
+        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive, &[]).map_err(|said| (said, at.get(), column.get()))?;
         exports = discovery.native_exports;
         for name in discovery.bound_globally {
             if !bound.contains(&name) { bound.push(name); }
         }
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, framed_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive).map_err(|said| (said, at.get(), column.get()))
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, framed_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive, &[]).map_err(|said| (said, at.get(), column.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, aliasing: &[(String, String)]) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
-        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false)?;
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false, aliasing)?;
         (pass.bound_globally, pass.native_exports)
     } else { (Vec::new(), HashSet::new()) };
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, beside, None, named, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false)
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, beside, None, named, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false, aliasing)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -546,7 +551,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     output
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, aliasing: &[(String, String)]) -> Res<Built> {
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
@@ -554,7 +559,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
+    let top = Layer { async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: aliasing.to_vec(), encountered: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -584,7 +589,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1633,9 +1638,14 @@ impl<'a> Builder<'a> {
                 return sequence(vec![Form::Write(found, Box::new(read)), selected]);
             }
         }
+        let at = self.default_depth.unwrap_or(self.layers.len());
         if let Some((depth, names)) = self.class_bindings.last() {
-            if *depth == self.layers.len() {
+            if *depth == at {
                 if let Some(slot) = names.get(name).cloned() {
+                    // A place kept for the body's own depth is further
+                    // off from anywhere deeper the name is read, by
+                    // just how much deeper that is.
+                    let slot = if at == self.layers.len() { slot } else { let mut moved = slot; moved.up += self.layers.len() - at; moved };
                     let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
                         && self.table.prims.contains_key(name)
                         && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
@@ -4489,7 +4499,7 @@ impl<'a> Builder<'a> {
                 self.skip_line_ends();
                 return Ok(false);
             }
-            let body = self.method(&title)?;
+            let (body, spares) = self.method(&title)?;
             self.parts().methods.retain(|(old, _)| old != &method_name);
             if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
                 self.parts().attributes.remove(at);
@@ -4497,7 +4507,26 @@ impl<'a> Builder<'a> {
             }
             let slot = self.member_address(&method_name, "method_body");
             let decorated=!wrappers.is_empty();
+            // What a parameter falls back on is read where the method
+            // stands, and goes with the routine, as the reference reads
+            // a default once at the definition -- in a language that
+            // binds names the Python way; anywhere else the call-time
+            // writing stands as it always did.
+            let resume = self.pos;
+            let mut default_values = Vec::new();
+            if self.table.flag("ext.syntax.call.bind_names") {
+                for (_, start) in &spares {
+                    self.pos = *start;
+                    default_values.push(self.expr(0)?);
+                }
+            }
+            self.pos = resume;
             let mut expression=constant(Value::Routine(body.clone()));
+            if !default_values.is_empty() {
+                let mut given = vec![expression];
+                given.extend(default_values);
+                expression = prim_call(Prim::Carry, given);
+            }
             while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
             setup.push(Form::Write(slot.clone(),Box::new(expression)));
             // A method of a class standing in a function climbs through
@@ -4516,7 +4545,10 @@ impl<'a> Builder<'a> {
             // A method an arm of a conditional writes belongs among the
             // members the class is handed, not among the methods it
             // always has: the arm holding it may never run.
-            match decorated || self.parts().arms > 0 || stands_in_routine {
+            // A method carrying the values its parameters fall back on
+            // is handed over from its address too, since the table of
+            // routines as compiled knows no such value.
+            match decorated || self.parts().arms > 0 || stands_in_routine || (self.table.flag("ext.syntax.call.bind_names") && !spares.is_empty()) {
                 true => self.member_noted(&method_name, slot.clone()),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot.clone());
@@ -4902,7 +4934,22 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             word = self.need_word("as the method name")?;
-            decorated = constant(Value::Routine(self.method(&word)?));
+            let (routine, spares) = self.method(&word)?;
+            let resume = self.pos;
+            let mut default_values = Vec::new();
+            if self.table.flag("ext.syntax.call.bind_names") {
+                for (_, start) in &spares {
+                    self.pos = *start;
+                    default_values.push(self.expr(0)?);
+                }
+            }
+            self.pos = resume;
+            decorated = constant(Value::Routine(routine));
+            if !default_values.is_empty() {
+                let mut given = vec![decorated];
+                given.extend(default_values);
+                decorated = prim_call(Prim::Carry, given);
+            }
         }
         while let Some((manner, slot)) = waiting.pop() {
             decorated = match manner {
@@ -5510,7 +5557,7 @@ impl<'a> Builder<'a> {
                 let gives_cell = self.skip_reference();
                 let member = self.need_word("as the method name")?;
                 self.giving_cells.push(gives_cell);
-                let program = self.method(&member);
+                let program = self.method(&member).map(|(routine, _)| routine);
                 self.giving_cells.pop();
                 held.methods.push((member, program?));
                 // A parameter of the maker that names a property makes
@@ -5563,7 +5610,7 @@ impl<'a> Builder<'a> {
 
     /// A method: a program whose first parameter is the thing it is for,
     /// under the name the definition gives it (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, Vec<(usize, usize)>)> {
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
@@ -5600,7 +5647,7 @@ impl<'a> Builder<'a> {
         if self.on_stmt_end() && !self.block_opens_ahead() {
             let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
             return match named {
-                Form::Const(Value::Routine(p)) => Ok(p),
+                Form::Const(Value::Routine(p)) => Ok((p, Vec::new())),
                 _ => Err("A method must be a program".to_string()),
             };
         }
@@ -5609,11 +5656,20 @@ impl<'a> Builder<'a> {
         let sigil = table.letter("identifier.variable_prefix");
         let enclosing_receiver = self.receiver.take();
         self.receiver = params.first().cloned();
+        let keep_defaults = table.flag("ext.syntax.call.bind_names");
+        let spares_out = spares.clone();
         let local_defaults = spares.iter().map(|(place, _)| *place).collect();
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             r.layers.last_mut().unwrap().permits_async = deferred;
             r.generator_seen = deferred;
-            let mut items = r.spare_values(spares, &formals)?;
+            // A method in a language that binds names carries the places
+            // its defaults stand for, filled where it is written, as a
+            // plain routine's are; anywhere else they are written in as
+            // the call leaves them out.
+            let mut items = if keep_defaults {
+                for (place, _) in &spares { r.carrying.push(*place); }
+                Vec::new()
+            } else { r.spare_values(spares, &formals)? };
             // What a parameter that names a property was handed is put
             // into the thing before the body runs.
             for member in &named {
@@ -5638,7 +5694,7 @@ impl<'a> Builder<'a> {
         match program? {
             Form::Const(Value::Routine(mut p)) => {
                 Rc::get_mut(&mut p).unwrap().local_defaults = local_defaults;
-                Ok(p)
+                Ok((p, spares_out))
             },
             _ => Err("A method must be a program".to_string()),
         }
@@ -7151,25 +7207,34 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            // Where the table requests enclosing defaults, hide the routine's own
-            // names: a default naming what a parameter also names finds
-            // the one outside, the reference reading every default
-            // before the routine it belongs to exists. The parameters
-            // stand aside under names nothing can spell, so every place
-            // and mark the routine keeps stays where it was.
-            let mut kept = Vec::new();
-            if self.table.flag("ext.stmt.fn.defaults.enclosing") {
-                for (at, name) in formals.iter().enumerate() {
-                    let away = format!("\0default aside {}", name);
-                    let ids = &mut self.layers.last_mut().expect("a layer").idents;
-                    kept.push(std::mem::replace(&mut ids[at], away));
+            let value = if self.table.flag("ext.syntax.call.bind_names") {
+                // What a parameter falls back on belongs to the scope the
+                // routine is written in, so the routine's own parameters
+                // answer to another spelling while it is read: a name
+                // spelled like one of them still reaches outside.
+                let mut renamed = Vec::new();
+                {
+                    let layer = self.layers.last_mut().expect("a layer");
+                    for (index, name) in layer.idents.iter_mut().enumerate() {
+                        if formals.contains(name) {
+                            renamed.push((index, std::mem::replace(name, format!("\0spare/{index}"))));
+                        }
+                    }
                 }
-            }
-            let built = self.expr(0);
-            for (at, back) in kept.into_iter().enumerate() {
-                self.layers.last_mut().expect("a layer").idents[at] = back;
-            }
-            let value = built?;
+                // Being read where the method is written, the expression
+                // sees the names a class body around the method keeps, as
+                // the reference reading it there sees them.
+                let outside = self.default_depth.replace(self.layers.len() - 1);
+                let read = self.expr(0);
+                {
+                    let layer = self.layers.last_mut().expect("a layer");
+                    for (index, name) in renamed { layer.idents[index] = name; }
+                }
+                self.default_depth = outside;
+                read?
+            } else {
+                self.expr(0)?
+            };
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
             let test = Form::Missing(slot);

@@ -1,4 +1,3 @@
-# Source: CPython Lib/timeit.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Tool for measuring execution time of small code snippets.
 
 This module avoids a number of common traps for measuring execution

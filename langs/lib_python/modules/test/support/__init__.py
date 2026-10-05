@@ -195,6 +195,29 @@ class _AlwaysEqual:
 # remains visible, so uses which require it will meet that limitation.
 ALWAYS_EQ = _AlwaysEqual()
 
+# A thing greater than everything but itself, and one smaller than
+# everything but itself; the reference builds its pair out of
+# total_ordering, and these are the answers that falls out of.
+class _Largest:
+    def __eq__(self, other): return isinstance(other, _Largest)
+    def __ne__(self, other): return not isinstance(other, _Largest)
+    def __lt__(self, other): return False
+    def __le__(self, other): return isinstance(other, _Largest)
+    def __gt__(self, other): return not isinstance(other, _Largest)
+    def __ge__(self, other): return True
+
+LARGEST = _Largest()
+
+class _Smallest:
+    def __eq__(self, other): return isinstance(other, _Smallest)
+    def __ne__(self, other): return not isinstance(other, _Smallest)
+    def __gt__(self, other): return False
+    def __ge__(self, other): return isinstance(other, _Smallest)
+    def __lt__(self, other): return not isinstance(other, _Smallest)
+    def __le__(self, other): return True
+
+SMALLEST = _Smallest()
+
 # These entry points can be imported, but their absent machinery must
 # be named before a test can mistake it for a successful check.
 force_not_colorized = _identity
@@ -259,7 +282,7 @@ def skip_if_sanitizer(reason=None, **sanitizers):
 import os
 import time
 import re
-TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python')
+TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python-3.14.8')
 REPO_ROOT = os.path.dirname(os.path.dirname(TEST_HOME_DIR))
 _header = 'nP'
 _align = '0n'

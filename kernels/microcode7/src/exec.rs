@@ -3308,7 +3308,7 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[]) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -8936,7 +8936,9 @@ impl<'a> Machine<'a> {
     /// How the table spells a value's method, so that a complaint names
     /// the member the way a program writes it.
     fn member_spelling(&self, operation: &str) -> String {
-        self.table.single(&format!("ext.builtin.method.{operation}")).unwrap_or(operation).to_string()
+        // A label the roster does not write is no label at all here:
+        // the method is spelled the way the program spelled it.
+        self.table.loose_strings(&format!("ext.builtin.method.{operation}")).first().map_or(operation, String::as_str).to_string()
     }
 
     /// The starred clauses of a try. Each takes from the raised gatherer
@@ -9461,7 +9463,9 @@ impl<'a> Machine<'a> {
             found.push(word.clone());
         }
         if !keywords.is_empty() && !["sort", "split", "rsplit", "format", "update", "encode"].contains(&name) {
-            let spelling = self.table.single(&format!("ext.builtin.method.{name}")).unwrap_or(name);
+            // A label the roster does not write is no label at all here:
+            // the complaint names the method as the program named it.
+            let spelling = self.table.loose_strings(&format!("ext.builtin.method.{name}")).first().map_or(name, String::as_str);
             return Err(self.builtin_keyword_fault(spelling).into());
         }
 
@@ -12887,7 +12891,9 @@ impl<'a> Machine<'a> {
             _ => return Ok(self.keys_match(first, second)),
         };
         if matches!(objects, (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b)) { return Ok(true); }
-        if !matches!(objects.0, Value::Thing(_)) && !matches!(objects.1, Value::Thing(_)) { return Ok(self.keys_match(objects.0, objects.1)); }
+        // Tuple keys can contain instances with their own equality. Use
+        // the interpreter's comparison so their protocols are honoured.
+        if !matches!(objects.0, Value::Thing(_) | Value::Tuple(_)) && !matches!(objects.1, Value::Thing(_) | Value::Tuple(_)) { return Ok(self.keys_match(objects.0, objects.1)); }
         let test = self.prim(Prim::Eq, "", &[objects.0.clone(), objects.1.clone()])?;
         self.object_truth(&test)
     }
@@ -13691,6 +13697,9 @@ impl<'a> Machine<'a> {
     fn attribute_entries(&self, t: &Rc<Thing>) -> Vec<(Value, Value)> {
         let namespace = self.namespace_holding(&Value::Thing(t.clone())).is_some();
         let holds = t.holds.borrow();
+        // A name read out of a thing's dictionary stands for the value
+        // its cell keeps, the very value reading the attribute itself
+        // would find.
         let mut entries: Vec<(Value, Value)> = holds.iter()
             .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| {
@@ -17077,7 +17086,14 @@ impl<'a> Machine<'a> {
                     // the members its own walk hands over, asked for one
                     // at a time: such a walk may have no end at all, and
                     // the places call for no more than they call for.
-                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => {
+                    // A thing whose blueprint hands over no walk of its
+                    // own but which keeps an ordinary walkable worth — a
+                    // tuple or list subclass's own — comes apart into
+                    // what the worth keeps, the way the walk one asked
+                    // of it with iter() goes.
+                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some()
+                        || Self::underlying(thing).map_or(false, |worth| matches!(worth.settled(),
+                            Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::TextRow(..) | Value::Octets { .. })) => {
                         let walk = self.iterated_value(&thing.clone())?;
                         self.apart_members(&walk, wanted, star.is_some())?
                     }
@@ -17387,8 +17403,39 @@ impl<'a> Machine<'a> {
             Prim::SpreadModule => {
                 if let Value::Thing(namespace) = &v[0] {
                     let names = namespace.holds.borrow().clone();
+                    // A module naming its __all__ is read out by exactly
+                    // those names, the way the reference reads a
+                    // wildcard import; what else it keeps stays its own.
+                    let chosen = match names.iter().find(|(name, _)| name == "__all__") {
+                        Some((_, entry)) => {
+                            let entry = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry.clone() };
+                            let mut wanted = Vec::new();
+                            for item in self.core_collect(&entry)? {
+                                match item {
+                                    Value::Text(word) => wanted.push(word.to_string()),
+                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", namespace.of.name, other.kind_word()).into()),
+                                }
+                            }
+                            Some(wanted)
+                        }
+                        None => None,
+                    };
+                    let explicit = chosen.is_some();
+                    let names: Vec<(String, Value)> = match &chosen {
+                        Some(wanted) => {
+                            let mut kept = Vec::new();
+                            for name in wanted {
+                                match names.iter().find(|(word, _)| word == name) {
+                                    Some((word, entry)) => kept.push((word.clone(), entry.clone())),
+                                    None => { self.namespace_item(&v[0], "", name)?; }
+                                }
+                            }
+                            kept
+                        }
+                        None => names.into_iter().filter(|(name, _)| !name.starts_with('_')).collect(),
+                    };
                     for (name, entry) in names {
-                        if name.starts_with('_') || !self.table.name_like(&name) { continue; }
+                        if (!explicit && name.starts_with('_')) || !self.table.name_like(&name) { continue; }
                         let worth = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry };
                         if matches!(worth, Value::Unset) { continue; }
                         let owner = self.loaded_spaces.get(&self.written_in).and_then(|path| self.imported.get(path)).cloned();
@@ -17399,6 +17446,18 @@ impl<'a> Machine<'a> {
                         let slot = if let Some(index) = self.idents.iter().rposition(|word| word == &key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
                         self.booked_write(slot, &name, Some(worth.clone()));
+                        // A text running in a dictionary of its own is
+                        // handed the names there as well, so a later
+                        // piece of the same text finds them.
+                        if let Some(which) = self.reading_now {
+                            let book = &self.readings[which];
+                            let goes_to = match &book.outer {
+                                Some(outer) if book.declared.iter().any(|word| word == &name) => outer,
+                                _ => &book.near,
+                            };
+                            let goes_to = goes_to.clone();
+                            if let Err(escape) = self.booked_put(&goes_to, &name, Some(worth.clone())) { self.got_away = Some(escape); }
+                        }
                         let saved = {
                             let mut cells = self.outermost.cells.borrow_mut();
                             cells.resize(self.idents.len(), Value::Unset);
@@ -17498,6 +17557,9 @@ impl<'a> Machine<'a> {
                 Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Prim::ProgramNames => {
+                // Given a module, answers its own namespace, as a read
+                // of the module's __dict__ would give it; anything else
+                // is the running program's, or a frame up the call chain.
                 if v.len() == 1 {
                     if let Value::Thing(namespace) = v[0].settled() {
                         let pairs: Vec<_> = namespace.holds.borrow().iter().filter_map(|(word, cell)| {
@@ -21177,6 +21239,7 @@ impl<'a> Machine<'a> {
     fn one_cell(a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Shared(x) | Value::Mutable(x, _), Value::Shared(y) | Value::Mutable(y, _)) => Rc::ptr_eq(x, y),
+            (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
             _ => false,
         }
     }
@@ -24843,7 +24906,28 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str()))) {
+        // Text run without dictionaries of its own is read with the
+        // caller's own module for its globals, as the reference reads
+        // the caller's globals: the module's names stand for its own
+        // slots ahead of everything further out.
+        let mut aliasing: Vec<(String, String)> = Vec::new();
+        let home = self.active_trace.as_ref().and_then(|item| {
+            item.holds.borrow().iter().find(|(word, _)| word == "\0environment")
+                .and_then(|(_, held)| match held.settled() { Value::Bound(code, _) => Some(code), _ => None })
+                .map(|code| self.routine_home(&code))
+        });
+        if let Some(path) = home {
+            if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
+                for (name, _) in space.holds.borrow().iter() {
+                    if name.starts_with('\0') { continue; }
+                    let wanted = format!("\0import/{path}/{name}");
+                    if self.idents.iter().any(|word| word == &wanted) {
+                        aliasing.push((name.clone(), wanted));
+                    }
+                }
+            }
+        }
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -25367,7 +25451,14 @@ impl Machine<'_> {
                 }
                 match self.placed_walk(source) {
                     Some(places) => Ok(places),
-                    None => Err(self.core_complaint("core.uniterable", &source.kind_word())),
+                    // A thing of a blueprint standing on a walkable kind
+                    // answers a walk with what it keeps, the way the
+                    // kind itself would: a tuple subclass is walked as
+                    // the tuple it keeps.
+                    None => match Self::underlying(source).map(|worth| worth.settled()) {
+                        Some(worth) if matches!(worth, Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::TextRow(..) | Value::Octets { .. }) => self.iterated_value(&worth),
+                        _ => Err(self.core_complaint("core.uniterable", &source.kind_word())),
+                    },
                 }
             }
             _ => {

@@ -2583,6 +2583,7 @@ impl<'a> Machine<'a> {
         code.written_in.as_ref().and_then(|place| self.loaded_spaces.get(place)).cloned()
             .unwrap_or_else(|| self.detail("main").to_owned())
     }
+
     /// The module a routine answers to as a function, as the reference
     /// answers it of the function's own: the module an explicit write
     /// left on the routine, the name the namespace a routine framed by
@@ -3997,6 +3998,22 @@ impl<'a> Machine<'a> {
                     } else { self.value_member(&native, "pop", vec![Value::text(key)], Vec::new())?; }
                     return Ok(Value::Nil);
                 }
+                // A name a module takes from outside that it never bound
+                // for itself becomes one of its own globals, standing in
+                // the cell its routines read it from, as the reference's
+                // module.__dict__ write is a global write.
+                if replacement.is_some() && !t.holds.borrow().iter().any(|(k,_)| k==key)
+                    && self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
+                    let wanted = format!("\0import/{}/{key}", t.blueprint().name);
+                    // A module read in again owns fresh cells at the
+                    // end of the roster; the newest of the name answers.
+                    if let Some(at) = self.idents.iter().rposition(|word| word == &wanted) {
+                        let linked = Value::Shared(Rc::new(RefCell::new(replacement.clone().unwrap())));
+                        self.outermost.cells.borrow_mut()[at] = linked.clone();
+                        t.holds.borrow_mut().push((key.to_owned(), linked));
+                        return Ok(Value::Nil);
+                    }
+                }
                 if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{
@@ -4447,6 +4464,10 @@ impl<'a> Machine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
+        // A side that is still a cell is asked about as whatever the
+        // cell is keeping.
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = subject { let inner = cell.borrow().clone(); return self.is_beneath(&inner, choice, class_only); }
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = choice { let inner = cell.borrow().clone(); return self.is_beneath(subject, &inner, class_only); }
         // The run’s own module objects answer to the native module kind.
         if !class_only && self.namespace_holding(&subject.settled()).is_some() {
             if let (Value::Blueprint(actual), Value::Blueprint(expected)) = (self.kind_named_after(&subject.settled()), choice.settled()) {

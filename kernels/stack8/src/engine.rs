@@ -826,7 +826,7 @@ impl<'a> Engine<'a> {
     /// tuple; a group's two are its heading and its members; and the
     /// only names a call may give are those of an absent name and the
     /// object it was sought on.
-    fn exception_new(&mut self, mut class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
+    fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
             if class.all_fields().iter().any(|(name, _)| name == "\0group") {
                 return self.class_construct(class, given);
@@ -843,7 +843,7 @@ impl<'a> Engine<'a> {
 
     /// Native allocation validates and stores exception state without
     /// running a subclass initializer. Class construction does that later.
-    fn exception_allocate(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
+    fn exception_allocate(&mut self, mut class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         let class_name = class.name.clone();
         let import = self.stands_on(&class, 19);
         let mut args = Vec::new();
@@ -3201,6 +3201,15 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
+                        // A thing of the program's own spreads into the
+                        // members its walk hands over: the walk a loop
+                        // would take of it, or the walkable worth a
+                        // subclass of a walkable kind keeps.
+                        Value::Object(_) if self.worth_free_of(&pair.1, &[15]).is_some() || self.special_value(&pair.1, 15).is_some() || self.indexed_walk(&pair.1).is_some() => {
+                            let members = self.core_members(&pair.1);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            items.extend(members?.into_iter().map(|v| (None,v)));
+                        }
                         Value::Array(a) | Value::Tuple(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
                         Value::Set(s) => items.extend(s.borrow().items().into_iter().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
@@ -5474,6 +5483,25 @@ impl<'a> Engine<'a> {
                         // find: it reads them only when it was handed
                         // no dictionaries of its own.
                         Action::Builtin(Builtin::Eval | Builtin::RunText, _) if !program.body_of_all && !self.lang.compile_modes.is_empty() => {
+                            // Text run without dictionaries of its own
+                            // is read with the caller's own module for
+                            // its globals, as the reference reads the
+                            // caller's globals: the module's names stand
+                            // for its slots ahead of everything further out.
+                            {
+                                let path = self.routine_home(program);
+                                if let Some(Value::Object(space)) = self.modules.get(&path).cloned() {
+                                    let mut aliases = Vec::new();
+                                    for (name, _) in space.fields.borrow().iter() {
+                                        if name.starts_with('\0') { continue; }
+                                        let suffix = format!(":{}:{}", path, name);
+                                        if let Some(at) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                                            aliases.push((name.clone(), self.registry.idents[at].clone()));
+                                        }
+                                    }
+                                    self.registry.pending_globals = aliases;
+                                }
+                            }
                             // What the text is handed is a frame of its
                             // own: a name the routine keeps in a cell is
                             // given a cell of its own holding the same,
@@ -9557,6 +9585,9 @@ impl<'a> Engine<'a> {
     fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let fields = o.fields.borrow();
+        // A name read out of a thing's dictionary stands for the value
+        // the name's cell keeps, the very value a read of the attribute
+        // itself would find.
         let mut entries: Vec<(Value, Value)> = fields.iter()
             .filter(|(key, held)| !key.starts_with(['\0', '#']) && !matches!(held.contents(), Value::Blank))
             .map(|(key, held)| {
@@ -10432,7 +10463,14 @@ impl<'a> Engine<'a> {
                     // the members its own walk hands over, asked for one
                     // at a time: such a walk may have no end at all, and
                     // the places call for no more than they call for.
-                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => {
+                    // A thing whose class hands over no walk of its own
+                    // but which keeps an ordinary walkable worth — a
+                    // tuple or list subclass's own — is taken apart
+                    // into what the worth keeps, the way the walk one
+                    // asked of it with iter() goes.
+                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some()
+                        || Self::worth_of(&source).map_or(false, |worth| matches!(worth.contents(),
+                            Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Map(_) | Value::Set(_) | Value::Counted(_) | Value::Words(..) | Value::Bytes(..))) => {
                         let walk = self.core_iterator(&source)?;
                         self.apart_members(&walk, *count, rest.is_some())?
                     }
@@ -10960,8 +10998,41 @@ impl<'a> Engine<'a> {
                 let module = self.drop_top()?;
                 if let Value::Object(object) = module {
                     let fields = object.fields.borrow().clone();
+                    // A module naming its __all__ is read out by exactly
+                    // those names, the way the reference reads a
+                    // wildcard import; what else it keeps stays its own.
+                    // A name it names that is no text, or a row that is
+                    // no row, is told of the way the reference tells of it.
+                    let chosen = match fields.iter().find(|(name, _)| name == "__all__") {
+                        Some((_, held)) => {
+                            let held = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                            let mut names = Vec::new();
+                            for item in self.comprehension_items(&held)? {
+                                match item {
+                                    Value::Text(word) => names.push(word.to_string()),
+                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", object.class.name, other.core_kind()).into()),
+                                }
+                            }
+                            Some(names)
+                        }
+                        None => None,
+                    };
+                    let explicit = chosen.is_some();
+                    let fields: Vec<(String, Value)> = match &chosen {
+                        Some(names) => {
+                            let mut kept = Vec::new();
+                            for name in names {
+                                match fields.iter().find(|(word, _)| word == name) {
+                                    Some((word, held)) => kept.push((word.clone(), held.clone())),
+                                    None => return Err(self.import_member_fault(&object.class.name.clone(), name).into()),
+                                }
+                            }
+                            kept
+                        }
+                        None => fields.into_iter().filter(|(name, _)| !name.starts_with('_')).collect(),
+                    };
                     for (name, held) in fields {
-                        if name.starts_with('_') || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
+                        if (!explicit && name.starts_with('_')) || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
                         let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
                         if matches!(value, Value::Blank) { continue; }
                         let destination = self.module_slots.get(&self.source).and_then(|(base, path)| self.modules.get(path).cloned().map(|module| (*base, module)));
@@ -10973,6 +11044,12 @@ impl<'a> Engine<'a> {
                         } else { self.registry.slot(&name) };
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone())); }
+                        // Text run in a dictionary of its own is handed
+                        // the names there too, the way the reference's
+                        // wildcard import writes the given globals.
+                        if let Some(reading) = self.reading_in {
+                            self.write_booked(Kept::Text(reading), &name, Some(value.clone()));
+                        }
                         match &self.world[at] {
                             Value::Bond(cell) => *cell.borrow_mut() = value,
                             _ if destination.is_some() => self.world[at] = Value::Bond(Rc::new(RefCell::new(value))),
@@ -12864,6 +12941,9 @@ impl<'a> Engine<'a> {
         match (a, b) {
             (Value::Bond(x) | Value::Binding(x) | Value::Collection(x, _),
              Value::Bond(y) | Value::Binding(y) | Value::Collection(y, _)) => Rc::ptr_eq(x, y),
+            // The very object already standing at the place is no
+            // change to what holds it: writing it back is no write.
+            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
             _ => false,
         }
     }
@@ -17990,6 +18070,9 @@ impl<'a> Engine<'a> {
                 match std::fs::read(args[0].display(&sp)) {
                     Ok(bytes) if binary => self.byte_make(bytes, false),
                     Ok(bytes) => {
+                        if binary {
+                            return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str())));
+                        }
                         let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
                         if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {

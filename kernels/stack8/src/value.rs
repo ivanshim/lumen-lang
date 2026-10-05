@@ -1311,6 +1311,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            // The one declined answer is itself to itself.
             (Value::Declined(a), Value::Declined(b)) => a == b,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),

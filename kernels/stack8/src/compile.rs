@@ -70,6 +70,10 @@ pub struct Registry {
     /// The global names the program's own lines have bound, as against
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
+    /// Aliases the outermost piece takes as its declared globals for
+    /// the next reading: the caller's own module's names standing for
+    /// its slots, as the reference's eval reads the caller's globals.
+    pub pending_globals: Vec<(String, String)>,
     pub program_bound: std::collections::HashSet<String>,
     builtin_exports: HashSet<String>,
     /// The names a write has actually bound at the outermost scope,
@@ -307,6 +311,10 @@ pub struct Compiler<'a> {
     gives_back: std::collections::HashSet<String>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
+    /// The piece depth a parameter default being read belongs to: the
+    /// class body the method is written in, whose own names the default
+    /// may see, or none while anything else is read.
+    default_depth: Option<usize>,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -563,7 +571,7 @@ fn compile_pass(
         declared: vec![false; already.len()],
         idents: already,
         scopes: Vec::new(),
-        globals: Vec::new(),
+        globals: std::mem::take(&mut table.pending_globals),
         lasts: Vec::new(),
         cycles: Vec::new(),
         escapes: Vec::new(),
@@ -601,7 +609,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1176,7 +1184,8 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
+        let at = self.default_depth.unwrap_or(self.pieces.len());
+        let alias = self.class_names.last().filter(|(depth, _)| *depth == at).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);
             if self.lang.shadow_builtins && self.lang.builtins.contains_key(name)
@@ -5594,8 +5603,24 @@ impl<'a> Compiler<'a> {
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.take();
             named = self.want_name("as the method name")?;
-            let body = self.method(&named)?;
+            let (body, _, spares) = self.method(&named)?;
+            // What a parameter falls back on is read where the method
+            // is written, and the reading goes with the routine, as the
+            // reference reads a default once at the definition -- but
+            // only in a language that binds names the Python way; every
+            // other language keeps its call-time default. The method's
+            // own parameters stand aside while it is read, so a name
+            // spelled like one of them still means the one outside.
+            let after = self.pos;
+            for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
+                self.pos = *from;
+                // The method's frame has been left behind. Read the entire
+                // default here, where class members and enclosing names bind.
+                self.expr(0)?;
+            }
+            self.pos = after;
             self.constant(Value::Routine(body));
+            if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
         }
         for (kind, held) in saved.into_iter().rev() {
             if kind == 0 {
@@ -5871,11 +5896,20 @@ impl<'a> Compiler<'a> {
                 self.skip_seps();
                 return Ok(false);
             }
-            let method = self.method(&original)?;
+            let (method, _, spares) = self.method(&original)?;
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
+            let after = self.pos;
+            for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
+                self.pos = *from;
+                // The method's frame has been left behind. Read the entire
+                // default here, where class members and enclosing names bind.
+                self.expr(0)?;
+            }
+            self.pos = after;
             self.constant(Value::Routine(method.clone()));
+            if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
             let wrapped=!decorators.is_empty();
             for place in decorators.into_iter().rev() {self.read(&place);self.act(Action::Invoke(Rc::from("")),2);}
             self.write(&slot);
@@ -5886,8 +5920,10 @@ impl<'a> Compiler<'a> {
             let reaches_out = !method.enclosing.is_empty() || method.annotation.as_ref().is_some_and(|annotation| !annotation.enclosing.is_empty());
             // A method an arm of a conditional defines is a member like
             // any other: the class cannot carry it among the methods it
-            // always has, since the arm may not run.
-            match wrapped || self.gathering().arms > 0 || reaches_out {
+            // always has, since the arm may not run. One carrying the
+            // values its parameters fall back on stands in its place,
+            // since the table of routines as compiled knows no such value.
+            match wrapped || self.gathering().arms > 0 || reaches_out || (self.lang.bind_names && !spares.is_empty()) {
                 true => self.member_kept(&named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
@@ -6817,7 +6853,8 @@ impl<'a> Compiler<'a> {
                 self.giving_cells.push(gives_cell);
                 let built = self.method(&member);
                 self.giving_cells.pop();
-                held.methods.push((member.clone(), built?));
+                let (routine, _, _) = built?;
+                held.methods.push((member.clone(), routine));
                 // A parameter of the maker that names a property makes
                 // the class carry that property too.
                 for named in std::mem::take(&mut self.promoted) {
@@ -6870,7 +6907,7 @@ impl<'a> Compiler<'a> {
 
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, Vec<String>, Vec<(usize, usize)>)> {
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].spelling());
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         // The type parameters read here stand aside while the
@@ -6913,12 +6950,13 @@ impl<'a> Compiler<'a> {
                 a.piece().result_touched = true;
                 a.write(RESULT_CELL);
                 Ok(())
-            });
+            }).map(|routine| (routine, Vec::new(), Vec::new()));
         }
         let named = promoted.clone();
         self.promoted = promoted;
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
+        let spares_out = spares.clone();
         let built = self.routine(name, formals, least, true, |a| {
             a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
@@ -6945,7 +6983,8 @@ impl<'a> Compiler<'a> {
             a.body()
         });
         self.method_self = previous;
-        built
+        let formals_out = given.clone();
+        built.map(|routine| (routine, formals_out, spares_out))
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
@@ -7271,26 +7310,40 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Missing(*at));
             let past = self.skip();
             self.pos = *from;
-            // With enclosing-scope defaults, a spare is read outside the routine's
-            // parameters: a default naming what a parameter also names
-            // finds the one outside, where the reference reads every
-            // default before the routine it belongs to exists. The
-            // parameters stand aside under names nothing can spell, so
-            // every cell and mark the routine keeps stays where it was.
-            let kept: Vec<String> = if self.lang.default_enclosing {
-                let standing: Vec<String> = (0..formals.len())
-                    .map(|at| format!("\0default aside {}", formals[at])).collect();
-                standing.iter().enumerate()
-                    .map(|(at, away)| std::mem::replace(&mut self.pieces.last_mut().expect("an open piece").idents[at], away.clone()))
-                    .collect()
+            if self.lang.bind_names {
+                // What a parameter falls back on is read where the routine
+                // is written, never out of the routine's own parameters:
+                // they stand aside while the expression is read, so a name
+                // spelled like one of them still means the one outside.
+                let mut shadowed = Vec::new();
+                {
+                    let unit = self.pieces.last_mut().expect("a unit");
+                    for (slot, name) in unit.idents.iter().enumerate() {
+                        if formals.contains(name) && !unit.declared[slot] {
+                            unit.declared[slot] = true;
+                            shadowed.push(slot);
+                        }
+                    }
+                }
+                // Being read where the method is written, the expression
+                // sees the names a class body around the method keeps, as
+                // the reference reading it there sees them.
+                let outside = self.default_depth.replace(self.pieces.len() - 1);
+                let idents_before = self.pieces.last().expect("a unit").idents.len();
+                let read = self.expr(0);
+                {
+                    let unit = self.pieces.last_mut().expect("a unit");
+                    for slot in shadowed { unit.declared[slot] = false; }
+                    // A name the default's reading reached for outside stands
+                    // in a place of its own now; the routine's own later reads
+                    // mean the parameter again, not that place.
+                    for slot in idents_before..unit.idents.len() { unit.declared[slot] = true; }
+                }
+                self.default_depth = outside;
+                read?;
             } else {
-                Vec::new()
-            };
-            let outcome = self.expr(0);
-            for (at, back) in kept.into_iter().enumerate() {
-                self.pieces.last_mut().expect("an open piece").idents[at] = back;
+                self.expr(0)?;
             }
-            outcome?;
             self.write(&formals[*at]);
             self.land(past);
         }

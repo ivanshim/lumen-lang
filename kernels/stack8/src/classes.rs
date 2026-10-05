@@ -3122,6 +3122,7 @@ impl<'a> Engine<'a> {
     pub(super) fn home_module_word(&self) -> &str {
         self.lang.names_module.first().map_or("builtins", String::as_str)
     }
+
     /// A builtin kind read by the word that spells it, where that word
     /// names a kind: the value `int`, not the class standing for it.
     pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
@@ -3627,6 +3628,22 @@ impl<'a> Engine<'a> {
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
                 let module=self.module_holding(&subject).is_some();
+                // A name a module takes from outside that it never bound
+                // for itself becomes one of its own globals, standing in
+                // the place its routines read it from, as the reference's
+                // module.__dict__ write is a global write.
+                if module && value.is_some() && !o.fields.borrow().iter().any(|(n,_)| n == name) {
+                    let suffix = format!(":{}:{}", o.class_now().name, name);
+                    // The newest incarnation of the module answers for
+                    // the name: a module read in again owns fresh cells.
+                    if let Some(slot) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                        let shared = Value::Bond(Rc::new(RefCell::new(value.clone().unwrap())));
+                        self.world.resize(self.registry.idents.len(), Value::Blank);
+                        self.world[slot] = shared.clone();
+                        o.fields.borrow_mut().push((name.to_string(), shared));
+                        return Ok(Value::Null);
+                    }
+                }
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
@@ -4154,6 +4171,10 @@ impl<'a> Engine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
         }
         if let Some(told)=self.maker_answers(wanted,value,subclass)? { return Ok(told); }
+        // A side still standing behind a cell is asked about as the
+        // value the cell keeps.
+        if matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..)) { return self.beneath(&value.contents(), wanted, subclass); }
+        if matches!(wanted, Value::Bond(_) | Value::Binding(_) | Value::Collection(..)) { return self.beneath(value, &wanted.contents(), subclass); }
         // The bytes kinds stand as values of their own rather than as
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
