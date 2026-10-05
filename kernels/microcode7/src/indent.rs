@@ -71,7 +71,7 @@ pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<
     let mut out = Vec::with_capacity(tokens.len());
     let mut inside = 0usize;
     let mut stack = vec![0usize];
-    let mark = |k: Shape, line: u32| Token { end_row: 0, end_column: 0, column: 1, shape: k, lexeme: String::new(), span: 0, row: line };
+    let mark = |k: Shape, line: u32| Token { end_row: 0, end_column: 0, column: 1, shape: k, lexeme: String::new(), raw: None, span: 0, row: line };
     for t in tokens {
         if t.shape == Shape::LineEnd {
             got_to = t.row + 1;
