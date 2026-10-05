@@ -3424,7 +3424,7 @@ impl<'a> Machine<'a> {
             return if matches!(held, Value::Unset) { self.fetch(slot, frame) } else { Ok(held) };
         }
         if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
-            if self.names_in_calls && !f.capture_slots.borrow().contains(&slot.at) && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
+            if self.names_in_calls && !f.capture_slots.borrow().contains(&slot.at) && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#')) {
                 return Ok(Value::Shared(cell.clone()));
             }
             if !self.rules.closes_over { return Ok(cell.borrow().clone()); }
@@ -3457,8 +3457,10 @@ impl<'a> Machine<'a> {
             let captured = cell.borrow().clone();
             v = captured;
         }
+        // Imported source names have binding wrappers; compiler temporaries
+        // hold collection cells directly and must retain those cells.
         if let Value::Shared(cell) = &v {
-            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
+            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#')) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.rules.closes_over { return Ok(held); }
             v = held;
@@ -3541,7 +3543,7 @@ impl<'a> Machine<'a> {
                 *cell.borrow_mut() = stored;
                 return Ok(());
             }
-            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
+            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#') {
                 self.booked_write(slot.at, &slot.ident, Some(stored.clone()));
                 if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
             }
@@ -14500,6 +14502,15 @@ impl<'a> Machine<'a> {
                 let mut found = false;
                 for held in members { if self.keys_agree(&held, &keyed)? { found = true; break; } }
                 return Ok(Some(Value::Flag(found != (operation == Prim::Absent))));
+            }
+        }
+        if let (Prim::Contains | Prim::Absent, [sought, container @ Value::Thing(_)]) = (operation, operands) {
+            if self.appointment(container, 14).is_none() {
+                if let Some(contents) = Self::underlying(container).map(|v| v.settled()) {
+                    if Self::native_mark(&contents).is_some_and(|mark| Self::mark_answers(mark, 14)) {
+                        return self.prim(operation, "", &[sought.clone(), contents]).map(Some);
+                    }
+                }
             }
         }
         let free_at: &[usize] = match operation {
@@ -25840,6 +25851,7 @@ impl Machine<'_> {
                     Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
                     Value::Ellipsis => 5,
+                    Value::Refusal(_) => 6,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Intrinsic(_, word) => {

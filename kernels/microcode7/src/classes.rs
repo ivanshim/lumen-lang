@@ -3769,17 +3769,6 @@ impl<'a> Machine<'a> {
                 if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{
-                if !self.detail("name").is_empty() && !Self::sealed(b) {
-                    if let Some(builder) = Self::builder_over(b) {
-                        if let Some(entry) = self.inherited_entry(&builder, key).filter(|entry| self.writes_too(entry)) {
-                            let part = if replacement.is_some() { "descriptor.set" } else { "descriptor.delete" };
-                            let hook = self.protocol_entry(&entry, part).ok_or_else(|| Escape::Error(format!("AttributeError: {}", self.detail(part))))?;
-                            let mut values = vec![subject.clone()]; values.extend(replacement);
-                            self.through_descriptor(&entry, hook, values)?;
-                            return Ok(Value::Nil);
-                        }
-                    }
-                }
                 if !direct {
                     let protocol = if replacement.is_none() { "remove" } else { "set" };
                     if let Some(factory) = Self::builder_over(b) {
@@ -3790,6 +3779,17 @@ impl<'a> Machine<'a> {
                                 Some(ref worth) => vec![Value::text(key), worth.clone()],
                             };
                             return self.apply_class_member(called, arguments);
+                        }
+                    }
+                }
+                if !self.detail("name").is_empty() && !Self::sealed(b) {
+                    if let Some(builder) = Self::builder_over(b) {
+                        if let Some(entry) = self.inherited_entry(&builder, key).filter(|entry| self.writes_too(entry)) {
+                            let part = if replacement.is_some() { "descriptor.set" } else { "descriptor.delete" };
+                            let hook = self.protocol_entry(&entry, part).ok_or_else(|| Escape::Error(format!("AttributeError: {}", self.detail(part))))?;
+                            let mut values = vec![subject.clone()]; values.extend(replacement);
+                            self.through_descriptor(&entry, hook, values)?;
+                            return Ok(Value::Nil);
                         }
                     }
                 }
