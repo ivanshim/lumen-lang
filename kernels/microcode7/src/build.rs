@@ -217,6 +217,17 @@ pub struct Builder<'a> {
     spoken_for: Vec<String>,
     gensyms: usize,
     gather_names: Vec<(String, String)>,
+    /// The iteration variables of the comprehensions around the reader,
+    /// in the order their `for` clauses were read.
+    gather_targets: Vec<String>,
+    /// How many comprehension sources are being read right now: an
+    /// assignment expression may stand in none of them.
+    gather_sources: usize,
+    /// Whether a bare assignment expression is barred where the reader
+    /// stands now: a short routine's body, or the value of another
+    /// assignment expression.
+    named_blocked: bool,
+    named_value: bool,
     pub presumed: HashMap<String, Signature>,
     pub seen: HashMap<String, Signature>,
     strict: bool,
@@ -573,7 +584,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1417,6 +1428,20 @@ impl<'a> Builder<'a> {
         self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len())
     }
 
+    /// Whether a named expression written in the comprehension now
+    /// being read would land in a class body: a comprehension binds a
+    /// name in the function or program around it, but a class body is
+    /// no closure for it to bind in.
+    fn gathering_in_class_body(&self) -> bool {
+        let Some((level, _)) = self.class_bindings.last() else { return false; };
+        for index in (0..self.layers.len()).rev() {
+            if self.layers[index].gathering_kind.is_none() {
+                return index + 1 == *level;
+            }
+        }
+        false
+    }
+
     /// Whether the layer around the class body already holds this name
     /// `global` or `nonlocal`, the two declarations that carry a name
     /// past a class body to the place it named before the body was
@@ -1782,7 +1807,7 @@ impl<'a> Builder<'a> {
         let param_slots = (0..params.len()).collect();
         let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>" | "<genexpr>"))
             && self.layers.last().map_or(false, |scope| scope.permits_async);
-        self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>" || name == "<genexpr>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
@@ -1798,6 +1823,8 @@ impl<'a> Builder<'a> {
             }
         }
         let earlier_gathering = self.gather_names.clone();
+        let earlier_targets = self.gather_targets.clone();
+        if !matches!(name, "<gathering>" | "<genexpr>") { self.gather_targets.clear(); }
         if holds == Holds::Every && self.table.flag("ext.stmt.function.closes_over") {
             let own = &self.layers.last().unwrap().idents;
             self.gather_names.retain(|pair| !own.contains(&pair.0));
@@ -1813,6 +1840,7 @@ impl<'a> Builder<'a> {
         self.finally_nesting = previous_finally;
         self.declarations = outer_declarations;
         self.gather_names = earlier_gathering;
+        self.gather_targets = earlier_targets;
         let generator = holds == Holds::Every && self.generator_seen && self.table.flag("ext.stmt.yield.suspends");
         if holds == Holds::Every {
             if self.generator_seen && !generator {
@@ -6867,6 +6895,10 @@ impl<'a> Builder<'a> {
                 if table.has_any("ext.builtin.exceptions.syntax") && params.last().is_some_and(|word| word == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if !short && self.on_any("ext.stmt.annotation") {
                     self.advance();
+                    if table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare
+                        && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
+                        return Err("SyntaxError: invalid syntax".to_owned());
+                    }
                     self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().spelling()) {
@@ -6920,6 +6952,10 @@ impl<'a> Builder<'a> {
                 self.advance();
                 if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&close) || self.on_any("syntax.call.separator")) {
                     return Err("SyntaxError: expected default value expression".to_owned());
+                }
+                if table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare
+                    && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
+                    return Err("SyntaxError: invalid syntax".to_owned());
                 }
                 spares.push((params.len() - 1, self.pos));
                 // Read once here only to step over it.
@@ -7408,7 +7444,17 @@ impl<'a> Builder<'a> {
                 let fill = Form::Write(target, Box::new(Form::Read(cell)));
                 steps.push(b.choose(absent, fill, constant(Value::Nil)));
             }
-            let body = b.expr_at(0, !table.has_any("ext.builtin.exceptions.syntax"))?;
+            b.named_blocked = true;
+            let outcome = b.expr_at(0, !table.has_any("ext.builtin.exceptions.syntax"));
+            b.named_blocked = false;
+            let body = outcome?;
+            if table.has_any("ext.builtin.exceptions.syntax") && table.spells("ext.op.assign.expression", &b.look().lexeme) {
+                if b.named_value { return Err(String::from("SyntaxError: invalid syntax")); }
+                let tail = &b.tokens[b.pos - 1];
+                b.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
+                b.pos = keyword_at;
+                return Err(String::from("SyntaxError: cannot use assignment expressions with lambda"));
+            }
             if table.has_any("ext.builtin.exceptions.syntax") && b.on_assign() {
                 let tail = &b.tokens[b.pos - 1];
                 b.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
@@ -7619,6 +7665,19 @@ impl<'a> Builder<'a> {
             prim_call(Prim::Apart, vec![partition, constant(Value::Small(0))])
         } else { value };
         Ok((gathered, star))
+    }
+
+    /// What the reference calls an expression an assignment expression
+    /// may not write to, where it is not a bare name.
+    fn named_target_kind(&self, begin: usize, end: usize) -> Option<&'static str> {
+        if self.tokens[begin..end].iter().any(|token| self.table.spells("ext.op.lambda", &token.lexeme)) {
+            return Some("lambda");
+        }
+        let open = self.table.single("syntax.group.open")?;
+        let close = self.table.single("syntax.group.close")?;
+        if self.tokens[begin].lexeme.as_str() != open || self.tokens[end - 1].lexeme.as_str() != close { return None; }
+        if !self.divided_at(begin + 1, end - 1, "ext.op.tuple").is_empty() { return Some("tuple"); }
+        None
     }
 
     fn has_added_target(&self, span: std::ops::Range<usize>) -> bool {
@@ -7976,6 +8035,9 @@ impl<'a> Builder<'a> {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if !self.divided_at(self.pos, self.tokens.len(), "ext.op.assign.expression").is_empty() {
+                return Err(String::from("SyntaxError: invalid syntax"));
+            }
             if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
                 let word = self.look();
                 let target = if word.shape == Shape::Woven {
@@ -8826,14 +8888,16 @@ impl<'a> Builder<'a> {
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let origin = self.pos;
+        let blocked = std::mem::take(&mut self.named_blocked);
         if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
             && matches!(self.look().lexeme.as_str(), "(" | "[" | "{") && self.written_inside_display(origin) {
             return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
         }
-        if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).spelling()) {
+        if floor == 0 && !blocked && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).spelling()) {
             let taken = self.advance();
             let word = taken.lexeme.clone();
             let spelled = taken.spelling().to_string();
+            let shown = spelled.clone();
             if table.has_any("ext.builtin.exceptions.syntax") {
                 if table.spells("literal.true", &spelled) || table.spells("literal.false", &spelled) || table.spells("literal.null", &spelled) {
                     return Err(format!("SyntaxError: cannot use assignment expressions with {spelled}"));
@@ -8841,12 +8905,26 @@ impl<'a> Builder<'a> {
                 if spelled == "__debug__" {
                     return Err("SyntaxError: cannot assign to __debug__".to_owned());
                 }
+                if self.gather_sources > 0 {
+                    return Err("SyntaxError: assignment expression cannot be used in a comprehension iterable expression".to_owned());
+                }
+                if self.layers.last().map_or(false, |layer| layer.gathering_kind.is_some()) {
+                    if self.gather_targets.contains(&word) {
+                        return Err(format!("SyntaxError: assignment expression cannot rebind comprehension iteration variable '{shown}'"));
+                    }
+                    if self.gathering_in_class_body() {
+                        return Err("SyntaxError: assignment expression within a comprehension cannot be used in a class body".to_owned());
+                    }
+                }
             }
             let layer = self.layers.last_mut().unwrap();
             if layer.gathering_kind.is_some() { layer.expression_targets.push(word.clone()); }
             self.advance();
             let target = self.address_to_write(&word);
-            let expression = self.expr(0)?;
+            let outer_value = std::mem::replace(&mut self.named_value, true);
+            let outcome = self.expr(0);
+            self.named_value = outer_value;
+            let expression = outcome?;
             return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
         }
         if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
@@ -8855,9 +8933,16 @@ impl<'a> Builder<'a> {
             return Err("SyntaxError: expected expression before 'if', but statement is given".to_owned());
         }
         let mut left = self.monadic_expr()?;
-        if floor == 0 && table.spells("ext.op.assign.expression", &self.look().spelling()) {
-            let Form::Read(target) = left else {
-                return Err("Named expression needs a variable".to_string());
+        if floor == 0 && !blocked && table.spells("ext.op.assign.expression", &self.look().spelling()) {
+            if table.has_any("ext.builtin.exceptions.syntax") && self.gather_sources > 0 {
+                return Err("SyntaxError: assignment expression cannot be used in a comprehension iterable expression".to_owned());
+            }
+            let target = match left {
+                Form::Read(target) => target,
+                _ => match self.named_target_kind(origin, self.pos) {
+                    Some(kind) if table.has_any("ext.builtin.exceptions.syntax") => return Err(format!("SyntaxError: cannot use assignment expressions with {kind}")),
+                    _ => return Err("Named expression needs a variable".to_string()),
+                },
             };
             self.advance();
             let rhs = self.expr(0)?;
@@ -10656,13 +10741,23 @@ impl<'a> Builder<'a> {
         Ok(value)
     }
 
+    /// The source of a comprehension clause. An assignment expression
+    /// may stand in none of them, however deeply nested, so the reading
+    /// is counted while the source is read.
+    fn gather_source(&mut self) -> Res<Form> {
+        self.gather_sources += 1;
+        let outcome = self.expr(1);
+        self.gather_sources -= 1;
+        outcome
+    }
+
     fn generator_comprehension(&mut self, clause: usize, end: &str) -> Res<Form> {
         if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
         let head = self.pos;
         self.pos = clause;
         self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
         let begins = self.pos;
-        let source = self.expr(1)?;
+        let source = self.gather_source()?;
         let ends = self.pos;
         let parameter = String::from(".0");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
@@ -10671,9 +10766,11 @@ impl<'a> Builder<'a> {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();
+            let before_targets = r.gather_targets.len();
             r.reserve_gathering(clause)?;
             let body = r.gather_tail(head, "", false)?;
             r.gather_names.truncate(before);
+            r.gather_targets.truncate(before_targets);
             r.need_sign(end, "after a generator expression")?;
             r.reject_gathering_assignment("generator expression")?;
             async_result = r.layers.last().unwrap().async_walk_seen;
@@ -10706,7 +10803,7 @@ impl<'a> Builder<'a> {
             self.pos = first_for;
             self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
             let begins = self.pos;
-            let source = self.expr(1)?;
+            let source = self.gather_source()?;
             let bounds = self.span_since(begins);
             let ends = self.pos;
             let parameter = self.gather_name("first_source");
@@ -10734,12 +10831,14 @@ impl<'a> Builder<'a> {
         let expression_at = self.pos;
         self.pos = first_for;
         let old_names = self.gather_names.len();
+        let old_targets = self.gather_targets.len();
         self.reserve_gathering(first_for)?;
         let name = self.gather_name("gathered");
         let empty = prim_call(if dictionary { Prim::MakeMap } else if self.table.flag("ext.syntax.set") && self.table.spells("syntax.map.close", end) { Prim::EmptySet } else { Prim::MakeArray }, Vec::new());
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
+        self.gather_targets.truncate(old_targets);
         if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "of" && self.glance(1).shape == Shape::Bare {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'if'?"));
         }
@@ -10749,18 +10848,18 @@ impl<'a> Builder<'a> {
         Ok(sequence(vec![start, work, answer]))
     }
 
-    fn gathering_bindings(&mut self, span: std::ops::Range<usize>, first_binding: usize) -> Res<()> {
+    fn gathering_bindings(&mut self, span: std::ops::Range<usize>, first_binding: usize, record: bool) -> Res<()> {
         let mut first = span.start;
         let limit = span.end;
         if first >= limit { return Ok(()); }
         let commas = self.divided_at(first, limit, "ext.op.tuple");
         if !commas.is_empty() {
             for boundary in commas.into_iter().chain(std::iter::once(limit)) {
-                self.gathering_bindings(first..boundary, first_binding)?;
+                self.gathering_bindings(first..boundary, first_binding, record)?;
                 first = boundary + 1;
             }
         } else if self.table.spells("ext.stmt.unpack.rest", &self.tokens[first].spelling()) {
-            self.gathering_bindings(first + 1..limit, first_binding)?;
+            self.gathering_bindings(first + 1..limit, first_binding, record)?;
         } else {
             let token = &self.tokens[first];
             let family = ["syntax.group", "syntax.array"].into_iter().find(|family|
@@ -10778,12 +10877,13 @@ impl<'a> Builder<'a> {
                     cursor += 1;
                     if level == 0 { break; }
                 }
-                if cursor == limit && level == 0 { self.gathering_bindings(first + 1..limit - 1, first_binding)?; }
+                if cursor == limit && level == 0 { self.gathering_bindings(first + 1..limit - 1, first_binding, record)?; }
             } else if limit - first == 1 && token.shape == Shape::Bare {
                 let word = token.lexeme.clone();
                 if self.layers.last().unwrap().expression_targets.contains(&word) {
                     return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{word}'"));
                 }
+                if record { self.gather_targets.push(word.clone()); }
                 if self.gather_names.iter().skip(first_binding).any(|pair| pair.0 == word) { return Ok(()); }
                 let binding = match self.table.flag("ext.stmt.function.closes_over") && self.table.has_any("ext.builtin.exceptions.syntax") {
                     true => word.to_string(),
@@ -10820,7 +10920,7 @@ impl<'a> Builder<'a> {
             if closing.is_empty() && word.shape == Shape::Bare && self.table.spells("ext.op.comprehension.for", &word.spelling()) {
                 let end = self.divided_at(cursor + 1, self.tokens.len(), "ext.op.comprehension.in")
                     .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })?;
-                self.gathering_bindings(cursor + 1..end, own)?;
+                self.gathering_bindings(cursor + 1..end, own, false)?;
                 cursor = end + 1;
                 continue;
             }
@@ -10883,7 +10983,7 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(target_begin..target_stop) {
             return Err(String::from("SyntaxError: cannot assign to expression"));
         }
-        self.gathering_bindings(target_begin..target_stop, 0)?;
+        self.gathering_bindings(target_begin..target_stop, 0, true)?;
         self.pos = target_stop + 1;
         let walks = self.table.flag("ext.stmt.yield.suspends");
         let beginning = self.pos;
@@ -10895,7 +10995,7 @@ impl<'a> Builder<'a> {
                 else { prim_call(Prim::IteratorInput, vec![supplied]) }
             }
             None => {
-                let value = self.expr(1)?;
+                let value = self.gather_source()?;
                 prim_call(if asynchronous { Prim::AsyncWalked } else if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
             }
         };
@@ -11131,6 +11231,11 @@ impl<'a> Builder<'a> {
             if label && bind && self.table.has_any("ext.builtin.exceptions.syntax")
                 && (self.sign(&close) || sep.as_ref().is_some_and(|mark| self.sign(mark))) {
                 return Err(String::from("SyntaxError: expected argument value expression"));
+            }
+            if label && bind && self.table.has_any("ext.builtin.exceptions.syntax")
+                && self.look().shape == Shape::Bare
+                && self.table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
+                return Err(String::from("SyntaxError: invalid syntax"));
             }
             let value = self.expr(0)?;
             let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));

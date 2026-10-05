@@ -23763,7 +23763,15 @@ impl<'a> Machine<'a> {
             if let Some(program) = self.frames_named.last() {
                 let cells = frame.cells.borrow();
                 for (word, held) in program.idents.iter().zip(cells.iter()) {
-                    if Self::visible_name(word) && !matches!(held, Value::Unset) { entries.push((Value::text(word), held.clone())); }
+                    // A name a closure reaches for is kept in a cell of
+                    // its own; one still holding nothing inside that
+                    // cell is no more named here than an unwritten name
+                    // of the routine's own is.
+                    let contents = match held {
+                        Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),
+                        other => other.clone(),
+                    };
+                    if Self::visible_name(word) && !matches!(contents, Value::Unset) { entries.push((Value::text(word), held.clone())); }
                 }
                 drop(cells);
                 // A name the routine reads from the scope around it is in
