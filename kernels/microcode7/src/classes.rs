@@ -2028,11 +2028,22 @@ impl<'a> Machine<'a> {
         };
         let home = metadata[0].bare();
         let public = metadata[1].bare();
-        let class = if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) { self.native_kind("bool") } else { match self.parent_from_type(&target) { Ok(kind) => kind, Err(_) => {
-            return Err(format!("TypeError: descriptor '{public}' for type '{home}' needs a type, not a '{}' as arg 2", limited_name(Self::type_argument_kind(&target))).into());
+        let bad_type_name = if let Value::Thing(instance) = &target {
+            let kind = instance.blueprint();
+            let native_buffer = kind.shared.borrow().iter().any(|entry| entry.0 == "\0buffer_allocator" && entry.1.is_true());
+            let named = kind.type_names.borrow().is_some();
+            if named && !native_buffer { Self::type_argument_kind(&target) }
+            else { self.full_class_name(&kind) }
+        } else { Self::type_argument_kind(&target) };
+        let class = if let Value::Blueprint(type_object) = &target { type_object.clone() } else if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) { self.native_kind("bool") } else { match self.parent_from_type(&target) { Ok(kind) => kind, Err(_) => {
+            return Err(format!("TypeError: descriptor '{public}' for type '{home}' needs a type, not a '{}' as arg 2", limited_name(bad_type_name)).into());
         }} };
         let parent = self.kind_by_word(&home).ok_or_else(|| self.class_unready())?;
-        let public_type = class.type_names.borrow().as_ref().map_or(class.name.clone(), |names| names.short.type_text().bare());
+        let exported = class.shared.borrow().iter().any(|entry| entry.0 == "\0buffer_allocator" && entry.1.is_true());
+        let public_type = match class.type_names.borrow().as_ref() {
+            Some(names) if !exported => names.short.type_text().bare(),
+            _ => self.full_class_name(&class),
+        };
         if self.is_beneath(&target, &parent, true)? == false {
             return Err(format!("TypeError: descriptor '{public}' requires a subtype of '{home}' but received '{}'", limited_name(public_type)).into());
         }

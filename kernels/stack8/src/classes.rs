@@ -2088,9 +2088,19 @@ impl<'a> Engine<'a> {
         };
         let defining = parts.1[0].plain();
         let word = parts.1[1].plain();
-        let class = if matches!(&owner, Value::Native(Builtin::Bool, _)) { self.kind_class("bool") } else { self.type_base(&owner).map_err(|_| Fault::Note(format!("TypeError: descriptor '{word}' for type '{defining}' needs a type, not a '{}' as arg 2", clip(Self::type_argument_kind(&owner)))))? };
+        let argument_kind = match &owner {
+            Value::Object(object) => {
+                let kind = object.class_now();
+                let exported = kind.shared.borrow().iter().any(|(key, value)| key == "\0buffer_allocator" && value.is_true());
+                if exported || kind.python_names.borrow().is_none() { self.qualified_class(&kind) } else { Self::type_argument_kind(&owner) }
+            }
+            _ => Self::type_argument_kind(&owner),
+        };
+        let class = if let Value::Class(held) = &owner { held.clone() } else if matches!(&owner, Value::Native(Builtin::Bool, _)) { self.kind_class("bool") } else { self.type_base(&owner).map_err(|_| Fault::Note(format!("TypeError: descriptor '{word}' for type '{defining}' needs a type, not a '{}' as arg 2", clip(argument_kind))))? };
         let base = self.spelled_kind(&defining).ok_or_else(|| self.class_refusal())?;
-        let title = class.python_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.0.type_text().plain());
+        let registered_buffer = class.shared.borrow().iter().any(|(key, value)| key == "\0buffer_allocator" && value.is_true());
+        let title = if registered_buffer || class.python_names.borrow().is_none() { self.qualified_class(&class) }
+            else { class.python_names.borrow().as_ref().unwrap().0.type_text().plain() };
         if !self.beneath(&owner, &base, true)? { return Err(format!("TypeError: descriptor '{word}' requires a subtype of '{defining}' but received '{}'", clip(title)).into()); }
         self.bind_class_value(descriptor.clone(), None, class)
     }
