@@ -41,6 +41,10 @@ impl<'a> Engine<'a> {
         }
         if word == "Union" {
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
+            // The reference builds a union by subscription, which the
+            // special form's own item method does; the folded members
+            // are the very shape the class questions read a union by.
+            hooks.push(("__class_getitem__".into(), Self::adapter(140, Vec::new())));
         }
         if word == "GenericAlias" {
             hooks.push(("__iter__".into(), Self::adapter(124, vec![Value::Small(5)])));
@@ -1113,6 +1117,16 @@ impl<'a> Engine<'a> {
                         }
                     }
                     Ok(Value::text(&parts.join(" | ")))
+                }
+                140 => {
+                    let subscript = args.last().cloned().unwrap_or(Value::Null).contents();
+                    let members: Vec<Value> = match subscript { Value::Tuple(row) => row.iter().cloned().collect(), other => vec![other] };
+                    if members.is_empty() { return Err("TypeError: Cannot take a Union of no types.".into()); }
+                    let mut folded: Option<Value> = None;
+                    for member in members {
+                        folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member) });
+                    }
+                    Ok(folded.unwrap_or(Value::Null))
                 }
                 124 => self.alias_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
                 122 => self.namespace_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
@@ -4114,17 +4128,17 @@ impl<'a> Engine<'a> {
         }
         Value::Class(self.kind_class(&word))
     }
-    /// Whether a value stands as a class at all: one the program wrote,
-    /// or a builtin word that names a kind.
-    fn stands_as_class(&self,value:&Value)->bool {
-        matches!(value,Value::Class(_))||self.kind_spelled(value).is_some()
-    }
     /// One builtin kind stands beneath another only where it is that
     /// very kind, or where it is the flag kind, which stands under the
     /// whole-number kind as the language counts a flag a number.
     fn kinds_beneath(&self,under:&str,over:&str)->bool {
         under==over
             || (self.lang.builtins.get(under)==Some(&Builtin::Bool) && self.lang.builtins.get(over)==Some(&Builtin::ToInt))
+    }
+    /// Whether a value stands as a class at all: one the program wrote,
+    /// or a builtin word that names a kind.
+    fn stands_as_class(&self,value:&Value)->bool {
+        matches!(value,Value::Class(_))||self.kind_spelled(value).is_some()
     }
     /// Whether a value is of a builtin kind. A walk is known by the name
     /// its kind is told by, which is the word that made it.
@@ -4155,13 +4169,119 @@ impl<'a> Engine<'a> {
         let told=self.core_fault(label,"");
         if told.is_empty(){self.class_refusal()}else{told.into()}
     }
+    /// The member a value holds under a name where it holds one: a
+    /// member that is absent is the plain absence the reference reads,
+    /// while any other fault is passed on as it stands. Both the
+    /// class questions ask values this way.
+    fn asked_member(&mut self, value:&Value, name:&str) -> Flow<Option<Value>> {
+        if name.is_empty() { return Ok(None); }
+        match self.class_get(value.clone(), name, false) {
+            Ok(found) => Ok(Some(found.contents())),
+            Err(fault) if self.attribute_fault(&fault) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+    /// The `__bases__` a value stands under where it keeps a tuple of
+    /// them, the reference's own reading of a class a value may stand
+    /// for without being a class itself. A member that is absent, or
+    /// is no tuple, leaves the walk with nothing.
+    fn class_bases(&mut self, value:&Value) -> Flow<Option<Vec<Value>>> {
+        let name = self.class_word("bases").to_string();
+        Ok(match self.asked_member(value, &name)? {
+            Some(Value::Tuple(items)) => Some(items.as_ref().clone()),
+            _ => None,
+        })
+    }
+    /// The class a value names through its own `__class__`, whether or
+    /// not that is the class it was made by.
+    fn named_class_of(&mut self, value:&Value) -> Flow<Option<Value>> {
+        let name = self.class_word("kind").to_string();
+        self.asked_member(value, &name)
+    }
+    /// Whether two values are the very one thing, which is how the
+    /// reference follows a `__bases__` line: the same class, the same
+    /// object, the same builtin kind under whatever spelling, or the
+    /// same placed value.
+    fn one_place(&self, a:&Value, b:&Value) -> bool {
+        match (a, b) {
+            (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Native(x, xw), Value::Native(y, yw)) => x == y && xw == yw,
+            (Value::Null, Value::Null) => true,
+            _ => match (self.kind_word_of(a), self.kind_word_of(b)) {
+                (Some(one), Some(two)) => one == two,
+                _ => a.same_place(b),
+            },
+        }
+    }
+    /// A value that is no class of its own but holds the question's own
+    /// member answers it, as the reference asks before falling back on
+    /// class lines; this is how a stub kind carries its own checking.
+    fn value_answers(&mut self,wanted:&Value,given:&Value,subclass:bool)->Flow<Option<bool>> {
+        let Value::Object(object)=wanted else{return Ok(None);};
+        let holder=object.class_now();
+        let Some(name)=self.lang.class_special.get(if subclass{77}else{76}).cloned() else{return Ok(None);};
+        let Some(member)=self.class_value(&holder,&name) else{return Ok(None);};
+        let bound=self.bind_class_value(member,Some(wanted.clone()),holder)?;
+        let told=self.class_apply(bound,vec![given.clone()])?;
+        Ok(Some(self.truth(&told)))
+    }
+    /// The reference's walk along a `__bases__` line from `derived`
+    /// towards the very `wanted`: a single base is stepped along and
+    /// does not grow the stack, two or more are each walked in turn,
+    /// and the whole is guarded so an endless line raises as the
+    /// reference's own does.
+    fn bases_walk(&mut self, mut derived:Value, wanted:&Value) -> Flow<bool> {
+        loop {
+            if self.one_place(&derived, wanted) { return Ok(true); }
+            let Some(bases) = self.class_bases(&derived)? else { return Ok(false); };
+            if bases.is_empty() { return Ok(false); }
+            if bases.len() == 1 { derived = bases.into_iter().next().unwrap(); continue; }
+            self.reaching_further()?;
+            let mut answer = Ok(false);
+            for base in bases.iter() {
+                match self.bases_walk(base.clone(), wanted) {
+                    Ok(true) => { answer = Ok(true); break; }
+                    Ok(false) => {}
+                    Err(fault) => { answer = Err(fault); break; }
+                }
+            }
+            self.answered();
+            return answer;
+        }
+    }
+    /// The kind word a value reports, where it reports one: a class the
+    /// program wrote and the builtin kind beneath it, a builtin word, a
+    /// bytes kind, or the NoneType a bare `None` stands for.
+    fn reported_kind_word(&self, value:&Value) -> Option<String> {
+        match value {
+            Value::Class(c) => Self::own_kind(c).or_else(|| Self::kind_beneath(c)),
+            Value::Native(op, word) if Self::kind_builtin(op) => Some(word.to_string()),
+            Value::Adapter(parts) if parts.0 == 8 => match &parts.1[0] { Value::Text(word) => Some(word.to_string()), _ => None },
+            Value::ByteKind(mutable, _) => Some(self.byte_kind_word(*mutable).to_string()),
+            Value::Null => Some("NoneType".to_string()),
+            _ => None,
+        }
+    }
+    /// Whether a class a value reports through `__class__` stands
+    /// beneath the kind asked after, in whatever shape each came: a
+    /// class beneath another class, a builtin word, or a bytes kind.
+    fn reported_stands_beneath(&self, reported:&Value, wanted:&Value) -> bool {
+        if let (Value::Class(a), Value::Class(b)) = (reported, wanted) {
+            if Self::contains_class(a, b) || Self::exception_beneath(a, b) { return true; }
+        }
+        match (self.reported_kind_word(reported), self.reported_kind_word(wanted)) {
+            (Some(under), Some(over)) => self.kinds_beneath(&under, &over),
+            _ => false,
+        }
+    }
     pub(super) fn module_of_kind(&self, value: &Value, expected: &Rc<Class>) -> bool {
         if self.module_holding(value).is_none() { return false; }
         let [path, member] = self.lang.module_kind.as_slice() else { return false };
         let Some(Value::Object(space)) = self.modules.get(path) else { return false };
         space.fields.borrow().iter().any(|(key, held)| key == member && matches!(held.contents(), Value::Class(kind) if Rc::ptr_eq(&kind, expected)))
     }
-    fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+    pub(super) fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if let Value::Collection(cell, _) | Value::Bond(cell) = value { let held = cell.borrow().clone(); return self.beneath(&held, wanted, subclass); }
         if let Value::Collection(cell, _) | Value::Bond(cell) = wanted { let held = cell.borrow().clone(); return self.beneath(value, &held, subclass); }
         if let Value::Object(object) = wanted {
@@ -4178,13 +4298,30 @@ impl<'a> Engine<'a> {
         // value the cell keeps.
         if matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..)) { return self.beneath(&value.contents(), wanted, subclass); }
         if matches!(wanted, Value::Bond(_) | Value::Binding(_) | Value::Collection(..)) { return self.beneath(value, &wanted.contents(), subclass); }
+        if let Some(told)=self.value_answers(wanted,value,subclass)? { return Ok(told); }
         // The bytes kinds stand as values of their own rather than as
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
-        if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
+        if let Value::Tuple(v)=wanted {
+            // A tuple of kinds is walked member by member, and the walk
+            // is guarded so a tuple nested without end raises as the
+            // reference's own recursion does rather than running on.
+            let members: Vec<Value> = v.iter().cloned().collect();
+            self.reaching_further()?;
+            let mut answer = Ok(false);
+            for member in members.iter() {
+                match self.beneath(value, member, subclass) {
+                    Ok(true) => { answer = Ok(true); break; }
+                    Ok(false) => {}
+                    Err(fault) => { answer = Err(fault); break; }
+                }
+            }
+            self.answered();
+            return answer;
+        }
         // A union built by `|` carries a bare `None` for the `NoneType`
         // member, the very value `None` itself is, so a chained union
         // reads it back this way rather than needing `type(None)`.
@@ -4197,7 +4334,10 @@ impl<'a> Engine<'a> {
         let amiss=if subclass{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         if let Value::Class(c)=wanted {
             if !subclass && self.module_of_kind(value, c) { return Ok(true); }
-            if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
+            if subclass && !self.stands_as_class(value){
+                if self.class_bases(value)?.is_some() { return self.bases_walk(value.clone(), wanted); }
+                return Err(self.unclassed("core.issubclass.subject"));
+            }
             // Everything stands beneath the class every other one does.
             if Rc::ptr_eq(c, &self.root_class()){return Ok(true);}
             // The run's own module objects answer to the native module
@@ -4213,7 +4353,27 @@ impl<'a> Engine<'a> {
                 }
             }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
-            return Ok(kind.map_or(false,|k|Self::exception_beneath(k,c)||Self::contains_class(k,c)));
+            if kind.is_some_and(|k|Self::exception_beneath(k,c)||Self::contains_class(k,c)){return Ok(true);}
+            // A value not of the kind may still name a class beneath it
+            // through its own `__class__`, which is read here and may
+            // raise, as the reference asks it. It is the class the value
+            // was made by that this second look must differ from, so a
+            // proxy naming the very kind asked after is of it.
+            if !subclass {
+                // A module already answers by the kind it was made as;
+                // asking it for its own `__class__` would walk the
+                // module's reader, so only a laid-out thing is asked.
+                if self.module_holding(value).is_none() {
+                    if let Value::Object(thing) = value {
+                        if let Some(Value::Class(held))=self.named_class_of(value)? {
+                            if !Rc::ptr_eq(&held, &thing.class_now()) {
+                                return Ok(Self::exception_beneath(&held,c)||Self::contains_class(&held,c));
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(false);
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
@@ -4223,14 +4383,40 @@ impl<'a> Engine<'a> {
                         if builtin==Builtin::SortOf { return Ok(self.is_metaclass_root(c)||c.lineage.iter().any(|base|self.is_metaclass_root(base))); }
                         return Ok(Self::kind_among(c,word));
                     }
-                    let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
-                    return Ok(self.kinds_beneath(&under,word));
+                    if let Some(under)=self.kind_spelled(value) { return Ok(self.kinds_beneath(&under,word)); }
+                    // A subject that stands as no class still may stand
+                    // as one through the `__bases__` it keeps.
+                    if self.class_bases(value)?.is_some() { return self.bases_walk(value.clone(), wanted); }
+                    return Err(self.unclassed("core.issubclass.subject"));
                 }
                 // A thing of a class standing on the kind is of the
-                // kind, and a class standing on several is of each.
-                if let Value::Object(o)=value{return Ok(Self::kind_among(&o.class_now(),word));}
+                // kind; a value not of it may still name a kind through
+                // its own `__class__`.
+                if let Value::Object(o)=value{
+                    if Self::kind_among(&o.class_now(),word) { return Ok(true); }
+                    // A module already answers by the kind it was made
+                    // as; its own reader is not walked for `__class__`.
+                    if self.module_holding(value).is_some() { return Ok(false); }
+                    if let Some(reported)=self.named_class_of(value)? {
+                        if !self.one_place(&reported, &Value::Class(o.class_now())) {
+                            return Ok(self.reported_stands_beneath(&reported, wanted));
+                        }
+                    }
+                    return Ok(false);
+                }
                 return Ok(self.kind_holds(&builtin,word,value));
             }}
+        }
+        // The kind may name no class of its own and still stand as one
+        // through its `__bases__`, as the reference asks before saying
+        // no; and the subject may stand as one the same way.
+        if self.class_bases(wanted)?.is_some() {
+            if subclass {
+                if self.class_bases(value)?.is_none() { return Err(self.unclassed("core.issubclass.subject")); }
+                return self.bases_walk(value.clone(), wanted);
+            }
+            let Some(named)=self.named_class_of(value)? else { return Ok(false); };
+            return self.bases_walk(named, wanted);
         }
         if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
         Err(self.unclassed(amiss))
@@ -4773,7 +4959,7 @@ impl<'a> Engine<'a> {
                 Value::Null => vec![Value::Class(self.kind_class("NoneType"))],
                 other => vec![other.clone()],
             };
-            for entry in entries { if !members.iter().any(|held: &Value| held.equals(&entry)) { members.push(entry); } }
+            for entry in entries { if !members.iter().any(|held: &Value| self.one_place(held, &entry)) { members.push(entry); } }
         }
         if members.len() == 1 { return members.remove(0); }
         let class = self.kind_class("Union");

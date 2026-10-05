@@ -2276,7 +2276,7 @@ impl<'a> Engine<'a> {
     fn class_for(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
         if !self.lang.exceptions.is_empty() {
-            if let Some(name) = self.lang.exceptions.iter().find(|n| told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
             let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
                 else if told.starts_with("Undefined variable") { &self.lang.fault_name }
                 else if told.starts_with("Undefined array key") { &self.lang.fault_key }
@@ -8522,7 +8522,13 @@ impl<'a> Engine<'a> {
             if matches!(op, Action::Add) && matches!(a, Value::Bytes(..)) && !self.lang.byte_prefixes.is_empty() {
                 return self.dyadic(op, a, b);
             }
-            if direct >= 18 && (Self::plain_thing(a) || Self::plain_thing(b)) {
+            // A union of kinds beside a further kind is joined below by
+            // `dyadic`'s own union reading and must not be refused here
+            // first as two plain things.
+            let joining_kinds = matches!(op, Action::BitEither)
+                && self.union_member(a) && self.union_member(b)
+                && (self.union_anchor(a) || self.union_anchor(b));
+            if direct >= 18 && !joining_kinds && (Self::plain_thing(a) || Self::plain_thing(b)) {
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
             }
@@ -21918,7 +21924,12 @@ impl Engine<'_> {
             let property = Value::Class(self.property_class());
             return self.core_isinstance(value, &property);
         }
-
+        // Where the language keeps the fuller class line, the kind
+        // questions go the one road the class tools use, so that unions,
+        // `__class__` overrides and `__bases__` lines answer alike.
+        if self.fuller_classes() {
+            return self.beneath(value, kind, false).map_err(|fault| fault.told(&self.wording()));
+        }
         if matches!(kind.contents(), Value::Object(o) if o.class_now().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
         }
