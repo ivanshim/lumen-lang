@@ -642,6 +642,18 @@ impl<'a> Machine<'a> {
         let mut ancestors=Vec::new();
         for base in bases.iter(){
             if !self.stands_for_a_kind(&base.settled()) {
+                // A parent that is no class but offers __mro_entries__
+                // is turned away by name the way the reference turns it
+                // away: type() never resolves entries; types.new_class()
+                // does.
+                let entry_word = self.detail("mro.entries").to_owned();
+                if !entry_word.is_empty() && matches!(base.settled(), Value::Thing(_)) {
+                    match self.read_class_member(base.clone(), &entry_word, false) {
+                        Ok(_) => return Err("TypeError: type() doesn't support MRO entry resolution; use types.new_class()".to_owned().into()),
+                        Err(escape) if self.missing_member_escape(&escape) => {}
+                        Err(escape) => return Err(escape),
+                    }
+                }
                 return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".to_owned().into());
             }
             ancestors.push(self.parent_from_type(base)?);

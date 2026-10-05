@@ -617,6 +617,10 @@ impl Value {
                 // is the dictionary's own reckoning of where the thing
                 // lies and no part of the key a window upon it shows.
                 for (key,value) in entries.iter() {
+                    // A pair whose place is still empty stands for a name
+                    // not yet written: a namespace that shows it shows a
+                    // name it does not have, so the window passes it by.
+                    if matches!(value.settled(), Value::Unset) { continue; }
                     let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
                     // A reading of the map itself walks, and is
                     // measured, the very way its keys are: it is asked

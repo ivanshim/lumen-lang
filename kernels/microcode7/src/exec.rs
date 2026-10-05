@@ -425,6 +425,7 @@ struct ExecutionRules<'a> {
     has_any_ext_builtin_core_chr_range: bool,
     has_any_ext_builtin_exceptions: bool,
     has_any_ext_builtin_exceptions_syntax: bool,
+    has_any_ext_builtin_loader_source: bool,
     has_any_ext_builtin_exceptions_traceback: bool,
     has_any_ext_builtin_format: bool,
     has_any_ext_builtin_isinstance: bool,
@@ -1819,6 +1820,7 @@ impl<'a> Machine<'a> {
                 has_any_ext_builtin_core_chr_range: table.has_any("ext.builtin.core.chr.range"),
                 has_any_ext_builtin_exceptions: table.has_any("ext.builtin.exceptions"),
                 has_any_ext_builtin_exceptions_syntax: table.has_any("ext.builtin.exceptions.syntax"),
+                has_any_ext_builtin_loader_source: table.has_any("ext.builtin.loader.source"),
                 has_any_ext_builtin_exceptions_traceback: table.has_any("ext.builtin.exceptions.traceback"),
                 has_any_ext_builtin_format: table.has_any("ext.builtin.format"),
                 has_any_ext_builtin_isinstance: table.has_any("ext.builtin.isinstance"),
@@ -18882,6 +18884,19 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            Prim::LoaderSource => {
+                n(1)?;
+                let content = match std::fs::read(self.entry_file.as_ref()) {
+                    Ok(content) => content,
+                    Err(_) => return Err(String::from("ImportError: source not available through get_data()")),
+                };
+                let adapter = self.load_namespace("_tokenize")?;
+                let Some(decode) = self.attribute(&adapter, "_decode_source") else {
+                    return Err(String::from("ImportError: source decoder is unavailable"));
+                };
+                let input = self.octets(content, false);
+                self.core_run(&decode, vec![input])?
+            }
             Prim::CryptoWork => {
                 let first = v.first().ok_or("TypeError: missing cryptographic operation")?;
                 match as_index(first)? {
@@ -24524,6 +24539,20 @@ impl<'a> Machine<'a> {
                 *held = Value::Dict(Rc::new(entries.into()));
             }
         }
+        // A language spelling the word gives the main module a loader
+        // of the file the run began from: its get_source reads that
+        // file, as CPython's SourceFileLoader does for __main__.
+        if self.rules.has_any_ext_builtin_loader_source {
+            let get_source = ("get_source".to_owned(), Value::Intrinsic(Prim::LoaderSource, Rc::from("__loader_source")));
+            let loader_kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+                name: "SourceFileLoader".to_owned(), under: None, methods: Vec::new(), constants: Vec::new(),
+                shared: RefCell::new(vec![get_source]), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
+                has_slot_storage: false, weak_slot: Cell::new(None), type_names: RefCell::new(None), sealed: Cell::new(false) };
+            self.made += 1;
+            let loader = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),
+                of: Rc::new(loader_kind), holds: RefCell::new(Vec::new()), turn: self.made }));
+            let _ = self.booked_put(&book, "__loader__", Some(loader));
+        }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: main.clone(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), has_slot_storage: false, weak_slot: std::cell::Cell::new(None), type_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false),
@@ -27180,7 +27209,11 @@ impl Machine<'_> {
                     if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
                 }
                 if input.len() == 2 || iter_stop_exception.is_some() {
-                    if input.len() == 2 && !matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_)) {
+                    // A summoned callable answers as callable() judges:
+                    // the wrapped member forms among them included.
+                    let callable_shape = matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_))
+                        || matches!(&input[0], Value::Wrapped(tag, _) if matches!(tag, 0..=4 | 8..=12 | 31 | 33 | 34 | 36 | 44..=48 | 50..=57 | 59 | 60 | 70..=74 | 77..=79 | 132 | 133 | 134));
+                    if input.len() == 2 && !callable_shape {
                         return Err("TypeError: iter(v, w): v must be callable".to_owned());
                     }
                     let sentinel = input.get(1).cloned().unwrap_or(Value::Nil);

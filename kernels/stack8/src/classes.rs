@@ -532,6 +532,18 @@ impl<'a> Engine<'a> {
         let mut parents = Vec::new();
         for b in listed.iter() {
             if !self.stands_for_kind(&b.contents()) {
+                // A base that is no class but answers __mro_entries__ is
+                // refused by name the way the reference refuses it:
+                // type() does not resolve entries, types.new_class()
+                // does.
+                let hook = self.class_word("mro.entries").to_string();
+                if !hook.is_empty() && matches!(b.contents(), Value::Object(_)) {
+                    match self.class_get(b.clone(), &hook, false) {
+                        Ok(_) => return Err("TypeError: type() doesn't support MRO entry resolution; use types.new_class()".to_string().into()),
+                        Err(fault) if self.attribute_fault(&fault) => {}
+                        Err(fault) => return Err(fault),
+                    }
+                }
                 return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".into());
             }
             parents.push(self.type_base(b)?);

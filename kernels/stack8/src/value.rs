@@ -788,14 +788,18 @@ impl Value {
                 // itself: the hash is the map's own reckoning of where
                 // the thing lies and no part of the key a viewer of the
                 // keys, or of the pairs, should ever see.
-                Value::array(pairs.iter().map(|(k,v)| {
+                Value::array(pairs.iter().filter_map(|(k,v)| {
+                    // A pair whose cell stands empty names nothing yet:
+                    // a namespace read through a view answers only for
+                    // the names written in it so far.
+                    if matches!(v.contents(), Value::Blank | Value::Gap) { return None; }
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    match view.1.as_str() {
+                    Some(match view.1.as_str() {
                         // A reading of the map itself walks, and is
                         // measured, the very way its keys are: the map
                         // read only is asked after by key alone.
                         "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::tuple(vec![bare,v.clone()]),
-                    }
+                    })
                 }).collect())
             }
             _ => self.clone(),

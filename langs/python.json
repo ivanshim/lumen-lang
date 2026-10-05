@@ -47,6 +47,7 @@
   "ext.builtin.posix": [
     "__posix"
   ],
+  "ext.builtin.loader.source": ["__loader_source"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],

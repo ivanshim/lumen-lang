@@ -18646,6 +18646,16 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+            Builtin::LoaderSource => {
+                arity(1)?;
+                let raw = std::fs::read(self.root_source.as_ref())
+                    .map_err(|_| "ImportError: source not available through get_data()".to_string())?;
+                let module = self.route_module("_tokenize")?;
+                let decoder = self.member_of(module, "_decode_source")?
+                    .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
+                let bytes = self.byte_make(raw, false);
+                self.call_held(decoder, vec![bytes])?
+            }
             // Whether the name given is a link standing for somewhere
             // else: asked of the link itself, and not of whatever
             // stands at its far end.
@@ -24211,6 +24221,19 @@ impl Engine<'_> {
                 else { entries.push((key, spec)); }
                 *contents = Value::Map(Rc::new(entries.into()));
             }
+        }
+        // The main module's namespace answers for a loader of the file
+        // the run was started with, as CPython's __main__ answers for a
+        // SourceFileLoader: its get_source reads that file. Only a
+        // language spelling the word carries one.
+        if self.lang.builtins.contains_key("__loader_source") {
+            self.made += 1;
+            let loader = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),
+                class: self.root_class(),
+                fields: RefCell::new(vec![("get_source".to_string(), Value::Native(Builtin::LoaderSource, Rc::from("get_source")))]),
+                mark: self.made,
+            }));
+            let _ = self.book_put(&book, "__loader__", Some(loader));
         }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),

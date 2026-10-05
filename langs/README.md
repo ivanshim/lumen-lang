@@ -2661,6 +2661,16 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.file.stat`: a builtin answering with the measurements of
+  the file a path names as a row of ten (kind, serials, links, owners,
+  size and the three times), or with the host's reason number where the
+  path names no file to measure.
+- `ext.builtin.file.make`: a builtin making an empty file where the path
+  named none, answering true when it was made, false when the name was
+  already taken, or the host's reason number.
+- `ext.builtin.loader.source`: a builtin answering with the source text
+  of the file the run was started with, as the main module's loader
+  answers `get_source` with it.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither. A second boolean argument
   requests POSIX stat fields, following symlinks when true; a failed query
@@ -4691,6 +4701,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.json.scanstring` | - | - | `__json_string_scan` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.loader.source` | - | - | `__loader_source` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |

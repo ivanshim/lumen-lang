@@ -347,7 +347,8 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 }
             }
             if start<s.len() { parts.push(s[start..].to_string()); }
-            Value::Words(Rc::new(parts),false)
+            // The reference answers a list of the parts.
+            Value::array(parts.iter().map(|part| Value::text(part)).collect())
         }
         Partition | Rpartition => {
             let sep=text(&params[0],lang)?;

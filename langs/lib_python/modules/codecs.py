@@ -150,14 +150,33 @@ def _encode_error(encoding, obj, start, end, reason, errors):
 def _normalize(encoding):
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str')
-    name = encoding.lower().replace('-', '_').replace(' ', '_')
+    # CPython's normalize_encoding: runs of anything but alphanumerics
+    # and dots collapse to one underscore, and the edges lose it.
+    lowered = encoding.lower()
+    chars = []
+    punct = False
+    for c in lowered:
+        if c.isalnum() or c == '.':
+            if punct and chars:
+                chars.append('_')
+            if c.isascii():
+                chars.append(c)
+            punct = False
+        else:
+            punct = True
+    name = ''.join(chars)
     aliases = {'utf8': 'utf_8', 'utf7': 'utf_7', 'utf16': 'utf_16', 'utf32': 'utf_32',
                'latin1': 'latin_1', 'iso8859_1': 'latin_1', 'iso_8859_1': 'latin_1',
                'us_ascii': 'ascii', '646': 'ascii',
                'utf16le': 'utf_16_le', 'utf16be': 'utf_16_be',
                'utf_16le': 'utf_16_le', 'utf_16be': 'utf_16_be',
                'utf32le': 'utf_32_le', 'utf32be': 'utf_32_be',
-               'utf_32le': 'utf_32_le', 'utf_32be': 'utf_32_be'}
+               'utf_32le': 'utf_32_le', 'utf_32be': 'utf_32_be',
+               # the charmap family under its hyphenated readings, as
+               # encodings/aliases.py maps them
+               'iso_8859_10': 'iso8859_10', 'iso_8859_13': 'iso8859_13',
+               'iso_8859_14': 'iso8859_14', 'iso_8859_15': 'iso8859_15',
+               'latin9': 'iso8859_15', 'l9': 'iso8859_15'}
     return aliases.get(name, name)
 
 class CodecInfo(tuple):

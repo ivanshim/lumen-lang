@@ -235,6 +235,12 @@ pub enum Prim {
     Collect,
     /// What a path names: a file, a directory, or neither.
     PathSort,
+    // The text of the file the run began from.
+    LoaderSource,
+    /// The measurements of the file a path names, as a row of ten, or
+    /// the host's reason number where it names none.
+    /// An empty file brought into being where the path named none.
+    /// The source text of the file the run was begun with.
     /// The host's facts as a row: directory, system, machine, surroundings.
     HostRow,
     CryptoWork,

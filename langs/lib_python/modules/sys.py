@@ -322,6 +322,14 @@ prefix = base_prefix
 base_exec_prefix = base_prefix
 exec_prefix = base_prefix
 
+# The interpreter stands alone, so the installation it names is itself:
+# the same prefix Python would compute for its own home, here the place
+# the binary stands.
+prefix = executable.rsplit('/', 1)[0] if '/' in executable else ''
+base_prefix = prefix
+exec_prefix = prefix
+base_exec_prefix = prefix
+
 float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111

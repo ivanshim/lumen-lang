@@ -455,6 +455,15 @@ def breakpoint(*args, **kws):
 
 
 def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    if isinstance(file, int) or opener is not None:
+        import _pyio
+        return _pyio.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
+    import os
+    file = os.fspath(file)
+    if isinstance(file, bytes):
+        file = os.fsdecode(file)
+    if not closefd:
+        raise ValueError('Cannot use closefd=False with file name')
     # A null byte inside the name is refused before the name is looked
     # at any further, the way the reference refuses it, whatever the
     # mode.
@@ -467,6 +476,10 @@ def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline
     for letter in mode:
         if letter not in 'rwaxb+t':
             raise ValueError("invalid mode: '" + mode + "'")
+    # A binary stream takes no newline, refused the way the reference
+    # refuses it before the file is ever made.
+    if newline is not None and 'b' in mode:
+        raise ValueError("binary mode doesn't take a newline argument")
     return _HostFile(file, mode, encoding, errors)
 
 

@@ -632,6 +632,12 @@ pub enum Builtin {
     Collect,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
+    // The source of the file the run was started with.
+    LoaderSource,
+    /// The numbers a path's file answers with, or the host's reason
+    /// number where it answers none.
+    /// An empty file made where nothing stood by that name.
+    /// The source text of the file the run was started with.
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
     Crypto,
