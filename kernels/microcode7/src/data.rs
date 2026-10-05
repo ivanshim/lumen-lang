@@ -743,6 +743,17 @@ impl Value {
                 if count.is_one() { return Ok(format!("walk:1:{}", sequence.first)); }
                 Ok(format!("walk:{}:{}:{}", count, sequence.first, sequence.stride))
             }
+            // A complex is addressed by the two numbers it stands
+            // for; one whose imaginary part is nought is the very real
+            // number it equals, and takes that number's own address,
+            // so the two meet as one. A pair holding a value no number
+            // answers to keeps the place it lies in, shared with none.
+            Value::Complex(pair) => {
+                if pair.0.is_nan() || pair.1.is_nan() { return Ok(format!("apart:{:p}", Rc::as_ptr(pair))); }
+                if pair.1 == 0.0 { return crate::complex::decimal_value(pair.0).hash_address(); }
+                let limb = |n: f64| if n == 0.0 { "0".to_string() } else { format!("{n:?}") };
+                Ok(format!("pair:{}/{}", limb(pair.0), limb(pair.1)))
+            }
             // Whole numbers already have a denominator of one, so
             // their address needs no temporary ratio or reduction.
             Value::Small(n) => Ok(format!("number:{n}:1")),
@@ -1058,7 +1069,7 @@ impl Value {
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
             (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
-                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
+                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| Value::text(word.as_str()).equals(value));
             }
             _ => (),
         }

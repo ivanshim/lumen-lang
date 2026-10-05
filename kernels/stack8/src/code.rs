@@ -595,9 +595,11 @@ pub enum Builtin {
     /// whether a file is there at all; and taking one away
     /// (ext.builtin.file.*). Only a language that spells these reaches
     /// outside the run at all.
+    FileReadBytes,
     FileRead,
     FileWrite,
     FileThere,
+    FileLink,
     FileGone,
     /// A directory's own entries, by name alone; a fresh directory made
     /// under one already there, named uniquely from a prefix and a
@@ -606,6 +608,9 @@ pub enum Builtin {
     DirList,
     DirMake,
     DirGone,
+    /// One directory taken away where it stands, but only where
+    /// nothing stands under it (ext.builtin.dir.remove).
+    DirRemove,
     /// One directory made to stand where the path given says, with
     /// none made along the way to it (ext.builtin.dir.make_one).
     DirMakeOne,
@@ -631,6 +636,8 @@ pub enum Builtin {
     FileKind,
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
+    Crypto,
+    PosixCall,
     /// A command handed to the host's own shell, answering with all
     /// that the shell wrote where a run writes (ext.builtin.shell).
     /// Only a language that spells this may start another program at
@@ -649,7 +656,6 @@ pub enum Builtin {
     AsciiSpan,
     JsonString,
     Subprocess,
-    Posix,
     /// The host's own signals, one word told which step it is on
     /// (ext.builtin.signal): give a number the handler it answers with,
     /// ask which handler a number was given, or leave a number pending
@@ -755,7 +761,11 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    ZlibNative,
+    StructNative,
+    BinAscii,
     HeapNative,
+    ContextNative,
     ReduceNative,
     RebuildNative,
     CharAtIndex,

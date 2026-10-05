@@ -199,12 +199,14 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    Linked,
     /// A directory's own entries, by name; a fresh directory made
     /// uniquely under one already there; and a directory taken away
     /// with everything under it (ext.builtin.dir.*).
     DirEntries,
     DirFresh,
     DirWhole,
+    DirDrop,
     /// A single directory raised at the place named, no others
     /// raised on the way there (ext.builtin.dir.make_one).
     DirOne,
@@ -230,6 +232,8 @@ pub enum Prim {
     PathSort,
     /// The host's facts as a row: directory, system, machine, surroundings.
     HostRow,
+    CryptoWork,
+    HostPosix,
     /// Everything the host's own shell wrote out, having been handed a
     /// command to run (ext.builtin.shell). Starting a second program
     /// beside this one is something only a language spelling this may
@@ -246,7 +250,6 @@ pub enum Prim {
  AsciiRun,
     JsonStringScan,
     Subprocess,
-    Posix,
     /// The host's signals, one word told which step it is on
     /// (ext.builtin.signal): give a number what answers for it, ask
     /// what a number was given, or leave a number to be taken up where
@@ -374,7 +377,12 @@ pub enum Prim {
     /// built-in writing for out to bytes and read it back: nothing
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    ReadOctetFile,
+    ZlibNative,
+    BinaryFormat,
+    BinaryAscii,
     HeapNative,
+    ContextStore,
     ReduceNative,
     ProductStep,
     RebuildNative,

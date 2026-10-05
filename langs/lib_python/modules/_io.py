@@ -815,6 +815,10 @@ class BufferedReader(_BufferedIOBase):
         self._raw = None
         return checked.raw
     def write(self, b):
+        # The accelerated buffer consumes bytes from a buffer provider,
+        # including arrays whose iteration yields wider numeric elements.
+        if not isinstance(b, (bytes, bytearray)):
+            b = memoryview(b).tobytes()
         return self._impl.write(b)
 
 class BufferedWriter(BufferedReader):
