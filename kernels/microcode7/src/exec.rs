@@ -6669,7 +6669,7 @@ impl<'a> Machine<'a> {
                     };
                     let this = values[3].settled();
                     let class = match &callable { Value::Blueprint(b) => b.clone(), _ => self.native_kind("super") };
-                    self.parent_constructed(class, vec![Value::Blueprint(owner), this])
+                    self.parent_framed(class, owner, this)
                 }
                 Prim::Bid => {
                     let mut values = self.value_list(args, frame)?;
@@ -21562,7 +21562,7 @@ impl<'a> Machine<'a> {
         })
     }
 
-    fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
+    pub(super) fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Value::Attributes(owner) = source {
             return Ok(self.attribute_entries(owner).into_iter().map(|(key, _)| match key {
                 Value::Keyed(value, _) => value.as_ref().clone(), other => other,
