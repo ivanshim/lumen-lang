@@ -12879,7 +12879,10 @@ impl<'a> Machine<'a> {
                     let mapped = if matches!(other, Value::Thing(_)) {
                         match self.read_class_member(other.clone(), "keys", false) {
                             Ok(method) => Some(method),
-                            Err(escaped) if self.missing_member_escape(&escaped) => None,
+                            Err(escaped) if self.missing_member_escape(&escaped) => {
+                                self.sought_in_vain = None;
+                                None
+                            },
                             Err(escaped) => return Err(self.suspension_fault(escaped)),
                         }
                     } else { self.attribute(&other, "keys") };
@@ -13826,7 +13829,12 @@ impl<'a> Machine<'a> {
     fn member_for_case(&mut self, subject: &Value, word: &str) -> Result<Option<Value>, String> {
         match self.read_class_member(subject.clone(), word, false) {
             Ok(found) => Ok(Some(found)),
-            Err(escape) if self.missing_member_escape(&escape) => Ok(None),
+            Err(escape) if self.missing_member_escape(&escape) => {
+                // No exception leaves an optional member lookup. Drop the
+                // diagnostic receiver along with the suppressed absence.
+                self.sought_in_vain.take();
+                Ok(None)
+            },
             Err(Escape::Error(message)) => Err(message),
             Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
         }
@@ -15398,7 +15406,10 @@ impl<'a> Machine<'a> {
                 let reader = if matches!(value, Value::Thing(_)) {
                     match self.read_class_member(value.clone(), "keys", false) {
                         Ok(method) => Some(method),
-                        Err(escaped) if self.missing_member_escape(&escaped) => None,
+                        Err(escaped) if self.missing_member_escape(&escaped) => {
+                            self.sought_in_vain = None;
+                            None
+                        },
                         Err(escaped) => return Err(self.suspension_fault(escaped)),
                     }
                 } else { None };
@@ -26399,6 +26410,7 @@ impl Machine<'_> {
                         };
                     }
                     if input.len() == 3 { return Ok(input[2].clone()); }
+                    self.sought_in_vain = Some((word.to_owned(), input[0].clone()));
                     let told = self.member_missing(&input[0], &word);
                     if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
                     return Err(told);

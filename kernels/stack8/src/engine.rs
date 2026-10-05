@@ -9387,7 +9387,12 @@ impl<'a> Engine<'a> {
     fn member_for_pattern(&mut self, subject: &Value, word: &str) -> Flow<Option<Value>> {
         match self.class_get(subject.clone(), word, false) {
             Ok(member) => Ok(Some(member)),
-            Err(fault) if self.attribute_fault(&fault) => Ok(None),
+            Err(fault) if self.attribute_fault(&fault) => {
+                // A failed optional read has consumed the fault. Its receiver
+                // must not remain owned by the metadata for a later error.
+                self.absent_member = None;
+                Ok(None)
+            },
             Err(fault) => Err(fault),
         }
     }
@@ -22540,6 +22545,7 @@ impl Engine<'_> {
                     if b == Builtin::HasAttr { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found { return Ok(member); }
                     if args.len() == 3 { return Ok(args[2].clone()); }
+                    self.absent_member = Some((word.clone(), args[0].clone()));
                     let told = self.member_amiss(&args[0], &word);
                     if told.is_empty() { return Err(self.core_fault("core.unready", name)); }
                     return Err(told);
