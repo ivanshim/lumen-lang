@@ -99,6 +99,7 @@ pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
     trace_hook: Value,
     in_trace_hook: bool,
+    trace_fault_outside: Option<(Weak<Instance>, Weak<Instance>)>,
     running_routine: Option<Rc<Routine>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
@@ -1298,6 +1299,7 @@ impl<'a> Engine<'a> {
             trace_frame: None,
             trace_hook: Value::Null,
             in_trace_hook: false,
+            trace_fault_outside: None,
             running_routine: None,
             inline_comp: None,
             location: None,
@@ -3914,10 +3916,14 @@ impl<'a> Engine<'a> {
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let caller_routine = self.running_routine.replace(program.clone());
+        if !self.lang.trace_fields.is_empty() { self.line = program.declared_on; self.location = None; }
         let outcome = self.trace_event("call", Value::Null).and_then(|()| self.run_instrs(program, &mut frame));
         let outcome = match outcome {
             Ok(()) => { let result = self.data.last().cloned().unwrap_or(Value::Null); self.trace_event("return", result) },
-            Err(fault) => { self.trace_event("return", Value::Null)?; Err(fault) },
+            Err(fault) => match self.trace_event("return", Value::Null) {
+                Ok(()) => Err(fault),
+                Err(callback) => { self.trace_outside_body(&callback); Err(callback) },
+            },
         };
         // A signal still left pending as the outermost body's own last
         // statement is done is taken up here, while the body's frame
@@ -3940,6 +3946,7 @@ impl<'a> Engine<'a> {
             },
             other => other,
         };
+        if let Err(Fault::Thrown(value)) = &outcome { self.record_trace(value, program); }
         self.running_routine = caller_routine;
         let mut body_namespace = None;
         if outcome.is_ok() {
@@ -4620,6 +4627,9 @@ impl<'a> Engine<'a> {
                 return match outcome {
                     Ok(value) => Ok(Some(value)),
                     Err(Fault::Thrown(value)) if matches!(&value, Value::Object(o) if self.stop_class(&o.class_now())) => {
+                        if let Value::Object(exception) = &value {
+                            self.trace_event("exception", Value::tuple(vec![Value::Class(exception.class_now()), value.clone(), self.trace_of(&value)]))?;
+                        }
                         *returned.borrow_mut() = self.class_get(value, "value", false)?;
                         *done.borrow_mut() = Value::Flag(true); Ok(None)
                     }
@@ -4628,7 +4638,17 @@ impl<'a> Engine<'a> {
             }
         }
 
-        if let Value::Generator(inner) = walk { return self.resume_generator(inner, sent); }
+        if let Value::Generator(inner) = walk {
+            let item = self.resume_generator(inner, sent)?;
+            if item.is_none() && !matches!(self.trace_hook, Value::Null) {
+                let raised = match self.stop_of(inner) { Fault::Thrown(value) => Some(value), Fault::Note(words) => self.as_fault(&words), _ => None };
+                if let Some(value @ Value::Object(_)) = raised {
+                    let Value::Object(exception) = &value else { unreachable!() };
+                    self.trace_event("exception", Value::tuple(vec![Value::Class(exception.class_now()), value, Value::Null]))?;
+                }
+            }
+            return Ok(item);
+        }
         match self.core_step(walk) {
             Ok(item) => Ok(item),
             Err(words) => Err(match self.carried.take() { Some(fault) => fault, None => words.into() }),
@@ -4770,12 +4790,14 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Some(Value::Generator(inner)) => {
-                    let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
-                    let before = std::mem::replace(&mut self.trace_frame, parent);
                     let python = !self.lang.async_generator_methods.is_empty();
-                    // Synchronous close ends the child before GeneratorExit
-                    // reaches the parent's own exception/finally continuation.
+                    // A forwarded throw links the child to its suspended parent;
+                    // close runs the child's finalizer in the closing caller.
                     let closing = python && close_on_exit && self.is_exit(&value);
+                    let before = self.trace_frame.clone();
+                    if !closing {
+                        self.trace_frame = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
+                    }
                     let stepped = if closing {
                         self.close_generator(&inner).map(|_| None)
                     } else {
@@ -4836,14 +4858,7 @@ impl<'a> Engine<'a> {
         }
         let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
         if let Some(value) = hurled {
-            if kept.closed || !kept.started || kept.program.is_none() {
-                if !kept.started && !kept.closed {
-                    if let Some(body) = &kept.program {
-                        let caller = std::mem::replace(&mut self.trace_frame, kept.trace_frame.clone());
-                        self.record_trace(&value, body);
-                        self.trace_frame = caller;
-                    }
-                }
+            if kept.closed || kept.program.is_none() {
                 kept.closed = true;
                 kept.trace_frame = None;
                 kept.returned = Value::Null;
@@ -4917,7 +4932,49 @@ impl<'a> Engine<'a> {
         self.inside.push(program.within.clone());
         let caller_frame = std::mem::replace(&mut self.trace_frame, kept.trace_frame.take());
         if let Some(active) = &self.trace_frame { active.fields.borrow_mut()[2].1 = caller_frame.clone().map_or(Value::Null, Value::Object); }
-        let result = self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept));
+        let caller_position = self.location.take();
+        let previous_routine = self.running_routine.replace(program.clone());
+        if let Some(active) = &self.trace_frame {
+            let fields = active.fields.borrow();
+            if let Value::Small(row) = &fields[0].1 { self.line = *row as u32; }
+            self.location = fields.iter().find_map(|(key, value)| match (key.as_str(), value) {
+                ("\0suspended_position", Value::Tuple(parts)) if parts.len() == 4 => match parts.as_slice() {
+                    [Value::Small(a), Value::Small(b), Value::Small(c), Value::Small(d)] => Some((*a as u32, *b as u32, *c as u32, *d as u32)),
+                    _ => None,
+                },
+                _ => None,
+            });
+        }
+        let result = self.trace_event("call", Value::Null).and_then(|()|
+            self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept)));
+        let leaving = if result.is_ok() { kept.handed.clone().unwrap_or_else(|| self.data.last().cloned().unwrap_or(Value::Null)) } else { Value::Null };
+        let result = match self.trace_event("return", leaving) {
+            Ok(()) => result,
+            Err(Fault::Thrown(value)) if result.is_ok() && kept.handed.is_some() => {
+                // A failed yield callback raises at the yield expression. The
+                // body's handlers and finalizers run with tracing disabled.
+                kept.handed = None;
+                kept.waiting = false;
+                kept.resuming = true;
+                kept.hurled = Some(value);
+                kept.sent = Value::Null;
+                self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))
+            }
+            Err(fault) => {
+                if result.is_err() { self.trace_outside_body(&fault); }
+                Err(fault)
+            }
+        };
+        if let Err(Fault::Thrown(value)) = &result { self.record_trace(value, &program); }
+        if let Some(active) = &self.trace_frame {
+            let mut fields = active.fields.borrow_mut();
+            fields.retain(|(key, _)| key != "\0suspended_position");
+            if let Some((a, b, c, d)) = self.location {
+                fields.push(("\0suspended_position".into(), Value::tuple([a, b, c, d].into_iter().map(|part| Value::Small(part as i64)).collect())));
+            }
+        }
+        self.running_routine = previous_routine;
+        self.location = caller_position;
         self.refresh_observed_frame();
         kept.trace_frame = std::mem::replace(&mut self.trace_frame, caller_frame);
         if let Some(active) = &kept.trace_frame { active.fields.borrow_mut()[2].1 = Value::Null; }
@@ -4944,6 +5001,7 @@ impl<'a> Engine<'a> {
         kept.hurled = None;
         if kept.handed.is_none() || result.is_err() {
             kept.closed = true;
+            kept.delegate = None;
             kept.returned = if result.is_err() { Value::Null } else { kept.stack.pop().unwrap_or(Value::Null) };
             kept.stack.clear();
             kept.frame.clear();
@@ -4977,7 +5035,9 @@ impl<'a> Engine<'a> {
     fn trace_event(&mut self, event: &str, argument: Value) -> Flow<()> {
         if self.in_trace_hook || matches!(self.trace_hook, Value::Null) { return Ok(()); }
         let Some(frame) = self.trace_frame.clone() else { return Ok(()) };
-        if event == "line" { frame.fields.borrow_mut().retain(|(key, _)| key != "\0traced_exception"); }
+        if event == "line" {
+            frame.fields.borrow_mut().retain(|(key, value)| key != "\0traced_exception" || self.caught.iter().any(|held| held.same_place(value)));
+        }
         if event == "exception" {
             if let Value::Tuple(parts) = &argument { frame.fields.borrow_mut().push(("\0traced_exception".into(), parts[1].clone())); }
         }
@@ -4994,11 +5054,24 @@ impl<'a> Engine<'a> {
         match result {
             Ok(next) => {
                 let mut fields = frame.fields.borrow_mut();
-                if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "f_trace") { if event == "call" || !matches!(next, Value::Null) { *value = next; } }
+                if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "f_trace") { if !matches!(next, Value::Null) { *value = next; } }
                 else { fields.push(("f_trace".into(), next)); }
                 Ok(())
             }
-            Err(message) => { self.trace_hook = Value::Null; Err(self.carried.take().unwrap_or(Fault::Note(message))) }
+            Err(message) => {
+                self.trace_hook = Value::Null;
+                if let Some((_, callback)) = frame.fields.borrow_mut().iter_mut().find(|(key, _)| key == "f_trace") { *callback = Value::Null; }
+                let failure = self.carried.take().unwrap_or(Fault::Note(message));
+                let failure = self.raised_of_note::<()>(Err(failure)).expect_err("trace callback failed");
+                if event == "exception" { self.trace_outside_body(&failure); }
+                Err(failure)
+            }
+        }
+    }
+
+    fn trace_outside_body(&mut self, fault: &Fault) {
+        if let (Some(frame), Fault::Thrown(Value::Object(error))) = (&self.trace_frame, fault) {
+            self.trace_fault_outside = Some((Rc::downgrade(frame), Rc::downgrade(error)));
         }
     }
 
@@ -5135,6 +5208,9 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = raised else { return };
         if !self.exception_class(&object.class_now()) || self.lang.trace_fields.len() < 11 { return; }
         let Some(frame) = self.trace_frame.clone() else { return };
+        if self.trace_fault_outside.as_ref().is_some_and(|(omitted, error)| {
+            omitted.upgrade().is_some_and(|held| Rc::ptr_eq(&held, &frame)) && error.upgrade().is_some_and(|held| Rc::ptr_eq(&held, object))
+        }) { return; }
         let prior = self.trace_of(raised);
         if matches!(&prior, Value::Trace(trace) if Rc::ptr_eq(&trace.frame, &frame)) { return; }
         let Some(key) = &self.lang.traceback_member else { return };
@@ -5179,7 +5255,11 @@ impl<'a> Engine<'a> {
             other => other,
         };
         if let Err(Fault::Thrown(value)) = &result {
-            let already = self.trace_frame.as_ref().is_some_and(|frame| frame.fields.borrow().iter().any(|(key, held)| key == "\0traced_exception" && held.same_place(value)));
+            let arriving = match self.trace_of(value) {
+                Value::Trace(trace) => self.trace_frame.as_ref().is_some_and(|frame| !Rc::ptr_eq(frame, &trace.frame)),
+                _ => false,
+            };
+            let already = !arriving && self.trace_frame.as_ref().is_some_and(|frame| frame.fields.borrow().iter().any(|(key, held)| key == "\0traced_exception" && held.same_place(value)));
             self.record_trace(value, program);
             if !already {
                 if let Value::Object(object) = value {
@@ -5207,9 +5287,23 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(value) = hurled {
+            self.trace_fault_outside = None;
+            if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut().retain(|(word, _)| word != "\0traced_exception"); }
             // Raised where the body left off, so what the body itself
             // was handling stands behind it.
             self.chain_context(&value);
+            if matches!(instrs.get(pc), Some(Instr::Act(Action::Delegate | Action::Awaited, _))) {
+                if let Some(kept) = suspended.as_deref_mut() { kept.delegate = None; }
+                self.record_trace(&value, program);
+                if let Value::Object(exception) = &value {
+                    self.trace_event("exception", Value::tuple(vec![Value::Class(exception.class_now()), value.clone(), self.trace_of(&value)]))?;
+                }
+                let depth = self.caught.len();
+                self.caught.push(value.clone());
+                let cleanup = self.trace_event("line", Value::Null);
+                self.caught.truncate(depth);
+                cleanup?;
+            }
             return Err(Fault::Thrown(value));
         }
         let mut counted = 0u32;
@@ -11852,6 +11946,8 @@ impl<'a> Engine<'a> {
                 return Err(Fault::Thrown(raised));
             }
             Action::Hurl => {
+                self.trace_fault_outside = None;
+                if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut().retain(|(word, _)| word != "\0traced_exception"); }
                 self.hurled_at.set(self.line);
                 let cause = if argc == 2 { Some(self.drop_top()?) } else { None };
                 let value = self.drop_top()?;

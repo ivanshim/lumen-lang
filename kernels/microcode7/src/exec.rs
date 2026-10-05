@@ -474,6 +474,7 @@ pub struct Machine<'a> {
     active_trace: Option<Rc<Thing>>,
     tracing_function: Value,
     tracing_busy: bool,
+    omitted_trace_fault: Option<(Weak<Thing>, Weak<Thing>)>,
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
@@ -1662,6 +1663,7 @@ impl<'a> Machine<'a> {
             active_trace: None,
             tracing_function: Value::Nil,
             tracing_busy: false,
+            omitted_trace_fault: None,
             gathering_locals: None,
             extent: None,
             activation_kind: None,
@@ -3756,6 +3758,10 @@ impl<'a> Machine<'a> {
             return match outcome {
                 Ok(item) => Ok(Some(item)),
                 Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => {
+                    if let Value::Thing(object) = &fault {
+                        let information = Value::tuple(vec![Value::Blueprint(object.blueprint()), fault.clone(), self.traceback_of(&fault)]);
+                        self.emit_trace("exception", information)?;
+                    }
                     *returned.borrow_mut() = self.read_class_member(fault, "value", false)?;
                     *done.borrow_mut() = Value::Flag(true); Ok(None)
                 }
@@ -3763,7 +3769,20 @@ impl<'a> Machine<'a> {
             };
         }
 
-        if let Value::Generator(inner) = walk { return self.resume(inner, sent); }
+        if let Value::Generator(inner) = walk {
+            let next = self.resume(inner, sent)?;
+            if next.is_none() && !matches!(self.tracing_function, Value::Nil) {
+                let stop = self.exhausted_of(inner);
+                let exception = match stop { Escape::Thrown(raised) => Some(raised), Escape::Error(text) => self.as_raised(&text), _ => None };
+                if let Some(raised) = exception {
+                    if let Value::Thing(object) = &raised {
+                        let kind = Value::Blueprint(object.blueprint());
+                        self.emit_trace("exception", Value::tuple(vec![kind, raised, Value::Nil]))?;
+                    }
+                }
+            }
+            return Ok(next);
+        }
         match self.next_value(walk) {
             Ok(item) => Ok(item),
             Err(words) => Err(match self.got_away.take() { Some(escape) => escape, None => Escape::Error(words) }),
@@ -4218,19 +4237,19 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Some(Value::Generator(inner)) => {
-                    let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
-                    let saved = std::mem::replace(&mut self.active_trace, parent);
                     let python = self.table.has_any("ext.stmt.async.generator.methods");
-                    // Synchronous close ends the child before GeneratorExit
-                    // reaches the parent's own exception/finally continuation.
                     let closing = python && close_on_exit && self.is_exit(&value);
+                    let saved = if closing { None } else {
+                        let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
+                        Some(std::mem::replace(&mut self.active_trace, parent))
+                    };
                     let stepped = if closing {
                         self.shut_generator(&inner).map(|_| None)
                     } else {
                         self.step_into_mode(&inner, Value::Nil, Some(value), given, close_on_exit)
                     };
                     let stepped = if python { stepped.map_err(|fault| self.delegated_fault(fault)) } else { stepped };
-                    self.active_trace = saved;
+                    if let Some(previous) = saved { self.active_trace = previous; }
                     let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
@@ -4285,12 +4304,7 @@ impl<'a> Machine<'a> {
         }
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
         if let Some(value) = hurled.clone() {
-            if state.ended || !state.begun || state.of.is_none() {
-                if !state.begun && !state.ended {
-                    let caller = std::mem::replace(&mut self.active_trace, state.trace_state.clone());
-                    self.save_traceback(&value, false);
-                    self.active_trace = caller;
-                }
+            if state.ended || state.of.is_none() {
                 state.ended = true;
                 state.trace_state = None;
                 state.frame = Env::make(0, None);
@@ -4385,8 +4399,47 @@ impl<'a> Machine<'a> {
                 None => (),
             }
         }
-        let outcome = self.unfold(&mut state, sent, hurled);
+        let caller_extent = self.extent.take();
+        if let Some(activation) = &self.active_trace {
+            let held = activation.holds.borrow();
+            if let Value::Small(line) = held[0].1 { self.row = line as u32; }
+            for (word, value) in held.iter() {
+                if word == "\0resume_bounds" {
+                    if let Value::Tuple(items) = value {
+                        if let [Value::Small(first), Value::Small(column), Value::Small(last), Value::Small(end)] = items.as_slice() {
+                            self.extent = Some((*first as u32, *column as u32, *last as u32, *end as u32));
+                        }
+                    }
+                }
+            }
+        }
+        let outcome = match self.emit_trace("call", Value::Nil) {
+            Ok(()) => self.unfold(&mut state, sent, hurled),
+            Err(callback) => Err(callback),
+        };
         let outcome = self.traced_result(outcome);
+        let returned = match &outcome { Ok(Some(yielded)) => yielded.clone(), Ok(None) => state.result.clone(), Err(_) => Value::Nil };
+        let outcome = match self.emit_trace("return", returned) {
+            Ok(()) => outcome,
+            Err(Escape::Thrown(fault)) if matches!(outcome, Ok(Some(_))) => {
+                let unwound = self.unfold(&mut state, Value::Nil, Some(fault));
+                self.traced_result(unwound)
+            }
+            Err(failed) => {
+                if outcome.is_err() { self.exclude_trace_origin(&failed); }
+                Err(failed)
+            }
+        };
+        if let Some(activation) = &self.active_trace {
+            let position = self.extent;
+            let mut held = activation.holds.borrow_mut();
+            held.retain(|(word, _)| word != "\0resume_bounds");
+            if let Some(bounds) = position {
+                let values = vec![Value::Small(bounds.0 as i64), Value::Small(bounds.1 as i64), Value::Small(bounds.2 as i64), Value::Small(bounds.3 as i64)];
+                held.push((String::from("\0resume_bounds"), Value::tuple(values)));
+            }
+        }
+        self.extent = caller_extent;
         self.update_watched_locals();
         state.trace_state = std::mem::replace(&mut self.active_trace, caller_trace);
         if let Some(item) = &state.trace_state { item.holds.borrow_mut()[2].1 = Value::Nil; }
@@ -4414,6 +4467,7 @@ impl<'a> Machine<'a> {
             // A finished generator no longer owns its activation. A
             // frame retained by the program still owns the old environment.
             state.trace_state = None;
+            state.inner = None;
             state.frame = Env::make(0, None);
             state.owed.clear();
             state.found.clear();
@@ -4858,6 +4912,7 @@ impl<'a> Machine<'a> {
                         Err(met) => { self.holding_fault.truncate(self.holding_below + held); escape = met; continue; }
                     }
                 }
+                Owed::From | Owed::Await => { state.inner = None; }
                 _ => continue,
             }
         }
@@ -4915,6 +4970,11 @@ impl<'a> Machine<'a> {
     /// held in while that clause runs.
     fn taking_clause(&mut self, plan: &Warded, raised: &Value, frame: &Rc<Env>) -> Result<Option<(Form, Option<Address>, bool)>, Escape> {
         for clause in &plan.clauses {
+            if !self.rules.trace_words.is_empty() {
+                self.row = clause.source_line;
+                if let Some(activation) = &self.active_trace { activation.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
+                self.emit_trace("line", Value::Nil)?;
+            }
             let accepts = match &clause.choices {
                 None => match raised {
                     Value::Thing(value) => clause.classes.iter().any(|name| value.blueprint().goes_by(name, self.classes_either_way)),
@@ -4961,8 +5021,22 @@ impl<'a> Machine<'a> {
             Some(value) => {
                 // Raised where the body left off, so what the body
                 // itself was handling stands behind it.
+                self.omitted_trace_fault = None;
+                if let Some(activation) = &self.active_trace {
+                    activation.holds.borrow_mut().retain(|(key, _)| key != "\0traced_fault");
+                }
                 self.keep_context(&value);
-                self.unwind(state, Escape::Thrown(value))?;
+                let failure = self.traced_result::<()>(Err(Escape::Thrown(value.clone()))).expect_err("injected exception");
+                let delegated = state.owed.iter().rev().find(|work| !matches!(work, Owed::At(_)))
+                    .is_some_and(|work| matches!(work, Owed::From | Owed::Await));
+                if delegated {
+                    let prior = self.holding_fault.len();
+                    self.holding_fault.push(value);
+                    let cleanup_line = self.emit_trace("line", Value::Nil);
+                    self.holding_fault.truncate(prior);
+                    cleanup_line?;
+                }
+                self.unwind(state, failure)?;
             }
             None => if taking { state.found.push(sent.clone()); },
         }
@@ -4977,7 +5051,10 @@ impl<'a> Machine<'a> {
                     state.found.push(returned);
                     state.owed.push(Owed::Finish);
                 }
-                Err(met) => self.unwind(state, met)?,
+                Err(met) => {
+                    let failure = self.traced_result::<()>(Err(met)).expect_err("failed generator operation");
+                    self.unwind(state, failure)?;
+                }
             }
         }
     }
@@ -5002,7 +5079,10 @@ impl<'a> Machine<'a> {
     fn emit_trace(&mut self, kind: &str, value: Value) -> Result<(), Escape> {
         if self.tracing_busy || matches!(self.tracing_function, Value::Nil) { return Ok(()); }
         let Some(activation) = self.active_trace.clone() else { return Ok(()) };
-        if kind == "line" { activation.holds.borrow_mut().retain(|(word, _)| word != "\0traced_fault"); }
+        if kind == "line" {
+            let pending = &self.holding_fault;
+            activation.holds.borrow_mut().retain(|(word, item)| word != "\0traced_fault" || pending.iter().any(|fault| fault.selfsame(item)));
+        }
         else if kind == "exception" {
             if let Value::Tuple(parts) = &value { activation.holds.borrow_mut().push(("\0traced_fault".to_owned(), parts[1].clone())); }
         }
@@ -5018,14 +5098,34 @@ impl<'a> Machine<'a> {
         let answer = self.apply_held(handler, vec![Value::Thing(activation.clone()), Value::text(kind), value]);
         self.tracing_busy = false;
         (self.row, self.extent) = saved;
-        let callback = match answer { Ok(callback) => callback, Err(error) => { self.tracing_function = Value::Nil; return Err(error); } };
+        let callback = match answer {
+            Ok(callback) => callback,
+            Err(error) => {
+                self.tracing_function = Value::Nil;
+                for (name, handler) in activation.holds.borrow_mut().iter_mut() {
+                    if name == "f_trace" { *handler = Value::Nil; break; }
+                }
+                let error = self.raised_if_error::<()>(Err(error)).expect_err("failed trace callback");
+                if kind == "exception" { self.exclude_trace_origin(&error); }
+                return Err(error);
+            }
+        };
         let mut namespace = activation.holds.borrow_mut();
         match namespace.iter_mut().find(|(name, _)| name == "f_trace") {
-            Some((_, prior)) if kind == "call" || !matches!(callback, Value::Nil) => *prior = callback,
+            Some((_, prior)) if !matches!(callback, Value::Nil) => *prior = callback,
             Some(_) => {},
             None => namespace.push(("f_trace".to_owned(), callback)),
         }
         Ok(())
+    }
+
+    fn exclude_trace_origin(&mut self, escape: &Escape) {
+        match (&self.active_trace, escape) {
+            (Some(activation), Escape::Thrown(Value::Thing(exception))) => {
+                self.omitted_trace_fault = Some((Rc::downgrade(activation), Rc::downgrade(exception)));
+            }
+            _ => {},
+        }
     }
 
     fn activation(&mut self, routine: &Rc<Routine>, environment: &Rc<Env>, parent: Option<Rc<Thing>>) -> Option<Rc<Thing>> {
@@ -5170,7 +5270,10 @@ impl<'a> Machine<'a> {
             rest => rest,
         };
         if let Err(Escape::Thrown(value)) = &outcome {
-            let registered = self.active_trace.as_ref().is_some_and(|activation| activation.holds.borrow().iter().any(|(word, item)| word == "\0traced_fault" && item.selfsame(value)));
+            let from_callee = if let Value::Backtrace(link) = self.traceback_of(value) {
+                self.active_trace.as_ref().is_some_and(|current| !Rc::ptr_eq(&link.activation, current))
+            } else { false };
+            let registered = !from_callee && self.active_trace.as_ref().is_some_and(|activation| activation.holds.borrow().iter().any(|(word, item)| word == "\0traced_fault" && item.selfsame(value)));
             self.save_traceback(value, false);
             if !registered {
                 if let Value::Thing(exception) = value {
@@ -5204,6 +5307,10 @@ impl<'a> Machine<'a> {
         let Some(slot) = self.table.single("ext.builtin.exceptions.traceback.member").map(str::to_owned) else { return };
         if !raised.holds.borrow().iter().any(|(key, _)| key == &slot) { return; }
         let Some(activation) = self.active_trace.clone() else { return };
+        if let Some((origin, exception)) = &self.omitted_trace_fault {
+            let same_origin = origin.upgrade().is_some_and(|item| Rc::ptr_eq(&item, &activation));
+            if same_origin && exception.upgrade().is_some_and(|item| Rc::ptr_eq(&item, raised)) { return; }
+        }
         let following = self.traceback_of(value);
         if let Value::Backtrace(link) = &following {
             if !repeat && Rc::ptr_eq(&link.activation, &activation) { return; }
@@ -6504,6 +6611,10 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Prim::Hurl => {
+                    self.omitted_trace_fault = None;
+                    if let Some(activation) = &self.active_trace {
+                        activation.holds.borrow_mut().retain(|(name, _)| name != "\0traced_fault");
+                    }
                     let mut values = self.value_list(args, frame)?.into_iter();
                     let raised = values.next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
                     let raised = if self.rules.has_any_ext_builtin_exceptions { self.raise_class(raised, frame)? } else {
@@ -11302,6 +11413,7 @@ impl<'a> Machine<'a> {
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
+        if mine && !self.rules.trace_words.is_empty() { self.row = program.declared_on; }
         let trace_started = if mine { self.emit_trace("call", Value::Nil) } else { Ok(()) };
         let outcome: Res = if let Err(error) = trace_started { Err(error) } else { loop {
             caught |= match program.traps {
@@ -11416,7 +11528,7 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         } };
-        let outcome = if mine { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => { self.emit_trace("return", Value::Nil)?; Err(error) } } } else { outcome };
+        let outcome = if mine { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => match self.emit_trace("return", Value::Nil) { Ok(()) => Err(error), Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) } } } } else { outcome };
         let mut outcome = outcome;
         let mut body_namespace = None;
         if outcome.is_ok() {
