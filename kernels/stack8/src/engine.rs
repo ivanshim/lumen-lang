@@ -15255,6 +15255,12 @@ impl<'a> Engine<'a> {
                 1
             } else if builtin == Builtin::Bytes(4) && key == "bytes_per_sep" {
                 2
+            } else if matches!(builtin, Builtin::Bytes(8 | 23)) && key == "sep" {
+                1
+            } else if matches!(builtin, Builtin::Bytes(8 | 23)) && key == "maxsplit" {
+                2
+            } else if builtin == Builtin::Bytes(33) && key == "tabsize" {
+                1
             } else if builtin == Builtin::Bytes(39) && key == "delete" {
                 // bytes.translate(table, /, delete=b'') keeps the dropped
                 // row after the table, read only by name; the receiver
