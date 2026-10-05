@@ -558,6 +558,13 @@ class memoryview:
     @property
     def strides(self):
         self._check()
+        if len(self._shape) > 1:
+            stride = self._itemsize
+            result = ()
+            for dimension in reversed(self._shape):
+                result = (stride,) + result
+                stride *= dimension
+            return result
         return (self._offsets.step if isinstance(self._offsets, range) else self._stride,)
 
     @property

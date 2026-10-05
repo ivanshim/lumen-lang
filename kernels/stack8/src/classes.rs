@@ -2082,11 +2082,16 @@ impl<'a> Engine<'a> {
             _ => self.class_type(vec![args[0].clone()])?,
         };
         let Value::Adapter(parts) = descriptor else { return Err(self.class_refusal()); };
+        let clip = |text: String| {
+            let end = text.char_indices().map(|(at, ch)| at + ch.len_utf8()).take_while(|end| *end <= 100).last().unwrap_or(0);
+            text[..end].to_owned()
+        };
         let defining = parts.1[0].plain();
         let word = parts.1[1].plain();
-        let class = if matches!(&owner, Value::Native(Builtin::Bool, _)) { self.kind_class("bool") } else { self.type_base(&owner).map_err(|_| Fault::Note(format!("TypeError: descriptor '{word}' for type '{defining}' needs a type, not a '{}' as arg 2", owner.core_kind())))? };
+        let class = if matches!(&owner, Value::Native(Builtin::Bool, _)) { self.kind_class("bool") } else { self.type_base(&owner).map_err(|_| Fault::Note(format!("TypeError: descriptor '{word}' for type '{defining}' needs a type, not a '{}' as arg 2", clip(Self::type_argument_kind(&owner)))))? };
         let base = self.spelled_kind(&defining).ok_or_else(|| self.class_refusal())?;
-        if !self.beneath(&owner, &base, true)? { return Err(format!("TypeError: descriptor '{word}' requires a subtype of '{defining}' but received '{}'", class.name).into()); }
+        let title = class.python_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.0.type_text().plain());
+        if !self.beneath(&owner, &base, true)? { return Err(format!("TypeError: descriptor '{word}' requires a subtype of '{defining}' but received '{}'", clip(title)).into()); }
         self.bind_class_value(descriptor.clone(), None, class)
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
@@ -3236,6 +3241,11 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 return Self::cell_held(w).ok_or_else(||self.class_word("cell.empty").to_string().into());
+            }
+            Value::Adapter(w) if w.0 == 235 => {
+                if name == self.class_word("name") { return Ok(Value::text("__get__")); }
+                if name == self.class_word("qualified") { return Ok(Value::text("classmethod_descriptor.__get__")); }
+                if name == "__objclass__" { return Ok(Value::Class(self.kind_class("classmethod_descriptor"))); }
             }
             Value::Adapter(w) if w.0==29 => {
                 if w.1.len() == 3 && name == self.class_word("descriptor.get") { return Ok(Value::ValueMethod(Rc::new((subject.clone(), "classmethod_bind".to_owned())))); }

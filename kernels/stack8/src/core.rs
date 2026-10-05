@@ -93,7 +93,7 @@ impl Value {
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 131 => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
-            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119) => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119 | 235) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",

@@ -2022,14 +2022,19 @@ impl<'a> Machine<'a> {
             self.class_from_type(vec![input[0].clone()])?
         } else { candidate };
         let Value::Wrapped(60, metadata) = entry else { return Err(self.class_unready()); };
+        let limited_name = |mut text: String| {
+            while text.len() > 100 { text.pop(); }
+            text
+        };
         let home = metadata[0].bare();
         let public = metadata[1].bare();
         let class = if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) { self.native_kind("bool") } else { match self.parent_from_type(&target) { Ok(kind) => kind, Err(_) => {
-            return Err(format!("TypeError: descriptor '{public}' for type '{home}' needs a type, not a '{}' as arg 2", target.kind_word()).into());
+            return Err(format!("TypeError: descriptor '{public}' for type '{home}' needs a type, not a '{}' as arg 2", limited_name(Self::type_argument_kind(&target))).into());
         }} };
         let parent = self.kind_by_word(&home).ok_or_else(|| self.class_unready())?;
+        let public_type = class.type_names.borrow().as_ref().map_or(class.name.clone(), |names| names.short.type_text().bare());
         if self.is_beneath(&target, &parent, true)? == false {
-            return Err(format!("TypeError: descriptor '{public}' requires a subtype of '{home}' but received '{}'", class.name).into());
+            return Err(format!("TypeError: descriptor '{public}' requires a subtype of '{home}' but received '{}'", limited_name(public_type)).into());
         }
         self.member_binding(entry.clone(), None, class)
     }
@@ -3097,6 +3102,13 @@ impl<'a> Machine<'a> {
         }
         if matches!(&value, Value::Wrapped(62, _)) {
             if let Some(method) = self.attribute(&value, key) { return Ok(method); }
+        }
+        if matches!(&value, Value::Wrapped(235, _)) {
+            let metadata = if key == self.detail("name") { Some(Value::text("__get__")) }
+                else if key == self.detail("qualified") { Some(Value::text("classmethod_descriptor.__get__")) }
+                else if key == "__objclass__" { Some(Value::Blueprint(self.native_kind("classmethod_descriptor"))) }
+                else { None };
+            if let Some(answer) = metadata { return Ok(answer); }
         }
         if let Value::Wrapped(60, parts) = &value {
             if let [Value::Text(kind), Value::Text(word), ..] = parts.as_slice() {

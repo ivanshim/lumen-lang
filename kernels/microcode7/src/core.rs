@@ -86,6 +86,7 @@ impl Value {
                     _ => "builtin_function_or_method",
                 }
             },
+            Self::Wrapped(235, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
