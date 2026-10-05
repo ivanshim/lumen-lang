@@ -15090,8 +15090,12 @@ impl<'a> Machine<'a> {
         // Where both sides carry an equality of their own and neither
         // would answer, the reference falls back to identity rather
         // than reading the worth beneath them; only where a side stands
-        // on the native kind may the members be read.
-        if self.appointed(one, place).is_some() && self.appointed(two, place).is_some() {
+        // on the native kind may the members be read. The entry is
+        // asked of every kind the dispatch can call: a plain routine, a
+        // bound one, and the descriptors a static method, a class
+        // method or a property is kept as, so a decline from any of
+        // them keeps its identity answer.
+        if self.appointment(one, place).is_some() && self.appointment(two, place).is_some() {
             return Ok(None);
         }
         // A thing standing on a native row or tuple, whose blueprint
