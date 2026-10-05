@@ -32,3 +32,22 @@ def get_clock_info(name):
     if name == 'time':
         return _ClockInfo(False)
     raise ValueError('unknown clock')
+
+# Integer nanoseconds from the same host clocks, without a float round trip.
+def time_ns():
+    return __clock(False, False)
+
+def monotonic_ns():
+    return __clock(True, False)
+
+def perf_counter_ns():
+    return __clock(True, False)
+
+def localtime(seconds=None):
+    raise NotImplementedError('time.localtime is not implemented')
+
+def gmtime(seconds=None):
+    raise NotImplementedError('time.gmtime is not implemented')
+
+def strftime(format, t=None):
+    raise NotImplementedError('time.strftime is not implemented')

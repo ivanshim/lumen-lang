@@ -637,6 +637,8 @@ only. The extension labels so far, all from PHP:
   retain a decimal point or an exponent with at least two digits.
   Unsupported presentations are evaluated and then refused.
 - `ext.lexical.identifier.reserved`: words forbidden as identifier binding
+- `ext.lexical.identifier.normalized`: a switch; an identifier is folded to its
+  NFKC spelling before it is bound, the way Python normalizes every name
   targets, including the hard Python keywords. Soft keywords stay usable.
 - `ext.lexical.string.prefix.template`: letters before a quote that ask
   for text with expressions between braces, making a template rather
@@ -4502,9 +4504,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | `__at_end` | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
+| `ext.builtin.binascii_native` | - | - | `__binascii_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
+| `ext.builtin.buffer.hooks` | - | - | `__buffer__` `__release_buffer__` | - | - | - | - | - | - | - |
 | `ext.builtin.build_class` | - | - | `__build_class__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
@@ -4530,6 +4534,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | `__warning_calls` | - | `__calls` | - | - | - | - | - |
+| `ext.builtin.cell.repr` | - | - | `<cell at 0x` `: ` ` object at 0x` `>` `empty` | - | - | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
@@ -4559,6 +4564,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.context_native` | - | - | `__context_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
 | `ext.builtin.core.abs.type` | - | - | `TypeError: bad operand type for abs(): '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
@@ -4597,6 +4603,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.crypto` | - | - | `__crypto` | - | - | - | - | - | - | - |
 | `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
@@ -4607,6 +4614,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.dir.list` | - | - | `__list_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make` | - | - | `__make_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make_one` | - | - | `__make_dir_one` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.remove` | - | - | `__remove_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.remove_tree` | - | - | `__remove_tree` | - | - | - | - | - | - | - |
 | `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -4617,7 +4625,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` `ChildProcessError` `ConnectionError` `ConnectionAbortedError` `ConnectionRefusedError` `ConnectionResetError` `InterruptedError` `ProcessLookupError` `TimeoutError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4649,9 +4657,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
+| `ext.builtin.file.link` | - | - | `__file_link` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.file_read.bytes` | - | - | `__file_read_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.frame.module` | - | - | `__frame_module` | - | - | - | - | - | - | - |
@@ -4906,9 +4916,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.storage.get` | - | - | `__storage_get` | - | - | - | - | - | - | - |
 | `ext.builtin.storage.set` | - | - | `__storage_set` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
+| `ext.builtin.struct_native` | - | - | `__struct_native` | - | - | - | - | - | - | - |
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
@@ -4994,7 +5006,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
-| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits.state` | - | - | `sys` `_int_max_str_digits` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
@@ -5011,6 +5023,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
+| `ext.builtin.type_descriptors.clear` | - | - | `__clear_type_descriptors` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | `__uncaught` | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
@@ -5024,6 +5037,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.strict` | - | - | `strict` | - | - | - | - | - | - | - |
+| `ext.builtin.zlib_native` | - | - | `__zlib_native__` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |
@@ -5045,6 +5059,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.warning` | - | - | `warnings` `warn_explicit` `SyntaxWarning` `"\{}" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\{}"? A raw string is also an option.` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
+| `ext.lexical.identifier.normalized` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.identifier.reserved` | - | - | `False` `None` `True` `and` `as` `assert` `async` `await` `break` `class` `continue` `def` `del` `elif` `else` `except` `finally` `for` `from` `global` `if` `import` `in` `is` `lambda` `nonlocal` `not` `or` `pass` `raise` `return` `try` `while` `with` `yield` | - | - | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
@@ -5320,7 +5335,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
-| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
@@ -5367,6 +5382,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.getter` | - | - | `getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.is_abstract` | - | - | `__isabstractmethod__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.readonly` | - | - | `AttributeError: readonly attribute` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.undeletable` | - | - | `AttributeError: property` ` of '` `' object has no deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.unreadable` | - | - | `AttributeError: property` ` of '` `' object has no getter` | - | - | - | - | - | - | - |
@@ -5458,6 +5474,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.packages` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
@@ -5876,6 +5893,9 @@ other definitions keep their existing native inventory and call behavior.
 
 `ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
 
+`ext.builtin.type_descriptors.clear` binds the private type-dictionary cleanup used by `sys._clear_type_descriptors`: it removes the dictionary and weak-reference descriptors from mutable types and rejects immutable types. Both kernels register it through their builtin label maps.
+
+The `co_freevars` entry in `ext.stmt.class.detail.code.fields` exposes the sorted lexical closure names alongside the corresponding function closure cells.
 ## Python release selection
 
 [`python/versions.json`](python/versions.json) is metadata, kept below a
@@ -6019,3 +6039,32 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 `ext.stmt.yield.input` names the iterator argument of a generator expression.
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
+
+The Python-only type-parameter labels also expose `_typing` primitives to the
+unchanged CPython v3.14.8 `typing.py`. Generic subscription and subclass
+initialization call its `_generic_class_getitem` and `_generic_init_subclass`;
+implicit generic bases retain their actual type parameters. Native TypeVar,
+ParamSpec and TypeVarTuple substitution hooks call the corresponding upstream
+helpers. TypeVar defaults are prepared before specialization. `_idfunc` returns
+its one argument unchanged. Union subscription uses the native union type,
+normalizes None through `_type_check`, flattens members and removes duplicates.
+Variance validation and representations follow `Objects/typevarobject.c`.
+The other four kernels do not expose these Python extensions.
+
+This remains a partial `_typing` port: variadic annotation syntax, TypeVarTuple
+iteration/unpacking, generic union and type-alias substitution, direct
+ParamSpecArgs/ParamSpecKwargs construction and their complete comparison,
+immutable-type/descriptor details, weak-reference ownership and serialization
+still need work. The complete `test_typing.py` stops at its starred parameter
+annotation syntax. Annotationlib's type representation adapter follows the
+upstream ordinary-object branches; template AST rendering remains unavailable.
+
+Prepared Python class namespaces expose the actual deferred annotation evaluator
+as `__annotate_func__`, or the annotation string dictionary under future
+annotations. Annotationlib's namespace lookup is the unchanged CPython helper.
+This lets the upstream NamedTuple metaclass discover its fields. Ordinary Python
+classes also expose their real weak-reference list through a read-only descriptor;
+class descriptor cycles are candidates for the existing cycle collector.
+Reassigning `__bases__` to the identical direct bases is allowed; changing bases
+still raises the existing unsupported-operation exception. The pure-Python
+`__future__.py` is also carried unchanged from v3.14.8.

@@ -68,6 +68,9 @@ impl PythonVersion {
         let [major, minor, micro] = self.numbers;
         match name {
             "sys" => format!("{source}\nversion_info = ({major}, {minor}, {micro}, 'final', 0)\nversion = '{} (Lumen)'\nhexversion = {}\n", self.release, (major << 24) | (minor << 16) | (micro << 8) | 0xf0),
+            // The test package's own search path names the reference suite
+            // beside the library; it follows the selected release too.
+            "test" => source.replace("/tests/python/test", &format!("/{}/test", self.tests)),
             "test.support" => {
                 let components = self.tests.split('/').map(|part| format!("{part:?}")).collect::<Vec<_>>().join(", ");
                 source.replace("'tests', 'python'", &components)

@@ -44,13 +44,18 @@
   "ext.builtin.complex.zero": [
     "ZeroDivisionError: division by zero"
   ],
-  "ext.builtin.posix": ["__posix"],
+  "ext.builtin.posix": [
+    "__posix"
+  ],
   "ext.builtin.loader.source": ["__loader_source"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
   "ext.builtin.file.kind": [
     "__file_kind"
+  ],
+  "ext.builtin.file.link": [
+    "__file_link"
   ],
   "ext.builtin.weak.make": [
     "__weak_make"
@@ -86,15 +91,34 @@
   "ext.builtin.dir.change": [
     "__change_dir"
   ],
+  "ext.builtin.cell.repr": [
+    "<cell at 0x",
+    ": ",
+    " object at 0x",
+    ">",
+    "empty"
+  ],
+  "ext.builtin.dir.remove": [
+    "__remove_dir"
+  ],
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
-  "ext.builtin.at_end": ["__at_end"],
+  "ext.builtin.at_end": [
+    "__at_end"
+  ],
+  "ext.builtin.crypto": [
+    "__crypto"
+  ],
   "ext.builtin.host.info": [
     "__host_info"
   ],
-  "ext.builtin.text.scan_ascii": ["__text_scan_ascii"],
-  "ext.builtin.json.scanstring": ["__json_string_scan"],
+  "ext.builtin.text.scan_ascii": [
+    "__text_scan_ascii"
+  ],
+  "ext.builtin.json.scanstring": [
+    "__json_string_scan"
+  ],
   "ext.builtin.subprocess": [
     "__subprocess"
   ],
@@ -201,6 +225,7 @@
     "with",
     "yield"
   ],
+  "ext.lexical.identifier.normalized": true,
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -209,8 +234,13 @@
     "' and '",
     "'"
   ],
-  "ext.stmt.class.native.name": ["__native_type_name__"],
-  "ext.stmt.class.bases.resolve": ["__mro_entries__", "__orig_bases__"],
+  "ext.stmt.class.native.name": [
+    "__native_type_name__"
+  ],
+  "ext.stmt.class.bases.resolve": [
+    "__mro_entries__",
+    "__orig_bases__"
+  ],
   "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
     "__annotations__"
@@ -625,8 +655,12 @@
   "ext.builtin.bytes.hex": [
     "hex"
   ],
-  "ext.builtin.bytes.resize": ["resize"],
-  "ext.builtin.bytes._export": ["_export"],
+  "ext.builtin.bytes.resize": [
+    "resize"
+  ],
+  "ext.builtin.bytes._export": [
+    "_export"
+  ],
   "ext.builtin.bytes.join": [
     "join"
   ],
@@ -686,7 +720,9 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
-  "ext.builtin.sre": ["__sre_native"],
+  "ext.builtin.sre": [
+    "__sre_native"
+  ],
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -854,8 +890,27 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.file_read.bytes": [
+    "__file_read_bytes"
+  ],
+  "ext.builtin.struct_native": [
+    "__struct_native"
+  ],
+  "ext.builtin.buffer.hooks": [
+    "__buffer__",
+    "__release_buffer__"
+  ],
+  "ext.builtin.binascii_native": [
+    "__binascii_native__"
+  ],
+  "ext.builtin.zlib_native": [
+    "__zlib_native__"
+  ],
   "ext.builtin.heap_native": [
     "__heap_native__"
+  ],
+  "ext.builtin.context_native": [
+    "__context_native__"
   ],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
@@ -935,7 +990,15 @@
     "PermissionError",
     "FileExistsError",
     "NotADirectoryError",
-    "BrokenPipeError"
+    "BrokenPipeError",
+    "ChildProcessError",
+    "ConnectionError",
+    "ConnectionAbortedError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "InterruptedError",
+    "ProcessLookupError",
+    "TimeoutError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -1005,7 +1068,33 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "__unused_python314_generator_state__", "tb_lasti"
+    "traceback",
+    "tb_lineno",
+    "tb_next",
+    "tb_frame",
+    "f_lineno",
+    "f_code",
+    "co_name",
+    "co_filename",
+    "co_firstlineno",
+    "frame",
+    "<module>",
+    "f_back",
+    "f_locals",
+    "f_globals",
+    "gi_frame",
+    "gi_code",
+    "tb_end_lineno",
+    "tb_colno",
+    "tb_end_colno",
+    "ag_frame",
+    "cr_frame",
+    "gi_suspended",
+    "cr_suspended",
+    "cr_running",
+    "gi_yieldfrom",
+    "__unused_python314_generator_state__",
+    "tb_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -1109,8 +1198,12 @@
   "ext.stmt.class.parent.bind": true,
   "ext.builtin.math.sumprod": true,
   "ext.builtin.random.words": true,
-  "ext.system.module.path": ["__path__"],
-  "ext.system.module.package": ["__package__"],
+  "ext.system.module.path": [
+    "__path__"
+  ],
+  "ext.system.module.package": [
+    "__package__"
+  ],
   "ext.builtin.max": [
     "max"
   ],
@@ -1128,8 +1221,12 @@
     "' has no attribute '",
     "'"
   ],
-  "ext.builtin.storage.get": ["__storage_get"],
-  "ext.builtin.storage.set": ["__storage_set"],
+  "ext.builtin.storage.get": [
+    "__storage_get"
+  ],
+  "ext.builtin.storage.set": [
+    "__storage_set"
+  ],
   "ext.builtin.member.get": [
     "getattr"
   ],
@@ -1162,7 +1259,10 @@
   "ext.builtin.method.clear": [
     "clear"
   ],
-  "ext.builtin.method.take_bytes": ["take_bytes", "bytearray.take_bytes"],
+  "ext.builtin.method.take_bytes": [
+    "take_bytes",
+    "bytearray.take_bytes"
+  ],
   "ext.builtin.method.copy": [
     "copy"
   ],
@@ -1615,6 +1715,7 @@
   "ext.builtin.staticmethod": [
     "staticmethod"
   ],
+  "ext.builtin.stream.binary": true,
   "ext.builtin.stream.amiss": [
     "TypeError: invalid stream arguments"
   ],
@@ -1923,7 +2024,7 @@
   ],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
-    " digits) for integer string conversion"
+    " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"
   ],
   "ext.builtin.to_int.infinity": [
     "OverflowError: cannot convert float infinity to integer"
@@ -2749,7 +2850,8 @@
     "co_flags",
     "co_filename",
     "co_firstlineno",
-    "__annotate__"
+    "__annotate__",
+    "co_freevars"
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
@@ -2860,9 +2962,6 @@
   "ext.stmt.class.detail.bases": [
     "__bases__"
   ],
-  "ext.stmt.class.detail.base": [
-    "__base__"
-  ],
   "ext.stmt.class.detail.call": [
     "__call__"
   ],
@@ -2899,10 +2998,18 @@
   "ext.stmt.class.detail.module": [
     "__module__"
   ],
-  "ext.stmt.class.detail.module.spec": ["__spec__"],
-  "ext.stmt.class.detail.module.path": ["__path__"],
-  "ext.stmt.class.detail.mro.entries": ["__mro_entries__"],
-  "ext.stmt.class.detail.original.bases": ["__orig_bases__"],
+  "ext.stmt.class.detail.module.spec": [
+    "__spec__"
+  ],
+  "ext.stmt.class.detail.module.path": [
+    "__path__"
+  ],
+  "ext.stmt.class.detail.mro.entries": [
+    "__mro_entries__"
+  ],
+  "ext.stmt.class.detail.original.bases": [
+    "__orig_bases__"
+  ],
   "ext.stmt.class.detail.mro": [
     "__mro__"
   ],
@@ -2939,10 +3046,21 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
-  "ext.builtin.namespace_type": ["__namespace_type"],
-  "ext.builtin.inline_values": ["_has_inline_values"],
-  "ext.stmt.class.detail.flags": ["__flags__"],
-  "ext.stmt.class.detail.prepare": ["__prepare__"],
+  "ext.builtin.namespace_type": [
+    "__namespace_type"
+  ],
+  "ext.builtin.inline_values": [
+    "_has_inline_values"
+  ],
+  "ext.builtin.type_descriptors.clear": [
+    "__clear_type_descriptors"
+  ],
+  "ext.stmt.class.detail.flags": [
+    "__flags__"
+  ],
+  "ext.stmt.class.detail.prepare": [
+    "__prepare__"
+  ],
   "ext.stmt.class.detail.unready": [
     "NotImplementedError: this class operation is not supported"
   ],
@@ -2980,6 +3098,9 @@
   ],
   "ext.stmt.class.detail.property.fget": [
     "fget"
+  ],
+  "ext.stmt.class.detail.property.is_abstract": [
+    "__isabstractmethod__"
   ],
   "ext.stmt.class.detail.property.fset": [
     "fset"
@@ -3330,6 +3451,7 @@
     "ModuleNotFoundError: No module named '",
     "'"
   ],
+  "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
     "NotImplementedError: relative imports require a package context"
   ],
@@ -3484,7 +3606,9 @@
   "ext.stmt.yield.send": [
     "send"
   ],
-  "ext.stmt.yield.input": [".0"],
+  "ext.stmt.yield.input": [
+    ".0"
+  ],
   "ext.stmt.yield.suspends": true,
   "ext.stmt.yield.throw": [
     "throw"
@@ -3933,9 +4057,18 @@
   "ext.text.format.zero.string": [
     "ValueError: Negative zero coercion (z) not allowed in string format specifier"
   ],
-  "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
-  "ext.lexical.escape.named.unknown": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name"],
-  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."],
+  "ext.lexical.escape.named.amiss": [
+    "SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"
+  ],
+  "ext.lexical.escape.named.unknown": [
+    "SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name"
+  ],
+  "ext.lexical.escape.warning": [
+    "warnings",
+    "warn_explicit",
+    "SyntaxWarning",
+    "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."
+  ],
   "ext.builtin.iter.stop_value": [],
   "ext.builtin.iter.stop_exception": []
 }

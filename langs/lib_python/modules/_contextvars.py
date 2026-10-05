@@ -1,102 +1,187 @@
-# Context variables for the interpreter's single-threaded Python runtime.
-# The interface follows CPython's contextvars; contexts own their values,
-# and tokens restore a previous binding only in the context that made them.
+# Runtime entry points for CPython v3.14.8 Python/context.c (PSF License).
+# Binding storage and token validation live in the Python-only native bridge.
+from types import GenericAlias
 
-_missing = object()
+class _Missing:
+    def __repr__(self):
+        return '<Token.MISSING>'
 
-class Token:
-    MISSING = _missing
-    def __init__(self, var, old_value, context):
-        self.var = var
-        self.old_value = old_value
-        self._context = context
-        self._used = False
+_missing = _Missing()
+_unset = object()
+_repr_running = set()
+
+def _no_subclass(cls, **kwargs):
+    raise TypeError("type '_contextvars." + cls.__bases__[0].__name__ + "' is not an acceptable base type")
 
 class ContextVar:
-    def __init__(self, name, *, default=_missing):
-        if not isinstance(name, str):
+    __module__ = '_contextvars'
+    __slots__ = ('_handle', '_name', '_default')
+    __init_subclass__ = classmethod(_no_subclass)
+
+    def __init__(self, *args, **kwargs):
+        if len(args) != 1:
+            raise TypeError('ContextVar() takes exactly 1 positional argument (' + str(len(args)) + ' given)')
+        if not isinstance(args[0], str):
             raise TypeError('context variable name must be a str')
-        self.name = name
-        self._default = default
+        for key in kwargs:
+            if key != 'default':
+                raise TypeError("'" + key + "' is an invalid keyword argument for ContextVar()")
+        hash(args[0])
+        self._name = args[0]
+        self._default = kwargs.get('default', _unset)
+        self._handle = __context_native__('var', 0, self)
 
-    def get(self, default=_missing):
-        if self in _current._values:
-            return _current._values[self]
-        if default is not _missing:
-            return default
-        if self._default is not _missing:
+    @property
+    def name(self):
+        return self._name
+
+    def get(self, *args):
+        if len(args) > 1:
+            raise TypeError('get expected at most 1 argument, got ' + str(len(args)))
+        found, value = __context_native__('get', self._handle)
+        if found:
+            return value
+        if args:
+            return args[0]
+        if self._default is not _unset:
             return self._default
-        raise LookupError(self.name)
+        raise LookupError(self)
 
-    def set(self, value):
-        old = _current._values.get(self, _missing)
-        token = Token(self, old, _current)
-        _current._values[self] = value
+    def set(self, value, /):
+        token = object.__new__(Token)
+        token._handle = __context_native__('set', self._handle, value)
         return token
 
-    def reset(self, token):
+    def reset(self, token, /):
         if not isinstance(token, Token):
-            raise TypeError('expected an instance of Token')
-        if token._used:
-            raise RuntimeError('Token has already been used once')
-        if token.var is not self:
-            raise ValueError('Token was created by a different ContextVar')
-        if token._context is not _current:
-            raise ValueError('Token was created in a different Context')
-        if token.old_value is _missing:
-            del _current._values[self]
-        else:
-            _current._values[self] = token.old_value
-        token._used = True
+            raise TypeError('expected an instance of Token, got ' + repr(token))
+        return __context_native__('reset', self._handle, token._handle, repr(token))
+
+    def __repr__(self):
+        serial = id(self)
+        if serial in _repr_running:
+            return '...'
+        _repr_running.add(serial)
+        try:
+            shown = '<ContextVar name=' + repr(self._name)
+            if self._default is not _unset:
+                shown += ' default=' + repr(self._default)
+            return shown + ' at ' + hex(serial) + '>'
+        finally:
+            _repr_running.remove(serial)
+
+    @classmethod
+    def __class_getitem__(cls, item):
+        return GenericAlias(cls, item)
+
+class Token:
+    __module__ = '_contextvars'
+    __slots__ = ('_handle',)
+    __init_subclass__ = classmethod(_no_subclass)
+    MISSING = _missing
+
+    def __new__(cls, *args, **kwargs):
+        raise RuntimeError('Tokens can only be created by ContextVars')
+
+    @property
+    def var(self):
+        return __context_native__('token', self._handle)[0]
+
+    @property
+    def old_value(self):
+        found, value = __context_native__('token', self._handle)[1]
+        return value if found else self.MISSING
+
+    def __repr__(self):
+        var, old, used = __context_native__('token', self._handle)
+        return '<Token' + (' used' if used else '') + ' var=' + repr(var) + ' at ' + hex(id(self)) + '>'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, value, traceback):
+        self.var.reset(self)
+
+    @classmethod
+    def __class_getitem__(cls, item):
+        return GenericAlias(cls, item)
 
 class Context:
-    def __init__(self):
-        self._values = {}
-        self._entered = False
+    __module__ = '_contextvars'
+    __slots__ = ('_handle',)
+    __hash__ = None
+    __init_subclass__ = classmethod(_no_subclass)
+
+    def __init__(self, *args, **kwargs):
+        if args or kwargs:
+            raise TypeError('Context() does not accept any arguments')
+        self._handle = __context_native__('new')
 
     def copy(self):
-        result = Context()
-        result._values = self._values.copy()
-        return result
+        ctx = object.__new__(Context)
+        ctx._handle = __context_native__('copy', self._handle)
+        return ctx
 
-    def run(self, callable, *args, **kwargs):
-        global _current
-        if self._entered:
-            raise RuntimeError('cannot enter context: already entered')
-        previous = _current
-        self._entered = True
-        _current = self
+    def run(self, /, *args, **kwargs):
+        if not args:
+            raise TypeError('run() missing 1 required positional argument')
+        previous = __context_native__('enter', self._handle, repr(self))
         try:
-            return callable(*args, **kwargs)
+            return args[0](*args[1:], **kwargs)
         finally:
-            _current = previous
-            self._entered = False
+            __context_native__('leave', previous)
+
+    def _lookup(self, key):
+        if not isinstance(key, ContextVar):
+            raise TypeError('a ContextVar key was expected, got ' + repr(key))
+        return __context_native__('lookup', self._handle, key._handle)
 
     def __getitem__(self, key):
-        return self._values[key]
+        found, value = self._lookup(key)
+        if found:
+            return value
+        raise KeyError(key)
 
     def __contains__(self, key):
-        return key in self._values
+        return self._lookup(key)[0]
 
-    def __iter__(self):
-        return iter(self._values)
-
-    def __len__(self):
-        return len(self._values)
-
-    def keys(self):
-        return self._values.keys()
-
-    def values(self):
-        return self._values.values()
+    def get(self, key, default=None, /):
+        found, value = self._lookup(key)
+        return value if found else default
 
     def items(self):
-        return self._values.items()
+        return iter(__context_native__('entries', self._handle))
 
-    def get(self, key, default=None):
-        return self._values.get(key, default)
+    def keys(self):
+        entries = __context_native__('entries', self._handle)
+        return iter([entry[0] for entry in entries])
 
-_current = Context()
+    def values(self):
+        entries = __context_native__('entries', self._handle)
+        return iter([entry[1] for entry in entries])
+
+    def __iter__(self):
+        return self.keys()
+
+    def __len__(self):
+        return len(__context_native__('entries', self._handle))
+
+    def __eq__(self, other):
+        if not isinstance(other, Context):
+            return NotImplemented
+        left = __context_native__('entries', self._handle)
+        right = __context_native__('entries', other._handle)
+        return dict(left) == dict(right)
+
+    def __ne__(self, other):
+        value = self.__eq__(other)
+        return value if value is NotImplemented else not value
+
+    def __repr__(self):
+        return '<_contextvars.Context object at ' + hex(id(self)) + '>'
+
 
 def copy_context():
-    return _current.copy()
+    ctx = object.__new__(Context)
+    ctx._handle = __context_native__('copy', __context_native__('current'))
+    return ctx

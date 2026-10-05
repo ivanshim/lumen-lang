@@ -2510,3 +2510,28 @@ test_enum 1007 (stack8) / 1053 (microcode7) of 1081, test_ipaddress 211/211, tes
 test_colorsys 8/8, test_sched 9/11, test_html 2/2. test_statistics measures 409/415 on both kernels class by class but
 exceeds Lambda's time limit as a whole file. The full check of the final merge agrees on 1194 scratch programs with no
 mismatch, passes every gate and shows no regression or kernel disagreement; kernel independence reports no problem.
+
+### 1bd. Batch 20z merged as #535; batch 21a: native struct, binascii, zlib and hashlib, decimal, os paths, dataclasses
+
+The third standard-library batch on the CPython 3.14.8 suite, mostly the modules CPython writes in C. Eleven branches,
+each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the branches came from
+GPT-6.1 Sol, DeepSeek V4.1 Flash and MiMo-V2.6-Pro workers, several finished by GPT-6.1 Sol after repeated reviews.
+
+- fix/stdlib-struct (native _struct and array), fix/stdlib-binascii (native binascii, CPython base64), fix/stdlib-zlib
+  (native zlib, CPython gzip), fix/stdlib-hashlib (hashlib, hmac, secrets over native digests).
+- fix/stdlib-decimal: CPython's _pydecimal and contextvars. fix/stdlib-os: genericpath, posixpath, stat and the POSIX
+  bridges. fix/dsflash-userdict: UserDict, UserList, UserString.
+- fix/dsflash-small3: Unicode identifiers by NFKC, UTF-8 and ISO-8859-15 source decoding, keyword decisions by their
+  original spelling in both parsers. fix/mimo-reprlib: reprlib, numbers, importlib.util cache paths.
+  fix/stdlib-dataclasses: CPython's dataclasses. fix/dsflash-strtod: test_strtod, now measurable with CPython re.
+
+Every CPython-derived file was checked against the v3.14.8 tag (330 reference files, 36 library modules).
+
+Measured: 6509 (stack8) of 7407 and 6487 (microcode7) of 7348 run, over 108 files, from 5813 / 5845 of 6335 over 83.
+New files include test_dataclasses 229/280, test_zlib 75/79, test_binascii 76/93, test_base64 40/41, test_posixpath
+80/94, test_genericpath 24/25, test_struct 37/44, test_userlist 54/54, test_userdict 28/28, test_reprlib 24/33,
+test_hmac 42/100, test_hashlib 32/82, test_decimal 84/286 (two class parts exceed Lambda's time limit), test_strtod
+8/9, test_secrets 11/11, test_stat 18/22, test_abstract_numbers 7/7, and the three small source/identifier files.
+Some large files exceed Lambda's time limit on one or both kernels and count as run nothing. The full check of the
+final merge agrees on 1194 scratch programs with no mismatch, passes every gate and shows no regression or kernel
+disagreement; kernel independence reports no problem.
