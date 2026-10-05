@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/genericpath.py; PSF License.
 """
 Path operations common to more than one OS
 Do not use directly.  The OS specific modules import the appropriate
