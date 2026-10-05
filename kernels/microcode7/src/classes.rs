@@ -2973,21 +2973,27 @@ impl<'a> Machine<'a> {
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
             }
-            // The two byte kinds read their two class methods by the
-            // primitive that carries them, the way the builder spells
-            // them, so a member holding the kind reaches them too.
-            // fromhex belongs to the class it is read from, so a
-            // subclass hands back its own kind; maketrans belongs to
-            // the kind alone and always hands back a plain row.
-            if matches!(Self::native_beneath(b).as_deref(), Some("bytes" | "bytearray")) && key == "fromhex" {
-                let word = match Self::native_beneath(b).as_deref() {
-                    Some("bytearray") => "bytearray_fromhex",
-                    _ => "bytes_fromhex",
-                };
-                return Ok(Value::Member(Rc::new(value.clone()), word.to_owned()));
-            }
-            if matches!(Self::native_beneath(b).as_deref(), Some("bytes" | "bytearray")) && key == "maketrans" {
-                return Ok(Value::Intrinsic(Prim::Octets(40), Rc::from("bytes.maketrans")));
+            // Look for a stored override only before the byte primitive
+            // in the ancestry. Its position also shields the primitive
+            // from mixins placed after it, while the builder's writable
+            // descriptors have already had their turn.
+            if matches!(key, "fromhex" | "maketrans")
+                && matches!(Self::native_beneath(b).as_deref(), Some("bytes" | "bytearray")) {
+                let owner = std::iter::once(b.as_ref()).chain(b.ancestry.iter().map(Rc::as_ref))
+                    .find_map(|parent| {
+                        match Self::native_word(parent).filter(|word| word == "bytes" || word == "bytearray") {
+                            Some(word) => Some(Err(word)),
+                            None => Self::own_entry(parent, key).map(Ok),
+                        }
+                    });
+                match owner {
+                    Some(Ok(stored)) => return self.member_binding(stored, None, b.clone()),
+                    Some(Err(word)) if key == "fromhex" => {
+                        return Ok(Value::Member(Rc::new(value.clone()), word + "_fromhex"));
+                    }
+                    Some(Err(_)) => return Ok(Value::Intrinsic(Prim::Octets(40), Rc::from("bytes.maketrans"))),
+                    None => {},
+                }
             }
             if key == self.detail("module") && self.table.has_any("ext.stmt.class.detail.module") {
                 match Self::own_entry(b, key) {

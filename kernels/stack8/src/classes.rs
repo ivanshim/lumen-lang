@@ -2393,21 +2393,23 @@ impl<'a> Engine<'a> {
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));
                 }
-                // The two byte kinds read their two class methods by the
-                // builtin that carries them, the way the compiler spells
-                // them, so a member holding the kind reaches them too.
-                // fromhex belongs to the class it is read from, so a
-                // subclass hands back its own kind; maketrans belongs to
-                // the kind alone and always hands back a plain row.
-                if matches!(Self::kind_beneath(c).as_deref(), Some("bytes" | "bytearray")) && name == "fromhex" {
-                    let word = match Self::kind_beneath(c).as_deref() {
-                        Some("bytearray") => "bytearray_fromhex",
-                        _ => "bytes_fromhex",
-                    };
-                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), word.to_string()))));
-                }
-                if matches!(Self::kind_beneath(c).as_deref(), Some("bytes" | "bytearray")) && name == "maketrans" {
-                    return Ok(Value::Native(Builtin::Bytes(40), Rc::from("bytes.maketrans")));
+                // Byte class methods participate in the same MRO as stored
+                // attributes. Stop at the native owner: a later mixin must
+                // not hide it. Metaclass data descriptors were read above.
+                if matches!(name, "fromhex" | "maketrans")
+                    && matches!(Self::kind_beneath(c).as_deref(), Some("bytes" | "bytearray")) {
+                    for base in std::iter::once(c.as_ref()).chain(c.lineage.iter().map(Rc::as_ref)) {
+                        if let Some(kind) = Self::own_kind(base).filter(|kind| matches!(kind.as_str(), "bytes" | "bytearray")) {
+                            if name == "maketrans" {
+                                return Ok(Value::Native(Builtin::Bytes(40), Rc::from("bytes.maketrans")));
+                            }
+                            let method = format!("{kind}_fromhex");
+                            return Ok(Value::ValueMethod(Rc::new((subject.clone(), method))));
+                        }
+                        if let Some(entry) = Self::own_class_value(base, name) {
+                            return self.bind_class_value(entry, None, c.clone());
+                        }
+                    }
                 }
                 if name==self.class_word("name") { return Ok(c.python_names.borrow().as_ref().map_or_else(|| Value::text(&c.name), |names| names.0.clone())); }
                 if name==self.class_word("qualified") { return Ok(c.python_names.borrow().as_ref().map(|names| names.1.clone()).unwrap_or_else(|| self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name)))); }
