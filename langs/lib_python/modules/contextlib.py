@@ -1,4 +1,5 @@
 # Small managers use the ordinary entry and leaving methods.
+import functools
 class nullcontext:
     def __init__(self, enter_result=None):
         self.enter_result = enter_result
@@ -58,6 +59,17 @@ class _GeneratorContextManager:
         self.function = function
         self.args = args
         self.keywords = keywords
+
+    # A manager made by contextmanager can stand in front of a function
+    # as a decorator: each call enters a fresh manager, runs the function
+    # inside it, and leaves again. The manager is remade per call so
+    # nested or repeated calls do not share one generator.
+    def __call__(self, function):
+        @functools.wraps(function)
+        def entered(*args, **keywords):
+            with _GeneratorContextManager(self.function, self.args, self.keywords):
+                return function(*args, **keywords)
+        return entered
 
     def __enter__(self):
         self.generator = self.function(*self.args, **self.keywords)

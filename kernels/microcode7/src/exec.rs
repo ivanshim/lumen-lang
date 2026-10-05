@@ -9713,6 +9713,11 @@ impl<'a> Machine<'a> {
         let bare = Rc::new(Vec::new());
         let kept = place.replace(Value::Vector(Rc::clone(&bare).into()));
         let outcome = self.ordered_members(&kept, &keywords);
+        // A key thing let go while the row is put in order bids its
+        // farewell now, as the reference does when the key is freed:
+        // the row stands aside, so a farewell that writes to it is
+        // seen as meddling once the ordering is done.
+        self.attend_to_gone();
         let meddled = !matches!(&*place.borrow(), Value::Vector(row) if Rc::ptr_eq(row, &bare));
         let ordered = match outcome { Err(away) => { place.replace(kept); return Err(away); }, Ok(row) => row };
         place.replace(Value::Vector(crate::tuples::Sequence::plain(ordered)));
@@ -14772,11 +14777,22 @@ impl<'a> Machine<'a> {
             let same = matches!((left, right), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(&a.blueprint(), &b.blueprint()));
             if reverse_first { attempts.insert(0, (right, reverse, left)); }
             else if forward < 8 || !same { attempts.push((right, reverse, left)); }
+            let mut declined = false;
+            let mut native_side = false;
             for (subject, index, argument) in attempts {
                 if (std::ptr::eq(subject, left) && left_repeat) || (std::ptr::eq(subject, right) && right_repeat) { continue; }
-                if let Some(result) = self.ask_special(subject, index, std::slice::from_ref(argument))? {
-                    if !matches!(result, Value::Refusal(_)) { return Ok(Some(result)); }
+                match self.ask_special(subject, index, std::slice::from_ref(argument))? {
+                    Some(result) if !matches!(result, Value::Refusal(_)) => return Ok(Some(result)),
+                    Some(_) => declined = true,
+                    None => native_side = true,
                 }
+            }
+            // A class whose own ordering method answered that it was not
+            // its to give, with no side standing on a native kind that
+            // could, has left the two in no order at all: the reference
+            // names them apart rather than reading the worth beneath.
+            if declined && !native_side && matches!(operation, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                return Err(self.unordered_complaint(operation, left, right));
             }
             if left_repeat || right_repeat {
                 let (sequence, count, index) = if left_repeat { (left, right, forward) } else { (right, left, reverse) };
@@ -15554,7 +15570,7 @@ impl<'a> Machine<'a> {
     /// equal to itself before anything is asked and any other pair asked
     /// as the program asks it, so a thing on either side answers for
     /// itself. Nothing where neither holds a thing.
-    fn alike_with_things(&mut self, one: &Value, two: &Value) -> Result<Option<bool>, String> {
+    fn alike_with_things(&mut self, one: &Value, two: &Value, place: usize) -> Result<Option<bool>, String> {
         fn holds_thing(value: &Value) -> bool {
             match value {
                 Value::Thing(_) => true,
@@ -15563,7 +15579,28 @@ impl<'a> Machine<'a> {
                 _ => false,
             }
         }
-        let ((Value::Vector(left), Value::Vector(right)) | (Value::Tuple(left), Value::Tuple(right))) = (one, two) else { return Ok(None) };
+        // Where both sides carry an equality of their own and neither
+        // would answer, the reference falls back to identity rather
+        // than reading the worth beneath them; only where a side stands
+        // on the native kind may the members be read. The entry is
+        // asked of every kind the dispatch can call: a plain routine, a
+        // bound one, and the descriptors a static method, a class
+        // method or a property is kept as, so a decline from any of
+        // them keeps its identity answer.
+        if self.appointment(one, place).is_some() && self.appointment(two, place).is_some() {
+            return Ok(None);
+        }
+        // A thing standing on a native row or tuple, whose blueprint
+        // appointed no equality of its own, is read member by member
+        // from the worth beneath it, as the plain road would read it.
+        let beneath = |value: &Value| -> Value {
+            match Self::underlying(value) {
+                Some(worth) if matches!(worth.settled(), Value::Vector(_) | Value::Tuple(_)) => worth.settled(),
+                _ => value.clone(),
+            }
+        };
+        let (first, second) = (beneath(one), beneath(two));
+        let ((Value::Vector(left), Value::Vector(right)) | (Value::Tuple(left), Value::Tuple(right))) = (&first, &second) else { return Ok(None) };
         if !left.iter().chain(right.iter()).any(holds_thing) { return Ok(None); }
         if left.len() != right.len() { return Ok(Some(false)); }
         for (here, there) in left.iter().zip(right.iter()) {
@@ -15575,9 +15612,21 @@ impl<'a> Machine<'a> {
     }
 
     fn weighed_member_wise(&mut self, op: Prim, one: &Value, two: &Value) -> Result<Option<Value>, String> {
+        // A thing standing on a native row or tuple, whose blueprint
+        // appointed no ordering of its own, is weighed by the members
+        // of the worth beneath it: that worth is what the plain road
+        // would have read, and each pair among its members is asked in
+        // turn. Anything else is handed on as it came.
+        let beneath = |value: &Value| -> Value {
+            match Self::underlying(value) {
+                Some(worth) if matches!(worth.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_)) => worth.settled(),
+                _ => value.clone(),
+            }
+        };
+        let (first, second) = (beneath(one), beneath(two));
         let members = |value: &Value| match value { Value::Vector(held) | Value::Tuple(held) | Value::Row(held) => Some(held.clone()), _ => None };
-        let rows = matches!(one, Value::Vector(_)) == matches!(two, Value::Vector(_));
-        if let (Some(left), Some(right), true) = (members(one), members(two), rows) {
+        let rows = matches!(first, Value::Vector(_)) == matches!(second, Value::Vector(_));
+        if let (Some(left), Some(right), true) = (members(&first), members(&second), rows) {
             for place in 0..left.len().min(right.len()) {
                 if contained_equal(&left[place], &right[place]) { continue; }
                 let same = self.prim(Prim::Eq, "", &[left[place].clone(), right[place].clone()])?;
@@ -15588,7 +15637,7 @@ impl<'a> Machine<'a> {
             let settled = match op { Prim::Lt => rank.is_lt(), Prim::Le => rank.is_le(), Prim::Gt => rank.is_gt(), _ => rank.is_ge() };
             return Ok(Some(Value::Flag(settled)));
         }
-        if matches!(one, Value::Thing(_)) || matches!(two, Value::Thing(_)) {
+        if matches!(first, Value::Thing(_)) || matches!(second, Value::Thing(_)) {
             return Err(self.unordered_complaint(op, one, two));
         }
         Ok(None)
@@ -16783,7 +16832,8 @@ impl<'a> Machine<'a> {
             if let Some(answer) = self.sequence_working(op, v)? { return Ok(answer); }
         }
         if let (Prim::Eq | Prim::Ne, [one, two]) = (op, v) {
-            if let Some(same) = self.alike_with_things(one, two)? { return Ok(Value::Flag(same == (op == Prim::Eq))); }
+            let place = if op == Prim::Eq { 2 } else { 3 };
+            if let Some(same) = self.alike_with_things(one, two, place)? { return Ok(Value::Flag(same == (op == Prim::Eq))); }
         }
         if let [Value::Wrapped(35, one), Value::Wrapped(35, two)] = v {
             if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {

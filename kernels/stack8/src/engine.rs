@@ -8509,6 +8509,8 @@ impl<'a> Engine<'a> {
         if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a) || matches!(a, Value::Bytes(..))) {
             if let Some(index) = self.special_index(b)? { return self.special_dyad(op, a, &index); }
         }
+        let mut declined = false;
+        let mut native_side = false;
         if let Some((direct, reflected)) = places {
             let left_repeat = matches!(op, Action::Mul) && self.c_sequence_repeat(a, direct);
             let right_repeat = matches!(op, Action::Mul) && self.c_sequence_repeat(b, reflected);
@@ -8525,14 +8527,33 @@ impl<'a> Engine<'a> {
                 _ => false,
             };
             if first_right && !right_repeat {
-                if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? {
-                    if !matches!(answer, Value::Declined(_)) { return Ok(answer); }
+                match self.special_call(b, reflected, vec![a.clone()])? {
+                    Some(answer) if !matches!(answer, Value::Declined(_)) => return Ok(answer),
+                    Some(_) => declined = true,
+                    None => native_side = true,
                 }
             }
-            if !left_repeat { if let Some(answer) = self.special_call(a, direct, vec![b.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } } }
+            if !left_repeat {
+                match self.special_call(a, direct, vec![b.clone()])? {
+                    Some(answer) if !matches!(answer, Value::Declined(_)) => return Ok(answer),
+                    Some(_) => declined = true,
+                    None => native_side = true,
+                }
+            }
             let same_class = matches!((a, b), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(&x.class_now(), &y.class_now()));
             if !first_right && !right_repeat && (direct < 8 || !same_class) {
-                if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
+                match self.special_call(b, reflected, vec![a.clone()])? {
+                    Some(answer) if !matches!(answer, Value::Declined(_)) => return Ok(answer),
+                    Some(_) => declined = true,
+                    None => native_side = true,
+                }
+            }
+            // A class whose own ordering method answered that it was not
+            // its to give, with no side standing on a native kind that
+            // could, has left the two in no order at all: the reference
+            // names them apart rather than reading the worth beneath.
+            if declined && !native_side && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                return Err(self.orderless_fault(op, a, b));
             }
             if left_repeat || right_repeat {
                 let (sequence, count, slot) = if left_repeat { (a, b, direct) } else { (b, a, reflected) };
@@ -8662,6 +8683,19 @@ impl<'a> Engine<'a> {
         // key it has not may answer through the method the definition
         // names for it.
         if matches!(op, Action::Same | Action::Unsame) && !self.lang.identity_not.is_empty() { return self.dyadic(op, a, b); }
+        // Where both sides are rows or tuples carrying an equality of
+        // their own for this very sign, and neither would answer, the
+        // reference falls back to identity rather than reading the
+        // members. A side inheriting the kind's own equality still lets
+        // the members be read, and a thing over any other worth is left
+        // to the worth as before.
+        let on_row = |v: &Value| matches!(Self::worth_of(v).map(|worth| worth.contents()), Some(Value::Array(_) | Value::Tuple(_)));
+        if let Some((direct, _)) = places {
+            if matches!(op, Action::Eq | Action::Ne) && on_row(a) && on_row(b)
+                && self.special_value(a, direct).is_some() && self.special_value(b, direct).is_some() {
+                return self.dyadic(op, a, b);
+            }
+        }
         let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
         if left.is_some() || right.is_some() {
             if let (Action::At | Action::Toward | Action::Apart, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
@@ -16183,6 +16217,11 @@ impl<'a> Engine<'a> {
             let vacant = Rc::new(Vec::new());
             let held = cell.replace(Value::Array(Rc::clone(&vacant).into()));
             let outcome = self.order_values(&held, &named);
+            // A key object let go while the row is put in order runs its
+            // last words now, as the reference does when the key is
+            // freed: the row stands aside, so a last word that writes to
+            // it is seen as meddling once the ordering is done.
+            self.settle_departed();
             let meddled = !matches!(&*cell.borrow(), Value::Array(row) if Rc::ptr_eq(row, &vacant));
             match outcome {
                 Err(told) => { *cell.borrow_mut() = held; return Err(told); }
