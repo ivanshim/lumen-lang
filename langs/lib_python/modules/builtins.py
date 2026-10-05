@@ -210,17 +210,17 @@ class _HostFile:
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
         self.errors = errors if errors is not None else 'strict'
         self.newline = newline
+        # Text opened with a named encoding keeps the canonical text
+        # wrapper over the bytes just read, so its errors and newline
+        # rules are the reference's own and its decoding stays
+        # incremental. Text opened without one keeps the native read
+        # the other callers already answer, and the binary side stays a
+        # plain buffer.
+        self._canonical = (not self._binary) and (encoding is not None)
         self.closed = False
         self._descriptor = None
         self._pos = 0
         self._dirty = False
-        # Line-at-a-time reading is what both the reference tests and
-        # the probe lean on hardest, so the binary side splits the whole
-        # of what is left into lines once, the first time a line is
-        # asked for. The text side instead keeps the canonical text
-        # wrapper over the bytes just brought in, so its encoding,
-        # errors and newline rules are the reference's own and its
-        # decoding stays incremental.
         self._lines = None
         self._lines_at = 0
         self._lines_pos = 0
@@ -232,13 +232,12 @@ class _HostFile:
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
+        empty = b'' if (self._binary or self._canonical) else ''
         if self._from_fd:
             if writing:
-                raw = b''
-                self._dirty = True
+                self._keep(empty)
             else:
-                raw = _slurp_descriptor(name)
-                self._dirty = False
+                self._keep(self._collect())
         elif writing:
             import posix
             flags = posix.O_WRONLY | posix.O_CREAT
@@ -247,29 +246,43 @@ class _HostFile:
             posix.close(fd)
             if _host_file_exists(name) and _host_file_kind(name) == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            raw = b''
-            self._dirty = True
+            self._keep(empty)
         else:
             kind = _host_file_kind(name)
             if kind == 0:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            raw = _host_file_read_bytes(name)
-            if raw is False:
-                raise OSError(5, 'Input/output error', name)
-            self._dirty = False
-        if self._binary:
-            self._buffer = raw
-            if appending:
-                self._pos = len(raw)
-        else:
-            import _pyio
-            self._buffer = None
-            self._text = _pyio.TextIOWrapper(
-                _pyio.BytesIO(raw), self.encoding, self.errors, self.newline)
-            if appending:
+            self._keep(self._collect())
+        if appending:
+            if self._text is not None:
                 self._text.seek(0, 2)
+            else:
+                self._pos = len(self._buffer)
+
+    def _collect(self):
+        if self._binary or self._canonical:
+            if self._from_fd:
+                return _slurp_descriptor(self.name)
+            data = _host_file_read_bytes(self.name)
+            if data is False:
+                raise OSError(5, 'Input/output error', self.name)
+            return data
+        if self._from_fd:
+            return _slurp_descriptor(self.name).decode('utf-8', 'replace')
+        text = _host_file_read(self.name)
+        if text is False:
+            raise OSError(5, 'Input/output error', self.name)
+        return text
+
+    def _keep(self, value):
+        if not self._canonical:
+            self._buffer = value
+            return
+        import _pyio
+        self._buffer = None
+        self._text = _pyio.TextIOWrapper(
+            _pyio.BytesIO(value), self.encoding, self.errors, self.newline)
 
     def _open(self):
         if self.closed:
@@ -373,9 +386,13 @@ class _HostFile:
                 raise TypeError('write() argument must be str, not ' + type(data).__name__)
             self._dirty = True
             return self._text.write(data)
-        if not isinstance(data, (bytes, bytearray)):
-            raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
-        data = bytes(data)
+        if not self._binary:
+            if not isinstance(data, str):
+                raise TypeError('write() argument must be str, not ' + type(data).__name__)
+        else:
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
+            data = bytes(data)
         self._buffer = self._buffer[:self._pos] + data + self._buffer[self._pos + len(data):]
         self._pos += len(data)
         self._dirty = True
@@ -386,15 +403,7 @@ class _HostFile:
         for line in lines:
             self.write(line)
 
-    def flush(self):
-        self._open()
-        if not self._dirty:
-            return
-        if self._text is not None:
-            self._text.flush()
-            data = bytes(self._text.buffer.getvalue())
-        else:
-            data = bytes(self._buffer)
+    def _spill_bytes(self, data):
         if self._from_fd:
             import posix
             posix.lseek(self.name, 0, 0)
@@ -407,6 +416,20 @@ class _HostFile:
                 _spill_descriptor(descriptor, data)
             finally:
                 posix.close(descriptor)
+
+    def flush(self):
+        self._open()
+        if not self._dirty:
+            return
+        if self._text is not None:
+            self._text.flush()
+            self._spill_bytes(bytes(self._text.buffer.getvalue()))
+        elif self._binary:
+            self._spill_bytes(bytes(self._buffer))
+        elif self._from_fd:
+            self._spill_bytes(self._buffer.encode(self.encoding, self.errors))
+        elif _host_file_write(self.name, self._buffer) is False:
+            raise FileNotFoundError(2, 'No such file or directory', self.name)
         self._dirty = False
 
     def fileno(self):
@@ -418,7 +441,12 @@ class _HostFile:
         if self._descriptor is None:
             flags = posix.O_RDWR if '+' in self.mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
             self._descriptor = posix.open(self.name, flags)
-        position = self._text.buffer.tell() if self._text is not None else self._pos
+        if self._text is not None:
+            position = self._text.buffer.tell()
+        elif self._binary:
+            position = self._pos
+        else:
+            position = len(self._buffer[:self._pos].encode(self.encoding, self.errors))
         posix.lseek(self._descriptor, position, 0)
         return self._descriptor
 
