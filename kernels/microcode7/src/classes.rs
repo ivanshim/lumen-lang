@@ -987,7 +987,8 @@ impl<'a> Machine<'a> {
                 if let Value::Thing(thing)=&made {
                     let class=thing.blueprint();
                     if self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(&class,known) || class.ancestry.iter().any(|b| Rc::ptr_eq(b,known))) {
-                        if let Some(name)=Self::kept_accessor(&property,"\0name") { Self::change_entry(&mut thing.holds.borrow_mut(),"\0name",Some(name)); }
+                        let named = property.holds.borrow().iter().find_map(|(key, value)| (key == "\0name").then(|| value.clone()));
+                        if let Some(value) = named { Self::change_entry(&mut thing.holds.borrow_mut(), "\0name", Some(value)); }
                     }
                 }
                 Ok(made)
@@ -1018,7 +1019,7 @@ impl<'a> Machine<'a> {
                 let plain=self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(known,&property.blueprint()));
                 {
                     let mut holds=property.holds.borrow_mut();
-                    holds.retain(|(k,_)| k!="\0name" && k!="\0doc" && k!="\0getterdoc" && k!="__doc__");
+                    holds.retain(|(key,_)| !["\0fget", "\0fset", "\0fdel", "\0name", "\0doc", "\0getterdoc", "__doc__"].contains(&key.as_str()));
                     for (key,v) in ["\0fget","\0fset","\0fdel"].into_iter().zip(taken.iter().take(3)) { holds.push((key.to_owned(),v.clone())); }
                     holds.push(("\0doc".to_owned(),doc.clone()));
                     holds.push(("\0getterdoc".to_owned(),Value::Flag(getter_doc)));

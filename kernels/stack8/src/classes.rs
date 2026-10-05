@@ -701,7 +701,7 @@ impl<'a> Engine<'a> {
         for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
         if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26, vec![]))); }
-        members.push((self.class_word("name").to_string(), Self::adapter(31, vec![])));
+        members.push((self.class_word("name").to_string(), Self::adapter(28, vec![Value::text("\0name")])));
         for part in ["property.fget", "property.fset", "property.fdel", "doc", "property.is_abstract"] {
             members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
         }
@@ -760,7 +760,7 @@ impl<'a> Engine<'a> {
                 Ok(Value::Null)
             }
             // A fresh property of the same class, one accessor changed;
-            // its name is left for the class that takes it to give.
+            // its stored name, including None, is carried over.
             23..=25 => {
                 let [accessor] = given else { return Err(self.class_refusal()) };
                 let place = ["\0fget", "\0fset", "\0fdel"][(tag - 23) as usize];
@@ -779,7 +779,8 @@ impl<'a> Engine<'a> {
                 if let Value::Object(instance) = &made {
                     let class = instance.class_now();
                     if self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(&class, known) || class.lineage.iter().any(|base| Rc::ptr_eq(base, known))) {
-                        if let Some(name) = Self::property_accessor(&property, "\0name") {
+                        let stored_name = property.fields.borrow().iter().find(|(key, _)| key == "\0name").map(|(_, value)| value.clone());
+                        if let Some(name) = stored_name {
                             let _ = Self::write_members(&mut instance.fields.borrow_mut(), "\0name", Some(name), false);
                         }
                     }
@@ -814,7 +815,7 @@ impl<'a> Engine<'a> {
                 let plain = self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &property.class_now()));
                 {
                     let mut fields = property.fields.borrow_mut();
-                    fields.retain(|(n, _)| n != "\0name" && n != "\0doc" && n != "\0getterdoc" && n != "__doc__");
+                    fields.retain(|(n, _)| !matches!(n.as_str(), "\0fget" | "\0fset" | "\0fdel" | "\0name" | "\0doc" | "\0getterdoc" | "__doc__"));
                     for (place, value) in ["\0fget", "\0fset", "\0fdel"].iter().zip(kept.iter().take(3)) { fields.push((place.to_string(), value.clone())); }
                     fields.push(("\0doc".to_string(), doc.clone()));
                     fields.push(("\0getterdoc".to_string(), Value::Flag(getter_doc)));
@@ -845,6 +846,7 @@ impl<'a> Engine<'a> {
     /// What a property's kept accessor reads as: the accessor itself, or
     /// for its first string, the one it was given, else its getter's.
     fn property_reading(&mut self, property: &Instance, place: &str) -> Flow<Value> {
+        if place == "\0name" { return self.property_name(property); }
         // Whether the property stands for a question nobody has
         // answered: a plain yes or no, taken from the marks on its
         // getter, its setter and its deleter alike. What a mark holds
@@ -2090,7 +2092,6 @@ impl<'a> Engine<'a> {
                 // property: bound to it. Its kept accessors read plainly.
                 20..=27 | 30 | 79..=80 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => self.property_reading(&o, &w.1[0].plain()), _ => Ok(value) },
-                31 => match subject { Some(Value::Object(o)) => self.property_name(&o), _ => Ok(value) },
                 _ => Ok(value),
             };
         }
@@ -3479,13 +3480,14 @@ impl<'a> Engine<'a> {
                 if let Some(member)=self.class_value(&o.class_now(),name) {
                     if let Value::Adapter(w)=&member {
                         if w.0==16 {return self.slot_write(&subject,&w.1,value);}
-                        // A property's own document string is kept among
-                        // its fields and takes a write; its accessors do
+                        // A property keeps its docstring and assigned name
+                        // in private fields that take writes; its accessors do
                         // not, as CPython keeps them read-only.
                         if w.0==28 {
-                            if w.1[0].plain() != "\0doc" { return Err(self.class_word("property.readonly").to_string().into()); }
+                            let place = w.1[0].plain();
+                            if !matches!(place.as_str(), "\0doc" | "\0name") { return Err(self.class_word("property.readonly").to_string().into()); }
                             let mut fields = o.fields.borrow_mut();
-                            let _ = Self::write_members(&mut fields, "\0doc", value, false);
+                            let _ = Self::write_members(&mut fields, &place, value, false);
                             return Ok(Value::Null);
                         }
                     }
