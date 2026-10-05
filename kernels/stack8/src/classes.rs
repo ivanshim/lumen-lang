@@ -4653,7 +4653,10 @@ impl<'a> Engine<'a> {
         let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".into()); };
         let Value::Object(o) = subject else { return Err(self.class_refusal()); };
         if plain.len() > 3 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len() - 1).into()); }
-        let Some(given) = plain.get(1) else { return Ok(Value::Null); };
+        // Reached with nothing but the thing, the constructing reads
+        // its class and first argument from the frame it was called
+        // in, and a frame with no first argument to give has none.
+        let Some(given) = plain.get(1) else { return Err("RuntimeError: super(): no arguments".into()); };
         let owner = self.super_type_arg(given)?;
         let receiver = plain.get(2).cloned().unwrap_or(Value::Null);
         self.super_fill(o, owner, receiver)?;

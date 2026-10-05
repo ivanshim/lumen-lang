@@ -4840,7 +4840,10 @@ impl<'a> Machine<'a> {
         let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".to_owned().into()); };
         let Value::Thing(t) = subject else { return Err(self.class_unready()); };
         if plain.len() > 3 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len() - 1).into()); }
-        let Some(first) = plain.get(1) else { return Ok(Value::Nil); };
+        // Reached with nothing but the thing, the constructing reads
+        // its class and first argument from the frame it was called
+        // in, and a frame with no first argument to give has none.
+        let Some(first) = plain.get(1) else { return Err("RuntimeError: super(): no arguments".to_owned().into()); };
         let owner = self.parent_type_arg(first)?;
         let receiver = plain.get(2).cloned().unwrap_or(Value::Nil);
         self.parent_fill(t, owner, receiver)?;
