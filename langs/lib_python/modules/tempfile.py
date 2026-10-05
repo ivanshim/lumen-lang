@@ -115,10 +115,9 @@ def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
                   suffix=None, prefix=None, dir=None, *, errors=None):
     binary, reading, writing, _appending = _reading_mode(mode)
     import operator
-    import sys
     buffering = operator.index(buffering)
-    if buffering > sys.maxsize or buffering < -sys.maxsize - 1:
-        raise OverflowError('Python int too large to convert to C ssize_t')
+    if buffering > 2147483647 or buffering < -2147483648:
+        raise OverflowError('Python int too large to convert to C int')
     if encoding is not None and not isinstance(encoding, str):
         raise TypeError("open() argument 'encoding' must be str or None, not " + type(encoding).__name__)
     if errors is not None and not isinstance(errors, str):
