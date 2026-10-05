@@ -2881,6 +2881,18 @@ impl<'a> Machine<'a> {
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
             }
+            // The two byte kinds read their two class methods by the
+            // primitive that carries them, the way the builder spells
+            // them, so a member holding the kind reaches them too.
+            if matches!(Self::native_word(b).as_deref(), Some("bytes" | "bytearray")) && (key == "fromhex" || key == "maketrans") {
+                let (task, word) = match (Self::native_word(b).as_deref(), key) {
+                    (Some("bytes"), "fromhex") => (5u8, "bytes.fromhex"),
+                    (Some("bytearray"), "fromhex") => (49u8, "bytearray.fromhex"),
+                    (_, "maketrans") => (40u8, "bytes.maketrans"),
+                    _ => unreachable!(),
+                };
+                return Ok(Value::Intrinsic(Prim::Octets(task), Rc::from(word)));
+            }
             if key == self.detail("module") && self.table.has_any("ext.stmt.class.detail.module") {
                 match Self::own_entry(b, key) {
                     Some(metadata) => return Ok(metadata),

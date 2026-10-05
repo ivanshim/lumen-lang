@@ -2299,6 +2299,18 @@ impl<'a> Engine<'a> {
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));
                 }
+                // The two byte kinds read their two class methods by the
+                // builtin that carries them, the way the compiler spells
+                // them, so a member holding the kind reaches them too.
+                if matches!(Self::own_kind(c).as_deref(), Some("bytes" | "bytearray")) && (name == "fromhex" || name == "maketrans") {
+                    let (task, word) = match (Self::own_kind(c).as_deref(), name) {
+                        (Some("bytes"), "fromhex") => (5u8, "bytes.fromhex"),
+                        (Some("bytearray"), "fromhex") => (49u8, "bytearray.fromhex"),
+                        (_, "maketrans") => (40u8, "bytes.maketrans"),
+                        _ => unreachable!(),
+                    };
+                    return Ok(Value::Native(Builtin::Bytes(task), Rc::from(word)));
+                }
                 if name==self.class_word("name") { return Ok(c.python_names.borrow().as_ref().map_or_else(|| Value::text(&c.name), |names| names.0.clone())); }
                 if name==self.class_word("qualified") { return Ok(c.python_names.borrow().as_ref().map(|names| names.1.clone()).unwrap_or_else(|| self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name)))); }
                 if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().cloned().map(|base| self.public_class(base)).collect())); }

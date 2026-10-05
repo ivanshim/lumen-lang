@@ -432,7 +432,7 @@ const TEXT_METHOD_LABELS: &[&str] = &[
 const BYTE_METHOD_LABELS: &[&str] = &[
     "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower",
     "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace",
-    "ext.builtin.bytes.strip", "ext.builtin.bytes.find",
+    "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.maketrans",
 ];
 const SET_METHOD_LABELS: &[&str] = &[
     "ext.builtin.set.add", "ext.builtin.set.remove", "ext.builtin.set.discard", "ext.builtin.set.pop",
@@ -6179,7 +6179,11 @@ impl<'a> Engine<'a> {
             Kindred::Set(fixed) => (&self.lang.set_words, if fixed { SET_STILL_LABELS } else { SET_METHOD_LABELS }),
             _ => (&self.lang.text_words, [].as_slice()),
         };
-        for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
+        for label in labels {
+            for word in book.get(*label).into_iter().flatten() {
+                names.push(word.rsplit('.').next().unwrap_or(word).to_string());
+            }
+        }
         // A counted row keeps its bounds beside the places it answers
         // through the methods above.
         if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
@@ -15101,12 +15105,17 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(builtin, Builtin::Bytes(0..=3)) && !named.is_empty() {
+            let constructing = matches!(builtin, Builtin::Bytes(0 | 1));
             let source_is_text = args.first().map_or(false, |source| matches!(source, Value::Text(_)));
-            for (key, value) in std::mem::take(&mut named) {
+            let mut handed = std::mem::take(&mut named);
+            handed.sort_by_key(|(key, _)| match key.as_str() { "encoding" => 0, "errors" => 1, _ => 2 });
+            for (key, value) in handed {
                 let at = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.byte_fault("arguments")) };
                 if args.len() > at { return Err(self.byte_fault("arguments")); }
-                if !source_is_text { return Err(format!("TypeError: {} without a string argument", key)); }
-                if at == 2 && args.len() < 2 { return Err("TypeError: string argument without an encoding".to_string()); }
+                if constructing {
+                    if !source_is_text { return Err(format!("TypeError: {} without a string argument", key)); }
+                    if at == 2 && args.len() < 2 { return Err("TypeError: string argument without an encoding".to_string()); }
+                }
                 while args.len() < at { args.push(Value::text("utf-8")); }
                 args.push(value);
             }
@@ -16911,6 +16920,7 @@ impl<'a> Engine<'a> {
                     let count = self.byte_count(value)?;
                     if let Some(count) = count {
                         if count.is_negative() { return Err(self.byte_fault("negative")); }
+                        if count.to_isize().is_none() { return Err(self.sequence_oversize()); }
                         let count = count.to_usize().ok_or_else(|| self.byte_fault("unready"))?;
                         let mut row = Vec::new();
                         row.try_reserve_exact(count).map_err(|_| self.byte_fault("unready"))?;

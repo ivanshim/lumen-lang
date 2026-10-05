@@ -12356,6 +12356,7 @@ impl<'a> Machine<'a> {
                         let quantity = self.octet_count(&values[0])?;
                         if let Some(quantity) = quantity {
                             if quantity < BigInt::zero() { return Err(self.octet_error("negative")); }
+                            if quantity.to_isize().is_none() { return Err(self.repeating_too_wide()); }
                             let length = quantity.to_usize().ok_or_else(|| self.octet_error("unready"))?;
                             let mut content = Vec::new();
                             content.try_reserve(length).map_err(|_| self.octet_error("unready"))?;
