@@ -83,6 +83,9 @@ thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static LISTENING: Cell<usize> = const { Cell::new(0) };
     static LISTENERS: RefCell<Vec<Rc<Dim>>> = const { RefCell::new(Vec::new()) };
+    // Wrapped methods have no drop notification; only their listeners
+    // need polling. Class and instance listeners are notified on departure.
+    static POLL_WRAPPED: Cell<bool> = const { Cell::new(false) };
     static STIRRED: Cell<bool> = const { Cell::new(false) };
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -134,6 +137,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             false
         });
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
+        let _ = POLL_WRAPPED.try_with(|poll| poll.set(listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_)))));
         notices.into_iter().rev().collect()
     }).unwrap_or_default()
 }
@@ -174,7 +178,8 @@ pub fn bidding() -> bool {
 
 /// Whether the machine has anything to attend to before its next step.
 pub fn stirred() -> bool {
-    let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
+    let gone_method = POLL_WRAPPED.try_with(|poll| poll.get()).unwrap_or(false)
+        && LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
     if gone_method { anything_departing(); }
     STIRRED.try_with(|s| s.get()).unwrap_or(false) || anchor_ready()
 }
@@ -270,6 +275,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
+            let _ = POLL_WRAPPED.try_with(|poll| poll.set(still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_)))));
             still.reverse();
             *all = still;
         });
@@ -311,6 +317,7 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
+        if matches!(held.ghost, Ghost::WrappedMethod(_)) { let _ = POLL_WRAPPED.try_with(|poll| poll.set(true)); }
     }
     Value::Dim(held)
 }
