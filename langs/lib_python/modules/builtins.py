@@ -101,6 +101,7 @@ IOError = OSError
 __file_exists = _host_file_exists
 __file_kind = _host_file_kind
 __file_read = _host_file_read
+__file_read_bytes = _host_file_read_bytes
 __file_write = _host_file_write
 
 bool = bool

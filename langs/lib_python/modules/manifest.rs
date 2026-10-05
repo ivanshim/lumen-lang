@@ -38,6 +38,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_sha1", include_str!("_sha1.py"), "_sha1.py"),
     ("_sha2", include_str!("_sha2.py"), "_sha2.py"),
     ("_sha3", include_str!("_sha3.py"), "_sha3.py"),
+    ("_socket", include_str!("_socket.py"), "_socket.py"),
     ("_sre", include_str!("_sre.py"), "_sre.py"),
     ("_sre_validation", include_str!("_sre_validation.py"), "_sre_validation.py"),
     ("_stat", include_str!("_stat.py"), "_stat.py"),
