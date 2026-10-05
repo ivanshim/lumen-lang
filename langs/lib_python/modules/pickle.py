@@ -1,6 +1,7 @@
 # Pickle reductions use the Python reconstruction protocol. The byte
 # envelope remains the runtime's private marshal-based representation,
 # except for boolean roots using standard pickle encodings for protocols 0--5.
+import codecs
 import marshal
 import sys
 
@@ -51,6 +52,8 @@ def _global(module, name):
         return owner
     if module == '__builtin__':
         module = 'builtins'
+    if module == 'copy_reg':
+        module = 'copyreg'
     if module == 'builtins' and name == 'NotImplemented':
         return NotImplemented
     if module == 'builtins' and name == 'Ellipsis':
@@ -430,6 +433,50 @@ def _read_protocol(data):
                 stack.append(memo[index])
         elif op == 78:
             stack.append(None)
+        elif op == 129:
+            args = stack.pop()
+            cls = stack.pop()
+            stack.append(cls.__new__(cls, *args))
+        elif op == 125:
+            stack.append({})
+        elif op == 100:
+            mark = marks.pop()
+            items = stack[mark:]
+            del stack[mark:]
+            d = {}
+            for i in range(0, len(items), 2):
+                d[items[i]] = items[i + 1]
+            stack.append(d)
+        elif op == 83:
+            end = data.index(b'\n', at)
+            token = data[at:end]
+            at = end + 1
+            if len(token) >= 2 and token[0] == token[-1] and token[0] in (34, 39):
+                token = token[1:-1]
+            else:
+                raise UnpicklingError('the STRING opcode argument must be quoted')
+            stack.append(codecs.decode(token, 'unicode_escape'))
+        elif op == 86:
+            end = data.index(b'\n', at)
+            token = data[at:end]
+            at = end + 1
+            stack.append(codecs.decode(token, 'raw_unicode_escape'))
+        elif op == 85:
+            size = data[at]
+            at += 1
+            stack.append(data[at:at + size].decode())
+            at += size
+        elif op == 115:
+            value = stack.pop()
+            key = stack.pop()
+            stack[-1][key] = value
+        elif op == 117:
+            mark = marks.pop()
+            items = stack[mark:]
+            del stack[mark:]
+            d = stack[-1]
+            for i in range(0, len(items), 2):
+                d[items[i]] = items[i + 1]
         elif op in (113, 104):
             index = data[at]
             at += 1

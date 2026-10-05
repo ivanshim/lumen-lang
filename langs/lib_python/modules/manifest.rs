@@ -234,6 +234,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("unittest", include_str!("unittest.py"), "unittest/__init__.py"),
     ("urllib.parse", include_str!("urllib/parse.py"), "urllib/parse.py"),
     ("urllib", include_str!("urllib.py"), "urllib/__init__.py"),
+    ("uuid", include_str!("uuid.py"), "uuid.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),

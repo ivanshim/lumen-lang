@@ -225,12 +225,13 @@ class MagicMock(Mock):
 
 
 class _Patch:
-    def __init__(self, target, attribute, new, create, made):
+    def __init__(self, target, attribute, new, create, made, new_callable=None):
         self.target = target
         self.attribute = attribute
         self.new = new
         self.create = create
         self.made = made
+        self.new_callable = new_callable
         self.temporary = None
         self.held = DEFAULT
 
@@ -242,7 +243,10 @@ class _Patch:
         else:
             self.held = DEFAULT
         if self.new is DEFAULT:
-            self.temporary = Mock(name=self.attribute, **self.made)
+            if self.new_callable is not None:
+                self.temporary = self.new_callable(**self.made)
+            else:
+                self.temporary = Mock(name=self.attribute, **self.made)
         else:
             self.temporary = self.new
         setattr(self.target, self.attribute, self.temporary)
@@ -280,6 +284,23 @@ class _Patch:
         return patched
 
 
+class _MultiplePatch:
+    # Several attributes of one thing stood in for at once, each by its
+    # own stand-in or plain value, put in together and taken out together.
+    def __init__(self, target, values):
+        self.patches = [_Patch(target, name, value, False, {})
+                        for name, value in values.items()]
+
+    def __enter__(self):
+        for one in self.patches:
+            one.start()
+
+    def __exit__(self, kind, value, traceback):
+        for one in reversed(self.patches):
+            one.stop()
+        return False
+
+
 _TAKEN = ('wraps', 'return_value', 'side_effect')
 
 # A dotted name is split at its last dot: what comes before is a chain
@@ -304,24 +325,26 @@ def _get_target(target):
     return thing, attribute
 
 class _Patcher:
-    def __call__(self, target, new=DEFAULT, create=False, **extra):
+    def __call__(self, target, new=DEFAULT, create=False, new_callable=None, **extra):
         for word in extra:
             if word not in _TAKEN:
                 raise 'NotImplementedError: patch does not take ' + word
         thing, attribute = _get_target(target)
-        return _Patch(thing, attribute, new, create, extra)
+        return _Patch(thing, attribute, new, create, extra, new_callable)
 
-    def object(self, target, attribute, new=DEFAULT, create=False, **extra):
+    def object(self, target, attribute, new=DEFAULT, create=False, new_callable=None, **extra):
         for word in extra:
             if word not in _TAKEN:
                 raise 'NotImplementedError: patch.object does not take ' + word
-        return _Patch(target, attribute, new, create, extra)
+        return _Patch(target, attribute, new, create, extra, new_callable)
 
     def dict(self, target, values=None, clear=False, **extra):
         raise 'NotImplementedError: patch.dict is not supported'
 
     def multiple(self, target, **extra):
-        raise 'NotImplementedError: patch.multiple is not supported'
+        if not extra:
+            raise ValueError('Must supply at least one keyword argument with patch.multiple')
+        return _MultiplePatch(target, extra)
 
 patch = _Patcher()
 
