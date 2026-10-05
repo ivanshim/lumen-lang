@@ -8378,8 +8378,12 @@ impl<'a> Builder<'a> {
                         let combined = self.kept_after(prim_call(operation, vec![current, value]));
                         steps.push(Form::Write(put.clone(), Box::new(combined)));
                     }
-                    steps.push(prim_call(Prim::Replace, vec![Form::Read(object), Form::Read(key), Form::Read(put.clone())]));
-                    steps.push(if gives_back { Form::Read(put) } else { constant(Value::Nil) });
+                    steps.push(prim_call(Prim::Replace, vec![Form::Read(object.clone()), Form::Read(key.clone()), Form::Read(put.clone())]));
+                    // Drop the evaluated target after its write. These cells
+                    // are implementation storage, not additional Python roots.
+                    steps.extend([Form::Forget(object), Form::Forget(key)]);
+                    steps.push(if gives_back { Form::Release(put) }
+                        else { sequence(vec![Form::Forget(put), constant(Value::Nil)]) });
                     return Ok(sequence(steps));
                 }
             }
@@ -8532,13 +8536,12 @@ impl<'a> Builder<'a> {
                 // are let go now the write has landed: a cell the program
                 // itself does not share should not go on being held by a
                 // name of the builder's own making.
-                for cell in &in_cells {
-                    let slot = self.address_to_write(cell);
-                    steps.push(Form::Forget(slot));
+                for cell in in_cells.iter().chain(&at_cells) {
+                    steps.push(Form::Forget(self.address_to_write(cell)));
                 }
-                if gives_back {
-                    steps.push(self.read(&holding));
-                }
+                let value_slot = self.address_to_write(&holding);
+                steps.push(if gives_back { Form::Release(value_slot) }
+                    else { sequence(vec![Form::Forget(value_slot), constant(Value::Nil)]) });
                 sequence(steps)
             }
             // `a[i][j] = v` and `a[i][] = v`: the keys are worked out
@@ -8616,9 +8619,12 @@ impl<'a> Builder<'a> {
                 let back = self.read(&in_cells[0]);
                 let home = self.address_to_rewrite(&name);
                 steps.push(Form::Write(home, Box::new(back)));
-                if gives_back {
-                    steps.push(self.read(&holding));
+                for name in at_cells.iter().chain(&in_cells) {
+                    steps.push(Form::Forget(self.address_to_write(name)));
                 }
+                let returned = self.address_to_write(&holding);
+                steps.push(if gives_back { Form::Release(returned) }
+                    else { sequence(vec![Form::Forget(returned), constant(Value::Nil)]) });
                 sequence(steps)
             }
             // `a[i] = &b`: the place holds the cell itself, so a write
@@ -9518,6 +9524,20 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.spells("ext.stmt.class.self", &t.lexeme) || table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
                 self.read_class(&t.lexeme)?
+            }
+            // Resolve a shadowed owner before calling an entry whose full
+            // dotted spelling would otherwise select a native primitive.
+            Shape::Bare if table.prims.get(&t.lexeme) == Some(&Prim::ValueMethod)
+                && t.lexeme.split_once('.').is_some_and(|(kind, _)| self.uses_bound_callable(kind)) => {
+                self.advance();
+                let (kind, entry) = t.lexeme.split_once('.').expect("native entry spelling");
+                let owner = self.read(kind);
+                let method = prim_call(Prim::Of, vec![owner, constant(Value::text(entry))]);
+                if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
+                    self.advance();
+                    let arguments = self.arguments_of(entry, "syntax.call.close", "syntax.call.separator")?;
+                    invoke(method, arguments)
+                } else { method }
             }
             Shape::Bare => {
                 self.advance();

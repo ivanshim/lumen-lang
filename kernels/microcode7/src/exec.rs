@@ -1836,7 +1836,7 @@ impl<'a> Machine<'a> {
         // rather than settled into a copy, so a member the body adds is
         // reached in its turn and one the body takes away is passed over.
         if matches!(op, Prim::Walked) && self.rules.suspends {
-            if let Some(living @ IteratorKind::Living(..)) = v.first().and_then(Self::live_walk) {
+            if let Some(living @ IteratorKind::Living(..)) = v.first().and_then(|value| self.live_walk(value)) {
                 return Ok(Self::cursor_value(living));
             }
         }
@@ -3679,7 +3679,7 @@ impl<'a> Machine<'a> {
 
 
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
-        if let (true, Some(walk)) = (self.rules.suspends, Self::live_walk(&source)) {
+        if let (true, Some(walk)) = (self.rules.suspends, self.live_walk(&source)) {
             return Ok(Self::cursor_value(walk));
         }
         if let Value::Generator(_) = source { return Ok(source); }
@@ -7003,7 +7003,7 @@ impl<'a> Machine<'a> {
                     // into a copy: it goes on in its own cell, so the walk
                     // reaches what the body adds and misses what it takes.
                     if *op == Prim::Iterated && self.rules.suspends {
-                        if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(Self::live_walk) { return Ok(Self::cursor_value(living)); }
+                        if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(|value| self.live_walk(value)) { return Ok(Self::cursor_value(living)); }
                     }
                     // The property builtin takes its accessors by name; making the property sorts them out.
                     if *op == Prim::ClassWork(13) { return self.work_on_class(13, values); }
@@ -9322,7 +9322,7 @@ impl<'a> Machine<'a> {
             if let Some(c) = maker.filter(|c| Self::native_beneath(c).is_some()) {
                 // The builtin `dict` makes a plain map, as the class method
                 // itself does; a subclass makes one of itself.
-                if c.name == "dict" {
+                if Self::native_word(&c).as_deref().and_then(|kind| self.table.prims.get(kind)) == Some(&Prim::Dictionary) {
                     return self.dict_fromkeys(&target, filling).map_err(Escape::from);
                 }
                 let made = self.apply_class_member(Value::Blueprint(c.clone()), Vec::new())?;
@@ -15518,7 +15518,7 @@ impl<'a> Machine<'a> {
     }
 
     fn compensated_total(&mut self, supplied: &Value) -> Result<Value, String> {
-        let iterator = if let Some(kind) = Self::live_walk(supplied) { Self::cursor_value(kind) }
+        let iterator = if let Some(kind) = self.live_walk(supplied) { Self::cursor_value(kind) }
             else { self.iterated_value(&supplied.settled())? };
         let mut pieces = Vec::<f64>::new();
         let mut exceptional = 0.0_f64;
@@ -15574,7 +15574,7 @@ impl<'a> Machine<'a> {
     }
 
     fn dot_product(&mut self, first: &Value, second: &Value) -> Result<Value, String> {
-        let mut begin = |offered: &Value| match Self::live_walk(offered) {
+        let mut begin = |offered: &Value| match self.live_walk(offered) {
             Some(kind) => Ok(Self::cursor_value(kind)),
             None => self.iterated_value(&offered.settled()),
         };
@@ -24715,7 +24715,7 @@ impl Machine<'_> {
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
         if self.rules.suspends {
-            if let Some(kind) = Self::live_walk(source) { return Ok(Self::cursor_value(kind)); }
+            if let Some(kind) = self.live_walk(source) { return Ok(Self::cursor_value(kind)); }
         }
         if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
         if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
@@ -25063,7 +25063,7 @@ impl Machine<'_> {
 
     /// The cell a list lives in, or a window upon a dictionary, taken as
     /// iter finds them before they are settled into copies.
-    fn live_walk(value: &Value) -> Option<IteratorKind> {
+    fn live_walk(&self, value: &Value) -> Option<IteratorKind> {
         match value {
             Value::Window(..) => Some(IteratorKind::Watching { window: value.clone(), at: 0, size: Self::window_extent(value) }),
             Value::Shared(cell) => match &*cell.borrow() {
@@ -25071,16 +25071,16 @@ impl Machine<'_> {
                 // A map in a name's cell is walked keys-first through a
                 // window on the cell, so a change made while the walk
                 // runs is refused rather than passed over.
-                Value::Dict(_) => {
+                Value::Dict(_) if self.table.has_any("ext.builtin.core.dict.changed") => {
                     let window = Value::Window(Rc::new(value.clone()), 'k');
                     Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
                 }
-                inner @ (Value::Mutable(..) | Value::Window(..)) => Self::live_walk(inner),
+                inner @ (Value::Mutable(..) | Value::Window(..)) => self.live_walk(inner),
                 _ => None,
             },
             Value::Mutable(cell, _) => match &*cell.borrow() {
                 Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
-                Value::Dict(_) => {
+                Value::Dict(_) if self.table.has_any("ext.builtin.core.dict.changed") => {
                     let window = Value::Window(Rc::new(value.clone()), 'k');
                     Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
                 }
@@ -25244,7 +25244,7 @@ impl Machine<'_> {
         // primitive alone is handed the cell as it stands.
         // A list or a dictionary's window is walked as it stands, so what
         // iter is handed is looked at before it is settled into a copy.
-        let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
+        let live = if op == Prim::Iterator && input.len() == 1 { self.live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
         let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some((**owner).clone()), _ => None };
         // A member read by name is bound to the value as it stands, so

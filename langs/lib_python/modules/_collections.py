@@ -590,6 +590,8 @@ class defaultdict(dict):
         if factory is None:
             raise KeyError(key)
         value = factory()
+        # CPython 3.14 uses PyDict_SetDefaultRef: a recursive factory's
+        # insertion wins, and a subclass's assignment hook is bypassed.
         return dict.setdefault(self, key, value)
 
     def __repr__(self):

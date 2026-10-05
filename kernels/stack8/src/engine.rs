@@ -4503,7 +4503,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
         if self.lang.yield_suspends {
-            if let Some(live) = Self::living_source(&source) { return Ok(Self::core_cursor(live)); }
+            if let Some(live) = self.living_source(&source) { return Ok(Self::core_cursor(live)); }
         }
         if matches!(source, Value::Generator(_)) { return Ok(source); }
         if self.lang.python_numbers {
@@ -10215,7 +10215,7 @@ impl<'a> Engine<'a> {
                     // change of its size under the walk stops the next
                     // step, and the values it hands out are not kept
                     // alive beyond that one step.
-                    if let Some(living @ CursorSource::Viewed(..)) = Self::living_source(&source) {
+                    if let Some(living @ CursorSource::Viewed(..)) = self.living_source(&source) {
                         self.data.push(Self::core_cursor(living));
                         return Ok(());
                     }
@@ -10227,7 +10227,7 @@ impl<'a> Engine<'a> {
                 // cell it lives in, so a member the body adds is handed
                 // out in its turn and one the body takes away is not.
                 if self.lang.yield_suspends {
-                    if let Some(living @ CursorSource::Living(..)) = Self::living_source(&source) {
+                    if let Some(living @ CursorSource::Living(..)) = self.living_source(&source) {
                         self.data.push(Self::core_cursor(living));
                         return Ok(());
                     }
@@ -13479,7 +13479,7 @@ impl<'a> Engine<'a> {
     }
 
     fn precise_sum(&mut self, iterable: &Value) -> Res<Value> {
-        let walk = match Self::living_source(iterable) {
+        let walk = match self.living_source(iterable) {
             Some(source) => Self::core_cursor(source),
             None => self.core_iterator(&iterable.contents())?,
         };
@@ -13533,7 +13533,7 @@ impl<'a> Engine<'a> {
     }
 
     fn product_sum(&mut self, p: &Value, q: &Value) -> Res<Value> {
-        let mut iterator = |source: &Value| match Self::living_source(source) {
+        let mut iterator = |source: &Value| match self.living_source(source) {
             Some(live) => Ok(Self::core_cursor(live)),
             None => self.core_iterator(&source.contents()),
         };
@@ -20952,7 +20952,7 @@ impl Engine<'_> {
 
     fn core_iterator(&mut self, source: &Value) -> Res<Value> {
         if self.lang.yield_suspends {
-            if let Some(live) = Self::living_source(source) { return Ok(Self::core_cursor(live)); }
+            if let Some(live) = self.living_source(source) { return Ok(Self::core_cursor(live)); }
         }
         if self.is_async_generator(source) { return Err(self.core_fault("core.uniterable", &source.core_kind())); }
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
@@ -20985,7 +20985,7 @@ impl Engine<'_> {
         // A plain map is walked through a keys window, whose walk
         // remembers the revision it began at: a change made while the
         // walk runs is refused, as the reference refuses it.
-        if let Value::Map(_) = source {
+        if self.lang.core_words.contains_key("core.dict.changed") && matches!(source, Value::Map(_)) {
             let window = Value::View(Rc::new((source.clone(), "keys".to_string())));
             let size = Self::window_size(&window);
             let walk = Self::core_cursor(CursorSource::Viewed(window, 0, size));
@@ -21270,7 +21270,7 @@ impl Engine<'_> {
     /// What iter is handed before its cell is opened: a list's own cell,
     /// or a window upon a map, each walked as it stands rather than
     /// copied as it stood.
-    fn living_source(value: &Value) -> Option<CursorSource> {
+    fn living_source(&self, value: &Value) -> Option<CursorSource> {
         match value {
             Value::View(_) => Some(CursorSource::Viewed(value.clone(), 0, Self::window_size(value))),
             Value::Bond(cell) | Value::Binding(cell) => match &*cell.borrow() {
@@ -21278,17 +21278,17 @@ impl Engine<'_> {
                 // A map in a name's cell is walked keys-first through a
                 // window upon the cell, so a change made while the walk
                 // runs is refused rather than passed over.
-                Value::Map(_) => {
+                Value::Map(_) if self.lang.core_words.contains_key("core.dict.changed") => {
                     let window = Value::View(Rc::new((value.clone(), "keys".to_string())));
                     let size = Self::window_size(&window);
                     Some(CursorSource::Viewed(window, 0, size))
                 }
-                inner @ (Value::Collection(..) | Value::View(_)) => Self::living_source(inner),
+                inner @ (Value::Collection(..) | Value::View(_)) => self.living_source(inner),
                 _ => None,
             },
             Value::Collection(cell, _) => match &*cell.borrow() {
                 Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
-                Value::Map(_) => {
+                Value::Map(_) if self.lang.core_words.contains_key("core.dict.changed") => {
                     let window = Value::View(Rc::new((value.clone(), "keys".to_string())));
                     let size = Self::window_size(&window);
                     Some(CursorSource::Viewed(window, 0, size))
@@ -21482,7 +21482,7 @@ impl Engine<'_> {
         // A cursor over a list, or over a window upon a map, reads it as
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
-        let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
+        let living = if b == Builtin::Iter && args.len() == 1 { self.living_source(&args[0]) } else { None };
         let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
