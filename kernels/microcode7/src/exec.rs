@@ -2033,7 +2033,7 @@ impl<'a> Machine<'a> {
         // rather than settled into a copy, so a member the body adds is
         // reached in its turn and one the body takes away is passed over.
         if matches!(op, Prim::Walked) && self.rules.suspends {
-            if let Some(living @ IteratorKind::Living(..)) = v.first().and_then(Self::live_walk) {
+            if let Some(living @ IteratorKind::Living(..)) = v.first().and_then(|value| self.live_walk(value)) {
                 return Ok(Self::cursor_value(living));
             }
         }
@@ -3903,7 +3903,7 @@ impl<'a> Machine<'a> {
 
 
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
-        if let (true, Some(walk)) = (self.rules.suspends, Self::live_walk(&source)) {
+        if let (true, Some(walk)) = (self.rules.suspends, self.live_walk(&source)) {
             return Ok(Self::cursor_value(walk));
         }
         if let Value::Generator(_) = source { return Ok(source); }
@@ -7226,7 +7226,7 @@ impl<'a> Machine<'a> {
                     // into a copy: it goes on in its own cell, so the walk
                     // reaches what the body adds and misses what it takes.
                     if *op == Prim::Iterated && self.rules.suspends {
-                        if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(Self::live_walk) { return Ok(Self::cursor_value(living)); }
+                        if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(|value| self.live_walk(value)) { return Ok(Self::cursor_value(living)); }
                     }
                     // The property builtin takes its accessors by name; making the property sorts them out.
                     if *op == Prim::ClassWork(13) { return self.work_on_class(13, values); }
@@ -9668,6 +9668,11 @@ impl<'a> Machine<'a> {
                 _ => None,
             };
             if let Some(c) = maker.filter(|c| Self::native_beneath(c).is_some()) {
+                // The builtin `dict` makes a plain map, as the class method
+                // itself does; a subclass makes one of itself.
+                if Self::native_word(&c).as_deref().and_then(|kind| self.table.prims.get(kind)) == Some(&Prim::Dictionary) {
+                    return self.dict_fromkeys(&target, filling).map_err(Escape::from);
+                }
                 let made = self.apply_class_member(Value::Blueprint(c.clone()), Vec::new())?;
                 let copy = Self::frozen_beneath(&made);
                 let mut working = if copy { self.frozen_rows(&made)? } else { made };
@@ -10861,7 +10866,11 @@ impl<'a> Machine<'a> {
                 Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
                 Value::Flag(true) => {
                     let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
-                    if let Value::Dict(entries) = pair.1.settled() {
+                    let spread = match pair.1.settled() {
+                        Value::Dict(_) => pair.1.settled(),
+                        _ => Self::underlying(&pair.1).map(|under| under.settled()).unwrap_or_else(|| pair.1.settled()),
+                    };
+                    if let Value::Dict(entries) = spread {
                         for (k, v) in entries.iter() {
                             match k {
                                 Value::Text(text) => names.push((text.to_string(), v.clone())),
@@ -13231,7 +13240,10 @@ impl<'a> Machine<'a> {
                     let mapped = if matches!(other, Value::Thing(_)) {
                         match self.read_class_member(other.clone(), "keys", false) {
                             Ok(method) => Some(method),
-                            Err(escaped) if self.missing_member_escape(&escaped) => None,
+                            Err(escaped) if self.missing_member_escape(&escaped) => {
+                                self.sought_in_vain = None;
+                                None
+                            },
                             Err(escaped) => return Err(self.suspension_fault(escaped)),
                         }
                     } else { self.attribute(&other, "keys") };
@@ -13805,6 +13817,14 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            Value::Wrapped(3, parts) if !self.rules.detail_main.is_empty() => {
+                let named = match parts.first() {
+                    Some(Value::Routine(code) | Value::Bound(code, _)) => if code.qualification.is_empty() { code.ident.clone() } else { code.qualification.clone() },
+                    _ => String::new(),
+                };
+                let of = match parts.get(1) { Some(receiver) => self.object_words(receiver, true)?, None => String::new() };
+                Ok(format!("<bound method {named} of {of}>"))
+            }
             // A bound method is written by the routine's own full name
             // and the thing it is bound to, as CPython writes it; a
             // language with no word for the running module keeps the
@@ -14175,7 +14195,12 @@ impl<'a> Machine<'a> {
     fn member_for_case(&mut self, subject: &Value, word: &str) -> Result<Option<Value>, String> {
         match self.read_class_member(subject.clone(), word, false) {
             Ok(found) => Ok(Some(found)),
-            Err(escape) if self.missing_member_escape(&escape) => Ok(None),
+            Err(escape) if self.missing_member_escape(&escape) => {
+                // No exception leaves an optional member lookup. Drop the
+                // diagnostic receiver along with the suppressed absence.
+                self.sought_in_vain.take();
+                Ok(None)
+            },
             Err(Escape::Error(message)) => Err(message),
             Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
         }
@@ -15265,6 +15290,34 @@ impl<'a> Machine<'a> {
                 };
                 Value::Flag(found != (operation == Prim::Absent))
             }
+            // A thing standing on a mapping kind is searched by its worth's
+            // own places, not by walking every key and asking each one; the
+            // walk would call a key's __eq__ for keys the hash keeps apart.
+            (Prim::Contains | Prim::Absent, [needle, haystack @ Value::Thing(_)])
+                if self.appointment(haystack, 14).is_none()
+                    && matches!(Self::underlying(haystack).map(|worth| worth.settled()), Some(Value::Dict(_))) => {
+                let worth = Self::underlying(haystack).unwrap().settled();
+                let Value::Dict(entries) = worth else { unreachable!() };
+                if let Some(words) = self.cannot_key(needle) { return Err(words); }
+                let key = self.hash_key(needle)?;
+                let placed = match key.hash_address() {
+                    Ok(address) => match entries.locate(&address) {
+                        Found::Found(_) => Some(true),
+                        Found::Absent => Some(false),
+                        Found::Unknown => None,
+                    },
+                    Err(_) => None,
+                };
+                let found = match placed {
+                    Some(found) => found,
+                    None => {
+                        let mut found = false;
+                        for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
+                        found
+                    }
+                };
+                Value::Flag(found != (operation == Prim::Absent))
+            }
             (Prim::Placed, [Value::Dict(entries), key, value]) => {
                 if let Some(words) = self.cannot_key(key) { return Err(words); }
                 let keyed = self.hash_key(key)?;
@@ -15802,7 +15855,10 @@ impl<'a> Machine<'a> {
                 let reader = if matches!(value, Value::Thing(_)) {
                     match self.read_class_member(value.clone(), "keys", false) {
                         Ok(method) => Some(method),
-                        Err(escaped) if self.missing_member_escape(&escaped) => None,
+                        Err(escaped) if self.missing_member_escape(&escaped) => {
+                            self.sought_in_vain = None;
+                            None
+                        },
                         Err(escaped) => return Err(self.suspension_fault(escaped)),
                     }
                 } else { None };
@@ -16049,7 +16105,7 @@ impl<'a> Machine<'a> {
     }
 
     fn compensated_total(&mut self, supplied: &Value) -> Result<Value, String> {
-        let iterator = if let Some(kind) = Self::live_walk(supplied) { Self::cursor_value(kind) }
+        let iterator = if let Some(kind) = self.live_walk(supplied) { Self::cursor_value(kind) }
             else { self.iterated_value(&supplied.settled())? };
         let mut pieces = Vec::<f64>::new();
         let mut exceptional = 0.0_f64;
@@ -16105,7 +16161,7 @@ impl<'a> Machine<'a> {
     }
 
     fn dot_product(&mut self, first: &Value, second: &Value) -> Result<Value, String> {
-        let mut begin = |offered: &Value| match Self::live_walk(offered) {
+        let mut begin = |offered: &Value| match self.live_walk(offered) {
             Some(kind) => Ok(Self::cursor_value(kind)),
             None => self.iterated_value(&offered.settled()),
         };
@@ -20836,6 +20892,11 @@ impl<'a> Machine<'a> {
                 if let [value @ (Value::Text(_) | Value::Unpaired(_))] = v { return Ok(value.clone()); }
                 n(1)?;
                 self.figures_allowed(&v[0])?;
+                // A bound method (or a method closure) is written by the
+                // thing it is bound to, which only the program can word.
+                if matches!(&v[0], Value::Wrapped(3, _) | Value::Method(..)) {
+                    return self.object_words(&v[0], false).map(|text| Value::text(&text));
+                }
                 Value::text(&self.told(&v[0], w))
             }
             Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
@@ -25723,7 +25784,7 @@ impl Machine<'_> {
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
         if self.rules.suspends {
-            if let Some(kind) = Self::live_walk(source) { return Ok(Self::cursor_value(kind)); }
+            if let Some(kind) = self.live_walk(source) { return Ok(Self::cursor_value(kind)); }
         }
         if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
         if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
@@ -26085,15 +26146,29 @@ impl Machine<'_> {
 
     /// The cell a list lives in, or a window upon a dictionary, taken as
     /// iter finds them before they are settled into copies.
-    fn live_walk(value: &Value) -> Option<IteratorKind> {
+    fn live_walk(&self, value: &Value) -> Option<IteratorKind> {
         match value {
             Value::Window(..) => Some(IteratorKind::Watching { window: value.clone(), at: 0, size: Self::window_extent(value) }),
             Value::Shared(cell) => match &*cell.borrow() {
                 Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
-                inner @ (Value::Mutable(..) | Value::Window(..)) => Self::live_walk(inner),
+                // A map in a name's cell is walked keys-first through a
+                // window on the cell, so a change made while the walk
+                // runs is refused rather than passed over.
+                Value::Dict(_) if self.table.has_any("ext.builtin.core.dict.changed") => {
+                    let window = Value::Window(Rc::new(value.clone()), 'k');
+                    Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
+                }
+                inner @ (Value::Mutable(..) | Value::Window(..)) => self.live_walk(inner),
                 _ => None,
             },
-            Value::Mutable(cell, _) => matches!(&*cell.borrow(), Value::Vector(_)).then(|| IteratorKind::Living(cell.clone(), 0)),
+            Value::Mutable(cell, _) => match &*cell.borrow() {
+                Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
+                Value::Dict(_) if self.table.has_any("ext.builtin.core.dict.changed") => {
+                    let window = Value::Window(Rc::new(value.clone()), 'k');
+                    Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -26261,7 +26336,7 @@ impl Machine<'_> {
         // primitive alone is handed the cell as it stands.
         // A list or a dictionary's window is walked as it stands, so what
         // iter is handed is looked at before it is settled into a copy.
-        let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
+        let live = if op == Prim::Iterator && input.len() == 1 { self.live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
         let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some((**owner).clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
@@ -26281,7 +26356,7 @@ impl Machine<'_> {
                 }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
-                let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, _ => false };
+                let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };
                 if !lazy_input { *item = item.settled(); }
             }
         }
@@ -26407,10 +26482,9 @@ impl Machine<'_> {
                 // A whole number is quoted only where it holds no more
                 // figures than the table allows.
                 if matches!(input[0].settled(), Value::Huge(_)) { self.figures_allowed(&input[0])?; }
-                // A closure's cell keeps its value in a frame, so it is
-                // written by the engine's own walk, which can open that
-                // frame; the plain quoting cannot reach it.
-                if matches!(input[0], Value::Wrapped(35, _)) {
+                // Cells and bound methods need the runtime's access to their
+                // frame or receiver to produce their Python representation.
+                if portion.is_none() && matches!(input[0], Value::Wrapped(3 | 35, _) | Value::Method(..)) {
                     let rendered = self.object_words(&input[0], true)?;
                     return Ok(Value::text(&rendered));
                 }
@@ -27024,6 +27098,7 @@ impl Machine<'_> {
                         };
                     }
                     if input.len() == 3 { return Ok(input[2].clone()); }
+                    self.sought_in_vain = Some((word.to_owned(), input[0].clone()));
                     let told = self.member_missing(&input[0], &word);
                     if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
                     return Err(told);

@@ -1331,6 +1331,12 @@ impl<'a> Machine<'a> {
             })?;self.deeper()?;values.insert(0,Value::Thing(t));let answer=self.apply_class_member(called,values);self.standing-=1;answer},
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
+                // A loose `dict.fromkeys` descriptor is the class method:
+                // its first argument is the iterable, not a receiver.
+                if tag == 60 && kept.len() == 2 && self.table.spells("ext.builtin.method.fromkeys", &kept[1].bare()) {
+                    let class = self.native_kind(&kept[0].bare());
+                    return self.value_member(&Value::Blueprint(class), "fromkeys", values, Vec::new());
+                }
                 match tag {
                     130 => {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
@@ -1667,10 +1673,14 @@ impl<'a> Machine<'a> {
                     }
                     72 => Ok(Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true)),
                     36=>{
-                        if kept.get(1).is_some_and(|owner|owner.bare()!=self.detail("root")) {
+                        let named=kept[0].bare();
+                        // State and reduction answer for the thing itself,
+                        // not for the native worth beneath it.
+                        let holds_state = self.table.strings("ext.stmt.class.detail.root.members").iter().position(|word| word == &named).is_some_and(|at| at == 10 || at == 11 || at == 12);
+                        if !holds_state && kept.get(1).is_some_and(|owner|owner.bare()!=self.detail("root")) {
                             if let Some(native)=values.first().and_then(Self::underlying){values[0]=native.settled();}
                         }
-                        let named=kept[0].bare();self.root_answers(&named,values)
+                        self.root_answers(&named,values)
                     }
                     // The maker of a native kind: the blueprint to make a
                     // thing of, then what the kind's primitive takes.

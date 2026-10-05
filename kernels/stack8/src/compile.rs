@@ -6979,7 +6979,7 @@ impl<'a> Compiler<'a> {
             // whatever its last bare statement came to.
             a.piece().python_fallthrough = true;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
-            a.spare_values(&spares, &given)?;
+            else { a.spare_values(&spares, &given)?; }
             // What a parameter that names a property was given is
             // written into the object before anything else runs.
             for member in &named {
@@ -8700,6 +8700,11 @@ impl<'a> Compiler<'a> {
             }
             self.read(&key); self.read(&value); self.read(&object);
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            // A completed store must not leave its key or container rooted
+            // in hidden frame slots until the defining call returns.
+            self.let_go(&key);
+            self.let_go(&object);
+            self.let_go(&value);
             if hushed || silenced { self.put(if silenced { Instr::Mute(false) } else { Instr::Hush(false) }); }
             return Ok(());
         }
@@ -8867,7 +8872,7 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if shared_target || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
+                let stored = if shared_target || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again
@@ -8876,11 +8881,17 @@ impl<'a> Compiler<'a> {
                     for w in relocated(base, footing_at as i64 - from as i64) {
                         self.put(w);
                     }
-                    let was = self.waiting.replace(made);
+                    let was = self.waiting.replace(made.clone());
                     let stored = self.store_into(footing_at, None, None, "=");
                     self.waiting = was;
                     stored
+                };
+                // Release every part of the completed composite target,
+                // including keys that can themselves close a reference cycle.
+                for temporary in held.iter().chain(&inner).chain([&value, &made]) {
+                    self.let_go(temporary);
                 }
+                stored
             }
             [Instr::Read(slot), ..]
                 if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
@@ -8948,6 +8959,9 @@ impl<'a> Compiler<'a> {
                 }
                 self.read(&made);
                 self.rewritten(&name);
+                for temporary in inner.iter().chain(&held).chain([&made, &value]) {
+                    self.let_go(temporary);
+                }
                 Ok(())
             }
             // `p op= e` where the place is a member of something: what
@@ -10106,6 +10120,24 @@ impl<'a> Compiler<'a> {
             Shape::Instr if Lang::spells(&lang.self_words, &tok.spelling()) || Lang::spells(&lang.parent_words, &tok.spelling()) => {
                 self.take();
                 self.read_class(&tok.lexeme)?;
+            }
+            // A dotted builtin spelling still reads the program's binding
+            // of its owner when that owner has been shadowed.
+            Shape::Instr if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::ValueMethod))
+                && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)) => {
+                self.take();
+                let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");
+                self.read(owner);
+                self.act(Action::Grab(Rc::from(member)), 1);
+                if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
+                    let method = self.gensym("shadowed_member");
+                    self.write(&method);
+                    self.take();
+                    let argc = self.arguments_of(member, &call)?;
+                    self.read(&method);
+                    self.let_go(&method);
+                    self.act(Action::Invoke(Rc::from(member)), argc + 1);
+                }
             }
             Shape::Instr => {
                 self.take();

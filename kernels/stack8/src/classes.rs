@@ -1579,12 +1579,17 @@ impl<'a> Engine<'a> {
                 }
                 42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
                 30 => {
-                    if w.1.get(1).is_some_and(|owner| owner.plain() != self.class_word("root")) {
+                    let operation = w.1[0].plain();
+                    // State and reduction answer for the thing itself, not
+                    // for the native worth beneath it, so they are given
+                    // the thing whole.
+                    let holds_state = self.lang.class_details.get("root.members").map_or(false, |names| names.get(10) == Some(&operation) || names.get(11) == Some(&operation));
+                    if !holds_state && w.1.get(1).is_some_and(|owner| owner.plain() != self.class_word("root")) {
                         if let Some(first) = args.first_mut() {
                             if let Some(native) = Self::worth_of(first) { *first = native.contents(); }
                         }
                     }
-                    self.root_work(&w.1[0].plain(),args)
+                    self.root_work(&operation,args)
                 },
                 // The maker of a builtin kind: given the class to make a
                 // thing of and what the kind's builtin takes.
@@ -2176,8 +2181,24 @@ impl<'a> Engine<'a> {
     /// What a thing holds of its own, as a dictionary, or nothing where
     /// it holds nothing.
     pub(super) fn root_state(&self, subject: &Value) -> Value {
-        let Value::Object(o) = subject else { return Value::Null };
-        let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
+        let settled = subject.contents();
+        let Value::Object(o) = &settled else { return Value::Null };
+        let mut entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
+        // A class that names no slots keeps its own names in a namespace
+        // dictionary; those are among what the object holds, as the
+        // reference reports them.
+        if let Some((_, held)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace") {
+            if let Value::Map(pairs) = held.contents() {
+                for (key, value) in pairs.iter() {
+                    let name = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                    if let Value::Text(text) = &name {
+                        if !text.starts_with(['\0', '#']) && !matches!(value, Value::Blank) {
+                            entries.push((Value::text(text), value.clone()));
+                        }
+                    }
+                }
+            }
+        }
         let dictionary = if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) };
         let slots: Vec<_> = o.fields.borrow().iter().filter_map(|(key, value)| {
             let slot = key.strip_prefix("\0slot:")?.rsplit_once(':')?.0;
@@ -2700,7 +2721,15 @@ impl<'a> Engine<'a> {
                 // Whatever a value of the kind answers to is carried by
                 // the kind itself, standing loose: the value it works
                 // upon is the first it is called with.
-                if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
+                if let Some(loose)=self.loose_kind_member(&subject,name) {
+                    // A kind's class method is bound to the kind itself, so
+                    // a plain `dict.fromkeys` read off a name reaches the
+                    // class method and not an unbound descriptor.
+                    if self.lang.value_methods.get(name).map(String::as_str) == Some("fromkeys") {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                    }
+                    return Ok(loose);
+                }
                 if let Some(inherited) = self.root_member(name, None) { return Ok(inherited); }
             }
             Value::Class(c) => {
@@ -2790,7 +2819,7 @@ impl<'a> Engine<'a> {
                 if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
-                if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
+                if let Some(member)=self.loose_kind_member(&subject,name) { return self.bind_class_value(member,None,c.clone()); }
                 if Self::own_kind(c).is_none() {
                     if let Some(base) = c.lineage.iter().find(|base| Self::own_kind(base).is_some()) {
                         if self.lang.value_methods.get(name).map(String::as_str) != Some("fromkeys") {
