@@ -54,87 +54,40 @@ def NamedTemporaryFile(*args, **keywords):
     raise 'NotImplementedError: tempfile.NamedTemporaryFile needs a file to be created and opened, which this runtime does not carry'
 
 
-# A raw binary stream over an operating-system descriptor. It carries no
-# name of its own: the directory entry it was opened under is taken away
-# as soon as the stream stands. The runtime's canonical buffered and text
-# streams wrap it, so a text mode keeps its encoding, errors and newline
-# handling and every read is counted in characters.
-class _DescriptorRaw(_pyio.RawIOBase):
-    def __init__(self, descriptor, readable, writable):
-        super().__init__()
-        self._descriptor = descriptor
-        self._readable = readable
-        self._writable = writable
-
-    def readable(self):
-        return self._readable
-
-    def writable(self):
-        return self._writable
-
-    def seekable(self):
-        return True
-
-    def fileno(self):
-        self._checkClosed()
-        return self._descriptor
-
+# Reuse FileIO's descriptor ownership and mode enforcement. Only its
+# reads need a bridge: this runtime has os.read but not os.readinto or
+# bytearray.resize, which the unchanged canonical FileIO uses.
+class _DescriptorRaw(_pyio.FileIO):
+    # Read into a writable contiguous byte view with one descriptor read.
     def readinto(self, buffer):
         self._checkClosed()
-        piece = os.read(self._descriptor, min(len(buffer), 65536))
-        count = len(piece)
-        buffer[:count] = piece
-        return count
+        self._checkReadable()
+        with memoryview(buffer) as view:
+            if view.readonly:
+                raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
+            if not view.c_contiguous:
+                raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
+            with view.cast('B') as target:
+                try:
+                    piece = os.read(self._fd, min(len(target), 65536))
+                except BlockingIOError:
+                    return None
+                target[:len(piece)] = piece
+                return len(piece)
 
+    # Read through EOF without resizing an exported bytearray.
     def readall(self):
         self._checkClosed()
+        self._checkReadable()
         pieces = []
         while True:
-            piece = os.read(self._descriptor, 65536)
-            if not piece:
-                break
-            pieces.append(piece)
-        return b''.join(pieces)
-
-    def write(self, data):
-        self._checkClosed()
-        total = 0
-        whole = len(data)
-        while total < whole:
-            piece = data[total:total + 65536]
-            count = os.write(self._descriptor, piece)
-            if not count:
-                break
-            total += count
-        return total
-
-    def seek(self, offset, whence=0):
-        self._checkClosed()
-        return os.lseek(self._descriptor, offset, whence)
-
-    def tell(self):
-        self._checkClosed()
-        return os.lseek(self._descriptor, 0, 1)
-
-    def truncate(self, size=None):
-        self._checkClosed()
-        if size is None:
-            size = os.lseek(self._descriptor, 0, 1)
-        os.ftruncate(self._descriptor, size)
-        return size
-
-    def close(self):
-        if self.closed:
-            return
-        descriptor = self._descriptor
-        try:
-            super().close()
-        finally:
-            self._descriptor = -1
             try:
-                os.close(descriptor)
-            except OSError:
-                pass
+                piece = os.read(self._fd, 65536)
+            except BlockingIOError:
+                return b''.join(pieces) if pieces else None
+            if not piece:
+                return b''.join(pieces)
+            pieces.append(piece)
 
 
 # The mode letters a temporary file may be opened with, read the way
@@ -161,6 +114,31 @@ _sequence = 0
 def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
                   suffix=None, prefix=None, dir=None, *, errors=None):
     binary, reading, writing, _appending = _reading_mode(mode)
+    import operator
+    import sys
+    buffering = operator.index(buffering)
+    if buffering > sys.maxsize or buffering < -sys.maxsize - 1:
+        raise OverflowError('Python int too large to convert to C ssize_t')
+    if encoding is not None and not isinstance(encoding, str):
+        raise TypeError("open() argument 'encoding' must be str or None, not " + type(encoding).__name__)
+    if errors is not None and not isinstance(errors, str):
+        raise TypeError("open() argument 'errors' must be str or None, not " + type(errors).__name__)
+    if binary:
+        if encoding is not None:
+            raise ValueError("binary mode doesn't take an encoding argument")
+        if errors is not None:
+            raise ValueError("binary mode doesn't take an errors argument")
+        if newline is not None:
+            raise ValueError("binary mode doesn't take a newline argument")
+    elif buffering == 0:
+        raise ValueError("can't have unbuffered text I/O")
+    line_buffering = buffering == 1
+    if binary and line_buffering:
+        import warnings
+        warnings.warn("line buffering (buffering=1) isn't supported in binary "
+                      "mode, the default buffer size will be used",
+                      RuntimeWarning, stacklevel=2)
+    size = buffering if buffering > 1 else _pyio.DEFAULT_BUFFER_SIZE
     if suffix is None:
         suffix = ''
     if prefix is None:
@@ -178,12 +156,12 @@ def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
             continue
     try:
         os.unlink(name)
-    except OSError:
+    except BaseException:
         os.close(descriptor)
         raise
-    raw = _DescriptorRaw(descriptor, reading, writing)
-    size = buffering if buffering and buffering > 0 else _pyio.DEFAULT_BUFFER_SIZE
+    raw = None
     try:
+        raw = _DescriptorRaw(descriptor, mode.replace('t', ''))
         if binary:
             if buffering == 0:
                 return raw
@@ -198,13 +176,14 @@ def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
             buffered = _pyio.BufferedReader(raw, size)
         else:
             buffered = _pyio.BufferedWriter(raw, size)
-        if encoding is None:
-            encoding = 'utf-8'
-        if errors is None:
-            errors = 'strict'
-        return _pyio.TextIOWrapper(buffered, encoding, errors, newline)
+        text = _pyio.TextIOWrapper(buffered, encoding, errors, newline, line_buffering)
+        text.mode = mode
+        return text
     except BaseException:
-        raw.close()
+        if raw is None:
+            os.close(descriptor)
+        else:
+            raw.close()
         raise
 
 
