@@ -5176,7 +5176,16 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Const(Value::ByteKind(changeable, shown)) if !self.wildcard_slots.is_empty() && (program.body_of_all || program.declared_on != 0) => {
                     let word = self.byte_kind_word(*changeable);
-                    self.data.push(self.wildcard_value(word).unwrap_or_else(|| Value::ByteKind(*changeable, shown.clone())));
+                    let held = self.wildcard_value(word);
+                    // A name still spelling the builtin it names is the
+                    // kind marker it was read as, so two readings of it
+                    // are one value; a name shadowed by a nearer binding
+                    // keeps whatever that binding holds.
+                    let value = match &held {
+                        Some(Value::Native(Builtin::Bytes(tag), _)) if *tag == u8::from(*changeable) => Value::ByteKind(*changeable, shown.clone()),
+                        _ => held.unwrap_or_else(|| Value::ByteKind(*changeable, shown.clone())),
+                    };
+                    self.data.push(value);
                 }
                 Instr::Const(v) => {
                     // A definition reached again makes a function of its

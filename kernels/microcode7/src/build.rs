@@ -1686,6 +1686,17 @@ impl<'a> Builder<'a> {
                 } else { self.address_to_read(name) };
                 let global_depth = self.layers.iter().skip(1).filter(|layer| layer.holds != Holds::Nothing).count();
                 if address.up == global_depth && !self.named_in_program.iter().any(|word| word == name) {
+                    if matches!(operation, Prim::Octets(0 | 1)) {
+                        // The two byte kinds are read in a class body the
+                        // very way they are read at the top of the unit,
+                        // as their kind markers, so two readings of one
+                        // are one value.
+                        let words = self.table.strings("ext.system.bytes.type");
+                        return constant(Value::OctetKind {
+                            changeable: operation == Prim::Octets(1),
+                            shown: Rc::from(format!("{}{}{}", words[0], name, words[1])),
+                        });
+                    }
                     return constant(Value::Intrinsic(operation, Rc::from(name)));
                 }
                 return Form::Read(address);
