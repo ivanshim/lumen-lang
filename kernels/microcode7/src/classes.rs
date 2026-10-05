@@ -2083,6 +2083,15 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), parts[1].bare()));
             }
         }
+        if matches!(&entry, Value::Wrapped(124, _)) {
+            let fits = receiver.as_ref().map(Value::settled).map_or(true, |v| {
+                matches!(v, Value::Thing(t) if Self::parent_kind_descended(&t.blueprint()))
+            });
+            if !fits {
+                let received = self.parent_tp_name(&receiver.as_ref().unwrap().settled());
+                return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{received}' object").into());
+            }
+        }
         match &entry {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(133 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
@@ -2802,7 +2811,7 @@ impl<'a> Machine<'a> {
         // Routines, wrapped routines and slots are members that bind, and
         // read as such; a slot writes and removes besides.
         if self.protocol_spelled() {
-            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|32,_));
+            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|32|124,_));
             if binds && key==self.detail("descriptor.get"){return Ok(Self::wrap(31,vec![value]));}
             if let Value::Wrapped(32,parts)=&value {
                 if key==self.detail("descriptor.set"){return Ok(Self::wrap(33,parts.as_ref().clone()));}
@@ -4978,10 +4987,14 @@ impl<'a> Machine<'a> {
     /// the reference lets its constructing run again on a thing made.
     fn parent_initialised(&mut self,given:Vec<Value>)->Res {
         let (positional, named) = self.open_arguments(given)?;
-        if !named.is_empty() { return Err("TypeError: super() takes no keyword arguments".to_owned().into()); }
         let plain: Vec<Value> = positional.into_iter().map(|value| value.settled()).collect();
         let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".to_owned().into()); };
-        let Value::Thing(t) = subject else { return Err(self.class_unready()); };
+        if !matches!(subject, Value::Thing(instance) if Self::parent_kind_descended(&instance.blueprint())) {
+            let received = self.parent_tp_name(subject);
+            return Err(format!("TypeError: descriptor '__init__' requires a 'super' object but received a '{received}'").into());
+        }
+        let Value::Thing(t) = subject else { unreachable!() };
+        if !named.is_empty() { return Err("TypeError: super() takes no keyword arguments".to_owned().into()); }
         if plain.len() > 3 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len() - 1).into()); }
         // Reached with nothing but the thing, the constructing reads
         // its class and first argument from the frame it was called in.
@@ -5038,6 +5051,7 @@ impl<'a> Machine<'a> {
     fn parent_walk(&mut self,owner:&Rc<Blueprint>,receiver:&Value,actual:Rc<Blueprint>,key:&str)->Res<Option<Value>> {
         let loose = matches!(receiver, Value::Blueprint(r) if Self::parent_same_class(r, &actual));
         let mut passed = false;
+        let root = self.common_ancestor();
         for base in std::iter::once(&actual).chain(actual.ancestry.borrow().iter()) {
             if passed {
                 if key == self.detail("allocate") {
@@ -5051,6 +5065,17 @@ impl<'a> Machine<'a> {
                     let receiver = if key == self.detail("subclass") && loose { Some(Value::Blueprint(actual.clone())) }
                         else if key == self.detail("allocate") || loose { None } else { Some(receiver.clone()) };
                     return Ok(Some(self.member_binding(entry, receiver, actual.clone())?));
+                }
+                // The common ancestor supplies slots at its own MRO position.
+                if Rc::ptr_eq(&root, base) {
+                    if let Some(slot) = self.from_the_root(key, true, &actual) {
+                        let answer = if key == self.detail("subclass") {
+                            Self::wrap(3, vec![slot, Value::Blueprint(actual.clone())])
+                        } else if loose || key == self.detail("allocate") { slot }
+                        else { Self::wrap(3, vec![slot, receiver.clone()]) };
+                        return Ok(Some(answer));
+                    }
+                    continue;
                 }
                 if Self::native_word(base).is_some() || self.is_fault_kind(base) {
                     if self.table.single("ext.stmt.class.constructor") == Some(key) {
@@ -5101,18 +5126,6 @@ impl<'a> Machine<'a> {
                 }
             }
             passed |= Self::parent_same_class(base, owner);
-        }
-        // The walk coming to the common ancestor, the root answers with
-        // its own members as a plain read of a thing does: the maker
-        // every blueprint stands on, its beginning among them.
-        if let Some(root)=self.from_the_root(key,true,&actual) {
-            if key==self.detail("allocate") { return Ok(Some(root)); }
-            // A member the root hands every class answers for the class
-            // even where the reading stands loose; the rest come back
-            // as they lie where nothing binds them.
-            if loose && key != self.detail("subclass") { return Ok(Some(root)); }
-            let bound=if key==self.detail("subclass"){Value::Blueprint(actual.clone())}else{receiver.clone()};
-            return Ok(Some(Self::wrap(3,vec![root,bound])));
         }
         Ok(None)
     }

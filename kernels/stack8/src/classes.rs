@@ -1983,6 +1983,14 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
+            // Native super init is a descriptor for super instances only.
+            if w.0 == 132 {
+                if let Some(receiver) = subject.as_ref().map(Value::contents) {
+                    if !matches!(&receiver, Value::Object(o) if Self::super_descended(&o.class_now())) {
+                        return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{}' object", self.super_tp_name(&receiver)).into());
+                    }
+                }
+            }
             if w.0 == 29 && w.1[0].plain() == "int" {
                 let receiver = subject.clone().unwrap_or_else(|| Value::Class(class.clone()));
                 if let Some(method) = self.integer_member(&receiver, &w.1[1].plain()) { return Ok(method); }
@@ -2292,7 +2300,7 @@ impl<'a> Engine<'a> {
         // A routine, a wrapped routine and a slot each read as a member
         // that binds; the slot writes and removes as well.
         if name == self.class_word("descriptor.get") && !name.is_empty()
-            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16))) {
+            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16 | 132))) {
             return Ok(Self::adapter(15, vec![subject]));
         }
         if let Value::Adapter(w) = &subject {
@@ -4538,6 +4546,7 @@ impl<'a> Engine<'a> {
         let loose = matches!(&receiver, Value::Class(c) if Rc::ptr_eq(c, &dynamic));
         let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.borrow().iter().cloned()).collect();
         let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
+        let root_class = self.root_class();
         for class in &order[start + 1..] {
             if name == self.class_word("allocate") {
                 if let Some(word) = Self::own_kind(class) {
@@ -4550,6 +4559,19 @@ impl<'a> Engine<'a> {
                 let subject = if name == self.class_word("subclass") && loose { Some(Value::Class(dynamic.clone())) }
                     else if name == self.class_word("allocate") || loose { None } else { Some(receiver.clone()) };
                 return Ok(Some(self.bind_class_value(value, subject, dynamic)?));
+            }
+            // Root descriptors belong here only if object is in this suffix.
+            if Rc::ptr_eq(class, &root_class) {
+                if let Some(root) = self.root_member(name, Some(&dynamic)) {
+                    let bound = if name == self.class_word("subclass") { Some(Value::Class(dynamic.clone())) }
+                        else if name == self.class_word("allocate") || loose { None }
+                        else { Some(receiver.clone()) };
+                    return Ok(Some(match bound {
+                        Some(subject) => Self::adapter(3, vec![root, subject]),
+                        None => root,
+                    }));
+                }
+                continue;
             }
             if Self::own_kind(class).is_some() || self.exception_class(class) || self.is_metaclass_root(class) {
                 let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");
@@ -4586,17 +4608,6 @@ impl<'a> Engine<'a> {
                     return Ok(Some(if loose { descriptor } else { Self::adapter(3, vec![descriptor, receiver.clone()]) }));
                 }
             }
-        }
-        // The walk coming to the root, the root answers with its own
-        // members as the plain read of a thing does: the maker every
-        // ordinary class stands on, its beginning among them.
-        if let Some(root) = self.root_member(name, Some(&dynamic)) {
-            if name == self.class_word("allocate") { return Ok(Some(root)); }
-            // The subclass hook is a class method of the root: it binds
-            // to the class the thing answers as, loose or not.
-            if name == self.class_word("subclass") { return Ok(Some(Self::adapter(3, vec![root, Value::Class(dynamic)]))); }
-            if loose { return Ok(Some(root)); }
-            return Ok(Some(Self::adapter(3, vec![root, receiver.clone()])));
         }
         Ok(None)
     }
@@ -4790,10 +4801,13 @@ impl<'a> Engine<'a> {
     /// the reference lets its constructing run again on a thing made.
     fn super_initialised(&mut self, args: Vec<Value>) -> Flow<Value> {
         let items = self.call_items(args)?;
-        if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: super() takes no keyword arguments".into()); }
-        let plain: Vec<Value> = items.into_iter().map(|(_, value)| value.contents()).collect();
+        let plain: Vec<Value> = items.iter().filter(|(key, _)| key.is_none()).map(|(_, value)| value.contents()).collect();
         let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".into()); };
-        let Value::Object(o) = subject else { return Err(self.class_refusal()); };
+        let o = match subject {
+            Value::Object(o) if Self::super_descended(&o.class_now()) => o,
+            _ => return Err(format!("TypeError: descriptor '__init__' requires a 'super' object but received a '{}'", self.super_tp_name(subject)).into()),
+        };
+        if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: super() takes no keyword arguments".into()); }
         if plain.len() > 3 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len() - 1).into()); }
         // Reached with nothing but the thing, the constructing reads
         // its class and first argument from the frame it was called in.

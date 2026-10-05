@@ -6645,7 +6645,7 @@ impl<'a> Machine<'a> {
                     let values = self.value_list(args, frame)?;
                     let callable = values[0].settled();
                     let descended = match &callable {
-                        Value::Blueprint(b) => Self::parent_kind_descended(b),
+                        Value::Blueprint(b) => Self::native_word(b).is_some_and(|word| word == "super"),
                         Value::Wrapped(9, kept) => kept.is_empty(),
                         _ => false,
                     };

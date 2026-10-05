@@ -11497,7 +11497,7 @@ impl<'a> Engine<'a> {
                 let given = self.drop_many(6)?;
                 let callable = given[0].contents();
                 let descended = match &callable {
-                    Value::Class(c) => Self::super_descended(c),
+                    Value::Class(c) => Self::own_kind(c).as_deref() == Some("super"),
                     Value::Adapter(w) => w.0 == 9 && w.1.is_empty(),
                     _ => false,
                 };
