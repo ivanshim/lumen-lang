@@ -95,19 +95,25 @@ def _global_name(value):
         candidate = getattr(builtins, name)
         if candidate is value:
             return ('builtins', name)
-    namespace = __program_namespace()
-    for name in namespace:
-        candidate = namespace[name]
-        if candidate is value:
-            # Instances are global only when their reduction says so.
-            if isinstance(value, type) or callable(value):
-                return ('__main__', name)
     name = getattr(value, '__qualname__', getattr(value, '__name__', None))
     module = getattr(value, '__module__', None)
     if name is not None and '<locals>' not in name:
+        if module is not None:
+            try:
+                advertised = _global(module, name)
+            except (ImportError, AttributeError, KeyError):
+                advertised = None
+            if advertised is value:
+                return (module, name)
         parts = name.split('.')
-        for module_name in list(sys.modules):
-            owner = sys.modules[module_name]
+        # The module the value names as its own first, then the rest:
+        # the reference finds the value under its own name where it
+        # lives, before anything a caller happened to import.
+        module_names = ([module] if module is not None else []) + [m for m in list(sys.modules) if m != module]
+        for module_name in module_names:
+            owner = sys.modules.get(module_name)
+            if owner is None:
+                continue
             if parts[0] not in dir(owner):
                 continue
             candidate = owner
@@ -115,6 +121,18 @@ def _global_name(value):
                 candidate = getattr(candidate, part, None)
             if candidate is value:
                 return (module_name, name)
+    namespace = __program_namespace()
+    for name in namespace:
+        candidate = namespace[name]
+        if candidate is value:
+            # Instances are global only when their reduction says so.
+            if isinstance(value, type) or callable(value):
+                try:
+                    published = _global('__main__', name)
+                except (AttributeError, KeyError):
+                    continue
+                if published is value:
+                    return ('__main__', name)
     if name is not None and module is not None and isinstance(value, type):
         return (module, name)
     return None
@@ -320,8 +338,13 @@ def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=
         raise TypeError('a bytes-like object is required, not str')
     if data[:4] == b'LP1\n':
         return _Reader(data[4:].decode()).get()
-    return _read_protocol(data)
+    return _read_protocol(data, encoding)
 
+
+
+# The reference keeps its pure-Python loads beside the dispatching
+# one; the loads here is that pure one already.
+_loads = loads
 
 def dump(obj, file, protocol=None, *, fix_imports=True, buffer_callback=None):
     file.write(dumps(obj, protocol, fix_imports=fix_imports, buffer_callback=buffer_callback))
@@ -348,7 +371,68 @@ class Unpickler:
         return load(self.file)
 
 
-def _read_protocol(data):
+def _decode_binstring(data, encoding):
+    # A binstring's bytes are text in the encoding the reader was given:
+    # latin1 keeps each byte as its own letter; bytes hands the bytes
+    # over whole; ASCII refuses a byte that is not one.
+    if encoding == 'bytes':
+        return bytes(data)
+    if encoding == 'latin1':
+        out = ''
+        for byte in data:
+            out += chr(byte)
+        return out
+    if encoding == 'utf-8':
+        return bytes(data).decode('utf-8')
+    out = ''
+    for byte in data:
+        if byte > 127:
+            raise UnicodeDecodeError('ascii', bytes([byte]), 0, 1, 'ordinal not in range(128)')
+        out += chr(byte)
+    return out
+
+def _unescape_string(text):
+    # A protocol-0 string is written as its repr: quotes around escapes.
+    out = ''
+    at = 0
+    while at < len(text):
+        ch = text[at]
+        if ch != '\\':
+            out += ch
+            at += 1
+            continue
+        at += 1
+        esc = text[at]
+        at += 1
+        if esc == 'n':
+            out += '\n'
+        elif esc == 'r':
+            out += '\r'
+        elif esc == 't':
+            out += '\t'
+        elif esc == '\\':
+            out += '\\'
+        elif esc == "'":
+            out += "'"
+        elif esc == '"':
+            out += '"'
+        elif esc == 'x':
+            out += chr(int(text[at:at + 2], 16))
+            at += 2
+        elif esc == 'u':
+            out += chr(int(text[at:at + 4], 16))
+            at += 4
+        elif esc in '01234567':
+            digits = esc
+            while len(digits) < 3 and at < len(text) and text[at] in '01234567':
+                digits += text[at]
+                at += 1
+            out += chr(int(digits, 8))
+        else:
+            out += esc
+    return out
+
+def _read_protocol(data, encoding='ASCII'):
     # The stack machine also accepts older standard range-iterator pickles.
     stack = []
     marks = []
@@ -481,6 +565,90 @@ def _read_protocol(data):
             index = data[at]
             at += 1
             if op == 113:
+                memo[index] = stack[-1]
+            else:
+                stack.append(memo[index])
+        elif op == 136:
+            stack.append(True)
+        elif op == 137:
+            stack.append(False)
+        elif op == 78:
+            stack.append(None)
+        elif op == 83:
+            end = data.index(b'\n', at)
+            text = data[at:end].decode()
+            at = end + 1
+            stack.append(_unescape_string(text[1:len(text) - 1]))
+        elif op == 86:
+            end = data.index(b'\n', at)
+            text = data[at:end].decode()
+            at = end + 1
+            stack.append(_unescape_string(text))
+        elif op == 85:
+            size = data[at]
+            at += 1
+            stack.append(_decode_binstring(data[at:at + size], encoding))
+            at += size
+        elif op == 84:
+            size = int.from_bytes(data[at:at + 4], 'little')
+            at += 4
+            stack.append(_decode_binstring(data[at:at + size], encoding))
+            at += size
+        elif op == 70:
+            end = data.index(b'\n', at)
+            stack.append(float(data[at:end].decode()))
+            at = end + 1
+        elif op == 71:
+            import struct
+            stack.append(struct.unpack('>d', data[at:at + 8])[0])
+            at += 8
+        elif op == 93:
+            stack.append([])
+        elif op == 125:
+            stack.append({})
+        elif op == 108:
+            mark = marks.pop()
+            value = list(stack[mark:])
+            del stack[mark:]
+            stack.append(value)
+        elif op == 97:
+            # The value comes off first: the list beneath it appends it.
+            value = stack.pop()
+            stack[-1].append(value)
+        elif op == 101:
+            mark = marks.pop()
+            target = stack[mark - 1]
+            target.extend(stack[mark:])
+            del stack[mark:]
+        elif op == 100:
+            mark = marks.pop()
+            value = {}
+            for pair_at in range(mark, len(stack), 2):
+                value[stack[pair_at]] = stack[pair_at + 1]
+            del stack[mark:]
+            stack.append(value)
+        elif op == 115:
+            value = stack.pop()
+            key = stack.pop()
+            stack[-1][key] = value
+        elif op == 117:
+            mark = marks.pop()
+            target = stack[mark - 1]
+            for pair_at in range(mark, len(stack), 2):
+                target[stack[pair_at]] = stack[pair_at + 1]
+            del stack[mark:]
+        elif op in (112, 103):
+            end = data.index(b'\n', at)
+            index = int(data[at:end].decode())
+            at = end + 1
+            if op == 112:
+                memo[index] = stack[-1]
+            else:
+                stack.append(memo[index])
+        elif op in (114, 106):
+            index = int.from_bytes(data[at:at + 4], 'little')
+            at += 4
+            if op == 114:
                 memo[index] = stack[-1]
             else:
                 stack.append(memo[index])

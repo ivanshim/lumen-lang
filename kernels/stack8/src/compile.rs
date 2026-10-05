@@ -43,6 +43,7 @@ thread_local! {
 #[derive(Default)]
 pub struct Registry {
     index: HashMap<String, usize>,
+    module_index: HashMap<String, HashMap<String, usize>>,
     pub idents: Vec<String>,
     /// Whether the next reading is of one expression alone, as text
     /// handed over to be weighed is: nothing may follow it. The mark is
@@ -70,6 +71,10 @@ pub struct Registry {
     /// The global names the program's own lines have bound, as against
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
+    /// Aliases the outermost piece takes as its declared globals for
+    /// the next reading: the caller's own module's names standing for
+    /// its slots, as the reference's eval reads the caller's globals.
+    pub pending_globals: Vec<(String, String)>,
     pub program_bound: std::collections::HashSet<String>,
     builtin_exports: HashSet<String>,
     /// The names a write has actually bound at the outermost scope,
@@ -119,8 +124,20 @@ impl Registry {
             return slot;
         }
         self.index.insert(name.to_string(), self.idents.len());
+        if let Some((_, tail)) = name.strip_prefix("\0module:").and_then(|word| word.split_once(':')) {
+            if let Some((path, member)) = tail.split_once(':') {
+                self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.idents.len());
+            }
+        }
         self.idents.push(name.to_string());
         self.idents.len() - 1
+    }
+
+    /// The most recently registered slot for a module member. Dynamic
+    /// text needs these aliases, but must not scan every compiled name
+    /// for every member each time eval or exec is called.
+    pub fn module_slot(&self, path: &str, member: &str) -> Option<usize> {
+        self.module_index.get(path)?.get(member).copied()
     }
 }
 
@@ -259,6 +276,18 @@ pub struct Compiler<'a> {
     writing_place: bool,
     interactive: bool,
     comprehension_names: Vec<(String, String)>,
+    /// The iteration variables of the comprehensions around the reader,
+    /// in the order their `for` clauses were read.
+    comprehension_targets: Vec<String>,
+    /// How many comprehension sources are being read right now: an
+    /// assignment expression may stand in none of them.
+    comprehension_sources: usize,
+    /// Whether a bare assignment expression is barred where the reader
+    /// now stands: a lambda body, so that the sign left over names the
+    /// lambda, and the value of an assignment expression, where the
+    /// reference reads the whole as invalid syntax.
+    bare_named_blocked: bool,
+    namedexpr_value: bool,
     generator_source: Option<(usize, usize, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
@@ -295,6 +324,10 @@ pub struct Compiler<'a> {
     gives_back: std::collections::HashSet<String>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
+    /// The piece depth a parameter default being read belongs to: the
+    /// class body the method is written in, whose own names the default
+    /// may see, or none while anything else is read.
+    default_depth: Option<usize>,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -551,7 +584,7 @@ fn compile_pass(
         declared: vec![false; already.len()],
         idents: already,
         scopes: Vec::new(),
-        globals: Vec::new(),
+        globals: std::mem::take(&mut table.pending_globals),
         lasts: Vec::new(),
         cycles: Vec::new(),
         escapes: Vec::new(),
@@ -589,7 +622,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1065,8 +1098,10 @@ impl<'a> Compiler<'a> {
         let name = renamed.as_deref().unwrap_or(name);
         // A named write in a comprehension belongs to the function
         // around its walks; the reserved iteration targets belong here.
-        if self.lang.closes_over && self.piece().ident == "<comprehension>" && renamed.is_none() && !name.starts_with('#') {
-            let owner = (0..self.pieces.len() - 1).rev().find(|&i| self.pieces[i].ident != "<comprehension>").unwrap_or(0);
+        let gathering = matches!(self.piece().ident.as_str(), "<comprehension>" | "<genexpr>");
+        if self.lang.closes_over && gathering && renamed.is_none() && !name.starts_with('#') {
+            let owner = (0..self.pieces.len() - 1).rev()
+                .find(|&i| !matches!(self.pieces[i].ident.as_str(), "<comprehension>" | "<genexpr>")).unwrap_or(0);
             let alias = self.pieces[owner].globals.iter().find(|(n, _)| n == name).map(|(_, to)| to.clone());
             if self.pieces[owner].outermost || alias.is_some() {
                 self.piece().globals.push((name.to_string(), alias.unwrap_or_else(|| name.to_string())));
@@ -1162,7 +1197,8 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
+        let at = self.default_depth.unwrap_or(self.pieces.len());
+        let alias = self.class_names.last().filter(|(depth, _)| *depth == at).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);
             if self.lang.shadow_builtins && self.lang.builtins.contains_key(name)
@@ -1280,6 +1316,20 @@ impl<'a> Compiler<'a> {
     /// not a method's within it or the program's around it.
     fn in_class_body(&self) -> bool {
         self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len())
+    }
+
+    /// Whether a named expression written in the comprehension now
+    /// being read would land in a class body: the reference lets a
+    /// comprehension bind a name in the function or program around it,
+    /// but not in the class body a comprehension cannot close over.
+    fn comprehension_in_class_body(&self) -> bool {
+        if self.class_depth == 0 { return false; }
+        for index in (0..self.pieces.len()).rev() {
+            if self.pieces[index].comprehension_kind.is_none() {
+                return index == self.class_depth - 1;
+            }
+        }
+        false
     }
 
     /// Whether the current unit already holds this name `global` or
@@ -1704,6 +1754,8 @@ impl<'a> Compiler<'a> {
             }
         }
         let surrounding_names = self.comprehension_names.clone();
+        let surrounding_targets = self.comprehension_targets.clone();
+        if !matches!(name, "<comprehension>" | "<genexpr>") { self.comprehension_targets.clear(); }
         if self.lang.closes_over {
             let own = self.piece().idents.clone();
             self.comprehension_names.retain(|(name, _)| !own.contains(name));
@@ -1717,6 +1769,7 @@ impl<'a> Compiler<'a> {
         self.syntax_finally_nesting = finally_around;
         body_result?;
         self.comprehension_names = surrounding_names;
+        self.comprehension_targets = surrounding_targets;
         // An ordinary Python function falling off the end returns None.
         // A return jumps past this write, preserving its own result.
         let python_body = returns_value && self.piece().python_fallthrough
@@ -5563,8 +5616,24 @@ impl<'a> Compiler<'a> {
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.take();
             named = self.want_name("as the method name")?;
-            let body = self.method(&named)?;
+            let (body, _, spares) = self.method(&named)?;
+            // What a parameter falls back on is read where the method
+            // is written, and the reading goes with the routine, as the
+            // reference reads a default once at the definition -- but
+            // only in a language that binds names the Python way; every
+            // other language keeps its call-time default. The method's
+            // own parameters stand aside while it is read, so a name
+            // spelled like one of them still means the one outside.
+            let after = self.pos;
+            for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
+                self.pos = *from;
+                // The method's frame has been left behind. Read the entire
+                // default here, where class members and enclosing names bind.
+                self.expr(0)?;
+            }
+            self.pos = after;
             self.constant(Value::Routine(body));
+            if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
         }
         for (kind, held) in saved.into_iter().rev() {
             if kind == 0 {
@@ -5840,11 +5909,20 @@ impl<'a> Compiler<'a> {
                 self.skip_seps();
                 return Ok(false);
             }
-            let method = self.method(&original)?;
+            let (method, _, spares) = self.method(&original)?;
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
+            let after = self.pos;
+            for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
+                self.pos = *from;
+                // The method's frame has been left behind. Read the entire
+                // default here, where class members and enclosing names bind.
+                self.expr(0)?;
+            }
+            self.pos = after;
             self.constant(Value::Routine(method.clone()));
+            if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
             let wrapped=!decorators.is_empty();
             for place in decorators.into_iter().rev() {self.read(&place);self.act(Action::Invoke(Rc::from("")),2);}
             self.write(&slot);
@@ -5855,8 +5933,10 @@ impl<'a> Compiler<'a> {
             let reaches_out = !method.enclosing.is_empty() || method.annotation.as_ref().is_some_and(|annotation| !annotation.enclosing.is_empty());
             // A method an arm of a conditional defines is a member like
             // any other: the class cannot carry it among the methods it
-            // always has, since the arm may not run.
-            match wrapped || self.gathering().arms > 0 || reaches_out {
+            // always has, since the arm may not run. One carrying the
+            // values its parameters fall back on stands in its place,
+            // since the table of routines as compiled knows no such value.
+            match wrapped || self.gathering().arms > 0 || reaches_out || (self.lang.bind_names && !spares.is_empty()) {
                 true => self.member_kept(&named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
@@ -6466,6 +6546,19 @@ impl<'a> Compiler<'a> {
         self.cell_to_write(&class_cell);
         self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        // The module a class statement is written in is the module's
+        // own `__name__`, read where the class is defined, as the
+        // reference reads it in the class body.
+        let module_word = lang.class_details.get("module").and_then(|v| v.first()).cloned();
+        let name_word = self.lang.module_names.first().cloned();
+        if let (Some(word), Some(name_word)) = (module_word, name_word) {
+            self.read(&name_word);
+            let slot = self.gensym("module_of_class");
+            self.write(&slot);
+            let body = self.gathering();
+            body.order.push(word.clone());
+            body.shared.push((word, slot));
+        }
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
         // a write through either as the body's first statement finds
@@ -6773,7 +6866,8 @@ impl<'a> Compiler<'a> {
                 self.giving_cells.push(gives_cell);
                 let built = self.method(&member);
                 self.giving_cells.pop();
-                held.methods.push((member.clone(), built?));
+                let (routine, _, _) = built?;
+                held.methods.push((member.clone(), routine));
                 // A parameter of the maker that names a property makes
                 // the class carry that property too.
                 for named in std::mem::take(&mut self.promoted) {
@@ -6826,7 +6920,7 @@ impl<'a> Compiler<'a> {
 
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, Vec<String>, Vec<(usize, usize)>)> {
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].spelling());
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         // The type parameters read here stand aside while the
@@ -6869,12 +6963,13 @@ impl<'a> Compiler<'a> {
                 a.piece().result_touched = true;
                 a.write(RESULT_CELL);
                 Ok(())
-            });
+            }).map(|routine| (routine, Vec::new(), Vec::new()));
         }
         let named = promoted.clone();
         self.promoted = promoted;
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
+        let spares_out = spares.clone();
         let built = self.routine(name, formals, least, true, |a| {
             a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
@@ -6901,7 +6996,8 @@ impl<'a> Compiler<'a> {
             a.body()
         });
         self.method_self = previous;
-        built
+        let formals_out = given.clone();
+        built.map(|routine| (routine, formals_out, spares_out))
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
@@ -7003,6 +7099,10 @@ impl<'a> Compiler<'a> {
                 if !lang.syntax_members.is_empty() && formals.last().is_some_and(|name| name == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if call.close != lang.short_function.as_ref().map_or("", |(_, mark)| mark.as_str()) && self.on_any(&lang.annotation_marks) {
                     self.take();
+                    if !lang.syntax_members.is_empty() && self.look().shape == Shape::Instr
+                        && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
+                        return Err("SyntaxError: invalid syntax".into());
+                    }
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
                     ends.extend(call.between.iter().cloned());
@@ -7054,6 +7154,10 @@ impl<'a> Compiler<'a> {
                 self.take();
                 if !lang.syntax_members.is_empty() && (self.at_symbol(&call.close) || call.between.as_ref().is_some_and(|mark| self.at_symbol(mark))) {
                     return Err("SyntaxError: expected default value expression".into());
+                }
+                if !lang.syntax_members.is_empty() && self.look().shape == Shape::Instr
+                    && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
+                    return Err("SyntaxError: invalid syntax".into());
                 }
                 spares.push((formals.len() - 1, self.pos));
                 // Read once here only to step over it.
@@ -7219,26 +7323,40 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Missing(*at));
             let past = self.skip();
             self.pos = *from;
-            // With enclosing-scope defaults, a spare is read outside the routine's
-            // parameters: a default naming what a parameter also names
-            // finds the one outside, where the reference reads every
-            // default before the routine it belongs to exists. The
-            // parameters stand aside under names nothing can spell, so
-            // every cell and mark the routine keeps stays where it was.
-            let kept: Vec<String> = if self.lang.default_enclosing {
-                let standing: Vec<String> = (0..formals.len())
-                    .map(|at| format!("\0default aside {}", formals[at])).collect();
-                standing.iter().enumerate()
-                    .map(|(at, away)| std::mem::replace(&mut self.pieces.last_mut().expect("an open piece").idents[at], away.clone()))
-                    .collect()
+            if self.lang.bind_names {
+                // What a parameter falls back on is read where the routine
+                // is written, never out of the routine's own parameters:
+                // they stand aside while the expression is read, so a name
+                // spelled like one of them still means the one outside.
+                let mut shadowed = Vec::new();
+                {
+                    let unit = self.pieces.last_mut().expect("a unit");
+                    for (slot, name) in unit.idents.iter().enumerate() {
+                        if formals.contains(name) && !unit.declared[slot] {
+                            unit.declared[slot] = true;
+                            shadowed.push(slot);
+                        }
+                    }
+                }
+                // Being read where the method is written, the expression
+                // sees the names a class body around the method keeps, as
+                // the reference reading it there sees them.
+                let outside = self.default_depth.replace(self.pieces.len() - 1);
+                let idents_before = self.pieces.last().expect("a unit").idents.len();
+                let read = self.expr(0);
+                {
+                    let unit = self.pieces.last_mut().expect("a unit");
+                    for slot in shadowed { unit.declared[slot] = false; }
+                    // A name the default's reading reached for outside stands
+                    // in a place of its own now; the routine's own later reads
+                    // mean the parameter again, not that place.
+                    for slot in idents_before..unit.idents.len() { unit.declared[slot] = true; }
+                }
+                self.default_depth = outside;
+                read?;
             } else {
-                Vec::new()
-            };
-            let outcome = self.expr(0);
-            for (at, back) in kept.into_iter().enumerate() {
-                self.pieces.last_mut().expect("an open piece").idents[at] = back;
+                self.expr(0)?;
             }
-            outcome?;
             self.write(&formals[*at]);
             self.land(past);
         }
@@ -7518,7 +7636,18 @@ impl<'a> Compiler<'a> {
                 let here = a.mark();
                 for word in relocated(code, here as i64) { a.put(word); }
             } else {
-                a.expr_at(0, false)?;
+                a.bare_named_blocked = true;
+                let outcome = a.expr_at(0, false);
+                a.bare_named_blocked = false;
+                outcome?;
+                if Lang::spells(&a.lang.expression_assign, &a.look().lexeme) {
+                    if a.namedexpr_value { return Err("SyntaxError: invalid syntax".into()); }
+                    let last = &a.tokens[a.pos - 1];
+                    a.registry.stopped_end = last.column + last.lexeme.chars().count();
+                    a.registry.stopped_end_row = last.row;
+                    a.pos = lambda_at;
+                    return Err("SyntaxError: cannot use assignment expressions with lambda".into());
+                }
                 if a.on_assign() {
                     let last = &a.tokens[a.pos - 1];
                     a.registry.stopped_end = last.column + last.lexeme.chars().count();
@@ -7717,6 +7846,21 @@ impl<'a> Compiler<'a> {
             }
         }
         (found, end)
+    }
+
+    /// What the reference calls an expression an assignment expression
+    /// may not write to, where it is not a bare name: the word it has
+    /// for the shape standing left of the sign.
+    fn named_target_kind(&self, begin: usize, end: usize) -> Option<&'static str> {
+        if self.tokens[begin..end].iter().any(|token| Lang::spells(&self.lang.lambda_words, &token.lexeme)) {
+            return Some("lambda");
+        }
+        let pair = self.lang.grouping.as_ref()?;
+        if !self.tokens[begin].is_lexeme(Shape::Sign, &pair.open) || !self.tokens[end - 1].is_lexeme(Shape::Sign, &pair.close) {
+            return None;
+        }
+        if !self.outer_marks(begin + 1, end - 1, &self.lang.tuple_marks).0.is_empty() { return Some("tuple"); }
+        None
     }
 
     /// A comma joins complete expressions, never the arguments within
@@ -8121,6 +8265,9 @@ impl<'a> Compiler<'a> {
             return Err("SyntaxError: invalid syntax".into());
         }
         if !self.lang.syntax_members.is_empty() {
+            if !self.outer_marks(self.pos, self.tokens.len(), &self.lang.expression_assign).0.is_empty() {
+                return Err("SyntaxError: invalid syntax".into());
+            }
             if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
                 let begins = self.look();
                 let kind = if begins.shape == Shape::StringBegin {
@@ -9131,12 +9278,14 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let begins = self.pos;
         let from = self.mark();
+        let blocked = std::mem::take(&mut self.bare_named_blocked);
         if floor == 0 && !lang.syntax_members.is_empty() && ["(", "[", "{"].contains(&self.look().lexeme.as_str())
             && self.display_assignment(begins) {
             return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
         }
-        if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).spelling()) {
+        if floor == 0 && !blocked && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).spelling()) {
             let at = self.look().clone();
+            let shown = self.spelled.get(self.pos).map(|token| token.lexeme.clone()).unwrap_or_else(|| at.lexeme.clone());
             let named = self.take().lexeme;
             if !lang.syntax_members.is_empty() {
                 if lang.true_words.contains(&named) || lang.false_words.contains(&named) || lang.null_words.contains(&named) {
@@ -9149,11 +9298,25 @@ impl<'a> Compiler<'a> {
                     self.registry.stopped_end_row = at.row;
                     return Err("SyntaxError: cannot assign to __debug__".into());
                 }
+                if self.comprehension_sources > 0 {
+                    return Err("SyntaxError: assignment expression cannot be used in a comprehension iterable expression".into());
+                }
+                if self.piece().comprehension_kind.is_some() {
+                    if self.comprehension_targets.contains(&named) {
+                        return Err(format!("SyntaxError: assignment expression cannot rebind comprehension iteration variable '{shown}'"));
+                    }
+                    if self.comprehension_in_class_body() {
+                        return Err("SyntaxError: assignment expression within a comprehension cannot be used in a class body".into());
+                    }
+                }
             }
             if self.piece().comprehension_kind.is_some() { self.piece().named_expressions.push(named.clone()); }
             self.take();
             self.cell_to_write(&named);
-            self.expr(0)?;
+            let outer_value = std::mem::replace(&mut self.namedexpr_value, true);
+            let outcome = self.expr(0);
+            self.namedexpr_value = outer_value;
+            outcome?;
             self.write(&named);
             self.read(&named);
             self.unsee_last_read(&named);
@@ -9165,10 +9328,16 @@ impl<'a> Compiler<'a> {
             return Err("SyntaxError: expected expression before 'if', but statement is given".into());
         }
         self.prefix()?;
-        if floor == 0 && Lang::spells(&lang.expression_assign, &self.look().spelling()) {
+        if floor == 0 && !blocked && Lang::spells(&lang.expression_assign, &self.look().spelling()) {
+            if !lang.syntax_members.is_empty() && self.comprehension_sources > 0 {
+                return Err("SyntaxError: assignment expression cannot be used in a comprehension iterable expression".into());
+            }
             let name = match &self.piece().instrs[from..] {
                 [Instr::Read(cell)] => cell.ident.to_string(),
-                _ => return Err("Named expression needs a variable".to_string()),
+                _ => match self.named_target_kind(begins, self.pos) {
+                    Some(kind) if !lang.syntax_members.is_empty() => return Err(format!("SyntaxError: cannot use assignment expressions with {kind}")),
+                    _ => return Err("Named expression needs a variable".to_string()),
+                },
             };
             self.piece().instrs.truncate(from);
             self.take();
@@ -11259,6 +11428,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() {
             let mut depth = 0usize;
             let mut separated = false;
+
             let mut parameters = 0usize;
             for token in self.tokens.iter().skip(self.pos) {
                 let word = token.spelling();
@@ -11330,13 +11500,23 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The source expression of a comprehension clause. An assignment
+    /// expression may stand in none of them, however deeply nested, so
+    /// the reading is counted while the source is read.
+    fn comprehension_source(&mut self) -> Res<()> {
+        self.comprehension_sources += 1;
+        let outcome = self.expr(1);
+        self.comprehension_sources -= 1;
+        outcome
+    }
+
     fn lazy_comprehension(&mut self, pair: &Brackets, clause: usize) -> Res<()> {
         if !self.lang.yield_suspends { return self.comprehension(pair, clause, false); }
         let head = self.pos;
         self.pos = clause;
         self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })? + 1;
         let source_at = self.pos;
-        self.expr(1)?;
+        self.comprehension_source()?;
         let source_end = self.pos;
         let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].spelling());
         self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
@@ -11388,7 +11568,7 @@ impl<'a> Compiler<'a> {
             self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })? + 1;
             let source_at = self.pos;
             let start = self.mark();
-            self.expr(1)?;
+            self.comprehension_source()?;
             if !self.lang.trace_fields.is_empty() {
                 let position = self.expression_location(source_at);
                 let code: Vec<Instr> = self.piece().instrs.drain(start..).collect();
@@ -11450,12 +11630,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// The head is read last, once all its names have their own cells.
-    fn comprehension_locals(&mut self, mut start: usize, mut end: usize, floor: usize) -> Res<()> {
+    /// A target read by the clauses themselves records its names, so
+    /// that a later assignment expression rebinding one is refused.
+    fn comprehension_locals(&mut self, mut start: usize, mut end: usize, floor: usize, record: bool) -> Res<()> {
         if start == end { return Ok(()); }
         let (cuts, _) = self.outer_marks(start, end, &self.lang.tuple_marks);
         if !cuts.is_empty() {
             for stop in cuts.into_iter().chain(Some(end)) {
-                self.comprehension_locals(start, stop, floor)?;
+                self.comprehension_locals(start, stop, floor, record)?;
                 start = stop + 1;
             }
             return Ok(());
@@ -11474,7 +11656,7 @@ impl<'a> Compiler<'a> {
             }
             if close + 1 == end {
                 end -= 1;
-                return self.comprehension_locals(start + 1, end, floor);
+                return self.comprehension_locals(start + 1, end, floor, record);
             }
         }
         if end == start + 1 && self.tokens[start].shape == Shape::Instr {
@@ -11482,6 +11664,7 @@ impl<'a> Compiler<'a> {
             if self.piece().named_expressions.contains(&name) {
                 return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{name}'"));
             }
+            if record { self.comprehension_targets.push(name.clone()); }
             if self.comprehension_names[floor..].iter().any(|(bound, _)| bound == &name) { return Ok(()); }
             let own = if self.lang.closes_over && !self.lang.syntax_members.is_empty() { name.clone() }
                 else { self.gensym("comprehension_name") };
@@ -11509,7 +11692,7 @@ impl<'a> Compiler<'a> {
             if nesting == 0 && token.shape == Shape::Instr && Lang::spells(&self.lang.comprehension_for, &token.spelling()) {
                 let (joins, _) = self.outer_marks(at + 1, self.tokens.len(), &self.lang.comprehension_in);
                 let end = *joins.first().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })?;
-                self.comprehension_locals(at + 1, end, floor)?;
+                self.comprehension_locals(at + 1, end, floor, false)?;
                 at = end + 1;
                 continue;
             }
@@ -11545,7 +11728,7 @@ impl<'a> Compiler<'a> {
             if !self.lang.syntax_members.is_empty() && self.added_target_expression(target_start, target_end) {
                 return Err("SyntaxError: cannot assign to expression".into());
             }
-            self.comprehension_locals(target_start, target_end, 0)?;
+            self.comprehension_locals(target_start, target_end, 0, true)?;
             self.pos = target_end + 1;
             let expression_start = self.pos;
             let instruction_start = self.mark();
@@ -11554,7 +11737,7 @@ impl<'a> Compiler<'a> {
                 if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
             } else {
-                self.expr(1)?;
+                self.comprehension_source()?;
                 self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
             let position = self.expression_location(expression_start);
@@ -11719,11 +11902,16 @@ impl<'a> Compiler<'a> {
         let mut comma = false;
         let mut generator = false;
         let mut target = false;
+        // A lambda's own parameters stand where an argument stands and
+        // carry marks of their own; the body's colon closes them.
+        let mut lambda_parameters = 0usize;
         for i in self.pos..self.tokens.len() {
             let t = &self.tokens[i];
             if !matches!(t.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = t.lexeme.as_str();
-            if depth == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
+            if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { lambda_parameters += 1; }
+            if depth == 0 && word == ":" { lambda_parameters = lambda_parameters.saturating_sub(1); }
+            if depth == 0 && lambda_parameters == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
                 if !self.lang.syntax_members.is_empty() && i > start + 1 {
                     let kind = match self.tokens[start].lexeme.as_str() { "*" => Some("iterable"), "**" => Some("keyword"), _ => None };
                     if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} argument unpacking")); }
@@ -11832,6 +12020,10 @@ impl<'a> Compiler<'a> {
             if tagged && !self.lang.syntax_members.is_empty()
                 && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
                 return Err("SyntaxError: expected argument value expression".into());
+            }
+            if tagged && !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr
+                && Lang::spells(&self.lang.expression_assign, &self.look_ahead(1).lexeme) {
+                return Err("SyntaxError: invalid syntax".into());
             }
             self.expr(0)?;
             if tagged || spread { self.act(Action::Tie, 2); }
