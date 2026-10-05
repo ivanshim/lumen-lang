@@ -6506,8 +6506,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if self.has_wildcard_imports()
-                && self.spread_override(name, *op).is_some() => {
+            Form::Apply(Callee::Prim(op, name), args) if self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
             }
