@@ -15,6 +15,36 @@ class _Sentinel:
 DEFAULT = _Sentinel('DEFAULT')
 
 
+class _Call:
+    # The reference library records each call as the arguments it was
+    # given and the keywords it was given, and that pair also answers
+    # for the two by the names `args` and `kwargs`. The stand-in keeps
+    # the pair here so a test that asks either name reads it.
+    def __init__(self, args, kwargs):
+        self.args = tuple(args)
+        self.kwargs = kwargs
+
+    def __eq__(self, other):
+        if isinstance(other, _Call):
+            return self.args == other.args and self.kwargs == other.kwargs
+        return (list(self.args), self.kwargs) == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __getitem__(self, at):
+        return (self.args, self.kwargs)[at]
+
+    def __len__(self):
+        return 2
+
+    def __iter__(self):
+        return iter((self.args, self.kwargs))
+
+    def __repr__(self):
+        return repr((self.args, self.kwargs))
+
+
 class Mock:
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
         self._mock_name = name
@@ -54,7 +84,7 @@ class Mock:
     def __call__(self, *args, **kwargs):
         self.called = True
         self.call_count += 1
-        self.call_args = (list(args), kwargs)
+        self.call_args = _Call(args, kwargs)
         self.call_args_list.append(self.call_args)
         effect = self.side_effect
         if effect is not None:
