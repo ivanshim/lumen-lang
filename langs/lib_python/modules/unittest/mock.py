@@ -226,6 +226,8 @@ class MagicMock(Mock):
 
 class _Patch:
     def __init__(self, target, attribute, new, create, made, new_callable=None):
+        if new_callable is not None and new is not DEFAULT:
+            raise ValueError("Cannot use 'new' and 'new_callable' together")
         self.target = target
         self.attribute = attribute
         self.new = new
@@ -287,13 +289,29 @@ class _Patch:
 class _MultiplePatch:
     # Several attributes of one thing stood in for at once, each by its
     # own stand-in or plain value, put in together and taken out together.
-    def __init__(self, target, values):
-        self.patches = [_Patch(target, name, value, False, {})
-                        for name, value in values.items()]
+    # A value left at DEFAULT makes a stand-in, and the stand-ins made are
+    # handed back in a dictionary. Should one patch refuse to start, the
+    # patches already started are undone again before the fault escapes.
+    def __init__(self, target, values, create=False, new_callable=None):
+        self.patches = []
+        self.created = {}
+        for name, value in values.items():
+            one = _Patch(target, name, value, create, {}, new_callable)
+            self.patches.append(one)
+            if value is DEFAULT:
+                self.created[name] = one
 
     def __enter__(self):
-        for one in self.patches:
-            one.start()
+        started = []
+        try:
+            for one in self.patches:
+                one.start()
+                started.append(one)
+        except BaseException:
+            for one in reversed(started):
+                one.stop()
+            raise
+        return {name: one.temporary for name, one in self.created.items()}
 
     def __exit__(self, kind, value, traceback):
         for one in reversed(self.patches):
@@ -341,10 +359,12 @@ class _Patcher:
     def dict(self, target, values=None, clear=False, **extra):
         raise 'NotImplementedError: patch.dict is not supported'
 
-    def multiple(self, target, **extra):
+    def multiple(self, target, spec=None, create=False, spec_set=None, autospec=None, new_callable=None, **extra):
+        if spec is not None or spec_set is not None or autospec is not None:
+            raise 'NotImplementedError: patch.multiple does not take spec, spec_set or autospec'
         if not extra:
             raise ValueError('Must supply at least one keyword argument with patch.multiple')
-        return _MultiplePatch(target, extra)
+        return _MultiplePatch(target, extra, create, new_callable)
 
 patch = _Patcher()
 

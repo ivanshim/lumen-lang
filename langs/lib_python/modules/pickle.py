@@ -338,7 +338,7 @@ def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=
         raise TypeError('a bytes-like object is required, not str')
     if data[:4] == b'LP1\n':
         return _Reader(data[4:].decode()).get()
-    return _read_protocol(data, encoding)
+    return _read_protocol(data, encoding, errors)
 
 
 
@@ -364,75 +364,78 @@ class Pickler:
 
 
 class Unpickler:
-    def __init__(self, file, **kwargs):
+    def __init__(self, file, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=None):
         self.file = file
+        self.encoding = encoding
+        self.errors = errors
 
     def load(self):
-        return load(self.file)
+        return load(self.file, encoding=self.encoding, errors=self.errors)
 
 
-def _decode_binstring(data, encoding):
+def _decode_binstring(data, encoding, errors='strict'):
     # A binstring's bytes are text in the encoding the reader was given:
-    # latin1 keeps each byte as its own letter; bytes hands the bytes
-    # over whole; ASCII refuses a byte that is not one.
+    # 'bytes' hands the bytes over whole; anything else is decoded with
+    # the reader's encoding and error mode, as CPython's _decode_string.
     if encoding == 'bytes':
         return bytes(data)
-    if encoding == 'latin1':
-        out = ''
-        for byte in data:
-            out += chr(byte)
-        return out
-    if encoding == 'utf-8':
-        return bytes(data).decode('utf-8')
-    out = ''
-    for byte in data:
-        if byte > 127:
-            raise UnicodeDecodeError('ascii', bytes([byte]), 0, 1, 'ordinal not in range(128)')
-        out += chr(byte)
-    return out
+    return bytes(data).decode(encoding, errors)
 
-def _unescape_string(text):
-    # A protocol-0 string is written as its repr: quotes around escapes.
-    out = ''
+def _escape_decode(data):
+    # CPython's codecs.escape_decode, on bytes: the protocol-0 STRING
+    # body is text with backslash escapes. \x and octal escapes name
+    # bytes, the plain escapes their one byte, and \u/\U (and any
+    # other unknown escape) keep the backslash for the reader's own
+    # encoding to meet afterwards.
+    out = bytearray()
     at = 0
-    while at < len(text):
-        ch = text[at]
-        if ch != '\\':
-            out += ch
+    while at < len(data):
+        ch = data[at]
+        if ch != 0x5c:
+            out.append(ch)
             at += 1
             continue
         at += 1
-        esc = text[at]
+        if at >= len(data):
+            out.append(0x5c)
+            break
+        esc = data[at]
         at += 1
-        if esc == 'n':
-            out += '\n'
-        elif esc == 'r':
-            out += '\r'
-        elif esc == 't':
-            out += '\t'
-        elif esc == '\\':
-            out += '\\'
-        elif esc == "'":
-            out += "'"
-        elif esc == '"':
-            out += '"'
-        elif esc == 'x':
-            out += chr(int(text[at:at + 2], 16))
+        if esc == 0x6e:
+            out.append(0x0a)
+        elif esc == 0x72:
+            out.append(0x0d)
+        elif esc == 0x74:
+            out.append(0x09)
+        elif esc == 0x62:
+            out.append(0x08)
+        elif esc == 0x66:
+            out.append(0x0c)
+        elif esc == 0x61:
+            out.append(0x07)
+        elif esc == 0x76:
+            out.append(0x0b)
+        elif esc == 0x5c:
+            out.append(0x5c)
+        elif esc == 0x27:
+            out.append(0x27)
+        elif esc == 0x22:
+            out.append(0x22)
+        elif esc == 0x78:
+            out.append(int(data[at:at + 2], 16))
             at += 2
-        elif esc == 'u':
-            out += chr(int(text[at:at + 4], 16))
-            at += 4
-        elif esc in '01234567':
-            digits = esc
-            while len(digits) < 3 and at < len(text) and text[at] in '01234567':
-                digits += text[at]
+        elif 0x30 <= esc <= 0x37:
+            digits = bytes([esc])
+            while len(digits) < 3 and at < len(data) and 0x30 <= data[at] <= 0x37:
+                digits += bytes([data[at]])
                 at += 1
-            out += chr(int(digits, 8))
+            out.append(int(digits, 8))
         else:
-            out += esc
-    return out
+            out.append(0x5c)
+            out.append(esc)
+    return bytes(out)
 
-def _read_protocol(data, encoding='ASCII'):
+def _read_protocol(data, encoding='ASCII', errors='strict'):
     # The stack machine also accepts older standard range-iterator pickles.
     stack = []
     marks = []
@@ -502,6 +505,10 @@ def _read_protocol(data, encoding='ASCII'):
             args = stack.pop()
             constructor = stack.pop()
             stack.append(constructor(*args))
+        elif op == 129:
+            args = stack.pop()
+            cls = stack.pop()
+            stack.append(cls.__new__(cls, *args))
         elif op == 98:
             state = stack.pop()
             _apply_state(stack[-1], state)
@@ -517,50 +524,6 @@ def _read_protocol(data, encoding='ASCII'):
                 stack.append(memo[index])
         elif op == 78:
             stack.append(None)
-        elif op == 129:
-            args = stack.pop()
-            cls = stack.pop()
-            stack.append(cls.__new__(cls, *args))
-        elif op == 125:
-            stack.append({})
-        elif op == 100:
-            mark = marks.pop()
-            items = stack[mark:]
-            del stack[mark:]
-            d = {}
-            for i in range(0, len(items), 2):
-                d[items[i]] = items[i + 1]
-            stack.append(d)
-        elif op == 83:
-            end = data.index(b'\n', at)
-            token = data[at:end]
-            at = end + 1
-            if len(token) >= 2 and token[0] == token[-1] and token[0] in (34, 39):
-                token = token[1:-1]
-            else:
-                raise UnpicklingError('the STRING opcode argument must be quoted')
-            stack.append(codecs.decode(token, 'unicode_escape'))
-        elif op == 86:
-            end = data.index(b'\n', at)
-            token = data[at:end]
-            at = end + 1
-            stack.append(codecs.decode(token, 'raw_unicode_escape'))
-        elif op == 85:
-            size = data[at]
-            at += 1
-            stack.append(data[at:at + size].decode())
-            at += size
-        elif op == 115:
-            value = stack.pop()
-            key = stack.pop()
-            stack[-1][key] = value
-        elif op == 117:
-            mark = marks.pop()
-            items = stack[mark:]
-            del stack[mark:]
-            d = stack[-1]
-            for i in range(0, len(items), 2):
-                d[items[i]] = items[i + 1]
         elif op in (113, 104):
             index = data[at]
             at += 1
@@ -576,23 +539,27 @@ def _read_protocol(data, encoding='ASCII'):
             stack.append(None)
         elif op == 83:
             end = data.index(b'\n', at)
-            text = data[at:end].decode()
+            token = data[at:end]
             at = end + 1
-            stack.append(_unescape_string(text[1:len(text) - 1]))
+            if len(token) >= 2 and token[0] == token[-1] and token[0] in (34, 39):
+                token = token[1:-1]
+            else:
+                raise UnpicklingError('the STRING opcode argument must be quoted')
+            stack.append(_decode_binstring(_escape_decode(token), encoding, errors))
         elif op == 86:
             end = data.index(b'\n', at)
-            text = data[at:end].decode()
+            token = data[at:end]
             at = end + 1
-            stack.append(_unescape_string(text))
+            stack.append(codecs.decode(token, 'raw_unicode_escape'))
         elif op == 85:
             size = data[at]
             at += 1
-            stack.append(_decode_binstring(data[at:at + size], encoding))
+            stack.append(_decode_binstring(data[at:at + size], encoding, errors))
             at += size
         elif op == 84:
             size = int.from_bytes(data[at:at + 4], 'little')
             at += 4
-            stack.append(_decode_binstring(data[at:at + size], encoding))
+            stack.append(_decode_binstring(data[at:at + size], encoding, errors))
             at += size
         elif op == 70:
             end = data.index(b'\n', at)
