@@ -1,0 +1,11 @@
+[package]
+name = "lumen-zlib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+libz-sys = { version = "=1.1.29", features = ["static"] }
+
+[lib]
+path = "lib.rs"

@@ -456,7 +456,7 @@ pub(crate) fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> 
     let mut names = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        if tokens[i].shape == Shape::Bare && table.spells("ext.stmt.global", &tokens[i].lexeme) {
+        if tokens[i].shape == Shape::Bare && table.spells("ext.stmt.global", &tokens[i].spelling()) {
             i += 1;
             loop {
                 match tokens.get(i) {
@@ -493,7 +493,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     if !table.has_any("ext.stmt.class.detail.slots") { return output; }
     let mut suites = Vec::new();
     for (index, token) in input.iter().enumerate() {
-        if token.shape != Shape::Bare || !table.spells("ext.stmt.class", &token.lexeme) { continue; }
+        if token.shape != Shape::Bare || !table.spells("ext.stmt.class", &token.spelling()) { continue; }
         let Some(class) = input.get(index + 1).filter(|t| t.shape == Shape::Bare) else { continue };
         let mut nesting: i32 = 0;
         let mut colon = None;
@@ -502,7 +502,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
             if part.shape != Shape::Sign { continue; }
             if ["(", "[", "{"].contains(&part.lexeme.as_str()) { nesting += 1; }
             if [")", "]", "}"].contains(&part.lexeme.as_str()) { nesting -= 1; }
-            if nesting == 0 && table.spells("block.intro", &part.lexeme) { colon = Some(offset); break; }
+            if nesting == 0 && table.spells("block.intro", &part.spelling()) { colon = Some(offset); break; }
         }
         let Some(mark) = colon else { continue };
         let start = (mark + 1..input.len()).find(|&i| input[i].shape != Shape::LineEnd).unwrap_or(input.len());
@@ -759,7 +759,7 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
     let mut i = 0;
     while i + 2 < tokens.len() {
         let word = &tokens[i];
-        if word.shape != Shape::Bare || !table.spells("stmt.function", &word.lexeme) {
+        if word.shape != Shape::Bare || !table.spells("stmt.function", &word.spelling()) {
             i += 1;
             continue;
         }
@@ -795,7 +795,7 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
                     spellings.push(std::mem::take(&mut spelling));
                     shares = false;
                     defaulting = false;
-                } else if p.shape == Shape::Sign && table.spells("stmt.assign", &p.lexeme) {
+                } else if p.shape == Shape::Sign && table.spells("stmt.assign", &p.spelling()) {
                     defaulting = true;
                 } else if !defaulting && is(p, mark) {
                     shares = true;
@@ -1103,7 +1103,7 @@ impl<'a> Builder<'a> {
     }
 
     fn key(&self, key: &str) -> bool {
-        self.look().shape == Shape::Bare && self.table.spells(key, &self.look().lexeme)
+        self.look().shape == Shape::Bare && self.table.spells(key, self.look().spelling())
     }
 
     fn on_stmt_end(&self) -> bool {
@@ -1138,7 +1138,7 @@ impl<'a> Builder<'a> {
     }
 
     fn need_word(&mut self, why: &str) -> Res<String> {
-        if self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme) {
+        if self.table.spells("ext.lexical.identifier.reserved", &self.look().spelling()) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
         if self.table.has_any("ext.builtin.exceptions.syntax") && ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.key(label)) {
@@ -1480,8 +1480,8 @@ impl<'a> Builder<'a> {
                     depth -= 1;
                 }
                 Shape::LineEnd if inline && depth == 0 => break,
-                Shape::Sign if inline && depth == 0 && self.table.spells("stmt.terminator", &token.lexeme) => break,
-                Shape::Bare if token.lexeme == "locals" || token.lexeme == "vars" || token.lexeme == "__classdict__" && self.table.has_any("ext.stmt.class.detail.kind") => return true,
+                Shape::Sign if inline && depth == 0 && self.table.spells("stmt.terminator", &token.spelling()) => break,
+                Shape::Bare if token.spelling() == "locals" || token.spelling() == "vars" || token.spelling() == "__classdict__" && self.table.has_any("ext.stmt.class.detail.kind") => return true,
                 _ => {}
             }
         }
@@ -1761,7 +1761,7 @@ impl<'a> Builder<'a> {
         });
         let began = self.pos;
         let mut start = self.pos;
-        while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
+        while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.spelling())) { start += 1; }
         let expression_body = name == "<generator>" || self.table.strings("ext.stmt.function.anonymous").first().map_or(false, |n| n == name);
         let mut doc = None;
         let mut finish = start;
@@ -2152,7 +2152,7 @@ impl<'a> Builder<'a> {
 
     fn type_scope_fault(&self) -> Option<String> {
         if !self.table.has_any("ext.builtin.exceptions.syntax") { return None; }
-        let word = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let word = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
         let head = word(self.pos);
         let named = match head {
             "async" if word(self.pos + 1) == "def" => self.pos + 2,
@@ -2217,7 +2217,7 @@ impl<'a> Builder<'a> {
         if head == "class" && has_types && word(cursor) == "(" {
             let mut openings = 0usize;
             for token in self.tokens.iter().skip(cursor) {
-                if let Some(kind) = match token.lexeme.as_str() { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
+                if let Some(kind) = match token.spelling() { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
                     return Some(format!("SyntaxError: {kind} expression cannot be used within the definition of a generic"));
                 }
                 match token.lexeme.as_str() {
@@ -2232,7 +2232,7 @@ impl<'a> Builder<'a> {
             let mut inside = 0usize;
             for token in self.tokens.iter().skip(cursor + 1) {
                 if inside == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let bad = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                let bad = match token.spelling() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
                 if !bad.is_empty() { return Some(format!("SyntaxError: {bad} expression cannot be used within a type alias")); }
                 if ["(", "[", "{"].contains(&token.lexeme.as_str()) { inside += 1; }
                 else if [")", "]", "}"].contains(&token.lexeme.as_str()) { inside = inside.saturating_sub(1); }
@@ -2371,7 +2371,7 @@ impl<'a> Builder<'a> {
                 let close = self.pair_close(at, limit)?;
                 let kind = if opener == "[" { "list" }
                     else if opener == "{" { if close == at + 1 || self.pair_holds(at, close, &[":"]) { "dict" } else { "set" } }
-                    else if opener == "(" && self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Bare && self.table.spells("ext.op.lambda", &t.lexeme)) { "function" }
+                    else if opener == "(" && self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Bare && self.table.spells("ext.op.lambda", &t.spelling())) { "function" }
                     else if self.pair_holds(at, close, &[","]) { "tuple" }
                     else if close == at + 2 { self.literal_at(at + 1, close)?.0 }
                     else if opener == "(" && self.pair_gathers(at, close) { "generator" }
@@ -2396,7 +2396,7 @@ impl<'a> Builder<'a> {
                     ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
                     _ => {}
                 },
-                Shape::Bare if nesting == 0 && walks.iter().any(|word| word == &token.lexeme) => return true,
+                Shape::Bare if nesting == 0 && walks.iter().any(|word| word == token.spelling()) => return true,
                 _ => {}
             }
         }
@@ -2424,7 +2424,7 @@ impl<'a> Builder<'a> {
             let open = self.pair_open(last, opened)?;
             if open > opened {
                 let ahead = &self.tokens[open - 1];
-                let names = ahead.shape == Shape::Bare && !self.table.keywords.contains(&ahead.lexeme);
+                let names = ahead.shape == Shape::Bare && !self.table.keywords.iter().any(|w| w == ahead.spelling());
                 let closed = ahead.shape == Shape::Sign && [")", "]", "}"].contains(&ahead.lexeme.as_str());
                 if names || closed { return None; }
             }
@@ -2478,10 +2478,10 @@ impl<'a> Builder<'a> {
         if open + 2 == close {
             let only = &self.tokens[open + 1];
             if only.shape == Shape::Bare {
-                if self.table.spells("literal.null", &only.lexeme) { return Some("NoneType"); }
-                if self.table.spells("literal.true", &only.lexeme) || self.table.spells("literal.false", &only.lexeme) { return Some("bool"); }
+                if self.table.spells("literal.null", &only.spelling()) { return Some("NoneType"); }
+                if self.table.spells("literal.true", &only.spelling()) || self.table.spells("literal.false", &only.spelling()) { return Some("bool"); }
             }
-            if only.shape == Shape::Sign && self.table.spells("ext.literal.ellipsis", &only.lexeme) { return Some("ellipsis"); }
+            if only.shape == Shape::Sign && self.table.spells("ext.literal.ellipsis", &only.spelling()) { return Some("ellipsis"); }
         }
         let (kind, ends) = self.literal_at(open + 1, close)?;
         if ends != close { return None; }
@@ -2493,10 +2493,10 @@ impl<'a> Builder<'a> {
     /// call upon that kind.
     fn constant_kind_called(&self, here: usize) -> Option<&'static str> {
         let before = &self.tokens[here - 1];
-        if before.shape == Shape::Sign && self.table.spells("ext.literal.ellipsis", &before.lexeme) { return Some("ellipsis"); }
+        if before.shape == Shape::Sign && self.table.spells("ext.literal.ellipsis", &before.spelling()) { return Some("ellipsis"); }
         if before.shape != Shape::Bare { return None; }
-        if self.table.spells("literal.null", &before.lexeme) { return Some("NoneType"); }
-        if self.table.spells("literal.true", &before.lexeme) || self.table.spells("literal.false", &before.lexeme) { return Some("bool"); }
+        if self.table.spells("literal.null", &before.spelling()) { return Some("NoneType"); }
+        if self.table.spells("literal.true", &before.spelling()) || self.table.spells("literal.false", &before.spelling()) { return Some("bool"); }
         None
     }
 
@@ -2510,7 +2510,7 @@ impl<'a> Builder<'a> {
         let limit = self.statement_limit(opened);
         let mut noted: Vec<(String, u32, usize)> = Vec::new();
         let first = &self.tokens[opened];
-        if first.shape == Shape::Bare && table.spells("ext.stmt.assert", &first.lexeme) && opened + 1 < limit && self.tokens[opened + 1].shape == Shape::Sign && self.tokens[opened + 1].lexeme == "(" {
+        if first.shape == Shape::Bare && table.spells("ext.stmt.assert", &first.spelling()) && opened + 1 < limit && self.tokens[opened + 1].shape == Shape::Sign && self.tokens[opened + 1].lexeme == "(" {
             if let Some(close) = self.pair_close(opened + 1, limit) {
                 let next = self.tokens.get(close + 1);
                 let ends = close + 1 >= limit || next.map_or(true, |t| t.shape == Shape::Sign && (t.lexeme == "," || table.separates(&t.lexeme)));
@@ -2534,8 +2534,8 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            if token.shape == Shape::Bare && table.spells("ext.op.identical", &token.lexeme) {
-                let negated = here + 1 < limit && self.tokens[here + 1].shape == Shape::Bare && table.spells("ext.op.identical.negated", &self.tokens[here + 1].lexeme);
+            if token.shape == Shape::Bare && table.spells("ext.op.identical", &token.spelling()) {
+                let negated = here + 1 < limit && self.tokens[here + 1].shape == Shape::Bare && table.spells("ext.op.identical.negated", &self.tokens[here + 1].spelling());
                 let mut right = here + 1 + usize::from(negated);
                 // The reference folds a sign before a number into the number.
                 let signed = right + 1 < limit && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && self.tokens[right + 1].shape == Shape::Numeral;
@@ -2606,7 +2606,7 @@ impl<'a> Builder<'a> {
         if self.look().row > ended_on { return Ok(()); }
         let first = self.tokens[opened].clone();
         let lone_word = opened + 1 == self.pos && first.shape == Shape::Bare;
-        if lone_word && table.spells("ext.stmt.legacy_call", &first.lexeme) && !self.on_any("ext.stmt.yield") {
+        if lone_word && table.spells("ext.stmt.legacy_call", &first.spelling()) && !self.on_any("ext.stmt.yield") {
             let here = self.pos;
             let expression = self.comma_value().is_ok();
             self.pos = here;
@@ -2719,15 +2719,15 @@ impl<'a> Builder<'a> {
             };
             if let Some(target) = correction {
                 let following = self.glance(1);
-                if following.shape == Shape::Bare || self.look().lexeme == "tyo" && following.lexeme == ":" && self.glance(2).shape == Shape::LineEnd {
+                if following.shape == Shape::Bare || self.look().spelling() == "tyo" && following.spelling() == ":" && self.glance(2).shape == Shape::LineEnd {
                     return Err(format!("SyntaxError: invalid syntax. Did you mean '{target}'?"));
                 }
             }
-            if self.look().lexeme == "elso" && self.glance(1).lexeme == ":"
+            if self.look().spelling() == "elso" && self.glance(1).spelling() == ":"
                 && self.glance(2).shape == Shape::LineEnd {
                 return Err(String::from("SyntaxError: invalid syntax. Did you mean 'else'?"));
             }
-            if self.look().lexeme == "case" && self.glance(1).lexeme != ":" {
+            if self.look().spelling() == "case" && self.glance(1).lexeme != ":" {
                 let mut nested = 0usize;
                 let arm = self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|token| {
                     if ["(", "[", "{"].contains(&token.lexeme.as_str()) { nested += 1; }
@@ -2736,8 +2736,8 @@ impl<'a> Builder<'a> {
                 });
                 if arm { return Err("SyntaxError: case statement must be inside match statement".to_owned()); }
             }
-            if self.look().lexeme == "lazy" && ["import", "from"].contains(&self.glance(1).lexeme.as_str()) {
-                let from = self.glance(1).lexeme == "from";
+            if self.look().spelling() == "lazy" && ["import", "from"].contains(&self.glance(1).spelling()) {
+                let from = self.glance(1).spelling() == "from";
                 let disallowed = if self.in_class_body() { Some("inside classes") }
                     else if !self.naming.is_empty() { Some("inside functions") }
                     else if self.syntax_try_nesting != 0 { Some("inside try/except blocks") }
@@ -2750,7 +2750,7 @@ impl<'a> Builder<'a> {
                     let kind = if from { "from ... import" } else { "import" };
                     return Err(format!("SyntaxError: lazy {kind} not allowed {place}"));
                 }
-                if from && words.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                if from && words.windows(2).any(|pair| pair[0].spelling() == "import" && pair[1].spelling() == "*") {
                     self.range_end = Some((if terminal.end_column == 0 { terminal.column + terminal.lexeme.chars().count() } else { terminal.end_column }, terminal.end_row.max(terminal.row)));
                     return Err("SyntaxError: lazy from ... import * is not allowed".to_owned());
                 }
@@ -2844,7 +2844,7 @@ impl<'a> Builder<'a> {
         }
         let next = self.glance(1);
         let ends = matches!(next.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
-            || self.table.spells("stmt.terminator", &next.lexeme);
+            || self.table.spells("stmt.terminator", &next.spelling());
         if ends && self.on_any("ext.literal.ellipsis") {
             self.advance();
             return Ok(constant(Value::Nil));
@@ -2856,7 +2856,7 @@ impl<'a> Builder<'a> {
             // The deferring word ahead of an import is stepped over; the
             // import behind it is read and answered as any other.
             if self.key("ext.stmt.import.lazy") && self.glance(1).shape == Shape::Bare
-                && (self.table.spells("ext.stmt.import", &self.glance(1).lexeme) || self.table.spells("ext.stmt.import.from", &self.glance(1).lexeme)) {
+                && (self.table.spells("ext.stmt.import", &self.glance(1).spelling()) || self.table.spells("ext.stmt.import.from", &self.glance(1).spelling())) {
                 self.advance();
                 self.in_lazy_from = true;
                 let read = self.stmt();
@@ -3086,7 +3086,7 @@ impl<'a> Builder<'a> {
                 return self.bag_decl();
             }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
-                if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).lexeme == "__debug__" {
+                if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).spelling() == "__debug__" {
                     return Err("SyntaxError: cannot assign to __debug__".to_owned());
                 }
                 if !self.table.flag("ext.stmt.class.this.explicit") && self.table.has_any("ext.stmt.class.bases.open") { return self.class_scope(); }
@@ -3094,7 +3094,7 @@ impl<'a> Builder<'a> {
             }
             // A class may be marked before it is named: `abstract class C`.
             if self.key("ext.stmt.class.modifier") && self.glance(1).shape == Shape::Bare {
-                let next = self.glance(1).lexeme.clone();
+                let next = self.glance(1).spelling().to_string();
                 if self.table.spells("ext.stmt.class", &next) || self.table.spells("ext.stmt.class.interface", &next) {
                     self.advance();
                     return self.class_decl();
@@ -3133,7 +3133,7 @@ impl<'a> Builder<'a> {
                     let equals = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
                     if let Some(&stop) = equals.first() {
                         let words = &self.tokens[self.pos..stop];
-                        let named = if words.first().is_some_and(|t| t.lexeme == "(") && words.iter().any(|t| t.lexeme == "yield") {
+                        let named = if words.first().is_some_and(|t| t.lexeme == "(") && words.iter().any(|t| t.spelling() == "yield") {
                             Some("yield expression")
                         } else if words.len() > 2 && words[0].shape == Shape::Bare && words[1].lexeme == "["
                             && self.pair_close(self.pos + 1, stop) == Some(stop - 1) { Some("subscript") }
@@ -3216,9 +3216,9 @@ impl<'a> Builder<'a> {
         for statement in words.split(|t| t.shape == Shape::LineEnd || t.lexeme == ";") {
             if statement.is_empty() { continue; }
             let quoted = count == 0 && statement.iter().all(|t| t.shape == Shape::Quote);
-            let importing = statement.get(0).map_or(false, |t| t.lexeme == "from")
-                && statement.get(1).map_or(false, |t| t.lexeme == "__future__")
-                && statement.get(2).map_or(false, |t| t.lexeme == "import");
+            let importing = statement.get(0).map_or(false, |t| t.spelling() == "from")
+                && statement.get(1).map_or(false, |t| t.spelling() == "__future__")
+                && statement.get(2).map_or(false, |t| t.spelling() == "import");
             if !quoted && !importing { return false; }
             count += 1;
         }
@@ -3386,7 +3386,7 @@ impl<'a> Builder<'a> {
     /// a value; the rest, `pass` among them, open a statement instead.
     fn adornment_head_ok(&self) -> bool {
         let table = self.table;
-        let head = &self.look().lexeme;
+        let head = self.look().spelling();
         if !table.keywords.contains(head) || table.monadic.contains_key(head) { return true; }
         ["ext.op.lambda", "ext.op.await", "literal.true", "literal.false", "literal.null", "ext.literal.ellipsis"]
             .iter().any(|label| table.spells(label, head))
@@ -3484,7 +3484,7 @@ impl<'a> Builder<'a> {
                     if token.lexeme == close { nesting -= 1; }
                 }
                 if nesting == 0 {
-                    enclosed = table.spells("block.intro", &self.glance(distance + 1).lexeme);
+                    enclosed = table.spells("block.intro", &self.glance(distance + 1).spelling());
                     break;
                 }
                 distance += 1;
@@ -3554,7 +3554,7 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
         if table.has_any("ext.builtin.exceptions.syntax") {
-            if self.look().lexeme == "ad" && self.glance(1).shape == Shape::Bare {
+            if self.look().spelling() == "ad" && self.glance(1).shape == Shape::Bare {
                 return Err(String::from("SyntaxError: invalid syntax. Did you mean 'and'?"));
             }
             if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
@@ -3577,18 +3577,18 @@ impl<'a> Builder<'a> {
         loop {
             let token = self.glance(offset);
             if token.shape == Shape::Finish { break; }
-            let opens = token.shape == Shape::Sign && (self.table.spells("syntax.group.open", &token.lexeme) || self.table.spells("syntax.array.open", &token.lexeme));
-            let closes = token.shape == Shape::Sign && (self.table.spells("syntax.group.close", &token.lexeme) || self.table.spells("syntax.array.close", &token.lexeme));
+            let opens = token.shape == Shape::Sign && (self.table.spells("syntax.group.open", &token.spelling()) || self.table.spells("syntax.array.open", &token.spelling()));
+            let closes = token.shape == Shape::Sign && (self.table.spells("syntax.group.close", &token.spelling()) || self.table.spells("syntax.array.close", &token.spelling()));
             if nesting == 0 {
-                if (bracketed && closes) || (!bracketed && (self.table.spells("stmt.for.in", &token.lexeme) || self.table.spells("stmt.assign", &token.lexeme))) { break; }
-                if self.table.spells("syntax.call.separator", &token.lexeme) {
+                if (bracketed && closes) || (!bracketed && (self.table.spells("stmt.for.in", &token.spelling()) || self.table.spells("stmt.assign", &token.spelling()))) { break; }
+                if self.table.spells("syntax.call.separator", &token.spelling()) {
                     separated = true;
                     new_item = true;
                     offset += 1;
                     continue;
                 }
                 if new_item { width += 1; new_item = false; }
-                spread |= self.table.spells("op.mul", &token.lexeme);
+                spread |= self.table.spells("op.mul", &token.spelling());
             }
             nesting += if opens { 1 } else if closes { -1 } else { 0 };
             offset += 1;
@@ -3675,8 +3675,8 @@ impl<'a> Builder<'a> {
         // A bare word bound here is a member where the binding stands
         // in a class body; a place within something binds no word.
         let next = self.glance(1).clone();
-        let within = table.spells("op.pipe", &next.lexeme)
-            || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.lexeme)));
+        let within = table.spells("op.pipe", &next.spelling())
+            || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.spelling())));
         if token.shape == Shape::Bare && !within { self.claim(&token.lexeme); }
         let target = self.deletion_place()?;
         if self.unsupported_place {
@@ -3708,7 +3708,7 @@ impl<'a> Builder<'a> {
             if still > 0 { continue; }
             let past = match self.tokens.get(step + 1) { Some(past) => past, None => return false };
             return past.shape == Shape::Sign
-                && (self.table.spells("op.pipe", &past.lexeme) || self.table.spells("op.index.open", &past.lexeme));
+                && (self.table.spells("op.pipe", &past.spelling()) || self.table.spells("op.index.open", &past.spelling()));
         }
         false
     }
@@ -4238,8 +4238,8 @@ impl<'a> Builder<'a> {
             let punctuation = ["ext.op.tuple", "ext.stmt.unpack.rest", "syntax.group.open", "syntax.group.close",
                 "syntax.array.open", "syntax.array.close"];
             match token.shape {
-                Shape::Bare if !self.table.keywords.contains(&token.lexeme) => gathered.push(token.lexeme.clone()),
-                Shape::Sign if punctuation.iter().any(|label| self.table.spells(label, &token.lexeme)) => {}
+                Shape::Bare if !self.table.keywords.iter().any(|w| w == token.spelling()) => gathered.push(token.lexeme.clone()),
+                Shape::Sign if punctuation.iter().any(|label| self.table.spells(label, &token.spelling())) => {}
                 _ => return false,
             }
         }
@@ -4400,8 +4400,8 @@ impl<'a> Builder<'a> {
             ahead += 1;
         }
         let next = self.glance(ahead);
-        let further = next.shape == Shape::Bare && table.spells("stmt.elif", &next.lexeme);
-        let remaining = next.shape == Shape::Bare && table.spells("stmt.else", &next.lexeme);
+        let further = next.shape == Shape::Bare && table.spells("stmt.elif", &next.spelling());
+        let remaining = next.shape == Shape::Bare && table.spells("stmt.else", &next.spelling());
         if !further && !remaining {
             return Ok(self.choose(test, taken, constant(Value::Nil)));
         }
@@ -4451,7 +4451,7 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
-        if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme) { self.advance(); self.coroutine_next = true; }
+        if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).spelling()) { self.advance(); self.coroutine_next = true; }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -4536,7 +4536,7 @@ impl<'a> Builder<'a> {
                 let mut nested = self.read(&member);
                 while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
                 Some((member, nested))
-            } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
+            } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling()) {
                 self.pos += 2;
                 // Commas after the value gather a tuple for the member,
                 // where the language has them.
@@ -4544,8 +4544,8 @@ impl<'a> Builder<'a> {
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
             } else if self.look().shape == Shape::Bare
-                && (!table.keywords.contains(&self.look().lexeme) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().lexeme)))
-                && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
+                && (!table.keywords.contains(self.look().spelling()) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().spelling())))
+                && table.spells("ext.stmt.annotation", &self.glance(1).spelling()) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
                 self.pos += 2;
@@ -4565,7 +4565,7 @@ impl<'a> Builder<'a> {
                     let value = self.comma_value()?;
                     Some((member, value))
                 } else { None }
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare && !table.keywords.iter().any(|w| w == self.look().spelling())
                 && self.glance(1).shape == Shape::Sign && table.compound.contains_key(&self.glance(1).lexeme) {
                 // `x += 1`: x is read as the body reads it, out of the
                 // class's place where the body has bound it and out of
@@ -4588,13 +4588,13 @@ impl<'a> Builder<'a> {
                 // the body does; one whose bindings this walk cannot
                 // follow yet is read the same way and the class refused.
                 let word = self.look().clone();
-                let harmless = match word.shape == Shape::Bare && table.keywords.contains(&word.lexeme) {
+                let harmless = match word.shape == Shape::Bare && table.keywords.iter().any(|w| w == word.spelling()) {
                     // `global` and `nonlocal` bind no member: the
                     // name they carry goes on meaning what it always
                     // did, a place beyond the class, so a class body
                     // forms around one exactly as it does around a
                     // call made for its effect.
-                    true => ["ext.stmt.throw", "ext.stmt.assert", "stmt.break", "stmt.continue", "ext.stmt.global", "ext.stmt.nonlocal"].iter().any(|label| table.spells(label, &word.lexeme)),
+                    true => ["ext.stmt.throw", "ext.stmt.assert", "stmt.break", "stmt.continue", "ext.stmt.global", "ext.stmt.nonlocal"].iter().any(|label| table.spells(label, &word.spelling())),
                     false => !self.writes_a_name(self.pos),
                 };
                 setup.push(self.stmt()?);
@@ -4659,7 +4659,7 @@ impl<'a> Builder<'a> {
         let starred = (self.pos..self.tokens.len())
             .map(|at| &self.tokens[at])
             .take_while(|word| !matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close))
-            .any(|word| word.shape == Shape::Sign && table.spells("op.mul", &word.lexeme));
+            .any(|word| word.shape == Shape::Sign && table.spells("op.mul", &word.spelling()));
         let before = self.class_bindings.last().expect("class namespace").1.clone();
         let brought = self.stmt()?;
         let bound = self.class_bindings.last().expect("class namespace").1.clone();
@@ -4707,7 +4707,7 @@ impl<'a> Builder<'a> {
             left = right + 1;
         }
         let of_a_word = |span: &std::ops::Range<usize>| span.len() == 1
-            && self.tokens[span.start].shape == Shape::Bare && !table.keywords.contains(&self.tokens[span.start].lexeme);
+            && self.tokens[span.start].shape == Shape::Bare && !table.keywords.iter().any(|w| w == self.tokens[span.start].spelling());
         let words = spans.iter().filter(|span| of_a_word(span)).count();
         if words == 0 { return self.stmt(); }
         if words < spans.len() {
@@ -4789,9 +4789,9 @@ impl<'a> Builder<'a> {
             let word = &self.tokens[at];
             if depth.is_empty() && (matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
                 || (word.shape == Shape::Sign && table.separates(&word.lexeme))) { end = at; break; }
-            if word.shape == Shape::Sign && table.spells("ext.op.assign.expression", &word.lexeme) { return true; }
+            if word.shape == Shape::Sign && table.spells("ext.op.assign.expression", &word.spelling()) { return true; }
             if depth.is_empty() && sign_at.is_none() && word.shape == Shape::Sign
-                && (table.spells("stmt.assign", &word.lexeme) || table.compound.contains_key(&word.lexeme)) { sign_at = Some(at); }
+                && (table.spells("stmt.assign", &word.spelling()) || table.compound.contains_key(word.spelling())) { sign_at = Some(at); }
             if word.shape != Shape::Sign { continue; }
             if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
             for family in ["syntax.group", "syntax.array", "syntax.map"] {
@@ -4810,12 +4810,12 @@ impl<'a> Builder<'a> {
         depth.clear();
         for at in start..sign_at.min(end) {
             let word = &self.tokens[at];
-            if depth.is_empty() && word.shape == Shape::Sign && table.spells("ext.stmt.annotation", &word.lexeme) { annotated = true; }
-            let after_mark = at > start && table.spells("op.pipe", &self.tokens[at - 1].lexeme);
-            if depth.is_empty() && word.shape == Shape::Bare && !annotated && !table.keywords.contains(&word.lexeme) && !after_mark {
+            if depth.is_empty() && word.shape == Shape::Sign && table.spells("ext.stmt.annotation", &word.spelling()) { annotated = true; }
+            let after_mark = at > start && table.spells("op.pipe", &self.tokens[at - 1].spelling());
+            if depth.is_empty() && word.shape == Shape::Bare && !annotated && !table.keywords.iter().any(|w| w == word.spelling()) && !after_mark {
                 let next = &self.tokens[at + 1];
-                let within = table.spells("op.pipe", &next.lexeme)
-                    || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.lexeme)));
+                let within = table.spells("op.pipe", &next.spelling())
+                    || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.spelling())));
                 if !within { return true; }
             }
             if word.shape != Shape::Sign { continue; }
@@ -4848,11 +4848,11 @@ impl<'a> Builder<'a> {
             let told_apart = self.table.single("ext.stmt.class.detail.descriptor.get").is_none();
             if told_apart && self.glance(1).shape == Shape::LineEnd {
                 for (label, mark) in [("ext.stmt.class.static", 's'), ("ext.stmt.class.classmethod", 'c'), ("ext.stmt.class.property", 'p')] {
-                    if self.table.spells(label, &self.look().lexeme) { manner = mark; }
+                    if self.table.spells(label, &self.look().spelling()) { manner = mark; }
                 }
             }
-            let setter = told_apart && self.table.spells("ext.op.member", &self.glance(1).lexeme)
-                && self.table.spells("ext.stmt.class.property.setter", &self.glance(2).lexeme)
+            let setter = told_apart && self.table.spells("ext.op.member", &self.glance(1).spelling())
+                && self.table.spells("ext.stmt.class.property.setter", &self.glance(2).spelling())
                 && self.glance(3).shape == Shape::LineEnd;
             let kept = match (manner, setter) {
                 (_, true) => {
@@ -4916,7 +4916,10 @@ impl<'a> Builder<'a> {
         } else { Vec::new() };
         if generic {
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            args.push(Form::Apply(Callee::Code(Box::new(maker)), Vec::new()));
+            let names = std::mem::take(&mut self.generic_class_parameters);
+            let types = names.iter().map(|name| self.read(name)).collect();
+            let parameters = prim_call(Prim::MakeTuple, types);
+            args.push(Form::Apply(Callee::Code(Box::new(maker)), vec![parameters]));
         }
         let header = self.gensym("class_header");
         setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
@@ -5018,7 +5021,13 @@ impl<'a> Builder<'a> {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
             let book = parts.book.as_ref().expect("class namespace");
             let target = self.read_to_write(book.ident.as_ref());
-            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), prim_call(Prim::MakeArray, row)]));
+            let metadata = self.gensym("annotation_values");
+            setup.push(Form::Write(metadata.clone(), Box::new(prim_call(Prim::MakeArray, row))));
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), self.read(&metadata.ident)]));
+            let (key, action) = if self.annotations_as_strings { ("__annotations__", 25) } else { ("__annotate_func__", 24) };
+            let target = self.read_to_write(book.ident.as_ref());
+            let evaluate = prim_call(Prim::ClassWork(action), vec![self.read(&metadata.ident)]);
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(key)), evaluate]));
             let target = self.read_to_write(book.ident.as_ref());
             setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text("\0string_annotations")), constant(Value::Flag(self.annotations_as_strings))]));
             for (_, routine) in &parts.annotated_names { if let Form::Glance(address) = routine { setup.push(Form::Forget(address.clone())); } }
@@ -5087,9 +5096,9 @@ impl<'a> Builder<'a> {
             } else {
             let mut first = true;
             while !self.sign(end) {
-                let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
+                let expanded = table.spells("op.mul", &self.look().spelling()) || table.spells("op.pow", &self.look().spelling());
                 if expanded { self.advance(); cannot = true; }
-                let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
+                let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling());
                 // A keyword in the header goes, under a name no program
                 // can spell, to the forebears' subclass hook; a table
                 // without such a hook cannot run the form.
@@ -5134,7 +5143,9 @@ impl<'a> Builder<'a> {
         if nested {
             let generic = self.gensym("generic_parent");
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            let value = Form::Apply(Callee::Code(Box::new(maker)), Vec::new());
+            let parameters = std::mem::take(&mut self.generic_class_parameters);
+            let members = parameters.iter().map(|item| self.read(item)).collect();
+            let value = Form::Apply(Callee::Code(Box::new(maker)), vec![prim_call(Prim::MakeTuple, members)]);
             setup.push(Form::Write(generic.clone(), Box::new(value)));
             if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
         }
@@ -5225,7 +5236,7 @@ impl<'a> Builder<'a> {
             if on_one_line && self.on_stmt_end() { break; }
             if self.class_item(&mut setup)? { continue; }
             if on_one_line {
-                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().spelling()) {
                     self.advance();
                 }
             } else { self.skip_line_ends(); }
@@ -5525,7 +5536,7 @@ impl<'a> Builder<'a> {
     /// under the name the definition gives it (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
-            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
+            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -5543,7 +5554,7 @@ impl<'a> Builder<'a> {
         let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + usize::from(!explicit), from)).collect();
         let formals = params.clone();
         if self.look().shape == Shape::Sign
-            && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme))
+            && (table.spells("stmt.function.returns", &self.look().spelling()) || table.spells("ext.stmt.function.returns", &self.look().spelling()))
         {
             self.advance();
             match table.has_any("ext.stmt.annotation") {
@@ -5616,7 +5627,7 @@ impl<'a> Builder<'a> {
         // A walk that hands out its items for writing walks the binding
         // itself, so that writing an item writes the array it came from.
         let mut named = match (self.look().shape, self.glance(1).shape) {
-            (Shape::Bare, Shape::Bare) if table.spells("stmt.foreach.as", &self.glance(1).lexeme) => Some(self.advance().lexeme),
+            (Shape::Bare, Shape::Bare) if table.spells("stmt.foreach.as", &self.glance(1).spelling()) => Some(self.advance().lexeme),
             _ => None,
         };
         // What is walked for its own cells need not be written out as a
@@ -5726,7 +5737,7 @@ impl<'a> Builder<'a> {
                 }
                 deep -= 1;
             } else if !said_as {
-                said_as = deep == 0 && w.shape == Shape::Bare && table.spells("stmt.foreach.as", &w.lexeme);
+                said_as = deep == 0 && w.shape == Shape::Bare && table.spells("stmt.foreach.as", &w.spelling());
             } else if a_sign && w.lexeme == mark {
                 return true;
             }
@@ -5961,14 +5972,14 @@ impl<'a> Builder<'a> {
             if matches!(token.shape, Shape::Finish | Shape::LineEnd) { return false; }
             if token.shape != Shape::Sign { continue; }
             if closing.is_empty() {
-                if table.spells("block.intro", &token.lexeme) { return true; }
-                if table.spells("stmt.assign", &token.lexeme) { return false; }
+                if table.spells("block.intro", &token.spelling()) { return true; }
+                if table.spells("stmt.assign", &token.spelling()) { return false; }
             }
             if closing.last().map_or(false, |end: &&str| *end == token.lexeme) {
                 closing.pop();
             } else {
                 for (open, close) in [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")] {
-                    if table.spells(open, &token.lexeme) { closing.push(table.single(close).unwrap_or_default()); break; }
+                    if table.spells(open, &token.spelling()) { closing.push(table.single(close).unwrap_or_default()); break; }
                 }
             }
         }
@@ -6062,20 +6073,20 @@ impl<'a> Builder<'a> {
             for token in self.tokens.iter().skip(self.pos + 1) {
                 if token.shape != Shape::Sign { continue; }
                 if nesting.is_empty() {
-                    if table.spells("syntax.call.separator", &token.lexeme) { grouped = true; }
-                    if table.spells("syntax.group.close", &token.lexeme) { break; }
+                    if table.spells("syntax.call.separator", &token.spelling()) { grouped = true; }
+                    if table.spells("syntax.group.close", &token.spelling()) { break; }
                 }
                 if nesting.last().map_or(false, |end: &&str| *end == token.lexeme) { nesting.pop(); }
                 else {
                     for stem in ["syntax.group", "syntax.array", "syntax.map"] {
-                        if table.spells(&format!("{}.open", stem), &token.lexeme) {
+                        if table.spells(&format!("{}.open", stem), &token.spelling()) {
                             nesting.push(table.single(&format!("{}.close", stem)).unwrap_or_default());
                             break;
                         }
                     }
                 }
             }
-            grouped |= table.spells("syntax.group.close", &self.glance(1).lexeme);
+            grouped |= table.spells("syntax.group.close", &self.glance(1).spelling());
         }
         if grouped { self.advance(); }
         let mut parts = Vec::new();
@@ -6172,7 +6183,7 @@ impl<'a> Builder<'a> {
         let mut i = at;
         while i + 2 < self.tokens.len()
             && self.tokens[i].shape == Shape::Bare
-            && self.tokens[i + 1].shape == Shape::Sign && self.table.spells("op.pipe", &self.tokens[i + 1].lexeme)
+            && self.tokens[i + 1].shape == Shape::Sign && self.table.spells("op.pipe", &self.tokens[i + 1].spelling())
             && self.tokens[i + 2].shape == Shape::Bare {
             i += 2;
         }
@@ -6244,7 +6255,7 @@ impl<'a> Builder<'a> {
                 if self.on_any("op.pow") {
                     self.advance();
                     let start = self.pos;
-                    if table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "_" {
+                    if table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "_" {
                         return Err(String::from("SyntaxError: invalid syntax"));
                     }
                     let CaseTest::Keep(name) = self.pattern_name()? else { return Err(self.bad_case()) };
@@ -6286,7 +6297,7 @@ impl<'a> Builder<'a> {
         let mut positional = Vec::new();
         let mut named: Vec<(String, CaseTest)> = Vec::new();
         while !self.on_any("syntax.call.close") {
-            if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
+            if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling()) {
                 let word = self.advance().lexeme;
                 if table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" { return Err(String::from("SyntaxError: cannot assign to __debug__")); }
                 if named.iter().any(|(seen, _)| *seen == word) {
@@ -6445,9 +6456,9 @@ impl<'a> Builder<'a> {
         if t.shape != Shape::Sign {
             return None;
         }
-        if self.table.spells("ext.op.increment", &t.lexeme) {
+        if self.table.spells("ext.op.increment", &t.spelling()) {
             Some(1)
-        } else if self.table.spells("ext.op.decrement", &t.lexeme) {
+        } else if self.table.spells("ext.op.decrement", &t.spelling()) {
             Some(-1)
         } else {
             None
@@ -6488,8 +6499,8 @@ impl<'a> Builder<'a> {
             ahead += 1;
         }
         let next = self.glance(ahead);
-        let elif = next.shape == Shape::Bare && self.table.spells("stmt.elif", &next.lexeme);
-        let else_ = next.shape == Shape::Bare && self.table.spells("stmt.else", &next.lexeme);
+        let elif = next.shape == Shape::Bare && self.table.spells("stmt.elif", &next.spelling());
+        let else_ = next.shape == Shape::Bare && self.table.spells("stmt.else", &next.spelling());
         let otherwise = if elif {
             self.pos += ahead;
             self.limb(Traps::Naught, |r| r.if_stmt())?
@@ -6509,7 +6520,7 @@ impl<'a> Builder<'a> {
                 while self.glance(later).shape == Shape::LineEnd { later += 1; }
                 let token = self.glance(later);
                 if self.table.has_any("ext.builtin.exceptions.syntax") && token.shape == Shape::Bare
-                    && self.table.spells("stmt.elif", &token.lexeme) {
+                    && self.table.spells("stmt.elif", &token.spelling()) {
                     return Err(String::from("SyntaxError: 'elif' block follows an 'else' block"));
                 }
                 arm
@@ -6630,7 +6641,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
-        if table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).lexeme == "im" {
+        if table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).spelling() == "im" {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'in'?"));
         }
         if table.has_any("ext.builtin.exceptions.syntax") {
@@ -6682,7 +6693,7 @@ impl<'a> Builder<'a> {
             let beginning = self.pos;
             let start = if self.on_any("ext.syntax.array.spread") { self.comma_value()? }
                 else { let item = self.expr(tier + 1)?; self.comma_tail(item)? };
-            if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
+            if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().spelling())) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
@@ -6730,7 +6741,7 @@ impl<'a> Builder<'a> {
             self.advance();
         }
         let name = self.need_word("after the binding keyword")?;
-        if self.look().shape == Shape::Sign && self.table.spells("stmt.let.annotation", &self.look().lexeme) {
+        if self.look().shape == Shape::Sign && self.table.spells("stmt.let.annotation", &self.look().spelling()) {
             self.advance();
             self.need_word("as a type name")?;
         }
@@ -6744,7 +6755,7 @@ impl<'a> Builder<'a> {
     }
 
     fn on_assign(&self) -> bool {
-        self.look().shape == Shape::Sign && self.table.spells("stmt.assign", &self.look().lexeme)
+        self.look().shape == Shape::Sign && self.table.spells("stmt.assign", &self.look().spelling())
     }
 
     fn need_assign(&mut self, why: &str) -> Res<()> {
@@ -6819,7 +6830,7 @@ impl<'a> Builder<'a> {
                     let separator = table.single("syntax.call.separator").unwrap_or("");
                     if self.sign(separator) {
                         self.advance();
-                        if self.sign(&close) || table.spells("ext.stmt.function.carries.pairs", &self.look().lexeme) { return Err(wrong()); }
+                        if self.sign(&close) || table.spells("ext.stmt.function.carries.pairs", &self.look().spelling()) { return Err(wrong()); }
                         continue;
                     }
                     manner = 'v';
@@ -6869,7 +6880,7 @@ impl<'a> Builder<'a> {
                     self.advance();
                     self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
-                } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
+                } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().spelling()) {
                     self.advance();
                     self.need_word("as a type name")?;
                 }
@@ -7038,7 +7049,7 @@ impl<'a> Builder<'a> {
             if self.forbids_await && self.key("ext.op.await") { return Err("SyntaxError: 'await' outside function".into()); }
             if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Bare && self.key("ext.stmt.yield")
                 && (self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every)) {
-                let wording = if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "yield from" } else { "yield" };
+                let wording = if table.spells("ext.stmt.yield.from", &self.glance(1).spelling()) { "yield from" } else { "yield" };
                 return Err(format!("SyntaxError: '{wording}' outside function"));
             }
             if shape == Shape::Sign {
@@ -7150,7 +7161,7 @@ impl<'a> Builder<'a> {
             _ => name.clone(),
         };
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
-            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
+            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") {
             let saved_owner = self.annotation_owner.clone();
             if self.in_class_body() {
@@ -7199,7 +7210,7 @@ impl<'a> Builder<'a> {
         }
         let returns_here = |b: &Self| {
             b.look().shape == Shape::Sign
-                && (table.spells("stmt.function.returns", &b.look().lexeme) || table.spells("ext.stmt.function.returns", &b.look().lexeme))
+                && (table.spells("stmt.function.returns", &b.look().spelling()) || table.spells("ext.stmt.function.returns", &b.look().spelling()))
         };
         if returns_here(self) {
             self.advance();
@@ -7311,7 +7322,7 @@ impl<'a> Builder<'a> {
             if self.sign(colon) { self.advance(); break; }
             if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { bad() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
-            if table.spells("op.div", &self.look().lexeme) {
+            if table.spells("op.div", &self.look().spelling()) {
                 if table.flag("ext.stmt.function.closes_over") {
                     if positional_mark || named_only || names.is_empty() {
                         let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one argument must precede /" };
@@ -7325,8 +7336,8 @@ impl<'a> Builder<'a> {
                     return Err("SyntaxError: expected comma between / and *".to_owned());
                 }
             } else {
-                let many = table.spells("op.mul", &self.look().lexeme);
-                let mapping = table.spells("op.pow", &self.look().lexeme);
+                let many = table.spells("op.mul", &self.look().spelling());
+                let mapping = table.spells("op.pow", &self.look().spelling());
                 let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
                     if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { bad() }); }
@@ -7470,7 +7481,7 @@ impl<'a> Builder<'a> {
         let least = params.len() - spares.len();
         let formals = params.clone();
         let returns_here = self.look().shape == Shape::Sign
-            && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme));
+            && (table.spells("stmt.function.returns", &self.look().spelling()) || table.spells("ext.stmt.function.returns", &self.look().spelling()));
         if returns_here {
             self.advance();
             match table.has_any("ext.stmt.annotation") {
@@ -7590,10 +7601,10 @@ impl<'a> Builder<'a> {
         for i in start..limit {
             let word = &self.tokens[i];
             if depth.is_empty() {
-                if word.shape == Shape::Bare && t.spells("ext.op.lambda", &word.lexeme) { break; }
+                if word.shape == Shape::Bare && t.spells("ext.op.lambda", word.spelling()) { break; }
                 if matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
                 if word.shape == Shape::Sign && t.separates(&word.lexeme) { break; }
-                if matches!(word.shape, Shape::Bare | Shape::Sign) && t.spells(label, &word.lexeme) { cuts.push(i); }
+                if matches!(word.shape, Shape::Bare | Shape::Sign) && t.spells(label, word.spelling()) { cuts.push(i); }
             }
             if word.shape == Shape::Sign {
                 if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) {
@@ -7657,8 +7668,8 @@ impl<'a> Builder<'a> {
         if lo >= hi { return Err(bad); }
         if self.table.has_any("ext.builtin.exceptions.syntax") && hi == lo + 1 {
             let entry = &self.tokens[lo];
-            let reserved = entry.lexeme == "__debug__" || ["literal.true", "literal.false", "literal.null"]
-                .iter().any(|label| self.table.spells(label, &entry.lexeme));
+            let reserved = entry.spelling() == "__debug__" || ["literal.true", "literal.false", "literal.null"]
+                .iter().any(|label| self.table.spells(label, &entry.spelling()));
             let description = if reserved { Some(entry.lexeme.as_str()) }
                 else if matches!(entry.shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { Some("literal") }
                 else { None };
@@ -7670,8 +7681,8 @@ impl<'a> Builder<'a> {
         while lo < hi {
             let token = &self.tokens[lo];
             let family = if token.shape != Shape::Sign { break; }
-                else if self.table.spells("syntax.array.open", &token.lexeme) { "syntax.array" }
-                else if self.table.spells("syntax.group.open", &token.lexeme) { "syntax.group" }
+                else if self.table.spells("syntax.array.open", &token.spelling()) { "syntax.array" }
+                else if self.table.spells("syntax.group.open", &token.spelling()) { "syntax.group" }
                 else { break; };
             let ending = self.table.single(&format!("{}.close", family)).unwrap();
             let mut level = 1;
@@ -7759,7 +7770,7 @@ impl<'a> Builder<'a> {
         let mut starred = None;
         for (number, piece) in pieces.iter_mut().enumerate() {
             let lead = &self.tokens[piece.start];
-            if lead.shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &lead.lexeme) {
+            if lead.shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &lead.spelling()) {
                 if starred.is_some() { return Err(bad); }
                 starred = Some(number);
                 piece.start += 1;
@@ -7799,7 +7810,7 @@ impl<'a> Builder<'a> {
         let name = self.gensym("given").ident.to_string();
         let mut forms = vec![self.write(&name, answer)];
         for sign in signs {
-            if self.table.spells("ext.stmt.yield", &self.tokens[left].lexeme) {
+            if self.table.spells("ext.stmt.yield", &self.tokens[left].spelling()) {
                 return Err(String::from("SyntaxError: assignment to yield expression not possible"));
             }
             forms.push(self.distribute(left..sign, &name)?);
@@ -7819,11 +7830,11 @@ impl<'a> Builder<'a> {
         while let Some(token) = self.tokens.get(at) {
             if matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish | Shape::Open) { break; }
             if token.shape == Shape::Sign {
-                if self.table.separates(&token.lexeme) || self.table.spells("block.intro", &token.lexeme) { break; }
+                if self.table.separates(&token.lexeme) || self.table.spells("block.intro", &token.spelling()) { break; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth -= 1,
-                    _ if depth == 0 && (self.table.spells("stmt.assign", &token.lexeme) || self.table.compound.contains_key(&token.lexeme)) => return Some(at),
+                    _ if depth == 0 && (self.table.spells("stmt.assign", &token.spelling()) || self.table.compound.contains_key(token.spelling())) => return Some(at),
                     _ => {}
                 }
             }
@@ -7921,11 +7932,11 @@ impl<'a> Builder<'a> {
         while let Some(token) = self.tokens.get(at) {
             if closings.is_empty() {
                 match token.shape {
-                    Shape::Sign if self.table.spells("ext.stmt.annotation", &token.lexeme) => return Some(at),
+                    Shape::Sign if self.table.spells("ext.stmt.annotation", &token.spelling()) => return Some(at),
                     Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish => return None,
                     _ => {}
                 }
-                if ["stmt.assign", "stmt.terminator"].iter().any(|label| self.table.spells(label, &token.lexeme)) {
+                if ["stmt.assign", "stmt.terminator"].iter().any(|label| self.table.spells(label, &token.spelling())) {
                     return None;
                 }
             }
@@ -7935,7 +7946,7 @@ impl<'a> Builder<'a> {
                     for (open, close) in [("syntax.group.open", "syntax.group.close"),
                         ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close"),
                         ("syntax.call.open", "syntax.call.close"), ("op.index.open", "op.index.close")] {
-                        if self.table.spells(open, &token.lexeme) {
+                        if self.table.spells(open, &token.spelling()) {
                             if let Some(end) = self.table.single(close) { closings.push(end); }
                             break;
                         }
@@ -7952,7 +7963,7 @@ impl<'a> Builder<'a> {
         let unchanged = self.layers.len() == 1 && !self.in_class_body()
             && self.table.flag("ext.syntax.names.shadow_builtins")
             && (self.table.prims.contains_key(&word) || self.table.spells("ext.stmt.class.parent", &word))
-            && self.glance(1).shape == Shape::Sign && self.table.spells("stmt.assign", &self.glance(1).lexeme)
+            && self.glance(1).shape == Shape::Sign && self.table.spells("stmt.assign", &self.glance(1).spelling())
             && self.glance(2).shape == Shape::Bare && self.glance(2).lexeme == word
             && matches!(self.glance(3).shape, Shape::LineEnd | Shape::Finish)
             && (self.native_exports.contains(&word) || !self.named_in_program.contains(&word));
@@ -7970,27 +7981,27 @@ impl<'a> Builder<'a> {
     }
 
     fn binding_or_value(&mut self) -> Res<Form> {
-        let forbidden = self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme);
+        let forbidden = self.table.spells("ext.lexical.identifier.reserved", &self.look().spelling());
         let literal = ["literal.true", "literal.false", "literal.null", "ext.stmt.yield"].iter().any(|tag| self.key(tag));
-        if forbidden && !literal && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+        if forbidden && !literal && self.table.spells("stmt.assign", &self.glance(1).spelling()) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
                 let word = self.look();
                 let target = if word.shape == Shape::Woven {
-                    Some(if self.table.spells("ext.lexical.string.prefix.template", &word.lexeme) { "t-string expression" } else { "f-string expression" })
+                    Some(if self.table.spells("ext.lexical.string.prefix.template", &word.spelling()) { "t-string expression" } else { "f-string expression" })
                 } else if word.lexeme == "{" && self.pair_close(self.pos, equal) == Some(equal - 1) {
                         Some(if self.divided_at(self.pos + 1, equal - 1, "syntax.map.pair").is_empty() { "set display" } else { "dict literal" })
                     } else { None };
-                if word.shape == Shape::Bare && self.glance(1).lexeme == "if" {
+                if word.shape == Shape::Bare && self.glance(1).spelling() == "if" {
                     return Err(String::from("SyntaxError: cannot assign to conditional expression"));
                 }
                 if let Some(description) = target {
                     return Err(format!("SyntaxError: cannot assign to {description} here. Maybe you meant '==' instead of '='?"));
                 }
             }
-            if self.look().lexeme == "None" && self.table.compound.contains_key(&self.glance(1).lexeme) {
+            if self.look().spelling() == "None" && self.table.compound.contains_key(&self.glance(1).lexeme) {
                 return Err(String::from("SyntaxError: 'None' is an illegal expression for augmented assignment"));
             }
             let list = self.on_any("syntax.array.open");
@@ -7998,17 +8009,17 @@ impl<'a> Builder<'a> {
             if list || call {
                 let began = self.pos + usize::from(call);
                 if let Some(end) = self.pair_close(began, self.tokens.len()) {
-                    if self.tokens.get(end + 1).is_some_and(|next| self.table.compound.contains_key(&next.lexeme)) {
+                    if self.tokens.get(end + 1).is_some_and(|next| self.table.compound.contains_key(next.spelling())) {
                         let name = if list { "list" } else { "function call" };
                         return Err(format!("SyntaxError: '{name}' is an illegal expression for augmented assignment"));
                     }
                 }
             }
-            if self.look().lexeme == "__debug__" && self.table.compound.contains_key(&self.glance(1).lexeme) {
+            if self.look().spelling() == "__debug__" && self.table.compound.contains_key(&self.glance(1).lexeme) {
                 return Err(String::from("SyntaxError: cannot assign to __debug__"));
             }
             if let Some(mark) = self.declaration_mark() {
-                if mark > self.pos + 1 && self.tokens[mark - 1].lexeme == "__debug__" && self.tokens[mark - 2].lexeme == "." {
+                if mark > self.pos + 1 && self.tokens[mark - 1].spelling() == "__debug__" && self.tokens[mark - 2].spelling() == "." {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
                 }
                 let (mut left, mut right) = (self.pos, mark);
@@ -8020,7 +8031,7 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: only single target (not list) can be annotated"));
                 }
                 let starts = &self.tokens[left];
-                let comprehension = self.tokens[self.pos].lexeme == "(" && self.tokens[left..mark].iter().any(|part| part.lexeme == "for");
+                let comprehension = self.tokens[self.pos].lexeme == "(" && self.tokens[left..mark].iter().any(|part| part.spelling() == "for");
                 if comprehension || starts.lexeme == "-" || matches!(starts.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
                     return Err(String::from("SyntaxError: illegal target for annotation"));
                 }
@@ -8033,7 +8044,7 @@ impl<'a> Builder<'a> {
                 }
                 let single = head + 1 == tail;
                 let token = &self.tokens[head];
-                let initial = &token.lexeme;
+                let initial = token.spelling();
                 let bad: Option<String> = if self.table.spells("ext.stmt.function.short", initial) { Some("cannot assign to lambda".to_owned()) }
                     else if self.table.spells("ext.stmt.yield", initial) { Some(if single { "assignment to yield expression not possible".to_owned() } else { "cannot assign to yield expression here. Maybe you meant '==' instead of '='?".to_owned() }) }
                     else if single && matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) { Some("cannot assign to literal here. Maybe you meant '==' instead of '='?".to_owned()) }
@@ -8068,7 +8079,7 @@ impl<'a> Builder<'a> {
             match prior.shape {
                 Shape::LineEnd | Shape::Open | Shape::Close => true,
                 Shape::Sign => ["stmt.terminator", "block.intro"].iter()
-                    .any(|label| self.table.spells(label, &prior.lexeme)),
+                    .any(|label| self.table.spells(label, &prior.spelling())),
                 _ => false,
             }
         });
@@ -8093,7 +8104,7 @@ impl<'a> Builder<'a> {
         self.place_depth -= usize::from(writing);
         let mut expr = read?;
         if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
-            if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.lexeme)) {
+            if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.spelling())) {
                 let assignment = self.pos;
                 self.pos = began;
                 expr = self.deletion_place()?;
@@ -8102,12 +8113,12 @@ impl<'a> Builder<'a> {
         }
         if self.on_writing() && !self.on_assign() && self.table.has_any("ext.builtin.exceptions.syntax") {
             let first = self.tokens[began..self.pos].iter().find(|token| token.lexeme != "(");
-            if first.is_some_and(|token| self.table.spells("ext.stmt.yield", &token.lexeme)) {
+            if first.is_some_and(|token| self.table.spells("ext.stmt.yield", &token.spelling())) {
                 return Err(String::from("SyntaxError: 'yield expression' is an illegal expression for augmented assignment"));
             }
         }
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
-            && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
+            && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).spelling());
         if self.table.flag("ext.stmt.assign.chain") && follows(self) {
             if let Form::Read(first) = &expr {
                 let mut destinations = vec![first.ident.to_string()];
@@ -8151,7 +8162,7 @@ impl<'a> Builder<'a> {
         let attribute = tail.len() >= 2
             && tail[tail.len() - 1].shape == Shape::Bare
             && tail[tail.len() - 2].shape == Shape::Sign
-            && self.table.spells("op.pipe", &tail[tail.len() - 2].lexeme);
+            && self.table.spells("op.pipe", &tail[tail.len() - 2].spelling());
         let temporary_index = matches!(&expr,
             Form::Apply(Callee::Prim(Prim::At, _), args)
                 if matches!(args.first(), Some(Form::Apply(Callee::Code(_), _))));
@@ -8240,7 +8251,7 @@ impl<'a> Builder<'a> {
         let mut targets = vec![self.address_to_write(first)];
         loop {
             if self.look().shape != Shape::Bare
-                || !self.table.spells("stmt.assign", &self.glance(1).lexeme) { break; }
+                || !self.table.spells("stmt.assign", &self.glance(1).spelling()) { break; }
             let target_name = self.advance().lexeme;
             if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &target_name)) {
                 return Err("Invalid assignment target before '='".to_string());
@@ -8295,7 +8306,7 @@ impl<'a> Builder<'a> {
         if self.table.flag("ext.stmt.assign.names.chained") && compound.is_none()
             && self.waiting.is_none() && self.stepping.is_none()
             && self.look().shape == Shape::Bare
-            && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+            && self.table.spells("stmt.assign", &self.glance(1).spelling()) {
             if let Form::Read(slot) = &expr {
                 return self.binding_chain(&slot.ident, gives_back);
             }
@@ -8513,7 +8524,9 @@ impl<'a> Builder<'a> {
                 // name of the builder's own making.
                 for cell in &in_cells {
                     let slot = self.address_to_write(cell);
-                    steps.push(Form::Forget(slot));
+                    steps.push(if self.table.flag("ext.op.arithmetic.python_numbers") {
+                        Form::Release(slot)
+                    } else { Form::Forget(slot) });
                 }
                 if gives_back {
                     steps.push(self.read(&holding));
@@ -8795,10 +8808,10 @@ impl<'a> Builder<'a> {
         for index in start..self.tokens.len() {
             let token = &self.tokens[index];
             if scopes.is_empty() && matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
-            if token.lexeme == "lambda" { if let Some(formals) = taking.last_mut() { *formals = true; } }
+            if token.spelling() == "lambda" { if let Some(formals) = taking.last_mut() { *formals = true; } }
             if token.shape != Shape::Sign { continue; }
             if token.lexeme == "(" {
-                scopes.push(index > 0 && self.tokens[index - 1].lexeme != "assert" && (self.tokens[index - 1].shape == Shape::Bare || [")", "]"].contains(&self.tokens[index - 1].lexeme.as_str())));
+                scopes.push(index > 0 && self.tokens[index - 1].spelling() != "assert" && (self.tokens[index - 1].shape == Shape::Bare || [")", "]"].contains(&self.tokens[index - 1].lexeme.as_str())));
                 taking.push(false);
             } else if token.lexeme == "[" || token.lexeme == "{" {
                 scopes.push(false);
@@ -8828,13 +8841,15 @@ impl<'a> Builder<'a> {
             && matches!(self.look().lexeme.as_str(), "(" | "[" | "{") && self.written_inside_display(origin) {
             return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
         }
-        if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
-            let word = self.advance().lexeme;
+        if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).spelling()) {
+            let taken = self.advance();
+            let word = taken.lexeme.clone();
+            let spelled = taken.spelling().to_string();
             if table.has_any("ext.builtin.exceptions.syntax") {
-                if table.spells("literal.true", &word) || table.spells("literal.false", &word) || table.spells("literal.null", &word) {
-                    return Err(format!("SyntaxError: cannot use assignment expressions with {word}"));
+                if table.spells("literal.true", &spelled) || table.spells("literal.false", &spelled) || table.spells("literal.null", &spelled) {
+                    return Err(format!("SyntaxError: cannot use assignment expressions with {spelled}"));
                 }
-                if word == "__debug__" {
+                if spelled == "__debug__" {
                     return Err("SyntaxError: cannot assign to __debug__".to_owned());
                 }
             }
@@ -8846,12 +8861,12 @@ impl<'a> Builder<'a> {
             return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
         }
         if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
-            && matches!(self.look().lexeme.as_str(), "pass" | "break" | "continue")
-            && self.glance(1).lexeme == "if" {
+            && matches!(self.look().spelling(), "pass" | "break" | "continue")
+            && self.glance(1).spelling() == "if" {
             return Err("SyntaxError: expected expression before 'if', but statement is given".to_owned());
         }
         let mut left = self.monadic_expr()?;
-        if floor == 0 && table.spells("ext.op.assign.expression", &self.look().lexeme) {
+        if floor == 0 && table.spells("ext.op.assign.expression", &self.look().spelling()) {
             let Form::Read(target) = left else {
                 return Err("Named expression needs a variable".to_string());
             };
@@ -8876,7 +8891,9 @@ impl<'a> Builder<'a> {
             if t.shape != Shape::Sign && t.shape != Shape::Bare {
                 break;
             }
-            let text = t.lexeme.clone();
+            // Infix and conditional words are matched by the spelling the
+            // text wrote, not the folded name an identifier binds as.
+            let text = t.spelling().to_string();
             if table.has_any("ext.builtin.exceptions.syntax") && (text == "|" || text == "&") {
                 let following = self.glance(1);
                 if following.lexeme == text && (following.row, following.column) == (t.row, t.column + 1) {
@@ -8890,13 +8907,13 @@ impl<'a> Builder<'a> {
                 self.advance();
                 let test = self.expr(1)?;
                 let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
-                if self.look().lexeme != *end {
+                if self.look().spelling() != end.as_str() {
                     return Err(if table.has_any("ext.builtin.exceptions.syntax") && !self.on_any("block.intro") {
                         String::from("SyntaxError: expected 'else' after 'if' expression")
                     } else { format!("Expected '{}' in conditional expression", end) });
                 }
                 self.advance();
-                if table.has_any("ext.builtin.exceptions.syntax") && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
+                if table.has_any("ext.builtin.exceptions.syntax") && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().spelling()) {
                     return Err("SyntaxError: expected expression after 'else', but statement is given".to_owned());
                 }
                 let no = self.expr(0)?;
@@ -9048,14 +9065,14 @@ impl<'a> Builder<'a> {
 
     fn comparison_head(&self) -> Option<(Prim, u32, usize)> {
         let t = self.table;
-        let first = &self.look().lexeme;
-        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", &self.glance(1).lexeme) {
-            let membership = t.dyadic.get(&self.glance(1).lexeme)?;
+        let first = self.look().spelling();
+        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", self.glance(1).spelling()) {
+            let membership = t.dyadic.get(self.glance(1).spelling())?;
             return Some((Prim::Absent, membership.level, 2));
         }
         let binary = t.dyadic.get(first)?;
         match binary.prim {
-            Prim::Selfsame if t.spells("ext.op.identical.negated", &self.glance(1).lexeme) => Some((Prim::Unlike, binary.level, 2)),
+            Prim::Selfsame if t.spells("ext.op.identical.negated", self.glance(1).spelling()) => Some((Prim::Unlike, binary.level, 2)),
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Selfsame | Prim::Unlike | Prim::Contains | Prim::Absent => Some((binary.prim, binary.level, 1)),
             _ => None,
         }
@@ -9155,7 +9172,7 @@ impl<'a> Builder<'a> {
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
-        if self.reading_yield && table.spells("op.mul", &t.lexeme) {
+        if self.reading_yield && table.spells("op.mul", &t.spelling()) {
             self.advance();
             let value = self.monadic_expr()?;
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
@@ -9177,7 +9194,7 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
             let scope_is_async = self.layers.last().map_or(false, |scope| scope.permits_async);
-            let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
+            let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).spelling()) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
             self.advance();
             self.generator_seen = true;
@@ -9252,11 +9269,11 @@ impl<'a> Builder<'a> {
             }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
-        if t.shape != Shape::Quote && table.spells("ext.stmt.class.special.declined", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.stmt.class.special.declined", &t.spelling()) {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.stmt.class.special.stop", &t.lexeme) && !table.spells("ext.builtin.exceptions", &t.lexeme) {
+        if table.spells("ext.stmt.class.special.stop", &t.spelling()) && !table.spells("ext.builtin.exceptions", &t.spelling()) {
             self.advance();
             let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
@@ -9264,24 +9281,24 @@ impl<'a> Builder<'a> {
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
-        if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.spelling()) {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
         }
         // The value with which a method declines an operation, by name.
-        if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.spelling()) {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
         // The lambda word must stand bare: quoted, it is text and no
         // more, as when it is one of print's arguments.
-        if t.shape == Shape::Bare && table.spells("ext.op.lambda", &t.lexeme) {
+        if t.shape == Shape::Bare && table.spells("ext.op.lambda", &t.spelling()) {
             self.advance();
             return self.lambda_form();
         }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
-        if table.single("ext.op.tuple").is_none() && table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
+        if table.single("ext.op.tuple").is_none() && table.spells("ext.stmt.unpack", &t.spelling()) && matches!(t.shape, Shape::Sign | Shape::Bare) {
             self.advance();
             let places = self.pos;
             self.step_past_call()?;
@@ -9325,12 +9342,12 @@ impl<'a> Builder<'a> {
             }
         }
         if matches!(t.shape, Shape::Sign | Shape::Bare) {
-            if let Some(op) = table.monadic.get(&t.lexeme).copied() {
+            if let Some(op) = table.monadic.get(t.spelling()).copied() {
                 self.advance();
                 let operand = self.expr(op.level)?;
                 return Ok(prim_call(op.prim, vec![operand]));
             }
-            if table.spells("ext.op.name_by_value", &t.lexeme) {
+            if table.spells("ext.op.name_by_value", &t.spelling()) {
                 // `$$a` and `${e}`: the name is whatever the value
                 // spells. Only the outermost bindings keep names the
                 // run can still see, so a name worked out inside a unit
@@ -9343,15 +9360,15 @@ impl<'a> Builder<'a> {
                 let spells = self.spelling()?;
                 return self.subscript(Form::Called(Box::new(spells)));
             }
-            if table.spells("ext.op.hush", &t.lexeme) {
+            if table.spells("ext.op.hush", &t.spelling()) {
                 // What the piece under the mark has to say about itself
                 // goes unsaid; the value it comes to is unchanged.
-                let tier = table.precedence.get(&t.lexeme).copied().unwrap_or(0);
+                let tier = table.precedence.get(t.spelling()).copied().unwrap_or(0);
                 self.advance();
                 let quiet = self.expr(tier)?;
                 return Ok(Form::Silenced(Box::new(quiet)));
             }
-            if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.lexeme) {
+            if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.spelling()) {
                 // A plus sign leaves its operand as it is, bound like a negation.
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
@@ -9377,7 +9394,7 @@ impl<'a> Builder<'a> {
                 }
                 text
             }
-            Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
+            Shape::Bare if table.spells("ext.stmt.class.new", &t.spelling()) => {
                 self.advance();
                 let named = self.need_word("as the class to make")?;
                 let stands = self.read_class(&named)?;
@@ -9392,7 +9409,7 @@ impl<'a> Builder<'a> {
                 }
                 prim_call(Prim::Spawn, given)
             }
-            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme)
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling())
                 && self.uses_bound_callable(&t.lexeme) => {
                 self.advance();
                 let target = self.read(&t.lexeme);
@@ -9406,21 +9423,21 @@ impl<'a> Builder<'a> {
             // bound, not opening a call, is an ordinary name, to be read,
             // listed or handed on. Unbound, it stands for the parent call
             // itself, as the arm below hands it over.
-            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme)
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling())
                 && self.within.is_none()
                 && (self.named_in_program.iter().any(|word| word == &t.lexeme)
                     || self.glance(1).shape == Shape::Sign
-                        && (table.spells("stmt.assign", &self.glance(1).lexeme) || table.compound.contains_key(&self.glance(1).lexeme)))
+                        && (table.spells("stmt.assign", &self.glance(1).spelling()) || table.compound.contains_key(&self.glance(1).lexeme)))
                 && table.single("syntax.call.open").map_or(true, |open| !(self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == open)) => {
                 self.advance();
                 self.read(&t.lexeme)
             }
-            Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
+            Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.spelling())
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
                 self.advance();
                 constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone()).into()))
             }
-            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling()) => {
                 self.advance();
                 let open = table.single("syntax.call.open").ok_or("A parent call needs brackets")?;
                 if !self.sign(open) {
@@ -9479,13 +9496,13 @@ impl<'a> Builder<'a> {
                 }
             }
             Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
-                && t.lexeme == "__classdict__" && table.has_any("ext.stmt.class.detail.kind") => {
+                && t.spelling() == "__classdict__" && table.has_any("ext.stmt.class.detail.kind") => {
                 self.advance();
                 let book = self.parts().book.clone().expect("class namespace prepared");
                 self.read(&book.ident.to_string())
             }
             Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
-                && table.spells("ext.stmt.class.detail.kind", &t.lexeme)
+                && table.spells("ext.stmt.class.detail.kind", &t.spelling())
                 && !self.layers.last().unwrap().idents.contains(&t.lexeme)
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
@@ -9494,21 +9511,21 @@ impl<'a> Builder<'a> {
                 let hidden = self.parts().completed_class.ident.to_string();
                 self.read(&hidden)
             }
-            Shape::Bare if table.spells("ext.stmt.class.self", &t.lexeme) || table.spells("ext.stmt.class.parent", &t.lexeme) => {
+            Shape::Bare if table.spells("ext.stmt.class.self", &t.spelling()) || table.spells("ext.stmt.class.parent", &t.spelling()) => {
                 self.advance();
                 self.read_class(&t.lexeme)?
             }
             Shape::Bare => {
                 self.advance();
-                if table.spells("literal.true", &t.lexeme) {
+                if table.spells("literal.true", &t.spelling()) {
                     constant(Value::Flag(true))
-                } else if table.spells("literal.false", &t.lexeme) {
+                } else if table.spells("literal.false", &t.spelling()) {
                     constant(Value::Flag(false))
-                } else if table.spells("literal.null", &t.lexeme) {
+                } else if table.spells("literal.null", &t.spelling()) {
                     constant(Value::Nil)
-                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.output", &t.lexeme) {
+                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.output", &t.spelling()) {
                     constant(Value::Channel(1))
-                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.error", &t.lexeme) {
+                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.error", &t.spelling()) {
                     constant(Value::Channel(2))
                 } else if matches!(table.prims.get(&t.lexeme), Some(Prim::Octets(0 | 1)))
                     && self.place_depth == 0 && !self.uses_bound_callable(&t.lexeme)
@@ -9516,7 +9533,7 @@ impl<'a> Builder<'a> {
                     let words = table.strings("ext.system.bytes.type");
                     constant(Value::OctetKind { changeable: table.prims.get(&t.lexeme) == Some(&Prim::Octets(1)),
                         shown: Rc::from(format!("{}{}{}", words[0], t.lexeme, words[1])) })
-                } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
+                } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == t.spelling())
                     && (table.flag("ext.syntax.call.bind_names") || table.single("syntax.call.open").map_or(false, |o| self.sign(o)))
                 {
                     // A routine written short is one expression, and
@@ -9524,7 +9541,7 @@ impl<'a> Builder<'a> {
                     // has nowhere to say which of them it wants.
                     let built = self.short_func()?;
                     return self.subscript(built);
-                } else if table.spells("stmt.function", &t.lexeme)
+                } else if table.spells("stmt.function", &t.spelling())
                     && table.single("syntax.call.open").map_or(false, |o| {
                         self.sign(o)
                             || (table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o)
@@ -9582,7 +9599,7 @@ impl<'a> Builder<'a> {
                     } else {
                         self.named_call(&t.lexeme, args)?
                     }
-                } else if table.spells("ext.system.globals", &t.lexeme)
+                } else if table.spells("ext.system.globals", &t.spelling())
                     && table.single("op.index.open").map_or(false, |o| self.sign(o))
                 {
                     // A word standing for all the outermost bindings
@@ -9733,8 +9750,8 @@ impl<'a> Builder<'a> {
                 if matches!(&named, Form::Apply(Callee::Code(_), _)) {
                     return Err(String::from("SyntaxError: cannot delete function call"));
                 }
-                let word = &self.look().lexeme;
-                let invalid = match word.as_str() {
+                let word = self.look().spelling();
+                let invalid = match word {
                     ":=" => Some("named expression"),
                     "if" => Some("conditional expression"),
                     _ if table.dyadic.contains_key(word) => Some("expression"),
@@ -9807,7 +9824,7 @@ impl<'a> Builder<'a> {
         if self.table.single("block.open").map_or(false, |open| self.sign(open)) {
             return true;
         }
-        if self.table.spells("ext.op.name_by_value", &self.look().lexeme) {
+        if self.table.spells("ext.op.name_by_value", &self.look().spelling()) {
             return true;
         }
         // A bare variable names a member of a thing by what it keeps,
@@ -9834,7 +9851,7 @@ impl<'a> Builder<'a> {
         // mark in the writing, so one standing there says the piece
         // spells a name and the member is named by what *that* binding
         // keeps: `$o->${e}` is a step further in.
-        if self.table.spells("ext.op.name_by_value", &self.look().lexeme) {
+        if self.table.spells("ext.op.name_by_value", &self.look().spelling()) {
             self.advance();
             let spells = self.spelling()?;
             return Ok(match member {
@@ -10113,7 +10130,7 @@ impl<'a> Builder<'a> {
                 let from = self.read(holding);
                 let there = prim_call(Prim::Apart, vec![from, constant(Value::Small(at as i64))]);
                 steps.push(self.write(&held, there));
-                if table.spells("ext.stmt.unpack", &self.look().lexeme) {
+                if table.spells("ext.stmt.unpack", &self.look().spelling()) {
                     self.advance();
                     steps.extend(self.taken_apart(&held)?);
                 } else {
@@ -10303,7 +10320,7 @@ impl<'a> Builder<'a> {
             }
             let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
                 && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
-                    && table.spells("syntax.group.close", &token.lexeme)));
+                    && table.spells("syntax.group.close", &token.spelling())));
             if reaching && table.flag("ext.op.member.pipes") && !table.spells("ext.text.format", &named) && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
@@ -10540,7 +10557,7 @@ impl<'a> Builder<'a> {
         for index in self.pos..self.tokens.len() {
             let token = &self.tokens[index];
             if !matches!(token.shape, Shape::Bare | Shape::Sign) { continue; }
-            let text = token.lexeme.as_str();
+            let text = token.spelling();
             if nesting.is_empty() {
                 match text {
                     ":" => awaiting_body = awaiting_body.saturating_sub(1),
@@ -10548,7 +10565,7 @@ impl<'a> Builder<'a> {
                     _ => (),
                 }
                 if table.spells(label, text) {
-                    let begins = if label == "ext.op.comprehension.for" && index > self.pos && table.spells("ext.op.comprehension.async", &self.tokens[index - 1].lexeme) { index - 1 } else { index };
+                    let begins = if label == "ext.op.comprehension.for" && index > self.pos && table.spells("ext.op.comprehension.async", &self.tokens[index - 1].spelling()) { index - 1 } else { index };
                     return Some(begins);
                 }
                 if awaiting_body == 0 && table.spells("syntax.call.separator", text) { return None; }
@@ -10577,13 +10594,13 @@ impl<'a> Builder<'a> {
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
-                    match (part.shape, part.lexeme.as_str()) {
+                    match (part.shape, part.spelling()) {
                         (Shape::Sign, ":") => parameter_lists = parameter_lists.saturating_sub(1),
                         (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
                         _ => (),
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                    if part.shape == Shape::Bare && part.spelling() == "for" {
                         // The comma check belongs to the expression being
                         // collected, ending at the first comprehension loop.
                         if comma_before_for {
@@ -10591,6 +10608,7 @@ impl<'a> Builder<'a> {
                         }
                         break;
                     }
+                    if part.shape == Shape::Bare && part.lexeme == "for" { break; }
                 }
                 if part.shape == Shape::Sign {
                     match part.lexeme.as_str() {
@@ -10629,7 +10647,7 @@ impl<'a> Builder<'a> {
                 let right = self.expr(0)?;
                 item = prim_call(Prim::Couple, vec![item, right]);
             }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "fur" && self.glance(1).shape == Shape::Bare {
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "fur" && self.glance(1).shape == Shape::Bare {
                 return Err(String::from("SyntaxError: invalid syntax. Did you mean 'for'?"));
             }
             if self.table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Bare | Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
@@ -10674,7 +10692,7 @@ impl<'a> Builder<'a> {
             Ok(body)
         })?;
         self.source_before = previous;
-        let walk = if self.table.spells("ext.op.comprehension.async", &self.tokens[clause].lexeme) { Prim::AsyncWalked } else { Prim::Walked };
+        let walk = if self.table.spells("ext.op.comprehension.async", &self.tokens[clause].spelling()) { Prim::AsyncWalked } else { Prim::Walked };
         let value = Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(walk, vec![source])]);
         if async_result && self.layers.len() == 1 && self.layers[0].permits_async { self.top_coroutine = true; }
         Ok(if async_result { prim_call(Prim::AsyncGathered, vec![value]) } else { value })
@@ -10708,9 +10726,9 @@ impl<'a> Builder<'a> {
             let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, vec![parameter], 1,
                 |reader| reader.gather_in_scope(first_for, end, dictionary))?;
             self.source_before = previous;
-            if self.layers.len() == 1 && self.layers[0].permits_async && self.tokens[first_for..self.pos].iter().any(|t| self.table.spells("ext.op.comprehension.async", &t.lexeme) || self.table.spells("ext.op.await", &t.lexeme)) { self.top_coroutine = true; }
+            if self.layers.len() == 1 && self.layers[0].permits_async && self.tokens[first_for..self.pos].iter().any(|t| self.table.spells("ext.op.comprehension.async", &t.spelling()) || self.table.spells("ext.op.await", &t.spelling())) { self.top_coroutine = true; }
             let walks = self.table.flag("ext.stmt.yield.suspends");
-            let begin = if self.table.spells("ext.op.comprehension.async", &self.tokens[first_for].lexeme) { Prim::AsyncWalked }
+            let begin = if self.table.spells("ext.op.comprehension.async", &self.tokens[first_for].spelling()) { Prim::AsyncWalked }
                 else if walks { Prim::Walked } else { Prim::Iterated };
             return Ok(self.located(bounds, Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(begin, vec![source])])));
         }
@@ -10733,7 +10751,7 @@ impl<'a> Builder<'a> {
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
-        if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "of" && self.glance(1).shape == Shape::Bare {
+        if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "of" && self.glance(1).shape == Shape::Bare {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'if'?"));
         }
         self.need_sign(end, "to finish a comprehension")?;
@@ -10752,7 +10770,7 @@ impl<'a> Builder<'a> {
                 self.gathering_bindings(first..boundary, first_binding)?;
                 first = boundary + 1;
             }
-        } else if self.table.spells("ext.stmt.unpack.rest", &self.tokens[first].lexeme) {
+        } else if self.table.spells("ext.stmt.unpack.rest", &self.tokens[first].spelling()) {
             self.gathering_bindings(first + 1..limit, first_binding)?;
         } else {
             let token = &self.tokens[first];
@@ -10810,7 +10828,7 @@ impl<'a> Builder<'a> {
         let mut closing = Vec::new();
         while let Some(word) = self.tokens.get(cursor) {
             if word.shape == Shape::Finish { break; }
-            if closing.is_empty() && word.shape == Shape::Bare && self.table.spells("ext.op.comprehension.for", &word.lexeme) {
+            if closing.is_empty() && word.shape == Shape::Bare && self.table.spells("ext.op.comprehension.for", &word.spelling()) {
                 let end = self.divided_at(cursor + 1, self.tokens.len(), "ext.op.comprehension.in")
                     .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })?;
                 self.gathering_bindings(cursor + 1..end, own)?;
@@ -10819,9 +10837,9 @@ impl<'a> Builder<'a> {
             }
             if word.shape == Shape::Sign {
                 let pairs = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")];
-                if let Some((_, end)) = pairs.iter().find(|(begin, _)| self.table.spells(begin, &word.lexeme)) {
+                if let Some((_, end)) = pairs.iter().find(|(begin, _)| self.table.spells(begin, &word.spelling())) {
                     closing.push(*end);
-                } else if pairs.iter().any(|(_, end)| self.table.spells(end, &word.lexeme)) && closing.pop().is_none() {
+                } else if pairs.iter().any(|(_, end)| self.table.spells(end, &word.spelling())) && closing.pop().is_none() {
                     break;
                 }
             }
@@ -10868,7 +10886,7 @@ impl<'a> Builder<'a> {
             let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
             return Ok(self.write(answer, enlarged));
         }
-        let asynchronous = self.pos > 0 && self.table.spells("ext.op.comprehension.async", &self.tokens[self.pos - 1].lexeme);
+        let asynchronous = self.pos > 0 && self.table.spells("ext.op.comprehension.async", &self.tokens[self.pos - 1].spelling());
         self.advance();
         let target_begin = self.pos;
         let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
@@ -11078,8 +11096,8 @@ impl<'a> Builder<'a> {
                 return Err(format!("Expected '{}'", close));
             }
             let label = self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign
-                && (self.table.spells("syntax.call.label", &self.glance(1).lexeme)
-                    || (self.table.flag("ext.syntax.call.bind_names") && self.table.spells("stmt.assign", &self.glance(1).lexeme)));
+                && (self.table.spells("syntax.call.label", &self.glance(1).spelling())
+                    || (self.table.flag("ext.syntax.call.bind_names") && self.table.spells("stmt.assign", &self.glance(1).spelling())));
             let mut tag = None;
             let bind = self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close";
             if label {
@@ -11099,7 +11117,7 @@ impl<'a> Builder<'a> {
                 }
                 self.pos += 2;
             } else if bind && matches!(self.look().shape, Shape::Bare | Shape::Sign) {
-                let word = &self.look().lexeme;
+                let word = self.look().spelling();
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
                 if tag.is_some() { self.advance(); }
@@ -11135,6 +11153,8 @@ impl<'a> Builder<'a> {
             if let Some(s) = &sep {
                 if self.sign(s) {
                     self.advance();
+                } else if !self.sign(&close) && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
                 }
             }
         }
@@ -11407,7 +11427,7 @@ impl<'a> Builder<'a> {
             let t = &self.tokens[(self.pos + ahead).min(self.tokens.len() - 1)];
             let separator = t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.table.separates(&t.lexeme));
             if !separator {
-                if t.shape == Shape::Bare && self.table.spells("stmt.else", &t.lexeme) {
+                if t.shape == Shape::Bare && self.table.spells("stmt.else", &t.spelling()) {
                     self.pos += ahead + 1;
                     return true;
                 }
@@ -11453,7 +11473,7 @@ impl<'a> Builder<'a> {
 
     fn take_named(&mut self, taker: &Token, name: &str, stmts: &mut Vec<Form>, stack: &mut Vec<Form>) -> Res<()> {
         let table = self.table;
-        let word = taker.lexeme.as_str();
+        let word = taker.spelling();
         if table.spells("stmt.assign", word) || table.spells("stmt.let", word) {
             let value = self.drop_top(stack)?;
             self.flush(stmts, stack);
@@ -11504,7 +11524,7 @@ impl<'a> Builder<'a> {
 
     fn bare_word(&mut self, t: &Token, stmts: &mut Vec<Form>, stack: &mut Vec<Form>) -> Res<()> {
         let table = self.table;
-        let w = t.lexeme.as_str();
+        let w = t.spelling();
         let closers = table.strings("block.close").to_vec();
         for (key, v) in [("literal.true", Value::Flag(true)), ("literal.false", Value::Flag(false)), ("literal.null", Value::Nil)] {
             if table.spells(key, w) {

@@ -79,8 +79,31 @@ class MappingProxyType:
             return self.copy() == other.copy()
         return self.copy() == other
 
+    # A reading stands for the mapping it reads when the union sign
+    # reaches it, on either side. Either side that is itself a reading
+    # is unwrapped first, and the ordinary union then runs on the
+    # mappings themselves, so a mapping's own answer and the kind it
+    # answers with are kept: a mapping whose union is its own returns
+    # that answer through the reading as well. A reading cannot be
+    # written through with the in-place sign.
+    def __or__(self, other):
+        right = other._mapping if isinstance(other, MappingProxyType) else other
+        return self._mapping | right
+
+    def __ror__(self, other):
+        left = other._mapping if isinstance(other, MappingProxyType) else other
+        return left | self._mapping
+
+    def __ior__(self, other):
+        raise TypeError("'|=' is not supported by mappingproxy; use '|' instead")
+
     def __repr__(self):
         return 'mappingproxy(' + repr(self._mapping) + ')'
+
+
+# The reference names this kind mappingproxy, and types.MappingProxyType
+# is that kind, so the name a type prints is the reference's.
+MappingProxyType.__name__ = 'mappingproxy'
 
 
 # A bag of named values, compared by the names it carries.

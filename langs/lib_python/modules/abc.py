@@ -74,15 +74,28 @@ def _counts_as(cls, subclass):
 
 
 class ABCMeta(type):
+    # The names nobody has answered, gathered the way the reference
+    # gathers them when the class is made: what the body itself left
+    # marked, and what it kept marked from the kinds beneath it.
+    def __new__(mcls, name, bases, namespace, **kwargs):
+        cls = super().__new__(mcls, name, bases, namespace)
+        abstracts = set()
+        for key, value in namespace.items():
+            if getattr(value, '__isabstractmethod__', False):
+                abstracts.add(key)
+        for base in bases:
+            for key in getattr(base, '__abstractmethods__', ()):
+                value = getattr(cls, key, None)
+                if getattr(value, '__isabstractmethod__', False):
+                    abstracts.add(key)
+        cls.__abstractmethods__ = frozenset(abstracts)
+        return cls
+
     def __call__(cls, *args, **kwargs):
-        missing = []
-        for name in dir(cls):
-            if getattr(getattr(cls, name, None), '__isabstractmethod__', False):
-                missing.append(name)
+        missing = sorted(getattr(cls, '__abstractmethods__', ()))
         if missing:
-            missing.sort()
-            raise TypeError("Can't instantiate abstract class %s with abstract method%s %s"
-                            % (cls.__name__, 's' if len(missing) > 1 else '', ', '.join(missing)))
+            raise TypeError("Can't instantiate abstract class %s without an implementation for abstract method%s %s"
+                            % (cls.__name__, 's' if len(missing) > 1 else '', ', '.join("'%s'" % name for name in missing)))
         return super().__call__(*args, **kwargs)
 
     def register(cls, subclass):

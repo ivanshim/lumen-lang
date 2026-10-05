@@ -447,7 +447,7 @@ pub(crate) fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
     let mut names = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        if tokens[i].shape == Shape::Instr && Lang::spells(&lang.global_words, &tokens[i].lexeme) {
+        if tokens[i].shape == Shape::Instr && Lang::spells(&lang.global_words, &tokens[i].spelling()) {
             i += 1;
             loop {
                 match tokens.get(i) {
@@ -486,7 +486,7 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
     // Work from the original spelling on every pass, including the body
     // of an inner class whose enclosing body has already been visited.
     for at in 0..source.len() {
-        if source[at].shape != Shape::Instr || !Lang::spells(&lang.class_words, &source[at].lexeme) { continue; }
+        if source[at].shape != Shape::Instr || !Lang::spells(&lang.class_words, &source[at].spelling()) { continue; }
         let Some(owner) = source.get(at + 1).filter(|t| t.shape == Shape::Instr) else { continue };
         let mut head = at + 2;
         let mut brackets = 0usize;
@@ -498,7 +498,7 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
                     ")" | "]" | "}" => brackets = brackets.saturating_sub(1),
                     _ => {}
                 }
-                if brackets == 0 && Lang::spells(&lang.block_intros, &token.lexeme) { break; }
+                if brackets == 0 && Lang::spells(&lang.block_intros, &token.spelling()) { break; }
             }
             if matches!(token.shape, Shape::LineEnd | Shape::Finish) { break; }
             head += 1;
@@ -801,7 +801,7 @@ impl<'a> Compiler<'a> {
     /// A delimiter may be a word or a symbol.
     fn at_lexeme(&self, text: &str) -> bool {
         let t = self.look();
-        matches!(t.shape, Shape::Sign | Shape::Instr) && t.lexeme == text
+        matches!(t.shape, Shape::Sign | Shape::Instr) && t.spelling() == text
     }
 
     /// Whether a block opens here, past any line ends before it: a
@@ -812,7 +812,7 @@ impl<'a> Compiler<'a> {
             ahead += 1;
         }
         let t = self.look_ahead(ahead);
-        t.shape == Shape::Sign && self.lang.block_opens.iter().any(|o| *o == t.lexeme)
+        t.shape == Shape::Sign && self.lang.block_opens.iter().any(|o| *o == t.spelling())
     }
 
     fn on_any(&self, list: &[String]) -> bool {
@@ -820,7 +820,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn on_keyword(&self, list: &[String]) -> bool {
-        self.look().shape == Shape::Instr && Lang::spells(list, &self.look().lexeme)
+        self.look().shape == Shape::Instr && Lang::spells(list, &self.look().spelling())
     }
 
     fn on_sep(&self) -> bool {
@@ -843,8 +843,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn want_name(&mut self, why: &str) -> Res<String> {
-        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme) { return Err("SyntaxError: invalid syntax".into()); }
-        if !self.lang.syntax_members.is_empty() && [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|names| Lang::spells(names, &self.look().lexeme)) {
+        if Lang::spells(&self.lang.reserved_names, &self.look().spelling()) { return Err("SyntaxError: invalid syntax".into()); }
+        if !self.lang.syntax_members.is_empty() && [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|names| Lang::spells(names, &self.look().spelling())) {
             return Err("SyntaxError: invalid syntax".into());
         }
         if self.look().shape != Shape::Instr {
@@ -1351,7 +1351,7 @@ impl<'a> Compiler<'a> {
                 }
                 Shape::LineEnd if inline && depth == 0 => break,
                 Shape::Sign if inline && depth == 0 && self.lang.ends_stmt(&token.lexeme) => break,
-                Shape::Instr if token.lexeme == "locals" || token.lexeme == "vars" || token.lexeme == "__classdict__" && !self.lang.class_details.is_empty() => return true,
+                Shape::Instr if token.spelling() == "locals" || token.spelling() == "vars" || token.spelling() == "__classdict__" && !self.lang.class_details.is_empty() => return true,
                 _ => {}
             }
         }
@@ -2118,7 +2118,7 @@ impl<'a> Compiler<'a> {
 
     fn python_type_scope_problem(&self) -> Option<String> {
         if self.lang.syntax_members.is_empty() { return None; }
-        let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
         let first = spelling(self.pos);
         let mut name_at = self.pos + 1;
         if first == "async" {
@@ -2192,7 +2192,7 @@ impl<'a> Compiler<'a> {
             for item in at + 1..self.tokens.len() {
                 let token = &self.tokens[item];
                 if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let kind = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                let kind = match token.spelling() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
                 if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
@@ -2343,7 +2343,7 @@ impl<'a> Compiler<'a> {
                     "[" => "list",
                     "{" => if close == at + 1 || self.bracket_holds(at, close, &[":"]) { "dict" } else { "set" },
                     // A lambda in parentheses stands for a function.
-                    _ if self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.lexeme)) => "function",
+                    _ if self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.spelling())) => "function",
                     _ if self.bracket_holds(at, close, &[","]) => "tuple",
                     // One literal in parentheses is that literal.
                     _ if close == at + 2 => self.literal_kind(at + 1, close)?.0,
@@ -2368,7 +2368,7 @@ impl<'a> Compiler<'a> {
             if token.shape == Shape::Sign {
                 if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
                 else if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
-            } else if depth == 0 && token.shape == Shape::Instr && Lang::spells(fors, &token.lexeme) { return true; }
+            } else if depth == 0 && token.shape == Shape::Instr && Lang::spells(fors, &token.spelling()) { return true; }
         }
         false
     }
@@ -2391,10 +2391,10 @@ impl<'a> Compiler<'a> {
         if open + 2 == close {
             let only = &self.tokens[open + 1];
             if only.shape == Shape::Instr {
-                if Lang::spells(&self.lang.null_words, &only.lexeme) { return Some("NoneType"); }
-                if Lang::spells(&self.lang.true_words, &only.lexeme) || Lang::spells(&self.lang.false_words, &only.lexeme) { return Some("bool"); }
+                if Lang::spells(&self.lang.null_words, &only.spelling()) { return Some("NoneType"); }
+                if Lang::spells(&self.lang.true_words, &only.spelling()) || Lang::spells(&self.lang.false_words, &only.spelling()) { return Some("bool"); }
             }
-            if only.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &only.lexeme) { return Some("ellipsis"); }
+            if only.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &only.spelling()) { return Some("ellipsis"); }
         }
         let (kind, ends) = self.literal_kind(open + 1, close)?;
         if ends != close { return None; }
@@ -2406,10 +2406,10 @@ impl<'a> Compiler<'a> {
     /// a call upon that kind.
     fn constant_kind_called(&self, at: usize) -> Option<&'static str> {
         let before = &self.tokens[at - 1];
-        if before.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &before.lexeme) { return Some("ellipsis"); }
+        if before.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &before.spelling()) { return Some("ellipsis"); }
         if before.shape != Shape::Instr { return None; }
-        if Lang::spells(&self.lang.null_words, &before.lexeme) { return Some("NoneType"); }
-        if Lang::spells(&self.lang.true_words, &before.lexeme) || Lang::spells(&self.lang.false_words, &before.lexeme) { return Some("bool"); }
+        if Lang::spells(&self.lang.null_words, &before.spelling()) { return Some("NoneType"); }
+        if Lang::spells(&self.lang.true_words, &before.spelling()) || Lang::spells(&self.lang.false_words, &before.spelling()) { return Some("bool"); }
         None
     }
 
@@ -2426,7 +2426,7 @@ impl<'a> Compiler<'a> {
             // a subscript of it, not a display.
             if open > began {
                 let before = &self.tokens[open - 1];
-                if before.shape == Shape::Instr && !self.lang.keywords.contains(&before.lexeme) { return None; }
+                if before.shape == Shape::Instr && !self.lang.keywords.iter().any(|w| w == before.spelling()) { return None; }
                 if before.shape == Shape::Sign && [")", "]", "}"].contains(&before.lexeme.as_str()) { return None; }
             }
             open
@@ -2478,7 +2478,7 @@ impl<'a> Compiler<'a> {
         let end = self.stmt_reach(began);
         let mut found: Vec<(String, usize, usize)> = Vec::new();
         let head = &self.tokens[began];
-        if head.shape == Shape::Instr && Lang::spells(&lang.assert_words, &head.lexeme) && began + 1 < end && self.tokens[began + 1].is_lexeme(Shape::Sign, "(") {
+        if head.shape == Shape::Instr && Lang::spells(&lang.assert_words, &head.spelling()) && began + 1 < end && self.tokens[began + 1].is_lexeme(Shape::Sign, "(") {
             if let Some(close) = self.bracket_close(began + 1, end) {
                 let after = self.tokens.get(close + 1);
                 let ends_there = close + 1 >= end || after.map_or(true, |t| t.shape == Shape::Sign && (t.lexeme == "," || lang.ends_stmt(&t.lexeme)));
@@ -2501,8 +2501,8 @@ impl<'a> Compiler<'a> {
                     found.push((format!("invalid {kind} literal"), token.row, following.column));
                 }
             }
-            if token.shape == Shape::Instr && lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Same)) {
-                let negated = at + 1 < end && self.tokens[at + 1].shape == Shape::Instr && Lang::spells(&lang.identity_not, &self.tokens[at + 1].lexeme);
+            if token.shape == Shape::Instr && lang.dyadic.get(token.spelling()).map_or(false, |op| matches!(op.action, Action::Same)) {
+                let negated = at + 1 < end && self.tokens[at + 1].shape == Shape::Instr && Lang::spells(&lang.identity_not, &self.tokens[at + 1].spelling());
                 let mut right = at + 1 + usize::from(negated);
                 // A sign before a number is folded into it by the reference.
                 if right < end && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && right + 1 < end && self.tokens[right + 1].shape == Shape::Numeral { right += 1; }
@@ -2562,7 +2562,7 @@ impl<'a> Compiler<'a> {
         let last_row = if last.end_row != 0 { last.end_row } else { last.row };
         if self.look().row > last_row { return Ok(()); }
         let head = self.tokens[began].clone();
-        if self.pos == began + 1 && head.shape == Shape::Instr && Lang::spells(&lang.legacy_call, &head.lexeme) && !self.on_keyword(&lang.yield_words) {
+        if self.pos == began + 1 && head.shape == Shape::Instr && Lang::spells(&lang.legacy_call, &head.spelling()) && !self.on_keyword(&lang.yield_words) {
             // Only words that read as an expression name the old form.
             let from = self.mark();
             let halted = self.pos;
@@ -2586,7 +2586,7 @@ impl<'a> Compiler<'a> {
     fn stmt_read(&mut self) -> Res<()> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
-            let word = self.look().lexeme.clone();
+            let word = self.look().spelling().to_string();
             let similar = [("fur", "for"), ("whille", "while"), ("iff", "if"),
                 ("elseif", "elif"), ("tyo", "try"), ("classe", "class"),
                 ("impor", "import"), ("form", "from"), ("frum", "from"),
@@ -2612,7 +2612,7 @@ impl<'a> Compiler<'a> {
                 if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
             }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
-                let from = self.look_ahead(1).lexeme == "from";
+                let from = self.look_ahead(1).spelling() == "from";
                 let complaint = if self.in_class_body() { Some("inside classes") }
                     else if !self.piece().outermost { Some("inside functions") }
                     else if self.syntax_try_nesting > 0 { Some("inside try/except blocks") }
@@ -2627,7 +2627,7 @@ impl<'a> Compiler<'a> {
                     self.registry.stopped_end = end.1;
                     return Err(format!("SyntaxError: lazy {} not allowed {place}", if from { "from ... import" } else { "import" }));
                 }
-                if from && statement.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                if from && statement.windows(2).any(|pair| pair[0].spelling() == "import" && pair[1].spelling() == "*") {
                     self.registry.stopped_end_row = end.0;
                     self.registry.stopped_end = end.1;
                     return Err("SyntaxError: lazy from ... import * is not allowed".into());
@@ -2759,7 +2759,7 @@ impl<'a> Compiler<'a> {
             self.write(&alias);
             return Ok(());
         }
-        if Lang::spells(&lang.ellipsis_words, &self.look().lexeme)
+        if Lang::spells(&lang.ellipsis_words, &self.look().spelling())
             && (matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Close | Shape::Finish)
                 || lang.ends_stmt(&self.look_ahead(1).lexeme)) {
             self.take();
@@ -2781,7 +2781,7 @@ impl<'a> Compiler<'a> {
             }
         }
         if self.look().shape == Shape::Instr || self.on_any(&lang.decorator_words) {
-            let w = self.look().lexeme.clone();
+            let w = self.look().spelling().to_string();
             if !lang.let_words.is_empty() && Lang::spells(&lang.let_words, &w) {
                 return self.binding();
             }
@@ -2792,7 +2792,7 @@ impl<'a> Compiler<'a> {
             // it stands without the word, and answered at once.
             if !lang.import_lazy_words.is_empty() && Lang::spells(&lang.import_lazy_words, &w)
                 && self.look_ahead(1).shape == Shape::Instr
-                && (Lang::spells(&lang.import_words, &self.look_ahead(1).lexeme) || Lang::spells(&lang.import_from_words, &self.look_ahead(1).lexeme)) {
+                && (Lang::spells(&lang.import_words, &self.look_ahead(1).spelling()) || Lang::spells(&lang.import_from_words, &self.look_ahead(1).spelling())) {
                 self.take();
                 self.in_lazy_from = true;
                 let result = self.stmt();
@@ -2910,7 +2910,7 @@ impl<'a> Compiler<'a> {
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
-            if Lang::spells(&lang.modifier_words, &w) && self.look_ahead(1).shape == Shape::Instr && names_class(&self.look_ahead(1).lexeme) {
+            if Lang::spells(&lang.modifier_words, &w) && self.look_ahead(1).shape == Shape::Instr && names_class(self.look_ahead(1).spelling()) {
                 self.take();
                 return self.class_decl();
             }
@@ -2950,7 +2950,7 @@ impl<'a> Compiler<'a> {
                     let (signs, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.assign_words);
                     if let Some(&equal) = signs.first() {
                         let target = &self.tokens[self.pos..equal];
-                        let kind = if target.first().is_some_and(|t| t.lexeme == "(") && target.iter().any(|t| t.lexeme == "yield") {
+                        let kind = if target.first().is_some_and(|t| t.lexeme == "(") && target.iter().any(|t| t.spelling() == "yield") {
                             Some("yield expression")
                         } else if target.len() > 2 && target[0].shape == Shape::Instr && target[1].lexeme == "["
                             && self.bracket_close(self.pos + 1, equal) == Some(equal - 1) { Some("subscript") }
@@ -3041,7 +3041,7 @@ impl<'a> Compiler<'a> {
                 if t.is_lexeme(Shape::Sign, &group.close) {
                     depth -= 1;
                     if depth == 0 {
-                        bracketed = Lang::spells(&lang.block_intros, &self.look_ahead(ahead + 1).lexeme);
+                        bracketed = Lang::spells(&lang.block_intros, &self.look_ahead(ahead + 1).spelling());
                         break;
                     }
                 }
@@ -3093,8 +3093,8 @@ impl<'a> Compiler<'a> {
                 let mut depth = 0usize;
                 while end < self.tokens.len() {
                     let word = &self.tokens[end];
-                    if depth == 0 && (Lang::spells(&lang.block_intros, &word.lexeme)
-                        || Lang::spells(&lang.tuple_marks, &word.lexeme) || word.lexeme == group.close) { break; }
+                    if depth == 0 && (Lang::spells(&lang.block_intros, &word.spelling())
+                        || Lang::spells(&lang.tuple_marks, &word.spelling()) || word.lexeme == group.close) { break; }
                     if word.shape == Shape::Sign {
                         if ["(", "[", "{"].contains(&word.lexeme.as_str()) { depth += 1; }
                         else if [")", "]", "}"].contains(&word.lexeme.as_str()) { depth = depth.saturating_sub(1); }
@@ -3115,7 +3115,7 @@ impl<'a> Compiler<'a> {
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
-        if !lang.syntax_members.is_empty() && self.look().lexeme == "ad" && self.look_ahead(1).shape == Shape::Instr {
+        if !lang.syntax_members.is_empty() && self.look().spelling() == "ad" && self.look_ahead(1).shape == Shape::Instr {
             return Err("SyntaxError: invalid syntax. Did you mean 'and'?".into());
         }
         if !lang.syntax_members.is_empty() && !self.on_any(&lang.block_intros) {
@@ -3147,7 +3147,7 @@ impl<'a> Compiler<'a> {
             let closing = t.shape == Shape::Sign && (self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.close)
                 || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.close));
             if depth == 0 {
-                if (enclosed && closing) || (!enclosed && (Lang::spells(&self.lang.in_words, &t.lexeme) || Lang::spells(&self.lang.assign_words, &t.lexeme))) { break; }
+                if (enclosed && closing) || (!enclosed && (Lang::spells(&self.lang.in_words, &t.spelling()) || Lang::spells(&self.lang.assign_words, &t.spelling()))) { break; }
                 if self.lang.calling.as_ref().and_then(|p| p.between.as_ref()).map_or(false, |s| t.lexeme == *s) {
                     comma = true;
                     seen = false;
@@ -3155,7 +3155,7 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
                 if !seen { count += 1; seen = true; }
-                starred |= self.lang.dyadic.get(&t.lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
+                starred |= self.lang.dyadic.get(t.spelling()).map_or(false, |op| matches!(op.action, Action::Mul));
             }
             if opening { depth += 1; }
             if closing { depth -= 1; }
@@ -3204,7 +3204,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) {
             return Err("SyntaxError: cannot assign to literal".into());
         }
-        if !self.lang.syntax_members.is_empty() && [&self.lang.null_words, &self.lang.true_words, &self.lang.false_words].iter().any(|words| Lang::spells(words, &self.look().lexeme)) {
+        if !self.lang.syntax_members.is_empty() && [&self.lang.null_words, &self.lang.true_words, &self.lang.false_words].iter().any(|words| Lang::spells(words, &self.look().spelling())) {
             return Err(format!("SyntaxError: cannot assign to {}", self.look().lexeme));
         }
         if self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
@@ -3248,7 +3248,7 @@ impl<'a> Compiler<'a> {
         // A bare name bound here is a member where the binding stands
         // in a class body; a place within something binds no name.
         let next = self.look_ahead(1);
-        let within = Lang::spells(&self.lang.pipe_words, &next.lexeme)
+        let within = Lang::spells(&self.lang.pipe_words, &next.spelling())
             || [&self.lang.grouping, &self.lang.array_brackets, &self.lang.index_brackets].into_iter().flatten()
                 .any(|pair| next.shape == Shape::Sign && pair.open == next.lexeme);
         if self.look().shape == Shape::Instr && !within {
@@ -3288,7 +3288,7 @@ impl<'a> Compiler<'a> {
         }
         let after = self.look_ahead(ahead + 1);
         if after.shape != Shape::Sign { return false; }
-        Lang::spells(&self.lang.pipe_words, &after.lexeme)
+        Lang::spells(&self.lang.pipe_words, &after.spelling())
             || self.lang.index_brackets.as_ref().map_or(false, |pair| pair.open == after.lexeme)
     }
 
@@ -3394,7 +3394,7 @@ impl<'a> Compiler<'a> {
         if lang.bare_calls && self.look().shape == Shape::Instr {
             // A builtin without brackets after it; echo always, since a
             // bracket after it opens a group, not its arguments.
-            let w = self.look().lexeme.clone();
+            let w = self.look().spelling().to_string();
             let bracketed = lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
             match lang.builtins.get(&w) {
                 Some(Builtin::Tell) => return self.bare_call(w),
@@ -3427,7 +3427,7 @@ impl<'a> Compiler<'a> {
     /// operators, are the reader's answer here.
     fn may_adorn(&self) -> bool {
         let lang = self.lang;
-        let word = &self.look().lexeme;
+        let word = self.look().spelling();
         if !lang.keywords.contains(word) { return true; }
         [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words]
             .into_iter().any(|spellings| Lang::spells(spellings, word))
@@ -3525,7 +3525,7 @@ impl<'a> Compiler<'a> {
             while at < end && self.tokens[at].shape != Shape::LineEnd && self.tokens[at].lexeme != ";" { at += 1; }
             let statement = &self.tokens[start..at];
             if !(docstring && statement.iter().all(|word| word.shape == Shape::Quote))
-                && !(statement.len() >= 3 && statement[0].lexeme == "from" && statement[1].lexeme == "__future__" && statement[2].lexeme == "import") { return false; }
+                && !(statement.len() >= 3 && statement[0].spelling() == "from" && statement[1].spelling() == "__future__" && statement[2].spelling() == "import") { return false; }
             docstring = false;
         }
         true
@@ -3872,7 +3872,7 @@ impl<'a> Compiler<'a> {
                 }
                 deep -= 1;
             } else if !past_as {
-                if deep == 0 && w.shape == Shape::Instr && Lang::spells(&lang.foreach_as_words, &w.lexeme) {
+                if deep == 0 && w.shape == Shape::Instr && Lang::spells(&lang.foreach_as_words, &w.spelling()) {
                     past_as = true;
                 }
             } else if w.shape == Shape::Sign && w.lexeme == mark {
@@ -3893,7 +3893,7 @@ impl<'a> Compiler<'a> {
         // A walk that hands out its items for writing walks the binding
         // itself, so that writing an item writes the array it came from.
         let mut named = match (self.look().shape, self.look_ahead(1).shape) {
-            (Shape::Instr, Shape::Instr) if Lang::spells(&lang.foreach_as_words, &self.look_ahead(1).lexeme) => {
+            (Shape::Instr, Shape::Instr) if Lang::spells(&lang.foreach_as_words, &self.look_ahead(1).spelling()) => {
                 Some(self.take().lexeme)
             }
             _ => None,
@@ -4270,8 +4270,8 @@ impl<'a> Compiler<'a> {
         for t in self.tokens.iter().skip(self.pos + 1) {
             if matches!(t.shape, Shape::LineEnd | Shape::Finish) { break; }
             if t.shape != Shape::Sign { continue; }
-            if depth == 0 && self.lang.block_intros.contains(&t.lexeme) { return true; }
-            if depth == 0 && self.lang.assign_words.contains(&t.lexeme) { return false; }
+            if depth == 0 && self.lang.block_intros.iter().any(|w| w == t.spelling()) { return true; }
+            if depth == 0 && self.lang.assign_words.iter().any(|w| w == t.spelling()) { return false; }
             for brackets in [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten() {
                 if t.lexeme == brackets.open { depth += 1; break; }
                 if t.lexeme == brackets.close { depth = depth.saturating_sub(1); break; }
@@ -4392,7 +4392,7 @@ impl<'a> Compiler<'a> {
 
     fn case_pattern(&mut self) -> Res<crate::code::Pattern> {
         let mut star = None;
-        let first = if self.lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+        let first = if self.lang.dyadic.get(self.look().spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
             star = Some(0);
             self.pattern_capture()?
@@ -4503,7 +4503,7 @@ impl<'a> Compiler<'a> {
         use crate::code::Pattern;
         let lang = self.lang;
         let token = self.look().clone();
-        if token.shape == Shape::Numeral || lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Sub)) {
+        if token.shape == Shape::Numeral || lang.dyadic.get(token.spelling()).map_or(false, |op| matches!(op.action, Action::Sub)) {
             self.take();
             let value = if token.shape == Shape::Numeral { parse_number(&token.lexeme, lang)? } else {
                 if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
@@ -4578,9 +4578,9 @@ impl<'a> Compiler<'a> {
             }
         }
         if token.shape == Shape::Instr {
-            if lang.true_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Flag(true))); }
-            if lang.false_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Flag(false))); }
-            if lang.null_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Null)); }
+            if lang.true_words.iter().any(|w| w == token.spelling()) { self.take(); return Ok(Pattern::Literal(Value::Flag(true))); }
+            if lang.false_words.iter().any(|w| w == token.spelling()) { self.take(); return Ok(Pattern::Literal(Value::Flag(false))); }
+            if lang.null_words.iter().any(|w| w == token.spelling()) { self.take(); return Ok(Pattern::Literal(Value::Null)); }
             let capture = self.pattern_capture()?;
             let mut path = Vec::new();
             while lang.pipe_words.contains(&self.look().lexeme) {
@@ -4781,7 +4781,7 @@ impl<'a> Compiler<'a> {
             self.take();
         }
         let name = self.want_name("after the binding keyword")?;
-        if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().spelling()) {
             self.take();
             self.want_name("as a type name")?;
         }
@@ -4815,7 +4815,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn on_assign(&self) -> bool {
-        self.look().shape == Shape::Sign && Lang::spells(&self.lang.assign_words, &self.look().lexeme)
+        self.look().shape == Shape::Sign && Lang::spells(&self.lang.assign_words, &self.look().spelling())
     }
 
     fn expect_assign(&mut self, why: &str) -> Res<()> {
@@ -4857,8 +4857,8 @@ impl<'a> Compiler<'a> {
             }
         }
         let t = self.look_ahead(ahead);
-        let elif = t.shape == Shape::Instr && Lang::spells(&lang.elif_words, &t.lexeme);
-        let els = t.shape == Shape::Instr && Lang::spells(&lang.else_words, &t.lexeme);
+        let elif = t.shape == Shape::Instr && Lang::spells(&lang.elif_words, &t.spelling());
+        let els = t.shape == Shape::Instr && Lang::spells(&lang.else_words, &t.spelling());
         if !elif && !els {
             if keyword_style {
                 self.expect_closer()?;
@@ -4887,7 +4887,7 @@ impl<'a> Compiler<'a> {
                 }
                 let next = self.look_ahead(following);
                 if !lang.syntax_members.is_empty() && next.shape == Shape::Instr
-                    && Lang::spells(&lang.elif_words, &next.lexeme) {
+                    && Lang::spells(&lang.elif_words, &next.spelling()) {
                     return Err("SyntaxError: 'elif' block follows an 'else' block".into());
                 }
             }
@@ -4978,7 +4978,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.take();
-        if !lang.syntax_members.is_empty() && self.look_ahead(1).lexeme == "im" {
+        if !lang.syntax_members.is_empty() && self.look_ahead(1).spelling() == "im" {
             return Err("SyntaxError: invalid syntax. Did you mean 'in'?".into());
         }
         if !lang.syntax_members.is_empty() {
@@ -5036,7 +5036,7 @@ impl<'a> Compiler<'a> {
             let from = self.mark();
             if self.on_any(&lang.array_spread) { self.scope_value()?; }
             else { self.expr(tier + 1)?; self.scope_tail(from)?; }
-            if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
+            if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().spelling())) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
                     return Err("A for loop needs a range: start..end".to_string());
@@ -5395,7 +5395,7 @@ impl<'a> Compiler<'a> {
         let (mut depth, mut i) = (0usize, self.pos);
         while i < self.tokens.len() && self.tokens[i].shape != Shape::Finish {
             let t = &self.tokens[i];
-            let lexeme_here = |list: &[String]| matches!(t.shape, Shape::Sign | Shape::Instr) && list.iter().any(|x| *x == t.lexeme);
+            let lexeme_here = |list: &[String]| matches!(t.shape, Shape::Sign | Shape::Instr) && list.iter().any(|x| *x == t.spelling());
             if lexeme_here(&lang.block_opens) {
                 depth += 1;
             } else if lexeme_here(&lang.block_closes) {
@@ -5414,10 +5414,10 @@ impl<'a> Compiler<'a> {
                     if w.shape != Shape::Instr {
                         return None;
                     }
-                    if Lang::spells(&lang.finally_words, &w.lexeme) {
+                    if Lang::spells(&lang.finally_words, &w.spelling()) {
                         return Some(j);
                     }
-                    if !Lang::spells(&lang.catch_words, &w.lexeme) {
+                    if !Lang::spells(&lang.catch_words, &w.spelling()) {
                         return None;
                     }
                     i = j;
@@ -5548,7 +5548,7 @@ impl<'a> Compiler<'a> {
                 else if Lang::spells(&lang.class_property, &word) { 3 }
                 else { 0 }
             } else if lang.member_mark.as_ref() == Some(&self.look_ahead(1).lexeme)
-                && Lang::spells(&lang.property_setter, &self.look_ahead(2).lexeme)
+                && Lang::spells(&lang.property_setter, &self.look_ahead(2).spelling())
                 && self.look_ahead(3).shape == Shape::LineEnd { 4 } else { 0 };
             let held = self.gensym("adornment");
             if kind == 4 {
@@ -5602,12 +5602,12 @@ impl<'a> Compiler<'a> {
             let word = &self.tokens[at];
             match word.shape {
                 Shape::Instr => {
-                    if lang.keywords.contains(&word.lexeme) { return false; }
-                    if [&lang.true_words, &lang.false_words, &lang.null_words].iter().any(|words| Lang::spells(words, &word.lexeme)) { return false; }
+                    if lang.keywords.iter().any(|w| w == word.spelling()) { return false; }
+                    if [&lang.true_words, &lang.false_words, &lang.null_words].iter().any(|words| Lang::spells(words, &word.spelling())) { return false; }
                     names.push(word.lexeme.clone());
                 }
-                Shape::Sign if Lang::spells(&lang.tuple_marks, &word.lexeme)
-                    || Lang::spells(&lang.unpack_rest, &word.lexeme)
+                Shape::Sign if Lang::spells(&lang.tuple_marks, &word.spelling())
+                    || Lang::spells(&lang.unpack_rest, &word.spelling())
                     || [&lang.grouping, &lang.array_brackets].into_iter().flatten()
                         .any(|pair| pair.open == word.lexeme || pair.close == word.lexeme) => {}
                 _ => return false,
@@ -5765,8 +5765,8 @@ impl<'a> Compiler<'a> {
             word.shape == Shape::LineEnd || (word.shape == Shape::Sign && lang.ends_stmt(&word.lexeme))
         } { ahead += 1; }
         let word = self.look_ahead(ahead);
-        let another = word.shape == Shape::Instr && Lang::spells(&lang.elif_words, &word.lexeme);
-        let otherwise = word.shape == Shape::Instr && Lang::spells(&lang.else_words, &word.lexeme);
+        let another = word.shape == Shape::Instr && Lang::spells(&lang.elif_words, &word.spelling());
+        let otherwise = word.shape == Shape::Instr && Lang::spells(&lang.else_words, &word.spelling());
         if !another && !otherwise {
             self.land(unless);
             return Ok(());
@@ -5827,7 +5827,7 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
-        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).lexeme) { self.take(); self.coroutine_next = true; }
+        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).spelling()) { self.take(); self.coroutine_next = true; }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();
@@ -5930,9 +5930,9 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme)
-            || Lang::spells(&lang.match_words, &self.look().lexeme) || Lang::spells(&lang.match_cases, &self.look().lexeme))
-            && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
+        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(self.look().spelling()) || Lang::spells(&lang.type_alias_words, &self.look().spelling())
+            || Lang::spells(&lang.match_words, &self.look().spelling()) || Lang::spells(&lang.match_cases, &self.look().spelling()))
+            && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).spelling()) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
             let named = self.take().lexeme;
@@ -5956,7 +5956,7 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+        } else if self.look().shape == Shape::Instr && !lang.keywords.iter().any(|w| w == self.look().spelling())
             && self.look_ahead(1).shape == Shape::Sign && lang.compound.contains_key(&self.look_ahead(1).lexeme) {
             self.class_compound()?;
         } else {
@@ -6007,7 +6007,7 @@ impl<'a> Compiler<'a> {
         for at in self.pos..self.tokens.len() {
             let word = &self.tokens[at];
             if matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close) { break; }
-            starred |= word.shape == Shape::Sign && lang.dyadic.get(&word.lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
+            starred |= word.shape == Shape::Sign && lang.dyadic.get(word.spelling()).map_or(false, |op| matches!(op.action, Action::Mul));
         }
         self.stmt()?;
         if starred { self.gathering().unready = true; }
@@ -6033,7 +6033,7 @@ impl<'a> Compiler<'a> {
             left = right + 1;
         }
         let bare = |from: usize, to: usize| to == from + 1
-            && self.tokens[from].shape == Shape::Instr && !lang.keywords.contains(&self.tokens[from].lexeme);
+            && self.tokens[from].shape == Shape::Instr && !lang.keywords.iter().any(|w| w == self.tokens[from].spelling());
         let names = spans.iter().filter(|&&(from, to)| bare(from, to)).count();
         if names == 0 { return self.stmt(); }
         if names < spans.len() {
@@ -6117,12 +6117,12 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let begin = self.pos;
         let word = self.look().clone();
-        let harmless = match word.shape == Shape::Instr && lang.keywords.contains(&word.lexeme) {
+        let harmless = match word.shape == Shape::Instr && lang.keywords.iter().any(|w| w == word.spelling()) {
             // `global` and `nonlocal` bind no member: the name they
             // carry goes on meaning what it always did, a place beyond
             // the class, so a class body forms around one exactly as
             // it does around a call made for its effect.
-            true => [&lang.throw_words, &lang.assert_words, &lang.break_words, &lang.continue_words, &lang.global_words, &lang.nonlocal_words].iter().any(|words| Lang::spells(words, &word.lexeme)),
+            true => [&lang.throw_words, &lang.assert_words, &lang.break_words, &lang.continue_words, &lang.global_words, &lang.nonlocal_words].iter().any(|words| Lang::spells(words, &word.spelling())),
             false => !self.binds_within(begin),
         };
         self.stmt()?;
@@ -6151,17 +6151,17 @@ impl<'a> Compiler<'a> {
             if deep == 0 && (matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close)
                 || (word.shape == Shape::Sign && lang.ends_stmt(&word.lexeme))) { break; }
             match word.shape {
-                Shape::Sign if Lang::spells(&lang.expression_assign, &word.lexeme) => return true,
+                Shape::Sign if Lang::spells(&lang.expression_assign, &word.spelling()) => return true,
                 Shape::Sign => {
-                    if deep == 0 && !lang.annotation_marks.is_empty() && at < target && Lang::spells(&lang.annotation_marks, &word.lexeme) { annotated = true; }
+                    if deep == 0 && !lang.annotation_marks.is_empty() && at < target && Lang::spells(&lang.annotation_marks, &word.spelling()) { annotated = true; }
                     for pair in [&lang.grouping, &lang.array_brackets, &lang.map_brackets].into_iter().flatten() {
                         if pair.open == word.lexeme { deep += 1; } else if pair.close == word.lexeme { deep = deep.saturating_sub(1); }
                     }
                 }
-                Shape::Instr if deep == 0 && at < target && !annotated && !lang.keywords.contains(&word.lexeme)
-                    && !(at > begin && Lang::spells(&lang.pipe_words, &self.tokens[at - 1].lexeme)) => {
+                Shape::Instr if deep == 0 && at < target && !annotated && !lang.keywords.iter().any(|w| w == word.spelling())
+                    && !(at > begin && Lang::spells(&lang.pipe_words, &self.tokens[at - 1].spelling())) => {
                     let next = &self.tokens[at + 1];
-                    let within = Lang::spells(&lang.pipe_words, &next.lexeme)
+                    let within = Lang::spells(&lang.pipe_words, &next.spelling())
                         || [&lang.grouping, &lang.array_brackets, &lang.index_brackets].into_iter().flatten()
                             .any(|pair| next.shape == Shape::Sign && pair.open == next.lexeme);
                     if !within { return true; }
@@ -6189,8 +6189,11 @@ impl<'a> Compiler<'a> {
             self.arguments(&pair)?
         } else { 0 };
         if generic {
+            let names = std::mem::take(&mut self.generic_class_parameters);
+            for name in &names { self.read(name); }
+            self.act(Action::MakeTuple, names.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
-            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            self.act(Action::Invoke(Rc::from("generic base")), 2);
             count += 1;
         }
         self.act(Action::MakeTuple, count);
@@ -6291,7 +6294,13 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text(crate::code::ANNOTATE_WORD));
             let count = parts.annotated.len() * 2;
             for (key, location) in &parts.annotated { self.constant(key.clone()); self.glance(location); let address = self.cell_to_write(location); self.put(Instr::Forget(address)); }
-            self.act(Action::MakeArray, count); self.read(parts.book.as_ref().expect("class namespace"));
+            self.act(Action::MakeArray, count);
+            let rows = self.gensym("annotation_rows"); self.write(&rows); self.read(&rows);
+            self.read(parts.book.as_ref().expect("class namespace"));
+            self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            self.constant(Value::text(if self.future_annotations { "__annotations__" } else { "__annotate_func__" }));
+            self.read(&rows); self.act(Action::Builtin(Builtin::ClassTool(if self.future_annotations { 25 } else { 24 }), Rc::from("")), 1);
+            self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
             self.constant(Value::text("\0annotation_strings")); self.constant(Value::Flag(self.future_annotations)); self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
@@ -6350,8 +6359,8 @@ impl<'a> Compiler<'a> {
             let mut expanded = false;
             for token in &self.tokens[self.pos..] {
                 if depth == 0 && token.lexeme == close { break; }
-                if depth == 0 && lang.class_details.contains_key("mro.entries") && Lang::spells(&lang.comprehension_for, &token.lexeme) { return Err("SyntaxError: invalid syntax".into()); }
-                if depth == 0 && (Lang::spells(&lang.call_spread, &token.lexeme) || Lang::spells(&lang.call_spread_pairs, &token.lexeme)) { expanded = true; }
+                if depth == 0 && lang.class_details.contains_key("mro.entries") && Lang::spells(&lang.comprehension_for, &token.spelling()) { return Err("SyntaxError: invalid syntax".into()); }
+                if depth == 0 && (Lang::spells(&lang.call_spread, &token.spelling()) || Lang::spells(&lang.call_spread_pairs, &token.spelling())) { expanded = true; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {}
@@ -6376,12 +6385,13 @@ impl<'a> Compiler<'a> {
                 let mut names_maker = false;
                 if keyword {
                     let word = self.spelled[self.pos].lexeme.clone();
-                    if !lang.syntax_members.is_empty() && word == "__debug__" {
+                    let raw_word = self.spelled[self.pos].spelling().to_string();
+                    if !lang.syntax_members.is_empty() && raw_word == "__debug__" {
                         return Err("SyntaxError: cannot assign to __debug__".into());
                     }
                     self.take();
                     self.take();
-                    if Lang::spells(&lang.metaclass_word, &word) { names_maker = true; }
+                    if Lang::spells(&lang.metaclass_word, &raw_word) { names_maker = true; }
                     else if lang.class_details.get("subclass").map_or(true, |v| v.is_empty()) { unready = true; }
                     else { handed = Some(word); }
                 }
@@ -6409,8 +6419,11 @@ impl<'a> Compiler<'a> {
             }
         }
         if inside_wrapper {
+            let names = std::mem::take(&mut self.generic_class_parameters);
+            for name in &names { self.read(name); }
+            self.act(Action::MakeTuple, names.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
-            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            self.act(Action::Invoke(Rc::from("generic base")), 2);
             let generic = self.gensym("generic_base");
             self.write(&generic);
             if base.is_none() { base = Some(generic); } else { further.push(generic); }
@@ -6744,7 +6757,7 @@ impl<'a> Compiler<'a> {
             let mut own = false;
             let mut reach = Reach::Open;
             while self.look().shape == Shape::Instr {
-                let w = self.look().lexeme.clone();
+                let w = self.look().spelling().to_string();
                 if Lang::spells(&lang.shared_words, &w) {
                     own = true;
                 } else if Lang::spells(&lang.hidden_words, &w) {
@@ -6824,8 +6837,12 @@ impl<'a> Compiler<'a> {
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
-        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
+        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].spelling());
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
+        // The type parameters read here stand aside while the
+        // parameters and their defaults are read, so a routine written
+        // within one of those is not handed them instead.
+        let typed = std::mem::take(&mut self.pending_types);
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -6839,7 +6856,7 @@ impl<'a> Compiler<'a> {
         let least = formals.len() - spares.len();
         let given = formals.clone();
         let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + offset, from)).collect();
-        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().spelling()) {
             self.take();
             if lang.annotation_marks.is_empty() {
                 self.skip_nothing_mark();
@@ -6849,6 +6866,7 @@ impl<'a> Compiler<'a> {
                 self.annotation_expression(&lang.block_intros)?;
             }
         }
+        self.pending_types = typed;
         // A method may be named and not written out, in a class of
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.
@@ -6946,7 +6964,7 @@ impl<'a> Compiler<'a> {
                     named_only = true;
                     if call.between.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
                         self.take();
-                        if self.at_symbol(&call.close) || Lang::spells(&lang.carries_pairs, &self.look().lexeme) { return Err(bad()); }
+                        if self.at_symbol(&call.close) || Lang::spells(&lang.carries_pairs, &self.look().spelling()) { return Err(bad()); }
                         continue;
                     }
                     gather = true;
@@ -6956,7 +6974,7 @@ impl<'a> Compiler<'a> {
             let mut takes_nothing = false;
             let _by_cell = self.skip_reference();
             let mut names_property = false;
-            while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().lexeme) {
+            while self.look().shape == Shape::Instr && Lang::spells(&lang.modifier_words, &self.look().spelling()) {
                 self.take();
                 names_property = true;
             }
@@ -7000,7 +7018,7 @@ impl<'a> Compiler<'a> {
                     ends.extend(call.between.iter().cloned());
                     self.pending_annotations.push((formals.last().unwrap().clone(), self.pos));
                     self.annotation_expression(&ends)?;
-                } else if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
+                } else if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().spelling()) {
                     self.take();
                     self.want_name("as a type name")?;
                 }
@@ -7160,8 +7178,8 @@ impl<'a> Compiler<'a> {
                 break;
             }
             if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
-            if !lang.syntax_members.is_empty() && outside_function && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.lexeme) {
-                let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).lexeme) { "yield from" } else { "yield" };
+            if !lang.syntax_members.is_empty() && outside_function && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.spelling()) {
+                let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).spelling()) { "yield from" } else { "yield" };
                 return Err(format!("SyntaxError: '{operation}' outside function"));
             }
             if token.shape == Shape::Sign {
@@ -7296,7 +7314,7 @@ impl<'a> Compiler<'a> {
         let original = name_at.filter(|&i| self.tokens[i].lexeme == name)
             .and_then(|i| self.spelled.get(i)).filter(|t| t.shape == Shape::Instr)
             .map(|t| t.lexeme.clone()).unwrap_or_else(|| name.to_string());
-        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
+        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].spelling());
         self.declaration_types()?;
         // The type parameters read here are kept aside while the
         // parameters and their defaults are read, so that a routine
@@ -7315,7 +7333,7 @@ impl<'a> Compiler<'a> {
         // the time it is called.
         let carried = self.carried_names(&call)?;
         let taken = carried.clone();
-        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().spelling()) {
             self.take();
             if lang.annotation_marks.is_empty() {
                 self.skip_nothing_mark();
@@ -7568,7 +7586,7 @@ impl<'a> Compiler<'a> {
         let (formals, spares, _) = self.parameters(ANONYMOUS, &call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
-        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().spelling()) {
             self.take();
             if lang.annotation_marks.is_empty() {
                 self.skip_nothing_mark();
@@ -7690,12 +7708,12 @@ impl<'a> Compiler<'a> {
         for at in begin..end {
             let t = &self.tokens[at];
             if closes.is_empty() {
-                if t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.lexeme) { return (found, at); }
+                if t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.spelling()) { return (found, at); }
                 if matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish)
                     || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) {
                     return (found, at);
                 }
-                if matches!(t.shape, Shape::Sign | Shape::Instr) && Lang::spells(marks, &t.lexeme) {
+                if matches!(t.shape, Shape::Sign | Shape::Instr) && Lang::spells(marks, &t.spelling()) {
                     found.push(at);
                 }
             }
@@ -7750,11 +7768,11 @@ impl<'a> Compiler<'a> {
         while let Some(token) = self.tokens.get(at) {
             if matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish | Shape::Open) { break; }
             if token.shape == Shape::Sign {
-                if lang.ends_stmt(&token.lexeme) || Lang::spells(&lang.block_intros, &token.lexeme) { break; }
+                if lang.ends_stmt(&token.lexeme) || Lang::spells(&lang.block_intros, &token.spelling()) { break; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1),
-                    _ if depth == 0 && (Lang::spells(&lang.assign_words, &token.lexeme) || lang.compound.contains_key(&token.lexeme)) => return Some(at),
+                    _ if depth == 0 && (Lang::spells(&lang.assign_words, &token.spelling()) || lang.compound.contains_key(token.spelling())) => return Some(at),
                     _ => {}
                 }
             }
@@ -7909,9 +7927,9 @@ impl<'a> Compiler<'a> {
         if begin == end { return Err(amiss.clone()); }
         if !self.lang.syntax_members.is_empty() && end == begin + 1 {
             let word = &self.tokens[begin];
-            let kind = if word.lexeme == "__debug__" { Some("__debug__") }
+            let kind = if word.spelling() == "__debug__" { Some("__debug__") }
                 else if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
-                    .iter().any(|words| Lang::spells(words, &word.lexeme)) { Some(word.lexeme.as_str()) }
+                    .iter().any(|words| Lang::spells(words, &word.spelling())) { Some(word.lexeme.as_str()) }
                 else if matches!(word.shape, Shape::Quote | Shape::Numeral | Shape::Bytes) { Some("literal") }
                 else { None };
             if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind}")); }
@@ -8012,7 +8030,7 @@ impl<'a> Compiler<'a> {
         }
         let mut rest = None;
         for (i, (a, _)) in spans.iter_mut().enumerate() {
-            if self.tokens[*a].shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.tokens[*a].lexeme) {
+            if self.tokens[*a].shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.tokens[*a].spelling()) {
                 if rest.replace(i).is_some() { return Err(amiss.clone()); }
                 *a += 1;
             }
@@ -8054,7 +8072,7 @@ impl<'a> Compiler<'a> {
         let after = self.pos;
         let mut left = begin;
         for sign in signs {
-            if Lang::spells(&self.lang.yield_words, &self.tokens[left].lexeme) {
+            if Lang::spells(&self.lang.yield_words, &self.tokens[left].spelling()) {
                 return Err("SyntaxError: assignment to yield expression not possible".into());
             }
             self.give_places(left, sign, &held)?;
@@ -8077,8 +8095,8 @@ impl<'a> Compiler<'a> {
             if depth == 0 {
                 if matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish) { break; }
                 if word.shape == Shape::Sign {
-                    if Lang::spells(&lang.annotation_marks, &word.lexeme) { return Some(at); }
-                    if lang.ends_stmt(&word.lexeme) || Lang::spells(&lang.assign_words, &word.lexeme) { break; }
+                    if Lang::spells(&lang.annotation_marks, &word.spelling()) { return Some(at); }
+                    if lang.ends_stmt(&word.lexeme) || Lang::spells(&lang.assign_words, &word.spelling()) { break; }
                 }
             }
             if word.shape == Shape::Sign {
@@ -8096,7 +8114,7 @@ impl<'a> Compiler<'a> {
         let name = self.look().lexeme.clone();
         let identity = self.lang.shadow_builtins && self.piece().outermost && !self.in_class_body()
             && (self.lang.builtins.contains_key(&name) || Lang::spells(&self.lang.parent_words, &name))
-            && self.look_ahead(1).shape == Shape::Sign && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)
+            && self.look_ahead(1).shape == Shape::Sign && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling())
             && self.look_ahead(2).shape == Shape::Instr && self.look_ahead(2).lexeme == name
             && matches!(self.look_ahead(3).shape, Shape::LineEnd | Shape::Finish)
             && (!self.registry.program_bound.contains(&name) || self.registry.builtin_exports.contains(&name));
@@ -8106,10 +8124,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn assignment_expression(&mut self) -> Res<()> {
-        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme)
-            && ![&self.lang.true_words, &self.lang.false_words, &self.lang.null_words, &self.lang.yield_words].iter().any(|words| Lang::spells(words, &self.look().lexeme))
+        if Lang::spells(&self.lang.reserved_names, &self.look().spelling())
+            && ![&self.lang.true_words, &self.lang.false_words, &self.lang.null_words, &self.lang.yield_words].iter().any(|words| Lang::spells(words, &self.look().spelling()))
             && self.look_ahead(1).shape == Shape::Sign
-            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling()) {
             return Err("SyntaxError: invalid syntax".into());
         }
         if !self.lang.syntax_members.is_empty() {
@@ -8120,28 +8138,28 @@ impl<'a> Compiler<'a> {
                 } else if begins.lexeme == "{" && self.bracket_close(self.pos, equal) == Some(equal - 1) {
                         let pair = self.lang.pair_mark.as_ref().map_or(Vec::new(), |mark| self.outer_marks(self.pos + 1, equal - 1, &[mark.clone()]).0);
                         Some(if pair.is_empty() { "set display" } else { "dict literal" })
-                    } else if begins.shape == Shape::Instr && self.look_ahead(1).lexeme == "if" {
+                    } else if begins.shape == Shape::Instr && self.look_ahead(1).spelling() == "if" {
                         return Err("SyntaxError: cannot assign to conditional expression".into());
                     } else { None };
                 if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
             }
-            if self.look().lexeme == "None" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+            if self.look().spelling() == "None" && self.lang.compound.contains_key(self.look_ahead(1).spelling()) {
                 return Err("SyntaxError: 'None' is an illegal expression for augmented assignment".into());
             }
             if self.look().lexeme == "[" || self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "(" {
                 let opening = if self.look().lexeme == "[" { self.pos } else { self.pos + 1 };
                 if let Some(close) = self.bracket_close(opening, self.tokens.len()) {
-                    if self.tokens.get(close + 1).is_some_and(|next| self.lang.compound.contains_key(&next.lexeme)) {
+                    if self.tokens.get(close + 1).is_some_and(|next| self.lang.compound.contains_key(next.spelling())) {
                         let kind = if opening == self.pos { "list" } else { "function call" };
                         return Err(format!("SyntaxError: '{kind}' is an illegal expression for augmented assignment"));
                     }
                 }
             }
-            if self.look().lexeme == "__debug__" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+            if self.look().spelling() == "__debug__" && self.lang.compound.contains_key(self.look_ahead(1).spelling()) {
                 return Err("SyntaxError: cannot assign to __debug__".into());
             }
             if let Some(colon) = self.statement_annotation() {
-                if colon >= self.pos + 2 && self.tokens[colon - 1].lexeme == "__debug__" && self.tokens[colon - 2].lexeme == "." {
+                if colon >= self.pos + 2 && self.tokens[colon - 1].spelling() == "__debug__" && self.tokens[colon - 2].spelling() == "." {
                     return Err("SyntaxError: cannot assign to __debug__".into());
                 }
                 let mut head = self.pos;
@@ -8154,7 +8172,7 @@ impl<'a> Compiler<'a> {
                     return Err("SyntaxError: only single target (not list) can be annotated".into());
                 }
                 let first = &self.tokens[head];
-                let generator = self.tokens[self.pos].lexeme == "(" && self.tokens[head..colon].iter().any(|word| word.lexeme == "for");
+                let generator = self.tokens[self.pos].lexeme == "(" && self.tokens[head..colon].iter().any(|word| word.spelling() == "for");
                 if matches!(first.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) || first.lexeme == "-" || generator {
                     return Err("SyntaxError: illegal target for annotation".into());
                 }
@@ -8165,7 +8183,7 @@ impl<'a> Compiler<'a> {
                 while start + 1 < end && self.tokens[start].is_lexeme(Shape::Sign, "(") && self.tokens[end - 1].is_lexeme(Shape::Sign, ")") { start += 1; end -= 1; }
                 let single = start + 1 == end;
                 let token = &self.tokens[start];
-                let word = token.lexeme.as_str();
+                let word = token.spelling();
                 let message: Option<String> = if self.lang.short_function.as_ref().map_or(false, |(name, _)| name == word) { Some("cannot assign to lambda".to_string()) }
                     else if Lang::spells(&self.lang.yield_words, word) { Some(if single { "assignment to yield expression not possible".to_string() } else { "cannot assign to yield expression here. Maybe you meant '==' instead of '='?".to_string() }) }
                     else if single && matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("cannot assign to literal here. Maybe you meant '==' instead of '='?".to_string()) }
@@ -8223,7 +8241,7 @@ impl<'a> Compiler<'a> {
             let before = &self.tokens[target_at - 1];
             matches!(before.shape, Shape::LineEnd | Shape::Open | Shape::Close)
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
-                    || Lang::spells(&self.lang.block_intros, &before.lexeme)))
+                    || Lang::spells(&self.lang.block_intros, &before.spelling())))
         };
         let writing_signs: Vec<String> = self.lang.assign_words.iter().cloned().chain(self.lang.compound.keys().cloned()).collect();
         let assignments = self.outer_marks(self.pos, self.tokens.len(), &writing_signs).0;
@@ -8249,7 +8267,7 @@ impl<'a> Compiler<'a> {
         self.writing_place = saved_place;
         expression?;
         if !self.lang.class_special.is_empty() && self.on_writing()
-            && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.lexeme)) {
+            && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.spelling())) {
             let end = self.pos;
             self.piece().instrs.truncate(from);
             self.pos = target_at;
@@ -8259,20 +8277,20 @@ impl<'a> Compiler<'a> {
         if self.on_writing() && !self.on_assign() && !self.lang.syntax_members.is_empty() {
             let mut head = target_at;
             while self.tokens[head].lexeme == "(" { head += 1; }
-            if Lang::spells(&self.lang.yield_words, &self.tokens[head].lexeme) {
+            if Lang::spells(&self.lang.yield_words, &self.tokens[head].spelling()) {
                 return Err("SyntaxError: 'yield expression' is an illegal expression for augmented assignment".into());
             }
         }
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
             && self.look_ahead(2).shape == Shape::Sign
-            && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme) {
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).spelling()) {
             if let [Instr::Read(first)] = &self.piece().instrs[from..] {
                 let mut names = vec![first.ident.to_string()];
                 self.piece().instrs.truncate(from);
                 while self.on_assign() && self.look_ahead(1).shape == Shape::Instr
                     && self.look_ahead(2).shape == Shape::Sign
-                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).lexeme) {
+                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(2).spelling()) {
                     self.take();
                     names.push(self.take().lexeme);
                 }
@@ -8313,7 +8331,7 @@ impl<'a> Compiler<'a> {
         // scopes can keep them. Their fault belongs to the run.
         let dotted = matches!(&self.tokens[target_at..self.pos],
             [.., mark, name] if mark.shape == Shape::Sign && name.shape == Shape::Instr
-                && Lang::spells(&self.lang.pipe_words, &mark.lexeme));
+                && Lang::spells(&self.lang.pipe_words, &mark.spelling()));
         let instructions = &self.pieces.last().expect("open piece").instrs;
         let (_, keys) = keys_apart(&instructions[from..], from, &self.keyed);
         let temporary_index = keys.first().map_or(false, |at| {
@@ -8379,7 +8397,7 @@ impl<'a> Compiler<'a> {
     fn name_chain(&mut self, first: &str, keep: Option<&str>) -> Res<()> {
         let mut names = vec![first.to_string()];
         while self.look().shape == Shape::Instr
-            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling()) {
             let named = self.take().lexeme;
             if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|words| Lang::spells(words, &named)) {
                 return Err("Invalid assignment target before '='".into());
@@ -8625,7 +8643,7 @@ impl<'a> Compiler<'a> {
                     self.write(&name);
                 } else if self.lang.chained_names && self.waiting.is_none()
                     && self.look().shape == Shape::Instr
-                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling()) {
                     self.name_chain(&name, keep)?;
                 } else {
                     self.value_written(keep)?;
@@ -9092,11 +9110,11 @@ impl<'a> Compiler<'a> {
         for at in start..self.tokens.len() {
             let word = &self.tokens[at];
             if groups.is_empty() && matches!(word.shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
-            if word.lexeme == "lambda" { if let Some(formals) = lambda_formals.last_mut() { *formals = true; } }
+            if word.spelling() == "lambda" { if let Some(formals) = lambda_formals.last_mut() { *formals = true; } }
             if word.shape != Shape::Sign { continue; }
             match word.lexeme.as_str() {
                 "(" => {
-                    let call = at > 0 && self.tokens[at - 1].lexeme != "assert" && (self.tokens[at - 1].shape == Shape::Instr || [")", "]"].contains(&self.tokens[at - 1].lexeme.as_str()));
+                    let call = at > 0 && self.tokens[at - 1].spelling() != "assert" && (self.tokens[at - 1].shape == Shape::Instr || [")", "]"].contains(&self.tokens[at - 1].lexeme.as_str()));
                     groups.push(call);
                     lambda_formals.push(false);
                 }
@@ -9127,7 +9145,7 @@ impl<'a> Compiler<'a> {
             && self.display_assignment(begins) {
             return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
         }
-        if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
+        if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).spelling()) {
             let at = self.look().clone();
             let named = self.take().lexeme;
             if !lang.syntax_members.is_empty() {
@@ -9152,12 +9170,12 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if floor == 0 && !lang.syntax_members.is_empty()
-            && ["pass", "break", "continue"].contains(&self.look().lexeme.as_str())
-            && self.look_ahead(1).lexeme == "if" {
+            && ["pass", "break", "continue"].contains(&self.look().spelling())
+            && self.look_ahead(1).spelling() == "if" {
             return Err("SyntaxError: expected expression before 'if', but statement is given".into());
         }
         self.prefix()?;
-        if floor == 0 && Lang::spells(&lang.expression_assign, &self.look().lexeme) {
+        if floor == 0 && Lang::spells(&lang.expression_assign, &self.look().spelling()) {
             let name = match &self.piece().instrs[from..] {
                 [Instr::Read(cell)] => cell.ident.to_string(),
                 _ => return Err("Named expression needs a variable".to_string()),
@@ -9187,7 +9205,9 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Sign | Shape::Instr) {
                 break;
             }
-            let text = t.lexeme.clone();
+            // The infix and conditional words are matched by the spelling
+            // the text wrote, not the folded name an identifier binds as.
+            let text = t.spelling().to_string();
             if !lang.syntax_members.is_empty() && matches!(text.as_str(), "&" | "|")
                 && self.look_ahead(1).lexeme == text && self.look_ahead(1).row == t.row
                 && self.look_ahead(1).column == t.column + 1 {
@@ -9215,7 +9235,7 @@ impl<'a> Compiler<'a> {
                     } else { "SyntaxError: expected 'else' after 'if' expression".into() });
                 }
                 self.take();
-                if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
+                if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().spelling()) {
                     return Err("SyntaxError: expected expression after 'else', but statement is given".into());
                 }
                 self.expr(0)?;
@@ -9358,9 +9378,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn comparison(&self) -> Option<(Action, u32, usize)> {
-        let word = &self.look().lexeme;
+        let word = self.look().spelling();
         if Lang::spells(&self.lang.membership_not, word) {
-            let next = &self.look_ahead(1).lexeme;
+            let next = self.look_ahead(1).spelling();
             if Lang::spells(&self.lang.membership_words, next) {
                 return self.lang.dyadic.get(next).map(|op| (Action::Lacks, op.level, 2));
             }
@@ -9368,7 +9388,7 @@ impl<'a> Compiler<'a> {
         let op = self.lang.dyadic.get(word)?;
         let mut action = op.action.clone();
         let mut width = 1;
-        if matches!(action, Action::Same) && Lang::spells(&self.lang.identity_not, &self.look_ahead(1).lexeme) {
+        if matches!(action, Action::Same) && Lang::spells(&self.lang.identity_not, &self.look_ahead(1).spelling()) {
             action = Action::Unsame;
             width = 2;
         }
@@ -9561,7 +9581,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
-        if self.yield_operand && lang.dyadic.get(&tok.lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
+        if self.yield_operand && lang.dyadic.get(tok.spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
             let start = self.mark();
             self.prefix()?;
@@ -9590,7 +9610,7 @@ impl<'a> Compiler<'a> {
         }
         if self.on_keyword(&lang.yield_words) {
             let yield_at = self.pos;
-            let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).lexeme) { "yield from" } else { "yield" };
+            let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).spelling()) { "yield from" } else { "yield" };
             let invalid = if self.piece().outermost || self.in_class_body() { Some(format!("'{operation}' outside function")) }
                 else { self.piece().comprehension_kind.map(|kind| format!("'yield' inside {kind}")) };
             self.take();
@@ -9682,38 +9702,38 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
-        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.spelling()) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
+        if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
             self.take();
             let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
-        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.spelling()) {
             self.take();
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
         // The value a method declines an operation with, written by name.
-        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.spelling()) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
         // Only the bare word opens a lambda; the same letters between
         // quotes are a string, as when handed to print.
-        if tok.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &tok.lexeme) {
+        if tok.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &tok.spelling()) {
             self.take();
             self.lambda_value()?;
             return Ok(());
         }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
-        if lang.tuple_marks.is_empty() && Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
+        if lang.tuple_marks.is_empty() && Lang::spells(&lang.unpack_words, &tok.spelling()) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
             self.take();
             // The value is worked out first and kept, since every place
             // reads from the one value.
@@ -9755,13 +9775,13 @@ impl<'a> Compiler<'a> {
             }
         }
         if matches!(tok.shape, Shape::Sign | Shape::Instr) {
-            if let Some(infix) = lang.monadic.get(&tok.lexeme).cloned() {
+            if let Some(infix) = lang.monadic.get(tok.spelling()).cloned() {
                 self.take();
                 self.expr(infix.level)?;
                 self.act(infix.action, 1);
                 return Ok(());
             }
-            if Lang::spells(&lang.naming_words, &tok.lexeme) {
+            if Lang::spells(&lang.naming_words, &tok.spelling()) {
                 // `$$a` and `${e}`: the name is what the value spells.
                 // Only the outermost bindings have names the run can
                 // still see, so a name worked out inside a unit of its
@@ -9774,17 +9794,17 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Named, 1);
                 return self.indexing(from);
             }
-            if Lang::spells(&lang.hush_words, &tok.lexeme) {
+            if Lang::spells(&lang.hush_words, &tok.spelling()) {
                 // Whatever the piece under the mark has to say about
                 // itself is kept quiet; its value stands as it would.
-                let tier = lang.precedence.get(&tok.lexeme).copied().unwrap_or(0);
+                let tier = lang.precedence.get(tok.spelling()).copied().unwrap_or(0);
                 self.take();
                 self.put(Instr::Mute(true));
                 self.expr(tier)?;
                 self.put(Instr::Mute(false));
                 return Ok(());
             }
-            if tok.shape == Shape::Sign && Lang::spells(&lang.plus_words, &tok.lexeme) {
+            if tok.shape == Shape::Sign && Lang::spells(&lang.plus_words, &tok.spelling()) {
                 // A plus sign leaves its operand alone, bound as tightly as a negation.
                 self.take();
                 let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
@@ -9810,7 +9830,7 @@ impl<'a> Compiler<'a> {
                     self.act(if bytes { Action::Add } else { Action::Join }, 2);
                 }
             }
-            Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
+            Shape::Instr if Lang::spells(&lang.new_words, &tok.spelling()) => {
                 self.take();
                 let named = self.want_name("as the class to make")?;
                 self.read_class(&named)?;
@@ -9827,7 +9847,7 @@ impl<'a> Compiler<'a> {
                 };
                 self.act(Action::Make, argc + 1);
             }
-            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling())
                 && self.builtin_shadowed(&tok.lexeme) => {
                 self.take();
                 if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
@@ -9841,22 +9861,22 @@ impl<'a> Compiler<'a> {
             // unless it opens a call, is a name like another: it may be
             // read, listed or passed. Unbound, it stands for the parent
             // call itself, as the arm below gives it.
-            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling())
                 && self.within.is_none()
                 && (self.registry.program_bound.contains(tok.lexeme.as_str())
                     || self.look_ahead(1).shape == Shape::Sign
-                        && (Lang::spells(&lang.assign_words, &self.look_ahead(1).lexeme) || lang.compound.contains_key(&self.look_ahead(1).lexeme)))
+                        && (Lang::spells(&lang.assign_words, &self.look_ahead(1).spelling()) || lang.compound.contains_key(&self.look_ahead(1).lexeme)))
                 && lang.calling.as_ref().map_or(true, |call| !self.look_ahead(1).is_lexeme(Shape::Sign, &call.open)) => {
                 self.take();
                 self.read(&tok.lexeme);
             }
-            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.spelling())
                 && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
                 && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
                 self.take();
                 self.constant(PARENT_CALLABLE.with(Clone::clone));
             }
-            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling()) => {
                 self.take();
                 let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
                 if !self.at_symbol(&call.open) {
@@ -9909,13 +9929,13 @@ impl<'a> Compiler<'a> {
                 }
             }
             Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
-                && !lang.class_details.is_empty() && tok.lexeme == "__classdict__" => {
+                && !lang.class_details.is_empty() && tok.spelling() == "__classdict__" => {
                 self.take();
                 let book = self.gathering().book.clone().expect("class namespace prepared");
                 self.read(&book);
             }
             Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
-                && lang.class_details.get("kind").map_or(false, |words| words.contains(&tok.lexeme))
+                && lang.class_details.get("kind").map_or(false, |words| words.iter().any(|w| w == tok.spelling()))
                 && !self.piece().idents.contains(&tok.lexeme)
                 && !self.comprehension_names.iter().any(|(name, _)| name == &tok.lexeme) => {
                 self.take();
@@ -9924,21 +9944,21 @@ impl<'a> Compiler<'a> {
                 let cell = self.gathering().class_cell.clone();
                 self.read(&cell);
             }
-            Shape::Instr if Lang::spells(&lang.self_words, &tok.lexeme) || Lang::spells(&lang.parent_words, &tok.lexeme) => {
+            Shape::Instr if Lang::spells(&lang.self_words, &tok.spelling()) || Lang::spells(&lang.parent_words, &tok.spelling()) => {
                 self.take();
                 self.read_class(&tok.lexeme)?;
             }
             Shape::Instr => {
                 self.take();
-                if Lang::spells(&lang.true_words, &tok.lexeme) {
+                if Lang::spells(&lang.true_words, &tok.spelling()) {
                     self.constant(Value::Flag(true));
-                } else if Lang::spells(&lang.false_words, &tok.lexeme) {
+                } else if Lang::spells(&lang.false_words, &tok.spelling()) {
                     self.constant(Value::Flag(false));
-                } else if Lang::spells(&lang.null_words, &tok.lexeme) {
+                } else if Lang::spells(&lang.null_words, &tok.spelling()) {
                     self.constant(Value::Null);
-                } else if !self.writing_place && Lang::spells(&lang.print_file_error, &tok.lexeme) {
+                } else if !self.writing_place && Lang::spells(&lang.print_file_error, &tok.spelling()) {
                     self.constant(Value::Stream(true));
-                } else if !self.writing_place && Lang::spells(&lang.print_file_output, &tok.lexeme) {
+                } else if !self.writing_place && Lang::spells(&lang.print_file_output, &tok.spelling()) {
                     self.constant(Value::Stream(false));
                 } else if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::Bytes(0 | 1)))
                     && !self.writing_place && !self.builtin_shadowed(&tok.lexeme)
@@ -9946,7 +9966,7 @@ impl<'a> Compiler<'a> {
                     let mutable = lang.builtins.get(&tok.lexeme) == Some(&Builtin::Bytes(1));
                     let words = &lang.byte_words["ext.system.bytes.type"];
                     self.constant(Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], tok.lexeme, words[1]))));
-                } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
+                } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == tok.spelling())
                     && (lang.bind_names || lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)))
                 {
                     // A routine written short is one expression, and
@@ -9954,7 +9974,7 @@ impl<'a> Compiler<'a> {
                     // it wants of them cannot be said, so it takes them
                     // all as they stand.
                     self.short_value()?;
-                } else if Lang::spells(&lang.function_words, &tok.lexeme)
+                } else if Lang::spells(&lang.function_words, &tok.spelling())
                     && lang
                         .calling
                         .as_ref()
@@ -10057,7 +10077,7 @@ impl<'a> Compiler<'a> {
                         // taken as an array: a place in it is the binding
                         // whose name that place spells, which is how a
                         // language reaches a global from inside a routine.
-                        _ if Lang::spells(&lang.globals_words, &tok.lexeme)
+                        _ if Lang::spells(&lang.globals_words, &tok.spelling())
                             && lang.index_brackets.as_ref().map_or(false, |b| self.at_symbol(&b.open)) =>
                         {
                             let index = lang.index_brackets.clone().expect("the index brackets");
@@ -10255,7 +10275,7 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
-                let word = self.look().lexeme.as_str();
+                let word = self.look().spelling();
                 let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
                     else if ["None", "True", "False"].contains(&word) { Some(word) }
                     else if word == "__debug__" { Some("__debug__") }
@@ -10290,7 +10310,7 @@ impl<'a> Compiler<'a> {
             }
             if targets && !self.lang.syntax_members.is_empty() {
                 if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) { return Err("SyntaxError: cannot delete function call".into()); }
-                let next = self.look().lexeme.as_str();
+                let next = self.look().spelling();
                 let kind = if next == "if" { Some("conditional expression") }
                     else if next == ":=" { Some("named expression") }
                     else if self.lang.dyadic.contains_key(next) { Some("expression") } else { None };
@@ -10400,7 +10420,7 @@ impl<'a> Compiler<'a> {
         // no such mark in the writing, so one standing there says the
         // piece spells a name and the member is named by what *that*
         // binding holds: `$o->${e}` is one step further in.
-        if Lang::spells(&lang.naming_words, &self.look().lexeme) {
+        if Lang::spells(&lang.naming_words, &self.look().spelling()) {
             self.take();
             self.naming()?;
             if member {
@@ -10429,7 +10449,7 @@ impl<'a> Compiler<'a> {
         if lang.block_opens.first().map_or(false, |open| self.at_symbol(open)) {
             return true;
         }
-        if Lang::spells(&lang.naming_words, &self.look().lexeme) {
+        if Lang::spells(&lang.naming_words, &self.look().spelling()) {
             return true;
         }
         // A bare variable names a member of a thing by what it holds,
@@ -10753,7 +10773,7 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::Small(at as i64));
                 self.act(Action::Apart, 2);
                 self.write(&held);
-                if Lang::spells(&lang.unpack_words, &self.look().lexeme) {
+                if Lang::spells(&lang.unpack_words, &self.look().spelling()) {
                     self.take();
                     self.unpack(&held)?;
                     self.discard();
@@ -11210,10 +11230,10 @@ impl<'a> Compiler<'a> {
         for (at, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = &tok.lexeme;
-            if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { lambda_parameters += 1; }
+            if depth == 0 && Lang::spells(&self.lang.lambda_words, tok.spelling()) { lambda_parameters += 1; }
             if depth == 0 && tok.is_lexeme(Shape::Sign, ":") { lambda_parameters = lambda_parameters.saturating_sub(1); }
-            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) {
-                return Some(if at > self.pos && Lang::spells(&self.lang.comprehension_async, &self.tokens[at - 1].lexeme) { at - 1 } else { at });
+            if depth == 0 && Lang::spells(&self.lang.comprehension_for, tok.spelling()) {
+                return Some(if at > self.pos && Lang::spells(&self.lang.comprehension_async, &self.tokens[at - 1].spelling()) { at - 1 } else { at });
             }
             let opens = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
             if opens.into_iter().flatten().any(|b| b.open == *word) { depth += 1; }
@@ -11238,7 +11258,7 @@ impl<'a> Compiler<'a> {
             else if brackets.into_iter().flatten().any(|b| b.close == tok.lexeme) {
                 if depth == 0 { break; }
                 depth -= 1;
-            } else if depth == 0 && (pair.between.as_ref() == Some(&tok.lexeme) || Lang::spells(&self.lang.comprehension_for, &tok.lexeme)) { break; }
+            } else if depth == 0 && (pair.between.as_ref() == Some(&tok.lexeme) || Lang::spells(&self.lang.comprehension_for, &tok.spelling())) { break; }
         }
         false
     }
@@ -11251,12 +11271,12 @@ impl<'a> Compiler<'a> {
             let mut separated = false;
             let mut parameters = 0usize;
             for token in self.tokens.iter().skip(self.pos) {
-                let word = token.lexeme.as_str();
+                let word = token.spelling();
                 if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                if depth == 0 && token.shape == Shape::Instr && token.spelling() == "for" {
                     if separated {
                         return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
                     }
@@ -11264,6 +11284,7 @@ impl<'a> Compiler<'a> {
                     // Later commas may belong to an unpacking loop target.
                     break;
                 }
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") { break; }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }
                     else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
@@ -11298,7 +11319,7 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 self.act(Action::Tie, 2);
             }
-            if !self.lang.syntax_members.is_empty() && self.look().lexeme == "fur" && self.look_ahead(1).shape == Shape::Instr {
+            if !self.lang.syntax_members.is_empty() && self.look().spelling() == "fur" && self.look_ahead(1).shape == Shape::Instr {
                 return Err("SyntaxError: invalid syntax. Did you mean 'for'?".into());
             }
             if !self.lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Instr | Shape::Numeral | Shape::Quote | Shape::Bytes) {
@@ -11327,7 +11348,7 @@ impl<'a> Compiler<'a> {
         let source_at = self.pos;
         self.expr(1)?;
         let source_end = self.pos;
-        let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
+        let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].spelling());
         self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
         let seed = ".0".to_string();
         let name = "<genexpr>".to_string();
@@ -11386,7 +11407,7 @@ impl<'a> Compiler<'a> {
                 self.put(position);
             }
             let source_end = self.pos;
-            let asynchronous = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
+            let asynchronous = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].spelling());
             self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             let seed = self.gensym("generator_source");
             let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
@@ -11398,7 +11419,7 @@ impl<'a> Compiler<'a> {
                 Ok(())
             })?;
             self.generator_source = prior;
-            if self.pieces.len() == 1 && self.pieces[0].asynchronous && self.tokens[clause..self.pos].iter().any(|t| Lang::spells(&self.lang.comprehension_async, &t.lexeme) || Lang::spells(&self.lang.await_words, &t.lexeme)) { self.piece().generator = true; }
+            if self.pieces.len() == 1 && self.pieces[0].asynchronous && self.tokens[clause..self.pos].iter().any(|t| Lang::spells(&self.lang.comprehension_async, &t.spelling()) || Lang::spells(&self.lang.await_words, &t.spelling())) { self.piece().generator = true; }
             self.constant(Value::Routine(program));
             self.act(Action::Invoke(Rc::from("<comprehension>")), 2);
             return Ok(());
@@ -11428,7 +11449,7 @@ impl<'a> Compiler<'a> {
         self.pos = clause;
         self.comprehension_clause(head, &result, map)?;
         self.comprehension_names.truncate(bindings);
-        if !self.lang.syntax_members.is_empty() && self.look().lexeme == "of" && self.look_ahead(1).shape == Shape::Instr {
+        if !self.lang.syntax_members.is_empty() && self.look().spelling() == "of" && self.look_ahead(1).shape == Shape::Instr {
             return Err("SyntaxError: invalid syntax. Did you mean 'if'?".into());
         }
         self.want_sign(&pair.close, "after a comprehension")?;
@@ -11449,7 +11470,7 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
-        if Lang::spells(&self.lang.unpack_rest, &self.tokens[start].lexeme) { start += 1; }
+        if Lang::spells(&self.lang.unpack_rest, &self.tokens[start].spelling()) { start += 1; }
         if start == end { return Ok(()); }
         let pair = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
             .find(|p| self.tokens[start].is_lexeme(Shape::Sign, &p.open)).cloned();
@@ -11495,7 +11516,7 @@ impl<'a> Compiler<'a> {
         while at < self.tokens.len() {
             let token = &self.tokens[at];
             if token.shape == Shape::Finish { break; }
-            if nesting == 0 && token.shape == Shape::Instr && Lang::spells(&self.lang.comprehension_for, &token.lexeme) {
+            if nesting == 0 && token.shape == Shape::Instr && Lang::spells(&self.lang.comprehension_for, &token.spelling()) {
                 let (joins, _) = self.outer_marks(at + 1, self.tokens.len(), &self.lang.comprehension_in);
                 let end = *joins.first().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })?;
                 self.comprehension_locals(at + 1, end, floor)?;
@@ -11772,14 +11793,14 @@ impl<'a> Compiler<'a> {
             let start = self.mark();
             let labelled = self.look().shape == Shape::Instr
                 && self.look_ahead(1).shape == Shape::Sign
-                && (Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme)
-                    || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)));
+                && (Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).spelling())
+                    || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling())));
             let tagged = self.lang.bind_names && labelled;
             let marker = matches!(self.look().shape, Shape::Sign | Shape::Instr);
-            let named_spread = marker && Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
+            let named_spread = marker && Lang::spells(&self.lang.call_spread_pairs, &self.look().spelling());
             let spread = marker && self.lang.bind_names && !labelled
-                && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
-                    || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+                && (Lang::spells(&self.lang.call_spread, &self.look().spelling())
+                    || Lang::spells(&self.lang.call_spread_pairs, &self.look().spelling()));
             if spread && !named_spread && !self.lang.syntax_members.is_empty()
                 && matches!(self.look_ahead(1).lexeme.as_str(), ")" | ":") {
                 return Err("SyntaxError: Invalid star expression".into());
@@ -11794,10 +11815,11 @@ impl<'a> Compiler<'a> {
             after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
                 let word = self.spelled[self.pos].lexeme.clone();
+                let raw_word = self.spelled[self.pos].spelling().to_string();
                 if !self.lang.syntax_members.is_empty() {
-                    let reserved = word == "__debug__" || [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
-                        .iter().any(|words| Lang::spells(words, &word));
-                    if reserved { return Err(format!("SyntaxError: cannot assign to {word}")); }
+                    let reserved = raw_word == "__debug__" || [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
+                        .iter().any(|words| Lang::spells(words, &raw_word));
+                    if reserved { return Err(format!("SyntaxError: cannot assign to {raw_word}")); }
                 }
                 let twice = &self.lang.call_keyword_repeated;
                 if spelled.contains(&word) && !twice.is_empty() {
@@ -11806,12 +11828,12 @@ impl<'a> Compiler<'a> {
                 spelled.push(word.clone());
                 self.constant(Value::text(&word));
             } else if spread {
-                self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));
+                self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().spelling())));
                 self.take();
             }
             if !self.lang.syntax_members.is_empty() && !spread {
                 let value_at = if labelled { self.pos + 2 } else { self.pos };
-                if self.tokens.get(value_at).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.yield_words, &t.lexeme)) {
+                if self.tokens.get(value_at).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.yield_words, &t.spelling())) {
                     self.pos = value_at;
                     return Err("SyntaxError: invalid syntax".into());
                 }
@@ -11831,6 +11853,8 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &pair.between {
                 if self.at_symbol(sep) {
                     self.take();
+                } else if !self.at_symbol(&pair.close) && !self.lang.syntax_members.is_empty() {
+                    return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
                 }
             }
         }
@@ -12068,7 +12092,7 @@ impl<'a> Compiler<'a> {
             if t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) {
                 ahead += 1;
             } else {
-                return (t.shape == Shape::Instr && Lang::spells(&self.lang.else_words, &t.lexeme)).then_some(ahead);
+                return (t.shape == Shape::Instr && Lang::spells(&self.lang.else_words, &t.spelling())).then_some(ahead);
             }
         }
     }
@@ -12125,7 +12149,7 @@ impl<'a> Compiler<'a> {
 
     fn postfix_word(&mut self, tok: &Token) -> Res<()> {
         let lang = self.lang;
-        let word = tok.lexeme.as_str();
+        let word = tok.spelling();
         if Lang::spells(&lang.true_words, word) {
             self.constant(Value::Flag(true));
             return Ok(());
@@ -12433,7 +12457,7 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool
     let mut i = 0;
     while i + 2 < tokens.len() {
         let t = &tokens[i];
-        if t.shape != Shape::Instr || !Lang::spells(&lang.function_words, &t.lexeme) {
+        if t.shape != Shape::Instr || !Lang::spells(&lang.function_words, &t.spelling()) {
             i += 1;
             continue;
         }
@@ -12468,7 +12492,7 @@ fn shared_parameters(tokens: &[Token], lang: &Lang) -> (HashMap<String, Vec<bool
                     marks.push(shared);
                     names.push(std::mem::take(&mut naming));
                     (shared, defaulting) = (false, false);
-                } else if p.shape == Shape::Sign && Lang::spells(&lang.assign_words, &p.lexeme) {
+                } else if p.shape == Shape::Sign && Lang::spells(&lang.assign_words, &p.spelling()) {
                     defaulting = true;
                 } else if !defaulting && sign(p, mark) {
                     shared = true;

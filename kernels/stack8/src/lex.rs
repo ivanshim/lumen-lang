@@ -34,6 +34,10 @@ pub enum Shape {
 pub struct Token {
     pub shape: Shape,
     pub lexeme: String,
+    /// The spelling as written, kept only when NFKC folding changed it.
+    /// Keyword and reserved-name classification reads this; the name a
+    /// Python identifier binds under is `lexeme`.
+    pub raw: Option<String>,
     pub width: usize,
     pub row: usize,
     pub column: usize,
@@ -44,6 +48,12 @@ pub struct Token {
 impl Token {
     pub fn is_lexeme(&self, shape: Shape, text: &str) -> bool {
         self.shape == shape && self.lexeme == text
+    }
+
+    /// The spelling the language's own words are matched against: the
+    /// text as written, which NFKC folding may have changed.
+    pub fn spelling(&self) -> &str {
+        self.raw.as_deref().unwrap_or(&self.lexeme)
     }
 }
 
@@ -277,7 +287,13 @@ impl<'a> Cursor<'a> {
     }
 
     fn push(&mut self, shape: Shape, lexeme: String, width: usize, row: usize, column: usize) {
-        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, width, row, column });
+        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
+    }
+
+    /// The same, keeping the spelling the text wrote where folding
+    /// changed it, for the language's own words to be matched against.
+    fn push_spelled(&mut self, shape: Shape, lexeme: String, raw: Option<String>, width: usize, row: usize, column: usize) {
+        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
     }
 
     /// The indentation of a line; a blank line is skipped whole. Returns
@@ -1291,11 +1307,19 @@ impl<'a> Cursor<'a> {
         for _ in 0..extra {
             s.push(self.step());
         }
+        // Python folds every identifier to NFKC for binding, but its own
+        // words are matched against the spelling the text wrote, so the
+        // token keeps both when they differ.
+        let mut raw = None;
+        if lang.identifier_normalized {
+            let folded = crate::unicode::normalized(&s);
+            if folded != s { raw = Some(std::mem::replace(&mut s, folded)); }
+        }
         let lowered = s.to_lowercase();
         if lang.names_folded || (lang.keywords_folded && lang.keywords.contains(&lowered)) {
             s = lowered;
         }
-        self.push(Shape::Instr, s, 0, line, col);
+        self.push_spelled(Shape::Instr, s, raw, 0, line, col);
     }
 
     fn quoted_name(&mut self, quote: char) -> Result<(), String> {
@@ -1539,7 +1563,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
     }
     let row = source.chars().filter(|c| *c == '\n').count() + 1;
     let column = source.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-    out.push(Token { end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row, column });
+    out.push(Token { end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
     Ok(out)
 }
 
@@ -1645,9 +1669,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         if text.is_empty() {
             return;
         }
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), width: 0, row: 1, column: 1 });
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), width: 0, row: 1, column: 1 });
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: 1, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
     };
     let mut rest = source;
     let mut row = 1;
@@ -1690,10 +1714,10 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         }
         // A run of code stands as its own statement, however it ended.
         if writes {
-            out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), width: 0, row, column: 1 });
+            out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
         }
         out.append(&mut cur.out);
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
         row = cur.row;
         // One line end straight after the closing marker is PHP's to eat.
         // Eaten or not, the line it ended is a line of the page and is
