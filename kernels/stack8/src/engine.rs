@@ -15403,8 +15403,8 @@ impl<'a> Engine<'a> {
                     (Builtin::Bytes(33), "tabsize") => 1,
                     _ => return Err(self.byte_fault("arguments")),
                 };
-                while args.len() <= slot { args.push(Value::Null); }
-                if !matches!(args[slot], Value::Null) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+                while args.len() <= slot { args.push(Value::Blank); }
+                if !matches!(args[slot], Value::Blank) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
                 args[slot] = value;
             }
             return self.builtin(builtin, name, &mut args);
@@ -15648,6 +15648,23 @@ impl<'a> Engine<'a> {
         if operation == "float_fromhex" {
             if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
             let parsed = self.value_method(&args[0], "fromhex", Vec::new(), Vec::new())?;
+            if let Value::Class(class) = receiver {
+                return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
+                    Fault::Note(message) => message,
+                    raised => { self.carried = Some(raised); String::new() },
+                });
+            }
+            return Err(self.lang.method_errors["arguments"].clone());
+        }
+        if operation == "bytes_fromhex" || operation == "bytearray_fromhex" {
+            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let spelling = match args.as_slice() {
+                [Value::Text(text)] => text.to_string(),
+                [Value::Bytes(row, ..)] => row.borrow().iter().copied().map(char::from).collect(),
+                [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.core_kind())),
+                _ => return Err(self.lang.method_errors["arguments"].clone()),
+            };
+            let parsed = self.byte_make(self.byte_unhex(&spelling)?, operation == "bytearray_fromhex");
             if let Value::Class(class) = receiver {
                 return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
@@ -16324,8 +16341,17 @@ impl<'a> Engine<'a> {
     /// where the number is above nought and from the start where it is
     /// below, and nowhere at all where it is nought.
     fn byte_hex(&self, row: &[u8], given: &[Value]) -> Res<Value> {
-        let (mark, every) = match given.first() {
-            None => (String::new(), 0i64),
+        // The count is read first, as CPython reads it, so an explicit
+        // None is refused even when the separator is omitted.
+        let every = match given.get(1) {
+            None | Some(Value::Blank) => 1i64,
+            Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                n.as_big()?.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())? as i64
+            }
+            _ => return Err("TypeError: bytes_per_sep must be an integer".to_string()),
+        };
+        let mark = match given.first() {
+            None | Some(Value::Blank) => String::new(),
             Some(Value::Text(_)) | Some(Value::Bytes(..)) => {
                 let text: String = match &given[0] {
                     Value::Text(s) => s.to_string(),
@@ -16334,21 +16360,16 @@ impl<'a> Engine<'a> {
                 };
                 if text.chars().count() != 1 { return Err("ValueError: sep must be length 1.".to_string()); }
                 if !text.is_ascii() { return Err("ValueError: sep must be ASCII.".to_string()); }
-                let every = match given.get(1) {
-                    None | Some(Value::Null) => 1,
-                    Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
-                        n.as_big()?.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())? as i64
-                    }
-                    _ => return Err("TypeError: bytes_per_sep must be an integer".to_string()),
-                };
-                (text, every)
+                text
             }
             Some(other) => return Err(format!("TypeError: object of type '{}' has no len()", other.core_kind())),
         };
-        let size = every.unsigned_abs() as usize;
+        // With no separator the count is never used to group the digits.
+        let group = if mark.is_empty() { 0i64 } else { every };
+        let size = group.unsigned_abs() as usize;
         let mut written = String::with_capacity(row.len() * 2);
         for (at, byte) in row.iter().enumerate() {
-            let breaks = at > 0 && size > 0 && if every > 0 { (row.len() - at) % size == 0 } else { at % size == 0 };
+            let breaks = at > 0 && size > 0 && if group > 0 { (row.len() - at) % size == 0 } else { at % size == 0 };
             if breaks { written.push_str(&mark); }
             written.push_str(&format!("{byte:02x}"));
         }
@@ -16451,13 +16472,13 @@ impl<'a> Engine<'a> {
             // Cut from the right, the pieces handed back in the order
             // they stand in the row.
             23 if given.len() <= 2 => {
-                let most = match given.get(1).filter(|v| !matches!(v, Value::Null)) {
+                let most = match given.get(1) {
+                    None | Some(Value::Blank) => usize::MAX,
                     Some(v) => { let n = whole(v)?; if n < 0 { usize::MAX } else { n as usize } }
-                    None => usize::MAX,
                 };
                 let blank = |b: &u8| b.is_ascii_whitespace() || *b == 11;
                 let mut pieces: Vec<Vec<u8>> = Vec::new();
-                match given.first().filter(|v| !matches!(v, Value::Null)) {
+                match given.first().filter(|v| !matches!(v, Value::Blank | Value::Null)) {
                     None => {
                         let mut rest = row;
                         loop {
@@ -16546,7 +16567,7 @@ impl<'a> Engine<'a> {
             // Each tab opened out to the next stop, which the count of
             // bytes since the last line break is measured against.
             33 if given.len() <= 1 => {
-                let stop = match given.first().filter(|v| !matches!(v, Value::Null)) { Some(v) => whole(v)?.max(0) as usize, None => 8 };
+                let stop = match given.first() { None | Some(Value::Blank) => 8, Some(v) => whole(v)?.max(0) as usize };
                 let (mut opened, mut column) = (Vec::new(), 0usize);
                 for &byte in row {
                     match byte {
@@ -17331,7 +17352,7 @@ impl<'a> Engine<'a> {
         let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
         let count = |v: Option<&Value>| -> Res<usize> {
             match v {
-                None | Some(Value::Null) => Ok(usize::MAX),
+                None | Some(Value::Blank) => Ok(usize::MAX),
                 Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
                     let n = v.as_big()?;
                     Ok(n.to_usize().unwrap_or(usize::MAX))
@@ -17347,7 +17368,7 @@ impl<'a> Engine<'a> {
             8 if given.len() <= 2 => {
                 let limit = count(given.get(1))?;
                 let mut parts = Vec::new();
-                if given.first().map_or(true, |v| matches!(v, Value::Null)) {
+                if given.first().map_or(true, |v| matches!(v, Value::Blank | Value::Null)) {
                     let mut pos = 0;
                     while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
                     while pos < row.len() {
