@@ -6624,7 +6624,7 @@ impl<'a> Machine<'a> {
                         let constructor=self.read_class_member(subject.settled(),&called,false)?;
                         return self.apply_class_member(constructor,values);
                     }
-                    if self.has_class_order() && (matches!(&subject, Value::Intrinsic(op, _) if (Self::names_a_kind(op) && (self.table.single("ext.stmt.class.constructor") == Some(called.as_str()) || called == "__getformat__") || !Self::names_a_kind(op) && self.table.strings("ext.stmt.class.special").get(79).is_some_and(|word| word == &called))) || matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Member(..) | Value::TextCall { .. } | Value::Intrinsic(Prim::Truthful, _))) || (self.table.has_any("ext.stmt.class.builder") && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.has_class_order() && (matches!(&subject, Value::Intrinsic(op, _) if (Self::names_a_kind(op) && (self.table.single("ext.stmt.class.constructor") == Some(called.as_str()) || called == "__getformat__") || !Self::names_a_kind(op) && [81, 79].into_iter().any(|slot| self.table.strings("ext.stmt.class.special").get(slot).is_some_and(|word| word == &called)))) || matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Member(..) | Value::TextCall { .. } | Value::Intrinsic(Prim::Truthful, _))) || (self.table.has_any("ext.stmt.class.builder") && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.rules.member_pipes {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -9143,6 +9143,14 @@ impl<'a> Machine<'a> {
                     return Err(format!("TypeError: __getformat__() argument must be str, not {kind}").into());
                 }
             }
+        }
+        if let Some(base) = name.strip_suffix("_fromhex").filter(|base| *base == "bytes" || *base == "bytearray") {
+            let qualified = self.read_class_member(receiver.clone(), "__qualname__", false)?.bare();
+            if !keywords.is_empty() { return Err(format!("TypeError: {qualified}.fromhex() takes no keyword arguments").into()); }
+            if arguments.len() != 1 { return Err(format!("TypeError: {qualified}.fromhex() takes exactly one argument ({} given)", arguments.len()).into()); }
+            let convert = Value::Intrinsic(Prim::Octets(if base == "bytearray" { 49 } else { 5 }), Rc::from([base, "fromhex"].join(".")));
+            let decoded = self.apply_class_member(convert, arguments)?;
+            return self.apply_class_member(receiver.clone(), vec![decoded]);
         }
         if name == "float_fromhex" {
             if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
@@ -14509,8 +14517,17 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
             return self.prim(operation, "", &[owner.proxy_pairs(), key.clone()]).map(Some);
         }
-        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _) | Value::Intrinsic(..))]) = (operation, operands) {
+        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _) | Value::Intrinsic(..) | Value::Member(..))]) = (operation, operands) {
             return Ok(method.hash_number().map(Value::Small));
+        }
+        if !self.rules.specials.is_empty() && matches!(operation, Prim::Eq | Prim::Ne) {
+            if let [left, right] = operands {
+                let builtins = matches!((left, right), (Value::Wrapped(3, a), Value::Wrapped(3, b))
+                    if matches!(a.first(), Some(Value::Wrapped(60, _) | Value::Intrinsic(..))) && matches!(b.first(), Some(Value::Wrapped(60, _) | Value::Intrinsic(..))));
+                if builtins || matches!((left, right), (Value::Member(..), Value::Member(..))) {
+                    return Ok(Some(Value::Flag(left.equals(right) == (operation == Prim::Eq))));
+                }
+            }
         }
         if self.rules.specials.is_empty() { return Ok(None); }
         if let (Prim::Hashed, [held]) = (operation, operands) {
@@ -17594,7 +17611,7 @@ impl<'a> Machine<'a> {
                     return self.read_class_member(v[0].settled(),&word,false).map(|_|Value::Flag(true)).or_else(|escape|if self.missing_member_escape(&escape){Ok(Value::Flag(false))}else{Err(escape)}).map_err(|escape|self.carried_native_fault(escape));
                 }
                 if word == "__getformat__" && matches!(&v[0], Value::Intrinsic(Prim::AsReal, _) | Value::Frac(_)) { return Ok(Value::Flag(true)); }
-                if matches!(&v[0], Value::Intrinsic(op, _) if !Self::names_a_kind(op)) && self.table.strings("ext.stmt.class.special").get(79).is_some_and(|name| name == &word) { return Ok(Value::Flag(true)); }
+                if matches!(&v[0], Value::Intrinsic(op, _) if !Self::names_a_kind(op)) && [79, 81].iter().any(|index| self.table.strings("ext.stmt.class.special").get(*index).is_some_and(|name| name == &word)) { return Ok(Value::Flag(true)); }
                 if self.table.single("ext.stmt.class.constructor") == Some(word.as_str()) && matches!(&v[0], Value::Intrinsic(op, _) if Self::names_a_kind(op)) { return Ok(Value::Flag(true)); }
                 if self.integer_attribute(&v[0], &word).is_some()
                     || matches!(v[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.table.spells("ext.builtin.bytes.from_int", &word) {

@@ -2396,12 +2396,19 @@ impl<'a> Engine<'a> {
         // The kind's word, or the kind read as a class, answers for its
         // type flags from the class the kind stands for.
         let bound = match &subject {
-            Value::ValueMethod(method) => Some((method.0.clone(), if method.1 == "float_getformat" { String::from("__getformat__") } else { method.1.clone() })),
+            Value::ValueMethod(method) => Some((method.0.clone(), match method.1.as_str() {
+                "float_getformat" => "__getformat__", "integer_from_bytes" => "from_bytes",
+                "integer_bytes" => "to_bytes", "integer_size" => "__sizeof__",
+                "float_fromhex" | "bytes_fromhex" | "bytearray_fromhex" => "fromhex",
+                "float_from_number" | "complex_from_number" => "from_number",
+                "callable_reduce_ex" => "__reduce_ex__", word => word,
+            }.to_owned())),
             Value::TextMethod(text, _, word) => Some((Value::Text(text.clone()), word.to_string())),
             Value::Adapter(binding) if binding.0 == 3 => {
                 if let Some(Value::Adapter(descriptor)) = binding.1.first() {
                     if descriptor.0 == 29 { Some((binding.1[1].clone(), descriptor.1[1].plain())) } else { None }
-                } else { None }
+                } else if let Some(Value::Native(_, word)) = binding.1.first() { Some((binding.1[1].clone(), word.rsplit('.').next().unwrap_or(word).to_owned())) }
+                else { None }
             }
             _ => None,
         };
@@ -2444,6 +2451,10 @@ impl<'a> Engine<'a> {
             }
         }
         if let Value::ByteKind(mutable, _) = subject.contents() {
+            if name == "fromhex" {
+                let word = self.byte_kind_word(mutable);
+                return Ok(Value::Native(Builtin::Bytes(if mutable { 49 } else { 5 }), Rc::from(format!("{word}.fromhex"))));
+            }
             {
                 let word = self.byte_kind_word(mutable).to_string();
                 let kind = self.kind_class(&word);
@@ -2610,6 +2621,11 @@ impl<'a> Engine<'a> {
                 }
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "__getformat__" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), String::from("float_getformat")))));
+                }
+                if name == "fromhex" {
+                    if let Some(kind) = Self::kind_beneath(c).filter(|kind| matches!(kind.as_str(), "bytes" | "bytearray")) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), format!("{kind}_fromhex")))));
+                    }
                 }
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));

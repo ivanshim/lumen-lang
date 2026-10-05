@@ -7963,6 +7963,13 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Flag(equal == matches!(op, Action::Same)));
             }
         }
+        if !self.lang.class_special.is_empty() && matches!(op, Action::Eq | Action::Ne)
+            && (matches!((a,b), (Value::ValueMethod(_), Value::ValueMethod(_)))
+                || matches!((a,b), (Value::Adapter(one), Value::Adapter(two)) if one.0 == 3 && two.0 == 3
+                    && (matches!(one.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(one.1.first(), Some(Value::Native(..))))
+                    && (matches!(two.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(two.1.first(), Some(Value::Native(..)))))) {
+            return Ok(Value::Flag(a.equals(b) != matches!(op, Action::Ne)));
+        }
         let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
         if matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
             && plain_number(a) && plain_number(b) {
@@ -8846,7 +8853,9 @@ impl<'a> Engine<'a> {
             Builtin::Hash if args.len() == 1 => {
                 // A loose member descriptor hashes by what it is kept as,
                 // even where its kind names no hash method of its own.
+                if let Value::ValueMethod(_) = &args[0] { return Ok(args[0].core_hash().map(Value::Small)); }
                 if let Value::Adapter(held) = &args[0] {
+                    if held.0 == 3 && (matches!(held.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(held.1.first(), Some(Value::Native(..)))) { return Ok(args[0].core_hash().map(Value::Small)); }
                     return Ok(Some(Value::Small(Rc::as_ptr(held) as usize as i64)));
                 }
                 if matches!(args[0], Value::Native(..) | Value::ByteKind(..)) {
@@ -10793,7 +10802,7 @@ impl<'a> Engine<'a> {
                 let kind_doc = name.as_ref() == self.class_word("doc")
                     && matches!(&held, Value::Native(_, word) if Self::builtin_kind_doc(word).is_some());
                 let kind_initialiser = matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) && self.lang.constructor.as_deref() == Some(name.as_ref())
-                    || matches!(&held, Value::Native(op, _) if !Self::kind_builtin(op)) && self.lang.class_special.get(79).is_some_and(|word| word == name.as_ref());
+                    || matches!(&held, Value::Native(op, _) if !Self::kind_builtin(op)) && [79, 81].iter().any(|index| self.lang.class_special.get(*index).is_some_and(|word| word == name.as_ref()));
                 let kind_namespace = name.as_ref() == self.class_word("namespace")
                     && (matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) || self.kind_spelled(&held).is_some());
                 let kind_flags = name.as_ref() == self.class_word("flags") && !name.is_empty()
@@ -11319,7 +11328,7 @@ impl<'a> Engine<'a> {
                         return Ok(());
                     }
                 }
-                if self.fuller_classes() && (matches!(&subject, Value::Native(op, _) if (Self::kind_builtin(op) && self.lang.constructor.as_deref() == Some(name) || !Self::kind_builtin(op) && self.lang.class_special.get(79).is_some_and(|word| word.as_str() == name.as_ref()))) || matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::ValueMethod(_) | Value::TextMethod(..)) || matches!(&subject, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
+                if self.fuller_classes() && (matches!(&subject, Value::Native(op, _) if (Self::kind_builtin(op) && self.lang.constructor.as_deref() == Some(name) || !Self::kind_builtin(op) && [81, 79].iter().any(|index| self.lang.class_special.get(*index).is_some_and(|word| word.as_str() == name.as_ref())))) || matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::ValueMethod(_) | Value::TextMethod(..)) || matches!(&subject, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -15590,6 +15599,15 @@ impl<'a> Engine<'a> {
                 return Err("ValueError: __getformat__() argument 1 must be 'double' or 'float'".to_string());
             }
             return Ok(Value::text(if cfg!(target_endian = "little") { "IEEE, little-endian" } else { "IEEE, big-endian" }));
+        }
+        if matches!(operation, "bytes_fromhex" | "bytearray_fromhex") {
+            let title = self.class_get(receiver.clone(), &self.class_word("qualified").to_owned(), false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain();
+            if !named.is_empty() { return Err(format!("TypeError: {title}.fromhex() takes no keyword arguments")); }
+            if args.len() != 1 { return Err(format!("TypeError: {title}.fromhex() takes exactly one argument ({} given)", args.len())); }
+            let kind = operation.trim_end_matches("_fromhex");
+            let factory = Value::Native(Builtin::Bytes(if kind == "bytearray" { 49 } else { 5 }), Rc::from(format!("{kind}.fromhex")));
+            let bytes = self.class_apply(factory, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+            return self.class_apply(receiver.clone(), vec![bytes]).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
         }
         if operation == "float_fromhex" {
             if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }

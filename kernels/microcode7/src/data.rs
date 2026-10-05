@@ -1148,7 +1148,12 @@ impl Value {
             },
             // A routine bound to a value is the one bound method where it
             // binds the one routine to the very same value.
-            (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
+            (Value::Wrapped(3,x), Value::Wrapped(3,y)) => {
+                if let (Some(a @ Value::Intrinsic(..)), Some(b @ Value::Intrinsic(..)), Some(one), Some(two)) = (x.first(), y.first(), x.get(1), y.get(1)) { return a.equals(b) && one.one_and_same(two); }
+                if let (Some(Value::Wrapped(60,p)), Some(Value::Wrapped(60,q)), Some(a), Some(b)) = (x.first(), y.first(), x.get(1), y.get(1)) {
+                    p.len() == q.len() && p.iter().zip(q.iter()).all(|(u,v)| u.equals(v)) && (a.one_and_same(b) || a.one_place(b))
+                } else { Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)) }
+            },
             (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
@@ -1550,6 +1555,21 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
+        match (name, kind) {
+            ("__getitem__", "dict" | "list") | ("__contains__", "frozenset" | "set" | "dict") => return Some(("method", "method_descriptor")),
+            _ => (),
+        }
+        let native_slot = matches!(name,
+            "__contains__" | "__call__" | "__buffer__" | "__bool__" | "__await__" | "__anext__" | "__and__" | "__aiter__" | "__add__" | "__abs__" |
+            "__get__" | "__ge__" | "__floordiv__" | "__float__" | "__eq__" | "__divmod__" | "__delitem__" | "__delete__" | "__delattr__" | "__del__" |
+            "__imod__" | "__imatmul__" | "__ilshift__" | "__ifloordiv__" | "__iand__" | "__iadd__" | "__hash__" | "__gt__" | "__getitem__" | "__getattribute__" |
+            "__iter__" | "__isub__" | "__irshift__" | "__ipow__" | "__ior__" | "__invert__" | "__int__" | "__init__" | "__index__" | "__imul__" |
+            "__ne__" | "__mul__" | "__mod__" | "__matmul__" | "__lt__" | "__lshift__" | "__len__" | "__le__" | "__ixor__" | "__itruediv__" |
+            "__repr__" | "__release_buffer__" | "__rdivmod__" | "__rand__" | "__radd__" | "__pow__" | "__pos__" | "__or__" | "__next__" | "__neg__" |
+            "__rsub__" | "__rshift__" | "__rrshift__" | "__rpow__" | "__ror__" | "__rmul__" | "__rmod__" | "__rmatmul__" | "__rlshift__" | "__rfloordiv__" |
+            "__xor__" | "__truediv__" | "__sub__" | "__str__" | "__setitem__" | "__setattr__" | "__set__" | "__rxor__" | "__rtruediv__"
+        );
+        if native_slot { return Some(("slot wrapper", "wrapper_descriptor")); }
         match kind {
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),

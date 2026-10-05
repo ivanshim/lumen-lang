@@ -1211,6 +1211,11 @@ impl Value {
     /// pointer.
     pub fn same_value(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+            (Value::Native(x, a), Value::Native(y, b)) => x == y && a == b,
+            (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
+            (Value::ByteKind(flag, _), Value::Native(crate::code::Builtin::Bytes(n @ 0..=1), _))
+            | (Value::Native(crate::code::Builtin::Bytes(n @ 0..=1), _), Value::ByteKind(flag, _)) => *flag == (*n == 1),
             (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
             (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
             (Value::Collection(x, _), Value::Collection(y, _)) => Rc::ptr_eq(x, y),
@@ -1317,6 +1322,14 @@ impl Value {
                     Rc::ptr_eq(&body(x), &body(y))
                 }
                 _ => Rc::ptr_eq(a, b),
+            },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 3 && b.0 == 3 => {
+                match (a.1.first(), b.1.first(), a.1.get(1), b.1.get(1)) {
+                    (Some(Value::Adapter(left)), Some(Value::Adapter(right)), Some(x), Some(y)) if left.0 == 29 && right.0 == 29 =>
+                        left.1.len() == right.1.len() && left.1.iter().zip(&right.1).all(|(p,q)| p.equals(q)) && (x.same_value(y) || x.same_place(y)),
+                    (Some(left @ Value::Native(..)), Some(right @ Value::Native(..)), Some(x), Some(y)) => left.equals(right) && (x.same_value(y) || x.same_place(y)),
+                    _ => Rc::ptr_eq(a,b),
+                }
             },
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
                 a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
@@ -1636,6 +1649,12 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        let coexist = (matches!(kind, "list" | "dict") && name == "__getitem__")
+            || (matches!(kind, "dict" | "set" | "frozenset") && name == "__contains__");
+        if coexist { return Some(("method", "method_descriptor")); }
+        if "__abs__ __add__ __aiter__ __and__ __anext__ __await__ __bool__ __buffer__ __call__ __contains__ __del__ __delattr__ __delete__ __delitem__ __divmod__ __eq__ __float__ __floordiv__ __ge__ __get__ __getattribute__ __getitem__ __gt__ __hash__ __iadd__ __iand__ __ifloordiv__ __ilshift__ __imatmul__ __imod__ __imul__ __index__ __init__ __int__ __invert__ __ior__ __ipow__ __irshift__ __isub__ __iter__ __itruediv__ __ixor__ __le__ __len__ __lshift__ __lt__ __matmul__ __mod__ __mul__ __ne__ __neg__ __next__ __or__ __pos__ __pow__ __radd__ __rand__ __rdivmod__ __release_buffer__ __repr__ __rfloordiv__ __rlshift__ __rmatmul__ __rmod__ __rmul__ __ror__ __rpow__ __rrshift__ __rshift__ __rsub__ __rtruediv__ __rxor__ __set__ __setattr__ __setitem__ __str__ __sub__ __truediv__ __xor__".split_ascii_whitespace().any(|slot| slot == name) {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),

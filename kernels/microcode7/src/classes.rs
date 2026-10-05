@@ -2672,13 +2672,6 @@ impl<'a> Machine<'a> {
             _ => {}
         }
 
-        if let Value::Member(owner, operation) = &value {
-            if key == self.detail("receiver") { return Ok(owner.as_ref().clone()); }
-            let public_format = (operation == "float_getformat").then(|| self.table.single("ext.builtin.method.getformat")).flatten();
-            if key == self.detail("name") {
-                return Ok(Value::text(public_format.and_then(|word| word.rsplit('.').next()).unwrap_or(operation)));
-            }
-        }
         if let Value::TextCall { subject, name, .. } = &value {
             if key == self.detail("receiver") { return Ok(Value::Text(subject.clone())); }
             if key == self.detail("name") { return Ok(Value::Text(name.clone())); }
@@ -2886,10 +2879,20 @@ impl<'a> Machine<'a> {
             if let Some(class) = class { return Ok(Value::Member(Rc::new(class), String::from("float_getformat"))); }
         }
         let binding = match &value {
-            Value::Member(receiver, word) => Some((receiver.as_ref().clone(), if word == "float_getformat" { String::from("__getformat__") } else { word.to_owned() })),
+            Value::Member(receiver, working) => {
+                let public = match working.as_str() {
+                    "callable_reduce_ex" => "__reduce_ex__", "integer_size" => "__sizeof__",
+                    "integer_bytes" => "to_bytes", "integer_from_bytes" => "from_bytes",
+                    "complex_from_number" | "float_from_number" => "from_number",
+                    "bytearray_fromhex" | "bytes_fromhex" | "float_fromhex" => "fromhex",
+                    "float_getformat" => "__getformat__", other => other,
+                };
+                Some((receiver.as_ref().clone(), public.to_string()))
+            },
             Value::TextCall { subject, name, .. } => Some((Value::Text(subject.clone()), name.to_string())),
             Value::Wrapped(3, parts) => match parts.first() {
                 Some(Value::Wrapped(60, descriptor)) => Some((parts[1].clone(), descriptor[1].bare())),
+                Some(Value::Intrinsic(_, label)) => Some((parts[1].clone(), label.rsplit('.').next().unwrap_or(label).to_string())),
                 _ => None,
             },
             _ => None,
@@ -3193,6 +3196,12 @@ impl<'a> Machine<'a> {
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "__getformat__" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_getformat")));
+            }
+            if key == "fromhex" {
+                let base = Self::native_beneath(b);
+                if base.as_deref() == Some("bytes") || base.as_deref() == Some("bytearray") {
+                    return Ok(Value::Member(Rc::new(value.clone()), format!("{}_fromhex", base.unwrap())));
+                }
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
