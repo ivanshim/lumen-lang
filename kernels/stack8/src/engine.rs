@@ -15092,9 +15092,12 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(builtin, Builtin::Bytes(0..=3)) && !named.is_empty() {
+            let source_is_text = args.first().map_or(false, |source| matches!(source, Value::Text(_)));
             for (key, value) in std::mem::take(&mut named) {
                 let at = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.byte_fault("arguments")) };
                 if args.len() > at { return Err(self.byte_fault("arguments")); }
+                if !source_is_text { return Err(format!("TypeError: {} without a string argument", key)); }
+                if at == 2 && args.len() < 2 { return Err("TypeError: string argument without an encoding".to_string()); }
                 while args.len() < at { args.push(Value::text("utf-8")); }
                 args.push(value);
             }
