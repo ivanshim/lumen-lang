@@ -627,6 +627,15 @@ class memoryview:
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
             if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
+            # A contiguous byte span is laid into the source in one
+            # native slice, rather than one unit at a time; the shapes
+            # that are not a plain contiguous span keep the walk below.
+            from array import array
+            if self._itemsize == 1 and isinstance(places, range) and (len(places) <= 1 or places.step == 1) and len(places) == len(value) and not isinstance(self._source, array):
+                start = places.start
+                raw = bytes(value) if isinstance(value, memoryview) else value
+                bytearray.__setitem__(self._source, slice(start, start + len(places)), raw)
+                return
             values = list(value)
             if len(places) != len(values):
                 raise ValueError('memoryview assignment: lvalue and rvalue have different structures')

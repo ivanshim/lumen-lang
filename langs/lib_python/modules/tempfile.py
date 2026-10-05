@@ -1,5 +1,6 @@
 # Where a program would put a file it means to throw away.
 import os
+import _pyio
 import shutil as _shutil
 import weakref as _weakref
 
@@ -53,131 +54,105 @@ def NamedTemporaryFile(*args, **keywords):
     raise 'NotImplementedError: tempfile.NamedTemporaryFile needs a file to be created and opened, which this runtime does not carry'
 
 
-# A file the runtime opens by descriptor alone. It stands on an
-# operating-system handle, reads and writes through the posix
-# primitives, and keeps no name of its own; the directory entry is
-# taken away as soon as the handle is made, the way an unnamed
-# temporary file works.
-class _DescriptorFile:
-    def __init__(self, descriptor, mode):
+# A raw binary stream over an operating-system descriptor. It carries no
+# name of its own: the directory entry it was opened under is taken away
+# as soon as the stream stands. The runtime's canonical buffered and text
+# streams wrap it, so a text mode keeps its encoding, errors and newline
+# handling and every read is counted in characters.
+class _DescriptorRaw(_pyio.RawIOBase):
+    def __init__(self, descriptor, readable, writable):
+        super().__init__()
         self._descriptor = descriptor
-        self.mode = mode
-        self._binary = 'b' in mode
-        self.encoding = None if self._binary else 'utf-8'
-        self.errors = 'strict'
-        self.closed = False
-        self.name = descriptor
-
-    def _open(self):
-        if self.closed:
-            raise ValueError('I/O operation on closed file.')
+        self._readable = readable
+        self._writable = writable
 
     def readable(self):
-        return 'r' in self.mode or '+' in self.mode
+        return self._readable
 
     def writable(self):
-        return 'w' in self.mode or 'a' in self.mode or 'x' in self.mode or '+' in self.mode
+        return self._writable
 
     def seekable(self):
         return True
 
     def fileno(self):
-        self._open()
+        self._checkClosed()
         return self._descriptor
 
-    def flush(self):
-        self._open()
+    def readinto(self, buffer):
+        self._checkClosed()
+        piece = os.read(self._descriptor, min(len(buffer), 65536))
+        count = len(piece)
+        buffer[:count] = piece
+        return count
+
+    def readall(self):
+        self._checkClosed()
+        pieces = []
+        while True:
+            piece = os.read(self._descriptor, 65536)
+            if not piece:
+                break
+            pieces.append(piece)
+        return b''.join(pieces)
 
     def write(self, data):
-        self._open()
-        if self._binary:
-            if not isinstance(data, (bytes, bytearray)):
-                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
-        else:
-            if not isinstance(data, str):
-                raise TypeError('write() argument must be str, not ' + type(data).__name__)
-            data = data.encode(self.encoding, self.errors)
-        whole = len(data)
+        self._checkClosed()
         total = 0
+        whole = len(data)
         while total < whole:
             piece = data[total:total + 65536]
             count = os.write(self._descriptor, piece)
             if not count:
                 break
             total += count
-        return total if self._binary else len(data.decode(self.encoding, self.errors))
-
-    def read(self, size=-1):
-        self._open()
-        if size is None or size < 0:
-            pieces = []
-            while True:
-                piece = os.read(self._descriptor, 65536)
-                if not piece:
-                    break
-                pieces.append(piece)
-            data = b''.join(pieces)
-        else:
-            data = os.read(self._descriptor, size)
-        return data if self._binary else data.decode(self.encoding, self.errors)
-
-    def readinto(self, buffer):
-        self._open()
-        piece = os.read(self._descriptor, min(len(buffer), 65536))
-        count = len(piece)
-        buffer[:count] = piece
-        return count
-
-    def readline(self, size=-1):
-        self._open()
-        line = bytearray()
-        while size is None or size < 0 or len(line) < size:
-            piece = os.read(self._descriptor, 1)
-            if not piece:
-                break
-            line += piece
-            if piece == b'\n':
-                break
-        data = bytes(line)
-        return data if self._binary else data.decode(self.encoding, self.errors)
+        return total
 
     def seek(self, offset, whence=0):
-        self._open()
+        self._checkClosed()
         return os.lseek(self._descriptor, offset, whence)
 
     def tell(self):
-        self._open()
+        self._checkClosed()
         return os.lseek(self._descriptor, 0, 1)
+
+    def truncate(self, size=None):
+        self._checkClosed()
+        if size is None:
+            size = os.lseek(self._descriptor, 0, 1)
+        os.ftruncate(self._descriptor, size)
+        return size
 
     def close(self):
         if self.closed:
             return
-        self.closed = True
         descriptor = self._descriptor
-        self._descriptor = -1
         try:
-            os.close(descriptor)
-        except OSError:
-            pass
+            super().close()
+        finally:
+            self._descriptor = -1
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
-    def __enter__(self):
-        self._open()
-        return self
 
-    def __exit__(self, *ignored):
-        self.close()
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        line = self.readline()
-        if not line:
-            raise StopIteration
-        return line
-
-    def __repr__(self):
-        return "<tempfile._DescriptorFile descriptor=%d mode=%r>" % (self._descriptor, self.mode)
+# The mode letters a temporary file may be opened with, read the way
+# every text and binary stream reads them.
+def _reading_mode(mode):
+    if not isinstance(mode, str):
+        raise TypeError('mode must be str, not ' + type(mode).__name__)
+    if any(letter not in 'rwaxbt+' for letter in mode):
+        raise ValueError('invalid mode: ' + repr(mode))
+    choosing = [letter for letter in mode if letter in 'rwax']
+    if len(choosing) != 1 or mode.count('+') > 1 or mode.count('b') > 1 or mode.count('t') > 1 or ('b' in mode and 't' in mode):
+        raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+    base = choosing[0]
+    binary = 'b' in mode
+    reading = base == 'r' or '+' in mode
+    writing = base in 'wxa' or '+' in mode
+    appending = base == 'a'
+    return binary, reading, writing, appending
 
 
 _sequence = 0
@@ -185,6 +160,7 @@ _sequence = 0
 
 def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
                   suffix=None, prefix=None, dir=None, *, errors=None):
+    binary, reading, writing, _appending = _reading_mode(mode)
     if suffix is None:
         suffix = ''
     if prefix is None:
@@ -200,8 +176,36 @@ def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
             break
         except FileExistsError:
             continue
-    os.unlink(name)
-    return _DescriptorFile(descriptor, mode)
+    try:
+        os.unlink(name)
+    except OSError:
+        os.close(descriptor)
+        raise
+    raw = _DescriptorRaw(descriptor, reading, writing)
+    size = buffering if buffering and buffering > 0 else _pyio.DEFAULT_BUFFER_SIZE
+    try:
+        if binary:
+            if buffering == 0:
+                return raw
+            if reading and writing:
+                return _pyio.BufferedRandom(raw, size)
+            if reading:
+                return _pyio.BufferedReader(raw, size)
+            return _pyio.BufferedWriter(raw, size)
+        if reading and writing:
+            buffered = _pyio.BufferedRandom(raw, size)
+        elif reading:
+            buffered = _pyio.BufferedReader(raw, size)
+        else:
+            buffered = _pyio.BufferedWriter(raw, size)
+        if encoding is None:
+            encoding = 'utf-8'
+        if errors is None:
+            errors = 'strict'
+        return _pyio.TextIOWrapper(buffered, encoding, errors, newline)
+    except BaseException:
+        raw.close()
+        raise
 
 
 def SpooledTemporaryFile(*args, **keywords):
