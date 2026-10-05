@@ -24029,6 +24029,21 @@ impl<'a> Machine<'a> {
         let main = self.detail("main").to_string();
         if main.is_empty() { return; }
         let book = self.world_kept();
+        if let Ok(name) = std::env::var("LUMEN_RUN_MODULE") {
+            self.made += 1;
+            let parent = name.rsplit_once('.').map_or("", |(parent, _)| parent);
+            let spec = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None),
+                of: self.common_ancestor(), holds: RefCell::new(vec![("name".into(), Value::text(&name)),
+                    ("origin".into(), Value::text(&self.entry_file)), ("parent".into(), Value::text(parent))]), turn: self.made }));
+            let mut held = book.borrow_mut();
+            if let Value::Dict(entries) = &*held {
+                let mut entries = entries.to_vec();
+                let key = Value::text("__spec__");
+                if let Some((_, value)) = entries.iter_mut().find(|(word, _)| word.equals(&key)) { *value = spec; }
+                else { entries.push((key, spec)); }
+                *held = Value::Dict(Rc::new(entries.into()));
+            }
+        }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: main.clone(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), has_slot_storage: false, weak_slot: std::cell::Cell::new(None), type_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false),

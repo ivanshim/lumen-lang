@@ -185,6 +185,7 @@ struct Invocation {
     program_args: Vec<String>,
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
+    module_name: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -552,6 +553,10 @@ fn run_all() {
     // to a file to say this: the words travel with the run.
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
+    // Only an actual -m invocation carries module execution metadata;
+    // a script child must not inherit its parent's module identity.
+    if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
+    else { std::env::remove_var("LUMEN_RUN_MODULE"); }
     if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
 
     let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
@@ -867,6 +872,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut python: Option<String> = None;
     let mut file: Option<String> = None;
     let mut module_source = None;
+    let mut module_name = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -959,6 +965,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     eprintln!("No module named {module}");
                     process::exit(1);
                 };
+                module_name = Some(if filename.ends_with("/__main__.py") { format!("{module}.__main__") } else { module });
                 file = Some(filename);
                 module_source = Some(source);
                 language = Some(Language::Named("python".to_string()));
@@ -1053,7 +1060,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

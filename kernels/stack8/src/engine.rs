@@ -23856,6 +23856,22 @@ impl Engine<'_> {
         let main = self.class_word("main").to_string();
         if main.is_empty() { return; }
         let book = self.outer_book_made();
+        if let Ok(name) = std::env::var("LUMEN_RUN_MODULE") {
+            self.made += 1;
+            let parent = name.rsplit_once('.').map_or("", |(parent, _)| parent);
+            let spec = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None),
+                class: self.root_class(),
+                fields: RefCell::new(vec![("name".into(), Value::text(&name)),
+                    ("origin".into(), Value::text(&self.source)), ("parent".into(), Value::text(parent))]), mark: self.made }));
+            let mut contents = book.borrow_mut();
+            if let Value::Map(entries) = &*contents {
+                let mut entries = entries.to_vec();
+                let key = Value::text("__spec__");
+                if let Some((_, held)) = entries.iter_mut().find(|(word, _)| word.equals(&key)) { *held = spec; }
+                else { entries.push((key, spec)); }
+                *contents = Value::Map(Rc::new(entries.into()));
+            }
+        }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), declares_slots: false, weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false) }),
