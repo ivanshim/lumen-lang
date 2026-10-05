@@ -9,6 +9,7 @@ __all__ = ['NamedTemporaryFile', 'TemporaryFile', 'SpooledTemporaryFile',
 
 template = 'tmp'
 tempdir = None
+_count = 0
 
 
 def gettempprefix():
@@ -49,8 +50,68 @@ def mktemp(suffix='', prefix=template, dir=None):
     raise 'NotImplementedError: tempfile.mktemp would name a file this runtime cannot then create'
 
 
-def NamedTemporaryFile(*args, **keywords):
-    raise 'NotImplementedError: tempfile.NamedTemporaryFile needs a file to be created and opened, which this runtime does not carry'
+def _forget(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _named_path(suffix, prefix, dir):
+    # The host's process number and a count kept here together name a
+    # path, and one already standing is passed over, so no call in this
+    # run is handed a name another call has used.
+    if suffix is None:
+        suffix = ''
+    if prefix is None:
+        prefix = template
+    if dir is None:
+        dir = gettempdir()
+    global _count
+    while True:
+        _count += 1
+        candidate = os.path.join(dir, '%s%d_%d%s' % (prefix, os.getpid(), _count, suffix))
+        if not os.path.exists(candidate):
+            return candidate
+
+
+class _NamedTemporaryFile:
+    def __init__(self, handle, name, delete, delete_on_close):
+        self._handle = handle
+        self.name = name
+        self.delete = delete
+        self.delete_on_close = delete_on_close
+
+    def __getattr__(self, word):
+        return getattr(self._handle, word)
+
+    def close(self):
+        if self._handle.closed:
+            return
+        self._handle.close()
+        if self.delete and self.delete_on_close:
+            _forget(self.name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.close()
+        if self.delete:
+            _forget(self.name)
+        return False
+
+
+def NamedTemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
+                       suffix=None, prefix=None, dir=None, delete=True, *,
+                       errors=None, delete_on_close=True):
+    path = _named_path(suffix, prefix, dir)
+    made = __file_create(path)
+    if made is not None:
+        _forget(path)
+        raise OSError('cannot create a temporary file at ' + path)
+    handle = open(path, mode)
+    return _NamedTemporaryFile(handle, path, delete, delete_on_close)
 
 
 def TemporaryFile(*args, **keywords):
