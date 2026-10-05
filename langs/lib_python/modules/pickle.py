@@ -381,58 +381,86 @@ def _decode_binstring(data, encoding, errors='strict'):
         return bytes(data)
     return bytes(data).decode(encoding, errors)
 
+def _hex_digit(c):
+    # What a byte stands for as a hexadecimal digit, or 16 when it is
+    # none, exactly as CPython's _PyLong_DigitValue has it.
+    if 0x30 <= c <= 0x39:
+        return c - 0x30
+    if 0x41 <= c <= 0x46:
+        return c - 0x41 + 10
+    if 0x61 <= c <= 0x66:
+        return c - 0x61 + 10
+    return 16
+
 def _escape_decode(data):
-    # CPython's codecs.escape_decode, on bytes: the protocol-0 STRING
-    # body is text with backslash escapes. \x and octal escapes name
-    # bytes, the plain escapes their one byte, and \u/\U (and any
-    # other unknown escape) keep the backslash for the reader's own
-    # encoding to meet afterwards.
+    # CPython's codecs.escape_decode, on bytes, exactly as
+    # Objects/bytesobject.c _PyBytes_DecodeEscape2 reads it: the plain
+    # escapes and the \x and octal escapes name bytes, a trailing
+    # backslash and an incomplete \x are refused, and an unknown escape
+    # keeps its backslash and the byte after it, with the one
+    # DeprecationWarning the reference raises.
+    import warnings
     out = bytearray()
     at = 0
-    while at < len(data):
-        ch = data[at]
-        if ch != 0x5c:
-            out.append(ch)
+    end = len(data)
+    warned = False
+    while at < end:
+        c = data[at]
+        if c != 0x5c:
+            out.append(c)
             at += 1
             continue
         at += 1
-        if at >= len(data):
-            out.append(0x5c)
-            break
+        if at >= end:
+            raise ValueError("Trailing \\ in string")
         esc = data[at]
         at += 1
-        if esc == 0x6e:
-            out.append(0x0a)
-        elif esc == 0x72:
-            out.append(0x0d)
-        elif esc == 0x74:
-            out.append(0x09)
-        elif esc == 0x62:
-            out.append(0x08)
-        elif esc == 0x66:
-            out.append(0x0c)
-        elif esc == 0x61:
-            out.append(0x07)
-        elif esc == 0x76:
-            out.append(0x0b)
+        if esc == 0x0a:
+            pass
         elif esc == 0x5c:
             out.append(0x5c)
         elif esc == 0x27:
             out.append(0x27)
         elif esc == 0x22:
             out.append(0x22)
-        elif esc == 0x78:
-            out.append(int(data[at:at + 2], 16))
-            at += 2
+        elif esc == 0x62:
+            out.append(0x08)
+        elif esc == 0x66:
+            out.append(0x0c)
+        elif esc == 0x74:
+            out.append(0x09)
+        elif esc == 0x6e:
+            out.append(0x0a)
+        elif esc == 0x72:
+            out.append(0x0d)
+        elif esc == 0x76:
+            out.append(0x0b)
+        elif esc == 0x61:
+            out.append(0x07)
         elif 0x30 <= esc <= 0x37:
-            digits = bytes([esc])
-            while len(digits) < 3 and at < len(data) and 0x30 <= data[at] <= 0x37:
-                digits += bytes([data[at]])
+            value = esc - 0x30
+            if at < end and 0x30 <= data[at] <= 0x37:
+                value = (value << 3) + data[at] - 0x30
                 at += 1
-            out.append(int(digits, 8))
+                if at < end and 0x30 <= data[at] <= 0x37:
+                    value = (value << 3) + data[at] - 0x30
+                    at += 1
+            if value > 0o377 and not warned:
+                warned = True
+                warnings.warn('b"\\%o" is an invalid octal escape sequence. Such sequences will not work in the future. ' % value, DeprecationWarning)
+            out.append(value & 0xff)
+        elif esc == 0x78:
+            if at + 1 < end and _hex_digit(data[at]) < 16 and _hex_digit(data[at + 1]) < 16:
+                out.append((_hex_digit(data[at]) << 4) + _hex_digit(data[at + 1]))
+                at += 2
+            else:
+                raise ValueError("invalid \\x escape at position %d" % (at - 2))
         else:
+            if not warned:
+                warned = True
+                warnings.warn('b"\\%c" is an invalid escape sequence. Such sequences will not work in the future. ' % esc, DeprecationWarning)
             out.append(0x5c)
-            out.append(esc)
+            at -= 1
     return bytes(out)
 
 def _read_protocol(data, encoding='ASCII', errors='strict'):
