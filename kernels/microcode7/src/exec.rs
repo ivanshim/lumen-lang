@@ -486,6 +486,7 @@ pub struct Machine<'a> {
     library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value>,
     wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
+    wildcard_source: RefCell<Option<(Rc<str>, bool)>>,
     loaded_spaces: HashMap<Rc<str>, String>,
     namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
@@ -890,7 +891,7 @@ impl<'a> Machine<'a> {
     }
 
     fn is_fault_kind(&self, kind: &Blueprint) -> bool {
-        self.rules.has_any_ext_builtin_exceptions && kind.every_field().iter().any(|(k, _)| k == "\0fault-kind")
+        self.rules.has_any_ext_builtin_exceptions && kind.has_public_field("\0fault-kind")
     }
 
     /// The furnished fault kind at a place in the roster, and whether a
@@ -942,7 +943,7 @@ impl<'a> Machine<'a> {
         if !Self::fault_descends(&cls, &base) {
             return Err(format!("TypeError: {}.__new__({}): {} is not a subtype of {}", base.name, cls.name, cls.name, base.name).into());
         }
-        if base.every_field().iter().any(|(key, _)| key == "\0gathers") {
+        if base.has_public_field("\0gathers") {
             if args.len() != 2 { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()); }
             let members = match args[1].settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
             return self.gather_faults(cls, args[0].clone(), args[1].clone(), members);
@@ -1178,7 +1179,7 @@ impl<'a> Machine<'a> {
     fn fault_from_call(&mut self, kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let initializer = self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&kind, key));
         if let Some(init) = initializer {
-            let gathers = kind.every_field().iter().any(|(key, _)| key == "\0gathers");
+            let gathers = kind.has_public_field("\0gathers");
             if gathers { return self.construct_plainly(kind, supplied); }
             let (ordered, _) = self.open_arguments(supplied.clone())?;
             let instance = self.make_fault(kind, ordered, Value::Nil);
@@ -1203,7 +1204,7 @@ impl<'a> Machine<'a> {
         if let Some(wanted) = unicode_arity {
             if row.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", kind.name, wanted, row.len()).into()); }
         }
-        let made = if kind.every_field().iter().any(|(key, _)| key == "\0gathers") {
+        let made = if kind.has_public_field("\0gathers") {
             if row.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", row.len()).into()); }
             if !named.is_empty() { return Err(format!("TypeError: {title}() takes no keyword arguments").into()); }
             let heading = row[0].clone();
@@ -1607,7 +1608,7 @@ impl<'a> Machine<'a> {
     /// number: nil for nought, a number as itself, and anything else
     /// told as a complaint with a status of one.
     fn exit_status(&self, thing: &Thing) -> Option<i32> {
-        if !thing.blueprint().every_field().iter().any(|(key, _)| key == "\0leaves-run") { return None; }
+        if !thing.blueprint().has_public_field("\0leaves-run") { return None; }
         let holds = thing.holds.borrow();
         let carried = match holds.iter().find(|(key, _)| key == "\0raised-values") {
             Some((_, Value::Arguments(row))) if row.len() == 1 => row[0].clone(),
@@ -1772,6 +1773,7 @@ impl<'a> Machine<'a> {
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
             wildcard_names: HashMap::new(),
+            wildcard_source: RefCell::new(None),
             loaded_spaces: HashMap::new(),
             namespace_books: Vec::new(),
             within_spare: false,
@@ -5379,6 +5381,19 @@ impl<'a> Machine<'a> {
         outer
     }
 
+    /// Most expressions stay in one source file. Avoid hashing that
+    /// file's name on every primitive call just to ask whether imports
+    /// can override a builtin. Namespace contents still remain live.
+    fn has_wildcard_imports(&self) -> bool {
+        if self.wildcard_names.is_empty() { return false; }
+        if let Some((source, present)) = self.wildcard_source.borrow().as_ref() {
+            if Rc::ptr_eq(source, &self.written_in) { return *present; }
+        }
+        let present = self.wildcard_names.contains_key(&self.written_in);
+        *self.wildcard_source.borrow_mut() = Some((self.written_in.clone(), present));
+        present
+    }
+
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         if self.active_trace.is_none() {
             if let Some(body) = self.frames_named.last().cloned() { self.active_trace = self.activation(&body, frame, None); }
@@ -5395,7 +5410,7 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => Ok(self.bind_program(p, frame)),
-            Form::Const(Value::OctetKind { changeable, .. }) if self.wildcard_names.contains_key(&self.written_in) => {
+            Form::Const(Value::OctetKind { changeable, .. }) if self.has_wildcard_imports() => {
                 let held = self.spread_value(self.octet_kind_word(*changeable));
                 match held { Some(value) => Ok(value), None => match node { Form::Const(value) => Ok(value.clone()), _ => unreachable!() } }
             }
@@ -5533,7 +5548,7 @@ impl<'a> Machine<'a> {
                 self.store(slot, frame, v.clone())?;
                 Ok(v)
             }
-            Form::Apply(Callee::Prim(Prim::Seq, _), args) if !self.wildcard_names.contains_key(&self.written_in) => {
+            Form::Apply(Callee::Prim(Prim::Seq, _), args) if !self.has_wildcard_imports() => {
                 let mut last = Value::Nil;
                 for a in args {
                     // What the statement before came to is let go
@@ -6491,7 +6506,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if self.wildcard_names.contains_key(&self.written_in)
+            Form::Apply(Callee::Prim(op, name), args) if self.has_wildcard_imports()
                 && self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
@@ -17527,6 +17542,7 @@ impl<'a> Machine<'a> {
                             }
                         }
                         if self.rules.names_shadow_builtins {
+                            *self.wildcard_source.borrow_mut() = None;
                             self.wildcard_names.entry(self.written_in.clone())
                                 .or_default().insert(name, slot);
                         }
@@ -20080,7 +20096,7 @@ impl<'a> Machine<'a> {
                     };
                     asked.map_err(|fault| self.carried_native_fault(fault))?
                 } else if self.is_fault_kind(class) {
-                    if !class.every_field().iter().any(|(k, _)| k == "\0gathers") {
+                    if !class.has_public_field("\0gathers") {
                         return Err(format!("TypeError: type '{}' is not subscriptable", class.name).into());
                     }
                     let namespace = self.load_namespace("types")?;

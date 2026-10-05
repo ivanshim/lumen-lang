@@ -1921,6 +1921,18 @@ impl Class {
     /// the class keeps to itself is filed under its own name and the
     /// class's together, so that a class standing on it may declare one
     /// of the same name without the two becoming one.
+    /// Ask whether an inherited public field exists without constructing
+    /// the complete instance layout or cloning its names and values.
+    pub fn has_public_field(&self, name: &str) -> bool {
+        let mut current = Some(self);
+        while let Some(class) = current {
+            if class.fields.iter().enumerate().any(|(at, (key, _))|
+                key == name && class.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
+            current = class.base.as_deref();
+        }
+        false
+    }
+
     pub fn all_fields(&self) -> Vec<(String, Value)> {
         let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
         for (at, (name, value)) in self.fields.iter().enumerate() {

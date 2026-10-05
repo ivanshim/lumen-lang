@@ -633,7 +633,7 @@ impl<'a> Engine<'a> {
         if !Self::exception_beneath(&cls, &base) {
             return Err(format!("TypeError: {}.__new__({}): {} is not a subtype of {}", base.name, cls.name, cls.name, base.name).into());
         }
-        if base.all_fields().iter().any(|(name, _)| name == "\0group") {
+        if base.has_public_field("\0group") {
             if args.len() != 2 { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()); }
             let members = match args[1].contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
             return self.make_group(cls, args[0].clone(), args[1].clone(), members);
@@ -809,7 +809,7 @@ impl<'a> Engine<'a> {
     }
 
     fn exception_class(&self, class: &Class) -> bool {
-        !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
+        !self.lang.exceptions.is_empty() && class.has_public_field("\0exception")
     }
 
     pub(super) fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
@@ -834,7 +834,7 @@ impl<'a> Engine<'a> {
     /// object it was sought on.
     fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
-            if class.all_fields().iter().any(|(name, _)| name == "\0group") {
+            if class.has_public_field("\0group") {
                 return self.class_construct(class, given);
             }
             let positional = self.call_items(given.clone())?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
@@ -864,7 +864,7 @@ impl<'a> Engine<'a> {
         if let Some(wanted) = unicode_arity {
             if args.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", class.name, wanted, args.len()).into()); }
         }
-        let made = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
+        let made = if class.has_public_field("\0group") {
             if args.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", args.len()).into()); }
             if !named.is_empty() { return Err(format!("TypeError: {class_name}() takes no keyword arguments").into()); }
             let heading = args[0].clone();
@@ -1238,7 +1238,7 @@ impl<'a> Engine<'a> {
     /// one. Nothing where the fault is no exit.
     pub fn exit_asked(&self, fault: &Fault) -> Option<i32> {
         let Fault::Thrown(Value::Object(object)) = fault else { return None };
-        if !object.class_now().all_fields().iter().any(|(n, _)| n == "\0exit") { return None; }
+        if !object.class_now().has_public_field("\0exit") { return None; }
         let held = object.fields.borrow();
         let given = match held.iter().find(|(n, _)| n == "\0arguments") {
             Some((_, Value::Tuple(row))) if row.len() == 1 => row[0].clone(),
@@ -5500,8 +5500,7 @@ impl<'a> Engine<'a> {
                                     let mut aliases = Vec::new();
                                     for (name, _) in space.fields.borrow().iter() {
                                         if name.starts_with('\0') { continue; }
-                                        let suffix = format!(":{}:{}", path, name);
-                                        if let Some(at) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                                        if let Some(at) = self.registry.module_slot(&path, name) {
                                             aliases.push((name.clone(), self.registry.idents[at].clone()));
                                         }
                                     }
@@ -8453,7 +8452,7 @@ impl<'a> Engine<'a> {
             // A group class is parameterisable, as the reference's is;
             // the other fault kinds are not subscriptable at all.
             if self.exception_class(c) {
-                if c.all_fields().iter().any(|(n, _)| n == "\0group") {
+                if c.has_public_field("\0group") {
                     let module = match self.import_module("types") {
                         Ok(module) => module,
                         Err(Fault::Note(words)) => return Err(words),

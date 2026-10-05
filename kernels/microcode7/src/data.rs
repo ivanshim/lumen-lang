@@ -803,7 +803,7 @@ impl Value {
                 match self.arguments_held() {
                 Some(row) => {
                     let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
-                    if thing.blueprint().every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                    if thing.blueprint().has_public_field("\0import-fault") {
                         for key in ["name", "path", "name_from"] {
                             let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
                             match value {
@@ -853,7 +853,7 @@ impl Value {
 
     fn arguments_held(&self) -> Option<Vec<Value>> {
         if let Value::Thing(thing) = self {
-            if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+            if thing.blueprint().has_public_field("\0fault-kind") {
                 let holds = thing.holds.borrow();
                 return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
                     Some((_, Value::Arguments(row))) => row.to_vec(),
@@ -936,7 +936,7 @@ impl Value {
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
         Some(if row.is_empty() { String::new() }
             else if row.len() > 1 { Self::argument_text(&row, words) }
-            else if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else if thing.blueprint().has_public_field("\0key-fault") { row[0].representation(words) }
             else { row[0].render(words) })
     }
 
@@ -1773,6 +1773,18 @@ impl Blueprint {
     /// class holds alone is filed under its own name and the class's
     /// together, so a class built on it may declare one of the same name
     /// without the two becoming one.
+    /// Ask whether an inherited public field exists without constructing
+    /// the complete instance layout or cloning its names and values.
+    pub fn has_public_field(&self, name: &str) -> bool {
+        let mut current = Some(self);
+        while let Some(class) = current {
+            if class.fields.iter().enumerate().any(|(at, (key, _))|
+                key == name && class.reaches.get(at) != Some(&Reach::Alone)) { return true; }
+            current = class.under.as_deref();
+        }
+        false
+    }
+
     pub fn every_field(&self) -> Vec<(String, Value)> {
         let mut all = self.under.as_ref().map_or_else(Vec::new, |u| u.every_field());
         for (at, (name, value)) in self.fields.iter().enumerate() {

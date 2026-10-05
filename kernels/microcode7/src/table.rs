@@ -88,6 +88,7 @@ pub struct Table {
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
     pub prims: HashMap<String, Prim>,
+    builtin_continuations: HashMap<String, Vec<String>>,
     /// Method spellings indexed once from the immutable definition.
     pub method_names: HashMap<String, &'static str>,
     /// One word for each primitive, kept in the order the labels write
@@ -500,6 +501,7 @@ impl Table {
             monadic: HashMap::new(),
             precedence: HashMap::new(),
             prims: HashMap::new(),
+            builtin_continuations: HashMap::new(),
             method_names: HashMap::new(),
             prim_words: Vec::new(),
             compound: HashMap::new(),
@@ -542,7 +544,22 @@ impl Table {
             }
         }
         table.method_names = methods;
+        // Recursive f-string expressions and dynamic compilation share
+        // this immutable roster. Index it once, rather than rebuilding
+        // it every time a short piece of source is tokenized.
+        let mut continued: HashMap<String, Vec<String>> = HashMap::new();
+        for name in table.prims.keys().chain(table.strings("ext.builtin.print.file.output").iter()).chain(table.strings("ext.builtin.print.file.error").iter()) {
+            let head: String = name.chars().enumerate()
+                .take_while(|(index, letter)| *index == 0 || table.extends_name(*letter))
+                .map(|(_, letter)| letter).collect();
+            if head.len() < name.len() { continued.entry(head).or_default().push(name.clone()); }
+        }
+        table.builtin_continuations = continued;
         Ok(table)
+    }
+
+    pub fn continued_builtins(&self, prefix: &str) -> &[String] {
+        self.builtin_continuations.get(prefix).map_or(&[], Vec::as_slice)
     }
 
     pub fn strings(&self, key: &str) -> &[String] {

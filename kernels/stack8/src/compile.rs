@@ -43,6 +43,7 @@ thread_local! {
 #[derive(Default)]
 pub struct Registry {
     index: HashMap<String, usize>,
+    module_index: HashMap<String, HashMap<String, usize>>,
     pub idents: Vec<String>,
     /// Whether the next reading is of one expression alone, as text
     /// handed over to be weighed is: nothing may follow it. The mark is
@@ -123,8 +124,20 @@ impl Registry {
             return slot;
         }
         self.index.insert(name.to_string(), self.idents.len());
+        if let Some((_, tail)) = name.strip_prefix("\0module:").and_then(|word| word.split_once(':')) {
+            if let Some((path, member)) = tail.split_once(':') {
+                self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.idents.len());
+            }
+        }
         self.idents.push(name.to_string());
         self.idents.len() - 1
+    }
+
+    /// The most recently registered slot for a module member. Dynamic
+    /// text needs these aliases, but must not scan every compiled name
+    /// for every member each time eval or exec is called.
+    pub fn module_slot(&self, path: &str, member: &str) -> Option<usize> {
+        self.module_index.get(path)?.get(member).copied()
     }
 }
 

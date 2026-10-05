@@ -681,16 +681,19 @@ impl<'a> Machine<'a> {
             _ => Err(format!("TypeError: type.__new__() argument 1 must be str, not {}", Self::type_argument_kind(given)).into()),
         }
     }
-    pub(super) fn ancestry_includes(class:&Rc<Blueprint>,target:&Rc<Blueprint>)->bool {
-        if std::iter::once(class).chain(class.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,target)){return true;}
-        // A kind standing under two stands under the second as well.
-        if class.fields.iter().any(|(key,held)| key=="\0also-under" && matches!(held,Value::Blueprint(other) if Self::ancestry_includes(other,target))) {
-            return true;
+    pub(super) fn ancestry_includes(class: &Rc<Blueprint>, target: &Rc<Blueprint>) -> bool {
+        fn visit(class: &Rc<Blueprint>, target: &Rc<Blueprint>, seen: &mut Vec<*const Blueprint>) -> bool {
+            if Rc::ptr_eq(class, target) || class.ancestry.iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
+            let address = Rc::as_ptr(class);
+            if seen.contains(&address) { return false; }
+            seen.push(address);
+            if class.fields.iter().any(|(key, held)| key == "\0also-under"
+                && matches!(held, Value::Blueprint(other) if visit(other, target, seen))) { return true; }
+            if class.parents.iter().any(|base| visit(base, target, seen)) { return true; }
+            class.under.as_ref().is_some_and(|base| visit(base, target, seen))
         }
-        // Every named forebear's own line counts, and the one stored
-        // parent carries the line of a kind no body built.
-        if class.parents.iter().any(|parent| Self::ancestry_includes(parent,target)) { return true; }
-        match &class.under {Some(parent)=>Self::ancestry_includes(parent,target),None=>false}
+        if Rc::ptr_eq(class, target) || class.ancestry.iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
+        visit(class, target, &mut Vec::new())
     }
     fn visible_blueprint(&self,class:Rc<Blueprint>)->Value {
         if self.builds_classes(&class){return self.kind_builder_word();}
@@ -2634,7 +2637,13 @@ impl<'a> Machine<'a> {
         match self.routine_members.iter().position(|(candidate, _)| candidate.revive().is_some_and(|key| key.equals(code))) {
             Some(found) => found,
             None => {
-                self.constructor_records.borrow_mut().clear();
+                // A new namespace can change only this routine's lookup.
+                // Keep unrelated negative records: clearing them all makes
+                // ordinary calls rescan every function after each definition.
+                // The collector still clears the cache when it moves records.
+                if let Value::Routine(body) | Value::Bound(body, _) = code {
+                    self.constructor_records.borrow_mut().remove(&(Rc::as_ptr(body) as usize));
+                }
                 let of = self.common_ancestor(); self.made += 1;
                 let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
@@ -3782,7 +3791,7 @@ impl<'a> Machine<'a> {
         if let Value::Thing(t) = &subject {
             if self.is_fault_kind(&t.blueprint()) {
                 if (self.table.single("ext.builtin.exceptions.group.message") == Some(key) || self.table.single("ext.builtin.exceptions.group.members") == Some(key))
-                    && t.blueprint().every_field().iter().any(|(k, _)| k == "\0gathers") {
+                    && t.blueprint().has_public_field("\0gathers") {
                     return Err(format!("AttributeError: attribute '{key}' of '{}' objects is not writable", t.blueprint().name).into());
                 }
                 for (label, description) in [("ext.builtin.exceptions.cause", "cause"), ("ext.builtin.exceptions.context", "context")] {

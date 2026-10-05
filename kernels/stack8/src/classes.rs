@@ -568,16 +568,19 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
-    pub(super) fn contains_class(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
-        if Rc::ptr_eq(actual, wanted) || actual.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, wanted)) { return true; }
-        // A class standing upon two stands beneath the second as well.
-        if let Some((_, Value::Class(other))) = actual.fields.iter().find(|(n, _)| n == "\0also-beneath") {
-            if Self::contains_class(other, wanted) { return true; }
+    pub(super) fn contains_class(class: &Rc<Class>, target: &Rc<Class>) -> bool {
+        fn visit(class: &Rc<Class>, target: &Rc<Class>, seen: &mut Vec<*const Class>) -> bool {
+            if Rc::ptr_eq(class, target) || class.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
+            let address = Rc::as_ptr(class);
+            if seen.contains(&address) { return false; }
+            seen.push(address);
+            if class.fields.iter().any(|(key, held)| key == "\0also-beneath"
+                && matches!(held, Value::Class(other) if visit(other, target, seen))) { return true; }
+            if class.direct.iter().any(|base| visit(base, target, seen)) { return true; }
+            class.base.as_ref().is_some_and(|base| visit(base, target, seen))
         }
-        // Every declared base's own ancestry counts, and the allocation
-        // link keeps the ancestry of native single-parent classes.
-        actual.direct.iter().any(|base| Self::contains_class(base, wanted))
-            || actual.base.as_ref().is_some_and(|parent| Self::contains_class(parent, wanted))
+        if Rc::ptr_eq(class, target) || class.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
+        visit(class, target, &mut Vec::new())
     }
     fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
@@ -3441,7 +3444,7 @@ impl<'a> Engine<'a> {
         if let Value::Object(o) = &subject {
             if self.exception_class(&o.class_now()) {
                 if (self.lang.group_message.as_deref() == Some(name) || self.lang.group_members.as_deref() == Some(name))
-                    && o.class_now().all_fields().iter().any(|(n, _)| n == "\0group") {
+                    && o.class_now().has_public_field("\0group") {
                     return Err(format!("AttributeError: attribute '{name}' of '{}' objects is not writable", o.class_now().name).into());
                 }
                 let cause = self.lang.exception_cause.as_deref() == Some(name);
