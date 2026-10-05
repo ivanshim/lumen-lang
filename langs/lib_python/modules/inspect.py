@@ -115,36 +115,6 @@ def getcoroutinestate(coroutine):
 _is_coroutine_mark = object()
 
 
-def iscoroutinefunction(obj):
-    import functools
-    function = obj
-    while True:
-        descriptor = getattr(function, '__partialmethod__', None)
-        if isinstance(descriptor, functools.partialmethod):
-            function = descriptor.func
-        elif isinstance(function, (functools.partial, functools.partialmethod)):
-            function = function.func
-        else:
-            break
-    while hasattr(function, '__func__'):
-        function = function.__func__
-    function = functools._unwrap_partial(function)
-    code = getattr(function, '__code__', None)
-    if code is not None and code.co_flags & CO_COROUTINE:
-        return True
-    marked = obj
-    while hasattr(marked, '__func__'):
-        marked = marked.__func__
-    marked = functools._unwrap_partial(marked)
-    return getattr(marked, '_is_coroutine_marker', None) is _is_coroutine_mark
-
-
-def markcoroutinefunction(func):
-    if hasattr(func, '__func__'):
-        func = func.__func__
-    func._is_coroutine_marker = _is_coroutine_mark
-    return func
-
 
 def __getattr__(name):
     if name.startswith('__'):
