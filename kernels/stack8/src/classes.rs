@@ -455,9 +455,14 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn contains_class(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
         if Rc::ptr_eq(actual, wanted) || actual.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, wanted)) { return true; }
-        // Native single-parent classes retain their actual ancestry in
-        // the allocation link; user classes also keep the complete C3 line.
-        actual.base.as_ref().is_some_and(|parent| Self::contains_class(parent, wanted))
+        // A class standing upon two stands beneath the second as well.
+        if let Some((_, Value::Class(other))) = actual.fields.iter().find(|(n, _)| n == "\0also-beneath") {
+            if Self::contains_class(other, wanted) { return true; }
+        }
+        // Every declared base's own ancestry counts, and the allocation
+        // link keeps the ancestry of native single-parent classes.
+        actual.direct.iter().any(|base| Self::contains_class(base, wanted))
+            || actual.base.as_ref().is_some_and(|parent| Self::contains_class(parent, wanted))
     }
     fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
@@ -942,6 +947,24 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
+                82 => {
+                    // A group's own maker: the class to make, then its
+                    // heading and exceptions, as the reference's __new__.
+                    let Some(receiver) = args.first().map(Value::contents) else {
+                        return Err("TypeError: BaseExceptionGroup.__new__(): not enough arguments".into());
+                    };
+                    let Value::Class(class) = &receiver else {
+                        if let Some(name) = receiver.kind_it_names().or_else(|| self.kind_spelled(&receiver).map(|word| word.to_string())) {
+                            return Err(format!("TypeError: BaseExceptionGroup.__new__({name}): {name} is not a subtype of BaseExceptionGroup").into());
+                        }
+                        return Err(format!("TypeError: BaseExceptionGroup.__new__(X): X is not a type object ({})", Self::type_argument_kind(&receiver)).into());
+                    };
+                    if !self.stands_on(class, 37) {
+                        let name = &class.name;
+                        return Err(format!("TypeError: BaseExceptionGroup.__new__({name}): {name} is not a subtype of BaseExceptionGroup").into());
+                    }
+                    self.exception_allocate(class.clone(), args[1..].to_vec())
+                }
                 129 => {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
                     Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
@@ -3270,6 +3293,10 @@ impl<'a> Engine<'a> {
         let mut value = value;
         if let Value::Object(o) = &subject {
             if self.exception_class(&o.class_now()) {
+                if (self.lang.group_message.as_deref() == Some(name) || self.lang.group_members.as_deref() == Some(name))
+                    && o.class_now().all_fields().iter().any(|(n, _)| n == "\0group") {
+                    return Err(format!("AttributeError: attribute '{name}' of '{}' objects is not writable", o.class_now().name).into());
+                }
                 let cause = self.lang.exception_cause.as_deref() == Some(name);
                 let context = self.lang.exception_context.as_deref() == Some(name);
                 if cause || context {
@@ -3972,9 +3999,9 @@ impl<'a> Engine<'a> {
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
+        if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
-        if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         // A union built by `|` carries a bare `None` for the `NoneType`
         // member, the very value `None` itself is, so a chained union
         // reads it back this way rather than needing `type(None)`.

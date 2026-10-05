@@ -798,7 +798,9 @@ impl Value {
         }
         match self {
             Value::Arguments(row) => Self::argument_text(row, words),
-            Value::Thing(thing) => match self.arguments_held() {
+            Value::Thing(thing) => {
+                if let Some(shown) = Self::gathered_representation(thing, words) { return shown; }
+                match self.arguments_held() {
                 Some(row) => {
                     let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
                     if thing.blueprint().every_field().iter().any(|(k, _)| k == "\0import-fault") {
@@ -813,6 +815,7 @@ impl Value {
                     format!("{}({})", thing.blueprint().name, shown.join(", "))
                 },
                 None => self.render(words),
+                }
             },
             Value::Vector(row) => {
                 let among = Among::members(self);
@@ -823,6 +826,24 @@ impl Value {
             }
             _ => self.render(words),
         }
+    }
+
+    fn gathered_representation(thing: &Rc<Thing>, words: Names) -> Option<String> {
+        let holds = thing.holds.borrow();
+        let style = match holds.iter().find(|(k, _)| k == "\0source-kind") { Some((_, Value::Small(style))) => *style, _ => return None };
+        let named = thing.blueprint().name.clone();
+        let message = holds.iter().find(|(k, _)| k == "\0heading").map(|(_, v)| v.representation(words)).unwrap_or_default();
+        let parts: Vec<Value> = match holds.iter().find(|(k, _)| k == "\0gathered") {
+            Some((_, Value::Tuple(items))) => items.to_vec(),
+            _ => Vec::new(),
+        };
+        let list_like = style == 1 && matches!(holds.iter().find(|(k, _)| k == "\0raised-values"), Some((_, Value::Arguments(row))) if row.len() == 2 && matches!(row[1].settled(), Value::Vector(_)));
+        let body = if style == 2 {
+            holds.iter().find(|(k, _)| k == "\0source-repr").map(|(_, v)| v.bare()).unwrap_or_default()
+        } else if list_like {
+            format!("[{}]", parts.iter().map(|v| v.representation(words)).collect::<Vec<_>>().join(", "))
+        } else { Self::argument_text(&parts, words) };
+        Some(format!("{named}({message}, {body})"))
     }
 
     fn argument_text(row: &[Value], words: Names) -> String {

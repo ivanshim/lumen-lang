@@ -546,6 +546,10 @@ impl<'a> Engine<'a> {
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
             if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
             if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
+            // A group's own maker, so that a subclass's __new__ can reach
+            // it through super() as the reference's does.
+            let mut shared = Vec::new();
+            if at == 37 || at == 38 { shared.push(("__new__".into(), Self::adapter(82, Vec::new()))); }
             // The three Unicode codec faults carry an encoding, the
             // object worked on, a start and end index and a reason,
             // and show themselves by those rather than by their args.
@@ -555,7 +559,7 @@ impl<'a> Engine<'a> {
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -834,6 +838,9 @@ impl<'a> Engine<'a> {
     /// object it was sought on.
     fn exception_new(&mut self, mut class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
+            if class.all_fields().iter().any(|(name, _)| name == "\0group") {
+                return self.class_construct(class, given);
+            }
             let positional = self.call_items(given.clone())?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
             let made = self.exception_instance(class, positional, Value::Null);
             let mut supplied = vec![made.clone()];
@@ -841,6 +848,12 @@ impl<'a> Engine<'a> {
             self.class_apply(init, supplied)?;
             return Ok(made);
         }
+        self.exception_allocate(class, given)
+    }
+
+    /// Native allocation validates and stores exception state without
+    /// running a subclass initializer. Class construction does that later.
+    fn exception_allocate(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         let class_name = class.name.clone();
         let import = self.stands_on(&class, 19);
         let mut args = Vec::new();
@@ -856,9 +869,20 @@ impl<'a> Engine<'a> {
             if args.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", class.name, wanted, args.len()).into()); }
         }
         let made = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
-            if args.len() != 2 { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()); }
-            let members = match args[1].contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
-            self.make_group(class, args[0].clone(), members)?
+            if args.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", args.len()).into()); }
+            if !named.is_empty() { return Err(format!("TypeError: {class_name}() takes no keyword arguments").into()); }
+            let heading = args[0].clone();
+            if !matches!(heading.contents(), Value::Text(_)) {
+                let kind = match &heading { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind().to_string() };
+                return Err(format!("TypeError: BaseExceptionGroup.__new__() argument 1 must be str, not {kind}").into());
+            }
+            let source = args[1].clone();
+            let members = match source.contents() {
+                Value::Array(row) | Value::Tuple(row) => row.to_vec(),
+                Value::Object(o) if self.class_value(&o.class_now(), "__getitem__").is_some() => self.special_items(&source)?,
+                _ => return Err("TypeError: second argument (exceptions) must be a sequence".into()),
+            };
+            self.make_group(class, heading, source, members)?
         } else { self.exception_instance(class, args, Value::Null) };
         if let Value::Object(object) = &made {
             let mut fields = object.fields.borrow_mut();
@@ -877,25 +901,44 @@ impl<'a> Engine<'a> {
     /// A group of exceptions made from a heading and its members, or
     /// refused. The base group made of ordinary faults alone becomes
     /// the ordinary group, as the reference makes it.
-    fn make_group(&mut self, class: Rc<Class>, heading: Value, members: Vec<Value>) -> Flow<Value> {
-        let refused = self.lang.group_invalid.clone().unwrap_or_default();
-        if !matches!(heading, Value::Text(_)) || members.is_empty() { return Err(refused.into()); }
-        if members.iter().any(|m| !matches!(m, Value::Object(o) if self.exception_class(&o.class_now()))) { return Err(refused.into()); }
-        let all_ordinary = members.iter().all(|m| matches!(m, Value::Object(o) if self.stands_on(&o.class_now(), 1)));
-        let strict = class.all_fields().iter().any(|(n, v)| n == "\0group" && matches!(v, Value::Flag(true)));
-        if strict && !all_ordinary { return Err(refused.into()); }
-        let class = match (all_ordinary, self.furnished(37), self.furnished(38)) {
-            (true, Some(base), Some(ordinary)) if Rc::ptr_eq(&class, &base) => ordinary,
-            _ => class,
-        };
+    fn make_group(&mut self, class: Rc<Class>, heading: Value, source: Value, members: Vec<Value>) -> Flow<Value> {
+        if members.is_empty() { return Err("ValueError: second argument (exceptions) must be a non-empty sequence".into()); }
+        for (at, member) in members.iter().enumerate() {
+            if !matches!(member, Value::Object(o) if self.exception_class(&o.class_now())) {
+                return Err(format!("ValueError: Item {at} of second argument (exceptions) is not an exception").into());
+            }
+        }
+        let nested_base = members.iter().any(|m| !matches!(m, Value::Object(o) if self.stands_on(&o.class_now(), 1)));
+        let ordinary_group = self.furnished(38);
+        let base_group = self.furnished(37);
+        if nested_base {
+            if ordinary_group.as_ref().is_some_and(|ordinary| Rc::ptr_eq(&class, ordinary)) {
+                return Err("TypeError: Cannot nest BaseExceptions in an ExceptionGroup".into());
+            }
+            let is_base = base_group.as_ref().is_some_and(|base| Rc::ptr_eq(&class, base));
+            let under_exception = self.furnished(1).is_some_and(|ordinary| Self::contains_class(&class, &ordinary));
+            if !is_base && under_exception { return Err(format!("TypeError: Cannot nest BaseExceptions in '{}'", class.name).into()); }
+        }
+        let class = if !nested_base {
+            match base_group {
+                Some(base) if Rc::ptr_eq(&class, &base) => ordinary_group.unwrap_or(class),
+                _ => class,
+            }
+        } else { class };
         let sp = self.wording();
         let count = members.len();
         let members = Value::tuple(members);
-        let made = self.exception_instance(class, vec![heading.clone(), members.clone()], Value::Null);
+        let made = self.exception_instance(class, vec![heading.clone(), source.clone()], Value::Null);
         if let Value::Object(object) = &made {
             let mut fields = object.fields.borrow_mut();
             fields.push(("\0heading".into(), heading.clone()));
             fields.push(("\0parts".into(), members.clone()));
+            let style = match source.contents() { Value::Array(_) => 1, Value::Tuple(_) => 0, _ => 2 };
+            fields.push(("\0source-kind".into(), Value::Small(style)));
+            if style == 2 {
+                let shown = self.special_text(&source, true)?;
+                fields.push(("\0source-repr".into(), Value::text(&shown)));
+            }
             if let [before, one, many] = self.lang.group_summary.as_slice() {
                 fields.push(("\0shown".into(), Value::text(&format!("{}{before}{count}{}", heading.display(&sp), if count == 1 { one } else { many }))));
             }
@@ -920,20 +963,27 @@ impl<'a> Engine<'a> {
     fn chosen(&mut self, value: &Value, chooser: &Chooser) -> Flow<bool> {
         match chooser {
             Chooser::Kinds(kinds) => Ok(matches!(value, Value::Object(o) if kinds.iter().any(|kind| Self::exception_beneath(&o.class_now(), kind)))),
-            Chooser::Test(routine) => {
-                self.data.push(value.clone());
-                self.data.push(routine.clone());
-                self.perform(&Action::Invoke(Rc::from("")), 2)?;
-                let answer = self.drop_top()?;
+            Chooser::Test(predicate) => {
+                let answer = self.class_apply(predicate.clone(), vec![value.clone()])?;
                 Ok(self.truth(&answer))
             }
         }
     }
 
+    /// One group further in, counted as a frame is counted, so that a
+    /// group nested past the recursion limit raises as the reference
+    /// does rather than running out of stack.
+    fn part_group(&mut self, value: Value, chooser: &Chooser) -> Flow<(Option<Value>, Option<Value>)> {
+        self.reaching_further()?;
+        let outcome = self.part_group_inner(value, chooser);
+        self.answered();
+        outcome
+    }
+
     /// Part an exception by a chooser into what it takes and what it
     /// leaves, each a group of the same shape as the whole, or nothing.
     /// What a group carries besides its members goes onto both halves.
-    fn part_group(&mut self, value: Value, chooser: &Chooser) -> Flow<(Option<Value>, Option<Value>)> {
+    fn part_group_inner(&mut self, value: Value, chooser: &Chooser) -> Flow<(Option<Value>, Option<Value>)> {
         if self.chosen(&value, chooser)? { return Ok((Some(value), None)); }
         let Some((class, heading, parts)) = Self::group_parts(&value) else { return Ok((None, Some(value))) };
         let (mut taken, mut left) = (Vec::new(), Vec::new());
@@ -945,7 +995,7 @@ impl<'a> Engine<'a> {
         let mut halves = [None, None];
         for (row, half) in [taken, left].into_iter().zip(halves.iter_mut()) {
             if row.is_empty() { continue; }
-            let made = self.make_group(class.clone(), heading.clone(), row)?;
+            let made = self.derive_group(&value, class.clone(), heading.clone(), row)?;
             self.carry_over(&value, &made);
             *half = Some(made);
         }
@@ -953,16 +1003,41 @@ impl<'a> Engine<'a> {
         Ok((taken, left))
     }
 
+    /// A group made from part of another: the class's own deriving
+    /// routine where it has one, else the plainest group the members
+    /// call for, as the reference makes it.
+    fn derive_group(&mut self, whole: &Value, class: Rc<Class>, heading: Value, row: Vec<Value>) -> Flow<Value> {
+        let word = self.lang.group_derive.clone().unwrap_or_else(|| "derive".to_string());
+        if let Some(member) = self.class_value(&class, &word) {
+            let bound = self.bind_class_value(member, Some(whole.clone()), class.clone())?;
+            let made = self.class_apply(bound, vec![Value::array(row.clone())])?;
+            if !matches!(&made, Value::Object(o) if self.exception_class(&o.class_now()) && self.stands_on(&o.class_now(), 37)) {
+                return Err("TypeError: derive must return an instance of BaseExceptionGroup".into());
+            }
+            return Ok(made);
+        }
+        let base = self.furnished(37).unwrap_or(class);
+        let source = Value::array(row.clone());
+        self.make_group(base, heading, source, row)
+    }
+
     /// The notes, the cause, the hushing flag and the traceback of a
     /// group go onto a group made from part of it.
     fn carry_over(&self, from: &Value, onto: &Value) {
         let (Value::Object(source), Value::Object(target)) = (from, onto) else { return };
-        let carried = [&self.lang.notes_member, &self.lang.exception_cause, &self.lang.exception_suppress, &self.lang.traceback_member];
+        let carried = [&self.lang.notes_member, &self.lang.exception_cause, &self.lang.exception_context, &self.lang.exception_suppress, &self.lang.traceback_member];
         let source = source.fields.borrow();
         let mut target = target.fields.borrow_mut();
         for key in carried.into_iter().flatten() {
             let Some((_, held)) = source.iter().find(|(n, _)| n == key) else { continue };
-            let held = match held { Value::Array(row) => Value::array(row.to_vec()), other => other.clone() };
+            // Only a sequence of notes is handed to both halves; notes
+            // that are not a sequence are left behind, as the reference does.
+            let held = match held {
+                Value::Array(row) => Value::array(row.to_vec()),
+                Value::Tuple(row) if self.lang.notes_member.as_deref() == Some(key) => Value::array(row.to_vec()),
+                _ if self.lang.notes_member.as_deref() == Some(key) => continue,
+                other => other.clone(),
+            };
             match target.iter_mut().find(|(n, _)| n == key) {
                 Some(place) => place.1 = held,
                 None => target.push((key.clone(), held)),
@@ -1101,16 +1176,23 @@ impl<'a> Engine<'a> {
         let Some((class, heading, _)) = Self::group_parts(&whole) else { return Err(unready.into()) };
         let [given] = args else { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()) };
         if derive {
-            let members = match given.contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
-            return self.make_group(class, heading, members);
+            let members = match given.contents() {
+                Value::Array(row) | Value::Tuple(row) => row.to_vec(),
+                Value::Object(o) if self.class_value(&o.class_now(), "__getitem__").is_some() => self.special_items(given)?,
+                _ => Vec::new(),
+            };
+            let base = self.furnished(37).unwrap_or(class);
+            return self.make_group(base, heading, given.clone(), members);
         }
+        let is_callable = self.class_work(2, vec![given.clone()])?.is_true();
         let chooser = match given {
             Value::Class(class) if self.exception_class(class) => Chooser::Kinds(vec![class.clone()]),
-            Value::Tuple(row) if row.iter().all(|kind| matches!(kind, Value::Class(class) if self.exception_class(class))) => {
-                Chooser::Kinds(row.iter().filter_map(|kind| match kind { Value::Class(class) => Some(class.clone()), _ => None }).collect())
+            Value::Tuple(row) if row.iter().all(|kind| matches!(kind.contents(), Value::Class(class) if self.exception_class(&class))) => {
+                Chooser::Kinds(row.iter().filter_map(|kind| match kind.contents() { Value::Class(class) => Some(class.clone()), _ => None }).collect())
             }
-            Value::Routine(_) | Value::Method(..) => Chooser::Test(given.clone()),
-            _ => return Err(unready.into()),
+            Value::Class(_) | Value::Tuple(_) => return Err("TypeError: second argument (exception types or predicate) must be an exception type, a tuple of exception types, or a predicate".into()),
+            _ if is_callable => Chooser::Test(given.clone()),
+            _ => return Err("TypeError: second argument (exception types or predicate) must be an exception type, a tuple of exception types, or a predicate".into()),
         };
         let (taken, left) = self.part_group(whole, &chooser)?;
         Ok(if split { Value::tuple(vec![taken.unwrap_or(Value::Null), left.unwrap_or(Value::Null)]) } else { taken.unwrap_or(Value::Null) })
@@ -4448,7 +4530,7 @@ impl<'a> Engine<'a> {
             false => raised.clone(),
             true => {
                 let Some(base) = self.furnished(37) else { return Err(unready.into()) };
-                self.make_group(base, Value::text(""), vec![raised.clone()])?
+                self.make_group(base, Value::text(""), Value::tuple(vec![raised.clone()]), vec![raised.clone()])?
             }
         };
         let mut remainder = Some(whole.clone());
@@ -4492,8 +4574,8 @@ impl<'a> Engine<'a> {
             1 => left.into_iter().next(),
             _ => {
                 let Some((class, heading, _)) = Self::group_parts(&whole) else { return Err(unready.into()) };
-                let members = left.iter().flat_map(|part| Self::group_parts(part).map_or_else(|| vec![part.clone()], |(_, _, parts)| parts)).collect();
-                let joined = self.make_group(class, heading, members)?;
+                let members: Vec<Value> = left.iter().flat_map(|part| Self::group_parts(part).map_or_else(|| vec![part.clone()], |(_, _, parts)| parts)).collect();
+                let joined = self.make_group(class, heading, Value::tuple(members.clone()), members)?;
                 self.carry_over(&whole, &joined);
                 Some(joined)
             }
@@ -4508,7 +4590,7 @@ impl<'a> Engine<'a> {
         if afresh.len() == 1 && left.is_none() { return Err(Fault::Thrown(afresh.remove(0))); }
         let Some(base) = self.furnished(37) else { return Err(unready.into()) };
         afresh.extend(left);
-        Err(Fault::Thrown(self.make_group(base, Value::text(""), afresh)?))
+        Err(Fault::Thrown(self.make_group(base, Value::text(""), Value::tuple(afresh.clone()), afresh)?))
     }
 
     /// Everything the walk was keeping is let go and it hands out
@@ -8328,6 +8410,9 @@ impl<'a> Engine<'a> {
         // the class before the key.
         if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
             if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
+                if self.exception_class(c) && matches!(hook.contents(), Value::Null) {
+                    return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
+                }
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
                 } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
@@ -8336,6 +8421,28 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words)) => Err(words),
                     Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
                 };
+            }
+            // A group class is parameterisable, as the reference's is;
+            // the other fault kinds are not subscriptable at all.
+            if self.exception_class(c) {
+                if c.all_fields().iter().any(|(n, _)| n == "\0group") {
+                    let module = match self.import_module("types") {
+                        Ok(module) => module,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    };
+                    let maker = match self.class_get(module, "GenericAlias", false) {
+                        Ok(maker) => maker,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    };
+                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
+                        Ok(alias) => Ok(alias),
+                        Err(Fault::Note(words)) => Err(words),
+                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
+                    };
+                }
+                return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
             }
         }
         // A thing standing for a whole number is that number wherever a
@@ -10756,8 +10863,10 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 if self.exception_class(&class) {
-                    if self.class_value(&class, self.class_word("allocate")).is_some() {
-                        let made = self.class_make(class, args)?;
+                    // A subclass that writes its own maker is made through
+                    // it; the builtin classes still make themselves here.
+                    if self.class_value(&class, self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(_))) {
+                        let made = self.class_construct(class, args)?;
                         self.data.push(made);
                         return Ok(());
                     }
