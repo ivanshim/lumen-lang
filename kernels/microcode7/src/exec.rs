@@ -3585,7 +3585,18 @@ impl<'a> Machine<'a> {
             }
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#') {
                 self.booked_write(slot.at, &slot.ident, Some(stored.clone()));
-                if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
+                let binding = match &destination.cells.borrow()[slot.at] {
+                    Value::Shared(cell) => Some(cell.clone()),
+                    _ => None,
+                };
+                match binding {
+                    Some(cell) => { *cell.borrow_mut() = stored; }
+                    // Released compiler temporaries have no binding left.
+                    // Recreate its outer cell so the next imported read
+                    // removes that layer, rather than the collection's cell.
+                    None => { destination.cells.borrow_mut()[slot.at] = Value::Shared(Rc::new(RefCell::new(stored))); }
+                }
+                return Ok(());
             }
             if Rc::ptr_eq(destination, &self.outermost) { self.booked_write(slot.at, &slot.ident, Some(stored.clone())); }
             destination.cells.borrow_mut()[slot.at] = stored;
@@ -5020,6 +5031,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
+        if let Some(template) = &body.definition { return self.code_handle(template); }
         let address = Rc::as_ptr(body) as usize;
         if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
             return Value::Wrapped(7, parts.into());
@@ -6854,6 +6866,10 @@ impl<'a> Machine<'a> {
                             let mut entries = self.attribute_entries(t);
                             let mut found = false;
                             for (stored, held) in entries.iter_mut() {
+                                // A key written among the holdings a
+                                // thing shows takes its new value here;
+                                // a module's own bindings keep their
+                                // cells by way of the restoring below.
                                 if self.keys_agree(stored, &wanted)? { *held = value.clone(); found = true; break; }
                             }
                             if !found { entries.push((wanted, value.clone())); }
@@ -8601,10 +8617,32 @@ impl<'a> Machine<'a> {
     /// unrelated locals in each defining call.
     fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Value {
         let environment = self.closure_environment(program, defining);
-        if (self.table.has_any("ext.stmt.class.special") && !program.frameless) || crate::ghost::bidding() {
-            crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(program), Rc::downgrade(&environment)));
+        let lambda = self.table.strings("ext.stmt.function.anonymous").iter().any(|word| word == &program.ident);
+        let function = !program.ident.starts_with('#') && (!program.ident.starts_with('<') || lambda);
+        // Python makes a new function each time a definition is reached,
+        // even when its defining environment is the unchanged module root.
+        // Its code remains the compiled definition; its attributes belong
+        // to this creation, including the globals' name at this instant.
+        let bound = if function && self.table.flag("ext.stmt.function.closes_over") {
+            let mut instance = (**program).clone();
+            instance.definition = Some(program.definition.as_ref().unwrap_or(program).clone());
+            let namespace = program.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+            instance.framed_in = None;
+            for key in self.table.strings("ext.system.module.name") {
+                match self.mapping_read(&namespace, key) {
+                    Ok(Some(Value::Text(name))) => { instance.framed_in = Some(name); break; }
+                    Ok(Some(_)) => break,
+                    _ => {}
+                }
+            }
+            Rc::new(instance)
+        } else {
+            program.clone()
+        };
+        if (self.table.has_any("ext.stmt.class.special") && !bound.frameless) || crate::ghost::bidding() {
+            crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(&bound), Rc::downgrade(&environment)));
         }
-        Value::Bound(program.clone(), environment)
+        Value::Bound(bound, environment)
     }
 
     fn frame_for(&self, program: &Rc<Routine>, env: &Rc<Env>) -> Rc<Env> {
@@ -15011,21 +15049,33 @@ impl<'a> Machine<'a> {
                 // An additional non-string key can compare equal to a name,
                 // so that case retains the full mapping protocol below.
                 if let Value::Text(word) = key {
+                    let module = self.namespace_holding(&Value::Thing(t.clone())).is_some();
                     let members = t.holds.borrow();
                     if members.iter().all(|entry| entry.0 != "\0keys") {
                         let answer = members.iter().find(|(name, item)| name == word.as_ref()
                             && !name.starts_with('#') && !name.starts_with('\0') && !matches!(item.settled(), Value::Unset));
-                        return answer.map(|entry| Some(entry.1.clone())).ok_or_else(|| self.bad_answer());
+                        // A module's cell binds the name; the value it
+                        // holds can itself be the list's shared storage.
+                        // Strip only the binding, as attribute_entries does.
+                        return answer.map(|entry| Some(match &entry.1 {
+                            Value::Shared(binding) if module => binding.borrow().clone(),
+                            value => value.clone(),
+                        })).ok_or_else(|| self.bad_answer());
                     }
                 }
                 // The key may be a name of any kind the dictionary can
-                // hold, found by the same equality the subscript uses.
+                // hold, found by the same equality the subscript uses;
+                // one that is not there is the missing key a dictionary
+                // names, since these holdings stand in for one.
                 let wanted = self.hash_key(key)?;
                 let mut found = None;
                 for (stored, value) in self.attribute_entries(t) {
                     if self.keys_agree(&stored, &wanted)? { found = Some(value); break; }
                 }
-                found.ok_or_else(|| self.bad_answer())?
+                match found {
+                    Some(value) => value,
+                    None => return Err(format!("KeyError: '{}'", key.bare()).into()),
+                }
             }
             (Prim::Erase, [one @ Value::Attributes(t), key]) => {
                 let wanted = self.hash_key(key)?;
@@ -22887,7 +22937,11 @@ impl Machine<'_> {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
         };
-        let built = match crate::build::build_module_position(&ready, self.table, &hidden, Rc::from(filename)) {
+        // The routines of a module are built beside the dictionary of
+        // the module's own names, so that what they read as their world
+        // names reads that dictionary and no other.
+        let namespace = Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into()))));
+        let built = match crate::build::build_module_position(&ready, self.table, &hidden, Rc::from(filename), Some(Value::Shared(namespace.clone())), Some(Rc::from(path))) {
             Ok(built) => built,
             Err((words, line, (column, end_column, end_line))) => return Err(self.text_unreadable_at(0, words, filename, line, column, Some((end_line, end_column)), &text)),
         };
@@ -22952,6 +23006,15 @@ impl Machine<'_> {
         if let (Some(word), Some(directories)) = (path_word, search) {
             if !members.iter().any(|entry| entry.0 == word) { members.push((word.to_owned(), directories)); }
         }
+        // The builtins word stands among the module's own names, the
+        // same way the world's own dictionary keeps it.
+        let natives = self.natives_kept();
+        for word in self.table.strings("ext.system.module.builtins") {
+            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::Shared(natives.clone()))); }
+        }
+        // Every name the text can reach keeps its own cell under this
+        // hidden map, so a binding taken away and put back reaches the
+        // very slot the module's own code reads through.
         let slot_links = exported.iter().enumerate().map(|(position, name)|
             (Value::text(name), self.outermost.cells.borrow()[beginning + position].clone())).collect::<Vec<_>>();
         members.push(("\0bindings".to_owned(), Value::Dict(Rc::new(slot_links.into()))));
@@ -22963,6 +23026,11 @@ impl Machine<'_> {
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
         self.namespace_books.retain(|(name, _)| name != path);
+        // The namespace the module's routines were built beside is the
+        // very holdings of the module itself, so an attribute written,
+        // a key added through those globals and a name the dynamic code
+        // reads all meet in one place.
+        *namespace.borrow_mut() = Value::Attributes(match &value { Value::Thing(t) => t.clone(), _ => unreachable!() });
         self.imported.insert(path.into(), value.clone());
         let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
@@ -23253,6 +23321,9 @@ fn spells_key(key: &Value, name: &str) -> bool {
 
 /// The value a dictionary in a cell keeps under a name.
 fn looked_up(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
+    if let Value::Attributes(space) = &*book.borrow() {
+        return space.holds.borrow().iter().find(|(word, _)| word == name).map(|(_, kept)| kept.clone());
+    }
     let Value::Dict(entries) = &*book.borrow() else { return None };
     entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, worth)| worth.clone())
 }
@@ -23722,6 +23793,17 @@ impl<'a> Machine<'a> {
         self.world_kept()
     }
 
+    /// The dictionary the program now running reads its world names
+    /// through: the namespace it was built beside, where its maker    /// passed one in; failing that, the world's own standing one.
+    fn standing_world(&mut self) -> Rc<RefCell<Value>> {
+        let made_beside = self.frames_named.last().and_then(|program| program.globe.clone());
+        match made_beside {
+            Some(Value::Shared(cell)) | Some(Value::Mutable(cell, _)) => cell,
+            Some(Value::Dict(entries)) => Rc::new(RefCell::new(Value::Dict(entries))),
+            _ => self.book_about(true),
+        }
+    }
+
     /// The names about a call given nothing: the outermost dictionary;
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
@@ -23756,8 +23838,10 @@ impl<'a> Machine<'a> {
                 Some(Value::Thing(space)) => Rc::new(RefCell::new(Value::Attributes(space.clone()))),
                 _ => self.world_kept(),
             }
-        } else if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
-            self.book_about(op == Prim::WorldBook)
+        } else if op == Prim::WorldBook {
+            self.standing_world()
+        } else if Rc::ptr_eq(frame, &self.outermost) {
+            self.book_about(false)
         } else {
             let mut entries = Vec::new();
             if let Some(program) = self.frames_named.last() {
@@ -24109,7 +24193,8 @@ impl<'a> Machine<'a> {
                     let namespace = self.loaded_spaces.get(&self.written_in).and_then(|owner| self.imported.get(owner));
                     if let Some(Value::Thing(space)) = namespace { return Ok(Value::Attributes(space.clone())); }
                 }
-                Ok(Value::Shared(self.book_about(op == Prim::WorldBook)))
+                let book = if op == Prim::WorldBook { self.standing_world() } else { self.book_about(false) };
+                Ok(Value::Shared(book))
             }
             // __import__(name, globals=None, locals=None, fromlist=(),
             // level=0): the level is weighed before the name is fetched,
@@ -24518,6 +24603,7 @@ impl<'a> Machine<'a> {
         if file.is_none() {
             let spoken_as = v.get(1).map(Value::settled).and_then(|held| match held {
                 Value::Dict(pairs) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(k) if k.as_ref() == "__name__")).and_then(|(_, kept)| match kept { Value::Text(named) => Some(named.to_string()), _ => None }),
+                Value::Attributes(space) => space.holds.borrow().iter().find(|(word, _)| word == "__name__").and_then(|(_, kept)| match kept.settled() { Value::Text(named) => Some(named.to_string()), _ => None }),
                 _ => None,
             });
             self.report_escape_notices(&source, "<string>", spoken_as.as_deref())?;
@@ -24544,7 +24630,7 @@ impl<'a> Machine<'a> {
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
-            (None, near) => (caller_book.unwrap_or_else(|| self.book_about(true)), near),
+            (None, near) => (caller_book.unwrap_or_else(|| self.standing_world()), near),
         };
         // A dictionary handed over for the outer names is given the
         // builtins as well, unless it names a dictionary of its own.

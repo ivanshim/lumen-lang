@@ -271,6 +271,7 @@ impl<'a> Engine<'a> {
             let Some(Value::Routine(template)) = code.1.first() else { return Err(self.class_refusal()); };
             let born = self.ambient_builtins();
             let mut made = (**template).clone();
+            if let Some(named) = self.captured_title(globe) { made.home = Some(named); }
             made.globe = Some(globe.clone());
             made.born = Some(born);
             made.revised = RefCell::new(None);
@@ -1612,6 +1613,7 @@ impl<'a> Engine<'a> {
                 let Some(held @ (Value::Binding(_) | Value::Bond(_))) = wrapped.1.first() else { return Err("TypeError: arg 5 (closure) must contain cells".into()); };
                 made.enclosed.push((*at, held.clone()));
             }
+            if let Some(named) = self.captured_title(&globals) { made.home = Some(named); }
             made.globe = Some(globals);
             made.born = Some(self.ambient_builtins());
             made.revised = RefCell::new(None);
@@ -2887,6 +2889,60 @@ impl<'a> Engine<'a> {
     /// program set on it: the name of the namespace a routine made by
     /// hand was made in, caught when it was made (None where that
     /// namespace named nothing), else the module its file was read as.
+    /// Whether a name the compiler gave a routine stands for a function
+    /// of its own to carry a namespace name: a real name does, the word
+    /// the language writes an anonymous routine under does, and a mark
+    /// standing for a piece of the program around it does not.
+    pub(super) fn takes_a_title(&self, ident: &str) -> bool {
+        if ident.starts_with('#') { return false; }
+        if !ident.starts_with('<') { return true; }
+        self.lang.lambda_name.iter().any(|word| word == ident)
+    }
+    /// The name the namespace a routine is made beside goes by, caught
+    /// as the routine is made: the name it answers to now, or that it
+    /// names nothing at all. Nothing at all here means the routine was
+    /// made beside no namespace worth asking.
+    pub(super) fn captured_title(&self, globe: &Value) -> Option<Option<Rc<str>>> {
+        let held = match globe {
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().clone(),
+            other => other.clone(),
+        };
+        let named_in = match &held {
+            Value::Map(pairs) => pairs,
+            Value::Fields(_) => return self.titled_fields(&held),
+            _ => return None,
+        };
+        for word in &self.lang.module_names {
+            if let Some(worth) = named_in.iter().find(|(key, _)| matches!(key, Value::Text(name) if name.as_ref() == word.as_str())).map(|(_, worth)| worth.contents()) {
+                return Some(match worth { Value::Text(named) => Some(named.clone()), _ => None });
+            }
+        }
+        Some(None)
+    }
+    /// Capture a function's name from its globals, including the main
+    /// program's live dictionary when no imported namespace was attached.
+    pub(super) fn creation_title(&mut self, routine: &Routine) -> Option<Option<Rc<str>>> {
+        if !self.takes_a_title(&routine.ident) || self.lang.module_names.is_empty() { return None; }
+        match &routine.globe {
+            Some(globals) => self.captured_title(globals),
+            None => {
+                let globals = Value::Bond(self.book_here(true));
+                self.captured_title(&globals)
+            }
+        }
+    }
+    /// The same question asked of the face a thing holds: its entries
+    /// stand as rows of its own rather than of a map.
+    fn titled_fields(&self, held: &Value) -> Option<Option<Rc<str>>> {
+        let Value::Fields(o) = held else { return None };
+        let fields = o.fields.borrow();
+        for word in &self.lang.module_names {
+            if let Some(worth) = fields.iter().find(|(n, _)| n == word).map(|(_, worth)| worth.contents()) {
+                return Some(match worth { Value::Text(named) => Some(named.clone()), _ => None });
+            }
+        }
+        Some(None)
+    }
     pub(super) fn routine_module(&self, f: &Routine) -> Value {
         match &f.home {
             Some(named) => named.as_ref().map_or(Value::Null, |word| Value::text(word)),
@@ -3614,7 +3670,33 @@ impl<'a> Engine<'a> {
                 (Value::Bond(cell),Value::Bond(given)) if Rc::ptr_eq(cell,given)=>{},
                 (Value::Bond(cell),_) if through=>{*cell.borrow_mut()=v;},
                 _=>members[i].1=v },
-            (None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
+            (None,Some(v))=>{
+                // A binding of the module's own put back after it was
+                // taken away goes into the very cell its code reads,
+                // where the name had one of its own.
+                if through {
+                    if let Some((_, Value::Map(links))) = members.iter().find(|(n,_)| n == "\0bindings") {
+                        if let Some(link) = links.iter().find(|(key,_)| matches!(key, Value::Text(word) if word.as_ref() == name)).map(|(_, held)| held.clone()) {
+                            if let Value::Bond(cell)|Value::Binding(cell)|Value::Collection(cell,_) = &link { *cell.borrow_mut() = v; }
+                            members.push((name.into(), link));
+                            return Ok(());
+                        }
+                    }
+                }
+                members.push((name.into(),v));
+            },
+            (Some(i),None)=>{
+                // A binding taken away leaves its cell empty, so the
+                // name is gone from the very slot the module's own code
+                // reads through and not only from the face it shows.
+                if through {
+                    if let Value::Bond(cell)|Value::Binding(cell)|Value::Collection(cell,_) = &members[i].1 {
+                        *cell.borrow_mut() = Value::Blank;
+                    }
+                }
+                members.remove(i);
+            },
+            _=>return Err(())} Ok(())
     }
     /// Whether the class, or one it stands on, names the members its
     /// things may hold. Such a thing keeps no namespace of its own.

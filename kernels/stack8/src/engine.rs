@@ -5239,6 +5239,12 @@ impl<'a> Engine<'a> {
             match &instrs[pc] {
                 Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!self.lang.class_special.is_empty() || !program.enclosing.is_empty() || program.annotation.is_some()) => {
                     let mut closed = (**program).clone();
+                    // A routine the compiler named within marks of its
+                    // own stands as a piece of the program around it
+                    // and keeps no namespace name of its own; the word
+                    // the language writes an anonymous routine under is
+                    // such a mark and yet is a function all the same.
+                    if let Some(title) = self.creation_title(program) { closed.home = Some(title); }
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
                         closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
@@ -5259,9 +5265,15 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Const(v) => {
                     // A definition reached again makes a function of its
-                    // own, the same words though it has.
+                    // own, the same words though it has, and each one
+                    // carries the name its namespace went by as it was
+                    // made.
                     let value = match v {
-                        Value::Routine(body) if self.fresh_routines => Value::Routine(Rc::new((**body).clone())),
+                        Value::Routine(body) if self.fresh_routines => {
+                            let mut made = (**body).clone();
+                            if let Some(title) = self.creation_title(body) { made.home = Some(title); }
+                            Value::Routine(Rc::new(made))
+                        }
                         other => other.clone(),
                     };
                     self.data.push(self.keep_collection(value));
@@ -11547,6 +11559,7 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 let mut made = (*program).clone();
+                if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
                 made.held = carried;
                 Value::Routine(Rc::new(made))
             }
@@ -22736,6 +22749,18 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
+        // A module's routines are made beside the module's own face:
+        // the very holdings names are read from and written to, so a
+        // name they read, `globals()` asked from within them, an
+        // attribute of the module and a key written through those
+        // globals all meet in one place.
+        self.made += 1;
+        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
+            fields: RefCell::new(Vec::new()), mark: self.made,
+        });
+        local.globe = Some(Value::Fields(object.clone()));
+        local.born = Some(self.native_dict());
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
             Ok(program) => program,
             Err(said) => {
@@ -22796,14 +22821,21 @@ impl Engine<'_> {
         }
         if self.lang.module_path.is_some() && !fields.iter().any(|(name, _)| name == "__package__") { fields.push(("__package__".into(), Value::text(package_owner))); }
         fields.push(("\0module-owner".into(), Value::text(path)));
-        self.made += 1;
-        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
-            fields: RefCell::new(fields), mark: self.made,
-        });
+        // The builtins word stands among the module's own names, as the
+        // reference keeps it in every module's dictionary.
+        let natives = self.natives_book();
+        for word in &self.lang.module_builtins {
+            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), Value::Bond(natives.clone()))); }
+        }
+        // Every name the text can reach keeps its own cell under this
+        // hidden map, so a binding taken away and put back reaches the
+        // very slot the module's own code reads through.
         let links = names.iter().enumerate().map(|(i, name)|
             (Value::text(name), self.world[offset + i].clone())).collect::<Vec<_>>();
-        object.fields.borrow_mut().push(("\0bindings".into(), Value::Map(Rc::new(links.into()))));
+        fields.push(("\0bindings".into(), Value::Map(Rc::new(links.into()))));
+        // The names now stand in the face the routines were made
+        // beside, the one holdings place that has been waiting for them.
+        *object.fields.borrow_mut() = fields;
         let module = Value::Object(object);
         self.module_books.retain(|(name, _)| name != path);
         self.modules.insert(path.to_string(), module.clone());
@@ -23632,6 +23664,40 @@ impl Engine<'_> {
         self.outer_book_made()
     }
 
+    /// The dictionary a routine reads its outer names through: the one
+    /// it was made in, or the one handed to it in place of that, where
+    /// it keeps one of those; else the outermost dictionary the run
+    /// stands in, as the reference reads a frame's own globals.
+    fn routine_outer(&mut self, program: &Rc<Routine>) -> Rc<RefCell<Value>> {
+        if let Some(book) = self.constructor_book(program) { return book; }
+        if let Some(held) = &program.globe {
+            let cell = match held {
+                Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.clone(),
+                Value::Map(_) | Value::Fields(_) => Rc::new(RefCell::new(held.clone())),
+                _ => return self.book_here(true),
+            };
+            return cell;
+        }
+        self.book_here(true)
+    }
+
+    /// The same, asked from wherever a run now stands: the routine
+    /// behind the frame at the top answers for it, since a builtin
+    /// called through a name rather than spelled out still stands
+    /// inside the call it was made in.
+    fn running_outer(&mut self) -> Rc<RefCell<Value>> {
+        let stands = self.trace_frame.as_ref().and_then(|frame| {
+            frame.fields.borrow().iter().find(|(name, _)| name == "\0routine").and_then(|(_, held)| match held {
+                Value::Routine(code) => Some(code.clone()),
+                _ => None,
+            })
+        });
+        match stands {
+            Some(code) => self.routine_outer(&code),
+            None => self.book_here(true),
+        }
+    }
+
     /// The names about a call with nothing given: the outermost
     /// dictionary, or inside a routine a fresh dictionary of its own
     /// names; listed in order for dir.
@@ -23654,14 +23720,10 @@ impl Engine<'_> {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
                 value => Rc::new(RefCell::new(value)),
             }
-        } else if kind == Builtin::OuterNames && self.reading_in.is_none() {
-            let module = program.written_in.as_ref().and_then(|source| self.module_slots.get(source)).and_then(|(_, path)| self.modules.get(path));
-            match module {
-                Some(Value::Object(space)) => Rc::new(RefCell::new(Value::Fields(space.clone()))),
-                _ => self.outer_book_made(),
-            }
-        } else if kind == Builtin::OuterNames || program.body_of_all {
-            self.book_here(kind == Builtin::OuterNames)
+        } else if kind == Builtin::OuterNames {
+            self.routine_outer(program)
+        } else if program.body_of_all {
+            self.book_here(false)
         } else {
             let mut pairs = Vec::new();
             for (name, held) in program.idents.iter().zip(frame.iter()) {
@@ -23972,7 +24034,8 @@ impl Engine<'_> {
                         if let Some(Value::Object(space)) = self.modules.get(path) { return Ok(Value::Fields(space.clone())); }
                     }
                 }
-                Ok(Value::Bond(self.book_here(builtin == Builtin::OuterNames)))
+                let book = if builtin == Builtin::OuterNames { self.running_outer() } else { self.book_here(false) };
+                Ok(Value::Bond(book))
             }
             // A dictionary fresh and empty every time it is asked for,
             // and never the one the world answers `locals()` with: the
@@ -24401,7 +24464,7 @@ impl Engine<'_> {
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
-            (None, near) => (caller_book.unwrap_or_else(|| self.book_here(true)), near),
+            (None, near) => (caller_book.unwrap_or_else(|| self.running_outer()), near),
         };
         // A dictionary given for the outer names is given the builtins
         // too, unless it names a dictionary of its own for them; a

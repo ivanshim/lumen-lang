@@ -351,7 +351,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, None, None, false, false)
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -360,7 +360,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, false, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, false, false)
         .map_err(|said| (said, at.get(), hard.get(), column.get()))
 }
 
@@ -369,7 +369,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
 /// statement that means one thing in a program of its own and another
 /// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, None, None, true, false)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -387,7 +387,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true, false)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, None, None, Some((inside, knows)), within, true, false)
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -406,21 +406,21 @@ pub fn build_within_at(
 ) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get(), column.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, None, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get(), column.get()))
 }
 
-pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String], origin: Rc<str>) -> Result<Built, (String, u32, (usize, usize, u32))> {
+pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String], origin: Rc<str>, beside: Option<Value>, named: Option<Rc<str>>) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), Some((&line, &fatal, &span)), None, None, false, false)
+    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false)
         .map_err(|message| (message, line.get(), span.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, true, false).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, true, false).map_err(|said| (said, at.get()))
 }
 
 /// Text handed over to be read while the run goes: as one expression
@@ -447,13 +447,13 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
-        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), None, None, None, mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false)?;
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false)?;
         (pass.bound_globally, pass.native_exports)
     } else { (Vec::new(), HashSet::new()) };
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false)
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, beside, None, named, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -752,7 +752,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     };
     let mut body = body;
     if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-    let program = Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { definition: None, class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -1886,7 +1886,7 @@ impl<'a> Builder<'a> {
             }
             flags = (flags & !128) | 512;
         }
-        Ok(constant(Value::Routine(Rc::new(Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { definition: None, class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
     fn annotation_spelling(&self, first: usize, last: usize) -> String {
@@ -1981,7 +1981,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { definition: None, class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -11113,12 +11113,17 @@ impl<'a> Builder<'a> {
         let mut preceding = 0;
         let mut clause_seen = false;
         let mut binding_names = false;
+        // The parameters of a lambda stand in the argument's own place
+        // and mark their defaults there; the body's colon ends them.
+        let mut defaults_open = 0usize;
         for at in self.pos..self.tokens.len() {
             let token = &self.tokens[at];
             if token.shape != Shape::Sign && token.shape != Shape::Bare { continue; }
             let word = token.lexeme.as_str();
             if nesting.is_empty() {
-                if word == "=" && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
+                if self.table.spells("ext.op.lambda", word) { defaults_open += 1; }
+                else if word == ":" { defaults_open = defaults_open.saturating_sub(1); }
+                if word == "=" && defaults_open == 0 && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
                     if at > begins + 1 && self.table.has_any("ext.builtin.exceptions.syntax") {
                         let spreading = match self.tokens[begins].lexeme.as_str() {
                             "*" => Some("iterable"), "**" => Some("keyword"), _ => None,
@@ -11752,7 +11757,7 @@ impl<'a> Builder<'a> {
             param_slots.reverse();
             let mut body = sequence(s);
             if table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-            let program = Routine { class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
+            let program = Routine { definition: None, class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

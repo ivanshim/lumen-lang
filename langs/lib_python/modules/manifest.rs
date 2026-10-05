@@ -224,6 +224,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("textwrap", include_str!("textwrap.py"), "textwrap.py"),
     ("threading", include_str!("threading.py"), "threading.py"),
     ("time", include_str!("time.py"), "time.py"),
+    ("timeit", include_str!("timeit.py"), "timeit.py"),
     ("token", include_str!("token.py"), "token.py"),
     ("tokenize", include_str!("tokenize.py"), "tokenize.py"),
     ("traceback", include_str!("traceback.py"), "traceback.py"),

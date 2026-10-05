@@ -1806,6 +1806,10 @@ impl<'a> Machine<'a> {
                 Value::Wrapped(35, items) => matches!(items.first(), Some(Value::Bound(_, other)) if Rc::ptr_eq(other, room)),
                 _ => false,
             }));
+            fresh.framed_in = match globals.settled() {
+                Value::Dict(pairs)=>pairs.iter().find(|(k,_)|matches!(k,Value::Text(t) if t.as_ref()=="__name__")).and_then(|(_,v)|match v.settled() { Value::Text(named)=>Some(named.clone()), _=>None }),
+                _=>None,
+            };
             fresh.globe = Some(globals);
             fresh.born = Some(self.builtins_here());
             let source = Rc::new(fresh);
@@ -2411,7 +2415,9 @@ impl<'a> Machine<'a> {
         if let Some((_, members)) = kept {
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
-        if code.globe.is_some() {
+        if code.globe.is_some() || code.definition.is_some() {
+            // The name a routine was made beside was caught when it was
+            // made, and no later change of that namespace moves it.
             return match &code.framed_in { Some(named) => Value::text(named), None => Value::Nil };
         }
         Value::text(&self.routine_home(code))
@@ -3741,10 +3747,34 @@ impl<'a> Machine<'a> {
                     }
                 }
                 // A loaded namespace keeps each binding in a cell its own
-                // code reads through; a new value goes into the cell.
+                // code reads through; a new value goes into the cell, and
+                // one taken away leaves the cell empty so every reading
+                // of the name -- compiled ones included -- finds it gone.
                 if self.namespace_holding(&subject).is_some() {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
-                    if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = self.collection_cell(v); return Ok(Value::Nil); }
+                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) { *link.borrow_mut() = self.collection_cell(v); return Ok(Value::Nil); }
+                    if replacement.is_none() {
+                        // The cell is emptied first, so the name is gone
+                        // from compiled readings of it too; a name that
+                        // was never there falls through to the refusal
+                        // every other absent member gets.
+                        if let Some(link) = link.as_ref() { *link.borrow_mut() = Value::Unset; }
+                        if Self::change_entry(&mut t.holds.borrow_mut(), key, None) { return Ok(Value::Nil); }
+                    }
+                    if let Some(v) = replacement.clone() {
+                        // A binding of the module's own put back after
+                        // it was taken away goes into the very cell its
+                        // code reads, where the name had one of its own.
+                        let again = t.holds.borrow().iter().find(|(word, _)| word == "\0bindings").and_then(|(_, table)| match table {
+                            Value::Dict(entries) => entries.iter().find(|(name, _)| spells_key(name, key)).map(|(_, link)| link.clone()),
+                            _ => None,
+                        });
+                        if let Some(Value::Shared(cell)) = again {
+                            *cell.borrow_mut() = self.collection_cell(v);
+                            Self::change_entry(&mut t.holds.borrow_mut(), key, Some(Value::Shared(cell)));
+                            return Ok(Value::Nil);
+                        }
+                    }
                 }
                 // A blueprint naming the entries its things hold, and
                 // holding one of its own under a name not among them,
