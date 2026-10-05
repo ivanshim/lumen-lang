@@ -12190,7 +12190,7 @@ impl<'a> Machine<'a> {
                 let name = match operation {
                     10 => "startswith", 13 => "find", 18 => "count", 19 => "index",
                     20 => "rfind", 21 => "rindex", 22 => "endswith", 39 => "translate",
-                    _ => return Err(refusal()),
+                    _ => return Err(wrong()),
                 };
                 if arguments.is_empty() {
                     let positional = if operation == 39 { " positional" } else { "" };

@@ -16429,7 +16429,7 @@ impl<'a> Engine<'a> {
                 let name = match task {
                     10 => "startswith", 13 => "find", 18 => "count", 19 => "index",
                     20 => "rfind", 21 => "rindex", 22 => "endswith", 39 => "translate",
-                    _ => return Err(unready()),
+                    _ => return Err(bad()),
                 };
                 if given.is_empty() {
                     let positional = if task == 39 { " positional" } else { "" };
