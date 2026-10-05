@@ -25,7 +25,11 @@ def _to_file_args(args):
             with open(file, 'w', encoding='utf-8') as out:
                 out.write(code)
             i += 2
-        elif a in ('-m', '-X', '-W', '-Q') and i + 1 < n:
+        elif a == '-m' and i + 1 < n:
+            file = '-m'
+            rest = args[i + 1:]
+            break
+        elif a in ('-X', '-W', '-Q') and i + 1 < n:
             i += 2
         elif len(a) > 2 and a[:2] in ('-X', '-W', '-Q'):
             i += 1
@@ -137,6 +141,7 @@ def spawn_python(*args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw):
     env = os.environ.copy()
     env['PYTHONPATH'] = os.pathsep.join(filter(None, sys.path))
     kw['env'] = env
+    kw.setdefault('stdin', subprocess.PIPE)
     kw['stdout'] = stdout
     kw['stderr'] = stderr
     return subprocess.Popen(cmd_line, **kw)

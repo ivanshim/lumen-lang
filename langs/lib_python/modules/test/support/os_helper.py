@@ -98,6 +98,13 @@ def temp_cwd(name='tempcwd', quiet=False):
         with change_cwd(temp_path, quiet=quiet) as cwd_dir:
             yield cwd_dir
 
+def create_empty_file(filename):
+    # CPython v3.14.8 / 8e6e75d9102e, Lib/test/support/os_helper.py's
+    # create_empty_file; PSF License. The file is made empty whether or
+    # not one stood there before.
+    made = open(filename, 'w')
+    made.close()
+
 def unlink(filename):
     try:
         os.unlink(filename)
