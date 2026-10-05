@@ -16403,6 +16403,7 @@ impl<'a> Machine<'a> {
                 let (bytes, times) = if matches!(&v[0], Value::Octets { .. }) { (&v[0], &v[1]) } else { (&v[1], &v[0]) };
                 let Value::Octets { cell, changeable, .. } = bytes else { unreachable!() };
                 let quantity = self.repeat_count(times)?;
+                if quantity == 1 && !*changeable { return Ok((*bytes).clone()); }
                 let cell = cell.borrow();
                 let mut result = Vec::new();
                 let size = quantity.checked_mul(cell.len()).ok_or_else(|| "OverflowError: repeated bytes are too long".to_string())?;

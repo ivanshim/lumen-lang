@@ -12782,9 +12782,11 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(op, Action::Mul) {
-            let pair = match (a, b) { (Value::Bytes(row, mutable, _), n) | (n, Value::Bytes(row, mutable, _)) => Some((row, mutable, n)), _ => None };
-            if let Some((row, mutable, n)) = pair {
+            let pair = match (a, b) { (Value::Bytes(..), n) => Some((a, n)), (n, Value::Bytes(..)) => Some((b, n)), _ => None };
+            if let Some((bytes, n)) = pair {
                 let count = self.sequence_count(n)?;
+                let Value::Bytes(row, mutable, _) = bytes else { unreachable!() };
+                if count == 1 && !*mutable { return Ok((*bytes).clone()); }
                 let row = row.borrow();
                 let size = row.len().checked_mul(count).ok_or_else(|| "OverflowError: repeated bytes are too long".to_string())?;
                 let mut out = Vec::new(); out.try_reserve(size).map_err(|_| "MemoryError: ".to_string())?;
