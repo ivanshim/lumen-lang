@@ -403,6 +403,8 @@ def _getframe(depth=0):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
 
+# Native bridge for CPython Python/sysmodule.c at v3.14.8 / 8e6e75d9102e; PSF License.
+_clear_type_descriptors = __clear_type_descriptors
 # Python audit hooks receive explicit runtime audit events in registration order.
 _audit_hooks = []
 
@@ -426,3 +428,12 @@ def _getframemodulename(depth=0):
 
 # Names supplied by the native importer and its source-backed adapters.
 builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
+
+
+def getfilesystemencoding():
+    return "utf-8"
+
+
+def getfilesystemencodeerrors():
+    return "surrogateescape"
+

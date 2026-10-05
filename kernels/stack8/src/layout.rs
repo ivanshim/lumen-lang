@@ -74,7 +74,7 @@ pub fn layout_position(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result
     let mut out = Vec::with_capacity(tokens.len());
     let mut nesting = 0usize;
     let mut levels = vec![0usize];
-    let boundary = |shape: Shape, row: usize| Token { end_row: 0, end_column: 0, shape, lexeme: String::new(), width: 0, row, column: 0 };
+    let boundary = |shape: Shape, row: usize| Token { end_row: 0, end_column: 0, shape, lexeme: String::new(), raw: None, width: 0, row, column: 0 };
     for tok in tokens {
         reached = match tok.shape {
             Shape::LineEnd => tok.row + 1,
