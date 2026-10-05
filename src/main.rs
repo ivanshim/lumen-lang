@@ -962,6 +962,23 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 emit = Some(language_from_flag(&said(&rest[1])));
                 rest = &rest[2..];
             }
+            Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2)
+                && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")) => {
+                let (module, used) = if flag == "-m" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let entry = embedded_modules::MODULES.iter().find(|entry| entry.0 == format!("{module}.__main__"))
+                    .or_else(|| embedded_modules::MODULES.iter().find(|entry| entry.0 == module));
+                let Some((_, source, _)) = entry else { eprintln!("No module named {module}"); process::exit(1); };
+                let Some(mut directory) = fresh_private_dir() else { eprintln!("Cannot create module script"); process::exit(1); };
+                directory.push("__main__.py");
+                if let Err(error) = fs::write(&directory, source) { eprintln!("Cannot create module script: {error}"); process::exit(1); }
+                file = Some(directory.to_string_lossy().into_owned());
+                language = Some(language_from_flag("python"));
+                rest = &rest[used..];
+                break;
+            }
             Some(_) | None if file.is_none() && !rest.is_empty() => {
                 file = Some(said(&rest[0]));
                 rest = &rest[1..];

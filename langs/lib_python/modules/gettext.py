@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/gettext.py; PSF License.
 """Internationalization and localization support.
 
 This module provides internationalization (I18N) and localization (L10N)
