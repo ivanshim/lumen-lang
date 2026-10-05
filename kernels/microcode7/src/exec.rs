@@ -526,6 +526,7 @@ pub struct Machine<'a> {
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
+    constructor_records: RefCell<HashMap<usize, Option<usize>>>,
     reaping: bool,
     loose_entries: RefCell<HashMap<(String, String), Value>>,
     stack_origin: usize,
@@ -1782,7 +1783,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()),
             descriptor_files: std::collections::BTreeMap::new(),
@@ -2736,6 +2737,7 @@ impl<'a> Machine<'a> {
         let lost = checked.remaining(original);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
+        self.constructor_records.borrow_mut().clear();
 
         let taken = Web::cut(&lost);
         drop(lost);
@@ -11240,11 +11242,31 @@ impl<'a> Machine<'a> {
     // The record itself stays live, so later writes to globals remain visible.
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
         let wanted = Rc::as_ptr(body);
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
+        let cached = self.constructor_records.borrow().get(&(wanted as usize)).copied();
+        let at = match cached {
+            Some(at) => at,
+            None => {
+                let at = self.routine_members.iter().position(|(candidate, _)| match candidate {
+                    crate::ghost::Ghost::Bound(code, room) => code.as_ptr() == wanted && code.strong_count() != 0 && room.strong_count() != 0,
+                    crate::ghost::Ghost::Routine(code) => code.as_ptr() == wanted && code.strong_count() != 0,
+                    _ => false,
+                });
+                self.constructor_records.borrow_mut().insert(wanted as usize, at);
+                at
+            }
+        }?;
+        // Cache the location, not its contents: global writes, deletion,
+        // and a replacement function namespace are read on every call.
+        let (candidate, record) = &self.routine_members[at];
+        let live = match candidate {
             crate::ghost::Ghost::Bound(code, room) => code.as_ptr() == wanted && code.strong_count() != 0 && room.strong_count() != 0,
             crate::ghost::Ghost::Routine(code) => code.as_ptr() == wanted && code.strong_count() != 0,
             _ => false,
-        })?;
+        };
+        if !live {
+            self.constructor_records.borrow_mut().remove(&(wanted as usize));
+            return self.constructor_world(body);
+        }
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
@@ -16051,6 +16073,14 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        // Exact native integers cannot supply user slots or collection
+        // behavior. Their arithmetic still uses the normal numeric rules.
+        if let [Value::Small(_), Value::Small(right)] = v {
+            if matches!(op, Prim::Plus | Prim::Minus | Prim::Times)
+                || *right != 0 && matches!(op, Prim::IntDiv | Prim::Mod) {
+                return self.number_work(op, v);
+            }
+        }
         if self.rules.map_union && matches!(op, Prim::BitsEither | Prim::SetAssign(0)) {
             fn mapping(value: &Value) -> Option<Value> {
                 match value {
@@ -20914,6 +20944,27 @@ impl<'a> Machine<'a> {
     }
 
     fn number_work(&mut self, op: Prim, v: &[Value]) -> Result<Value, String> {
+        if let [Value::Small(left), Value::Small(right)] = v {
+            let result = match op {
+                Prim::Plus => left.checked_add(*right),
+                Prim::Minus => left.checked_sub(*right),
+                Prim::Times => left.checked_mul(*right),
+                Prim::IntDiv | Prim::Mod if *right != 0 => {
+                    match (left.checked_div(*right), left.checked_rem(*right)) {
+                        (Some(quotient), Some(remainder)) => {
+                            let floor = remainder != 0 && (remainder < 0) != (*right < 0)
+                                && self.table.flag("ext.op.arithmetic.python_numbers");
+                            if op == Prim::IntDiv {
+                                if floor { quotient.checked_sub(1) } else { Some(quotient) }
+                            } else if floor { remainder.checked_add(*right) } else { Some(remainder) }
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(result) = result { return Ok(self.at_width(Value::Small(result))); }
+        }
         let result = {
             let sum = match op {
                 Prim::Plus => Calc::Plus,
