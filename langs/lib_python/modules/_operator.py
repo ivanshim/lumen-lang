@@ -18,8 +18,8 @@ def index(a):
                               'is deprecated, and may be removed in a future version of Python.',
                               DeprecationWarning, stacklevel=2)
             return int.__index__(answer)
-        raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
-    raise 'TypeError: value cannot be interpreted as an integer'
+        raise TypeError('__index__ returned non-int (type ' + type(answer).__name__[:200] + ')')
+    raise TypeError("'" + type(a).__name__[:200] + "' object cannot be interpreted as an integer")
 
 
 

@@ -637,11 +637,6 @@ class memoryview:
         self._check()
         return self._shape
 
-    @property
-    def c_contiguous(self):
-        self._check()
-        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
-
     def __len__(self):
         self._check()
         return self._shape[0]
@@ -801,6 +796,7 @@ class memoryview:
         result = memoryview(self)
         result._format = format
         result._itemsize = width
+        result._stride = width
         result._offsets = list(range(start, start + self.nbytes, width))
         result._shape = dimensions
         return result
