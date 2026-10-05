@@ -18084,24 +18084,18 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            // What the main module's loader answers get_source with:
-            // the text of the file this run began from, read the way
-            // CPython's SourceFileLoader reads it for linecache.
             Prim::LoaderSource => {
                 n(1)?;
-                match std::fs::read(self.entry_file.as_ref()) {
-                    Ok(bytes) => {
-                        let body = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { &bytes[3..] } else { &bytes[..] };
-                        let mut head = String::new();
-                        for (row, piece) in body.split(|byte| *byte == b'\n').take(2).enumerate() {
-                            if row > 0 || piece.len() <= 200 { head.extend(piece.iter().map(|byte| (*byte as char).to_ascii_lowercase())); }
-                        }
-                        if self.rules.has_any_ext_builtin_exceptions_syntax && (head.contains("coding: latin1") || head.contains("coding: latin-1")) {
-                            Value::text(&body.iter().copied().map(char::from).collect::<String>())
-                        } else { Value::text(&String::from_utf8_lossy(body)) }
-                    }
-                    Err(_) => return Err("ImportError: source not available through get_data()".to_string().into()),
-                }
+                let content = match std::fs::read(self.entry_file.as_ref()) {
+                    Ok(content) => content,
+                    Err(_) => return Err(String::from("ImportError: source not available through get_data()")),
+                };
+                let adapter = self.load_namespace("_tokenize")?;
+                let Some(decode) = self.attribute(&adapter, "_decode_source") else {
+                    return Err(String::from("ImportError: source decoder is unavailable"));
+                };
+                let input = self.octets(content, false);
+                self.core_run(&decode, vec![input])?
             }
             Prim::CryptoWork => {
                 let first = v.first().ok_or("TypeError: missing cryptographic operation")?;

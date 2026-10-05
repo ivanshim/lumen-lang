@@ -245,6 +245,19 @@ def read(fd, length, /):
     return _call('read', _cint(fd), _fd(length))
 
 
+def readinto(fd, buffer, /):
+    descriptor = _cint(fd)
+    view = memoryview(buffer)
+    if view.readonly:
+        raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
+    if not view.c_contiguous:
+        raise BufferError('memoryview: underlying buffer is not C-contiguous')
+    octets = view.cast('B')
+    data = _call('read', descriptor, len(octets))
+    octets[:len(data)] = data
+    return len(data)
+
+
 def write(fd, data, /):
     descriptor = _cint(fd)
     if not isinstance(data, (bytes, bytearray)):

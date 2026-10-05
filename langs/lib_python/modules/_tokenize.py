@@ -1264,3 +1264,13 @@ class TokenizerIter(object):
         if type_ == ENDMARKER:
             self.done = True
         return (type_, string, (lineno, col_offset), (end_lineno, end_col_offset), line)
+
+
+def _decode_source(source_bytes):
+    # CPython v3.14.8 Lib/importlib/_bootstrap_external.py: decode_source.
+    import tokenize
+    import _io
+    source_bytes_readline = _io.BytesIO(source_bytes).readline
+    encoding = tokenize.detect_encoding(source_bytes_readline)
+    newline_decoder = _io.IncrementalNewlineDecoder(None, True)
+    return newline_decoder.decode(source_bytes.decode(encoding[0]))

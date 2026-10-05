@@ -18073,22 +18073,15 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            // The source of the file the run was started with, as the
-            // main module's loader answers get_source with it, the way
-            // CPython's SourceFileLoader reads it for linecache.
             Builtin::LoaderSource => {
                 arity(1)?;
-                match std::fs::read(self.root_source.as_ref()) {
-                    Ok(bytes) => {
-                        let body = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { &bytes[3..] } else { &bytes[..] };
-                        let header = body.split(|byte| *byte == b'\n').take(2).flatten()
-                            .copied().map(char::from).collect::<String>().to_ascii_lowercase();
-                        if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {
-                            Value::text(&body.iter().copied().map(char::from).collect::<String>())
-                        } else { Value::text(&String::from_utf8_lossy(body)) }
-                    }
-                    Err(_) => return Err("ImportError: source not available through get_data()".into()),
-                }
+                let raw = std::fs::read(self.root_source.as_ref())
+                    .map_err(|_| "ImportError: source not available through get_data()".to_string())?;
+                let module = self.route_module("_tokenize")?;
+                let decoder = self.member_of(module, "_decode_source")?
+                    .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
+                let bytes = self.byte_make(raw, false);
+                self.call_held(decoder, vec![bytes])?
             }
             // Whether the name given is a link standing for somewhere
             // else: asked of the link itself, and not of whatever

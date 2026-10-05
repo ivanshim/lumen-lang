@@ -438,6 +438,15 @@ def breakpoint(*args, **kws):
 
 
 def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    if isinstance(file, int) or opener is not None:
+        import _pyio
+        return _pyio.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
+    import os
+    file = os.fspath(file)
+    if isinstance(file, bytes):
+        file = os.fsdecode(file)
+    if not closefd:
+        raise ValueError('Cannot use closefd=False with file name')
     # A null byte inside the name is refused before the name is looked
     # at any further, the way the reference refuses it, whatever the
     # mode.
