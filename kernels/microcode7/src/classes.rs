@@ -4287,6 +4287,9 @@ impl<'a> Machine<'a> {
                 // it.
                 if !class_only {
                     if let Value::Thing(thing) = subject {
+                        // A module already answers by the kind it was
+                        // made as; its own reader is not walked.
+                        if self.namespace_holding(subject).is_some() { return Ok(false); }
                         if let Some(Value::Blueprint(held))=self.value_class_named(subject)? {
                             if !Rc::ptr_eq(&held,&thing.blueprint()) {
                                 return Ok(Self::fault_descends(&held,c)||Self::ancestry_includes(&held,c));
@@ -4316,6 +4319,9 @@ impl<'a> Machine<'a> {
                 // not of it may still name a kind through `__class__`.
                 if let Value::Thing(t)=subject{
                     if Self::native_among(&t.blueprint(),word) { return Ok(true); }
+                    // A module already answers by the kind it was made
+                    // as; its own reader is not walked for `__class__`.
+                    if self.namespace_holding(subject).is_some() { return Ok(false); }
                     if let Some(reported)=self.value_class_named(subject)? {
                         if !self.same_thing(&reported, &Value::Blueprint(t.blueprint())) {
                             return Ok(self.reported_stands_beneath(&reported,choice));

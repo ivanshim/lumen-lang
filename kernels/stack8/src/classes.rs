@@ -3929,10 +3929,15 @@ impl<'a> Engine<'a> {
             // was made by that this second look must differ from, so a
             // proxy naming the very kind asked after is of it.
             if !subclass {
-                if let Value::Object(thing) = value {
-                    if let Some(Value::Class(held))=self.named_class_of(value)? {
-                        if !Rc::ptr_eq(&held, &thing.class_now()) {
-                            return Ok(Self::exception_beneath(&held,c)||Self::contains_class(&held,c));
+                // A module already answers by the kind it was made as;
+                // asking it for its own `__class__` would walk the
+                // module's reader, so only a laid-out thing is asked.
+                if self.module_holding(value).is_none() {
+                    if let Value::Object(thing) = value {
+                        if let Some(Value::Class(held))=self.named_class_of(value)? {
+                            if !Rc::ptr_eq(&held, &thing.class_now()) {
+                                return Ok(Self::exception_beneath(&held,c)||Self::contains_class(&held,c));
+                            }
                         }
                     }
                 }
@@ -3958,6 +3963,9 @@ impl<'a> Engine<'a> {
                 // its own `__class__`.
                 if let Value::Object(o)=value{
                     if Self::kind_among(&o.class_now(),word) { return Ok(true); }
+                    // A module already answers by the kind it was made
+                    // as; its own reader is not walked for `__class__`.
+                    if self.module_holding(value).is_some() { return Ok(false); }
                     if let Some(reported)=self.named_class_of(value)? {
                         if !self.one_place(&reported, &Value::Class(o.class_now())) {
                             return Ok(self.reported_stands_beneath(&reported, wanted));
