@@ -53,8 +53,155 @@ def NamedTemporaryFile(*args, **keywords):
     raise 'NotImplementedError: tempfile.NamedTemporaryFile needs a file to be created and opened, which this runtime does not carry'
 
 
-def TemporaryFile(*args, **keywords):
-    raise 'NotImplementedError: tempfile.TemporaryFile needs a file to be created and opened, which this runtime does not carry'
+# A file the runtime opens by descriptor alone. It stands on an
+# operating-system handle, reads and writes through the posix
+# primitives, and keeps no name of its own; the directory entry is
+# taken away as soon as the handle is made, the way an unnamed
+# temporary file works.
+class _DescriptorFile:
+    def __init__(self, descriptor, mode):
+        self._descriptor = descriptor
+        self.mode = mode
+        self._binary = 'b' in mode
+        self.encoding = None if self._binary else 'utf-8'
+        self.errors = 'strict'
+        self.closed = False
+        self.name = descriptor
+
+    def _open(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file.')
+
+    def readable(self):
+        return 'r' in self.mode or '+' in self.mode
+
+    def writable(self):
+        return 'w' in self.mode or 'a' in self.mode or 'x' in self.mode or '+' in self.mode
+
+    def seekable(self):
+        return True
+
+    def fileno(self):
+        self._open()
+        return self._descriptor
+
+    def flush(self):
+        self._open()
+
+    def write(self, data):
+        self._open()
+        if self._binary:
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
+        else:
+            if not isinstance(data, str):
+                raise TypeError('write() argument must be str, not ' + type(data).__name__)
+            data = data.encode(self.encoding, self.errors)
+        whole = len(data)
+        total = 0
+        while total < whole:
+            piece = data[total:total + 65536]
+            count = os.write(self._descriptor, piece)
+            if not count:
+                break
+            total += count
+        return total if self._binary else len(data.decode(self.encoding, self.errors))
+
+    def read(self, size=-1):
+        self._open()
+        if size is None or size < 0:
+            pieces = []
+            while True:
+                piece = os.read(self._descriptor, 65536)
+                if not piece:
+                    break
+                pieces.append(piece)
+            data = b''.join(pieces)
+        else:
+            data = os.read(self._descriptor, size)
+        return data if self._binary else data.decode(self.encoding, self.errors)
+
+    def readinto(self, buffer):
+        self._open()
+        piece = os.read(self._descriptor, min(len(buffer), 65536))
+        count = len(piece)
+        buffer[:count] = piece
+        return count
+
+    def readline(self, size=-1):
+        self._open()
+        line = bytearray()
+        while size is None or size < 0 or len(line) < size:
+            piece = os.read(self._descriptor, 1)
+            if not piece:
+                break
+            line += piece
+            if piece == b'\n':
+                break
+        data = bytes(line)
+        return data if self._binary else data.decode(self.encoding, self.errors)
+
+    def seek(self, offset, whence=0):
+        self._open()
+        return os.lseek(self._descriptor, offset, whence)
+
+    def tell(self):
+        self._open()
+        return os.lseek(self._descriptor, 0, 1)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        descriptor = self._descriptor
+        self._descriptor = -1
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+    def __enter__(self):
+        self._open()
+        return self
+
+    def __exit__(self, *ignored):
+        self.close()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        line = self.readline()
+        if not line:
+            raise StopIteration
+        return line
+
+    def __repr__(self):
+        return "<tempfile._DescriptorFile descriptor=%d mode=%r>" % (self._descriptor, self.mode)
+
+
+_sequence = 0
+
+
+def TemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None,
+                  suffix=None, prefix=None, dir=None, *, errors=None):
+    if suffix is None:
+        suffix = ''
+    if prefix is None:
+        prefix = template
+    if dir is None:
+        dir = gettempdir()
+    global _sequence
+    while True:
+        _sequence += 1
+        name = os.path.join(dir, '%s_%d_%d%s' % (prefix, os.getpid(), _sequence, suffix))
+        try:
+            descriptor = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            continue
+    os.unlink(name)
+    return _DescriptorFile(descriptor, mode)
 
 
 def SpooledTemporaryFile(*args, **keywords):

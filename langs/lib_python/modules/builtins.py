@@ -492,14 +492,14 @@ class memoryview:
             self._shape = object._shape
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
-            self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
+            self._offsets = range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
             self._shape = (len(self._offsets),)
         elif isinstance(object, array):
             self._source = object
-            self._offsets = list(range(0, len(object._buffer), object.itemsize))
+            self._offsets = range(0, len(object._buffer), object.itemsize)
             self._format = "w" if object.typecode in "uw" else object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
@@ -552,9 +552,12 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
-        if not self._offsets:
+        offsets = self._offsets
+        if isinstance(offsets, range):
+            return len(offsets) <= 1 or offsets.step == self._itemsize
+        if not offsets:
             return True
-        return all(at == self._offsets[0] + i * self._itemsize for i, at in enumerate(self._offsets))
+        return all(at == offsets[0] + i * self._itemsize for i, at in enumerate(offsets))
 
     @property
     def contiguous(self):
@@ -582,7 +585,10 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
-        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
+        offsets = self._offsets
+        if isinstance(offsets, range):
+            return len(offsets) <= 1 or offsets.step == self._itemsize
+        return all(offsets[i] == offsets[i-1] + self.itemsize for i in range(1, len(offsets)))
 
     def __len__(self):
         self._check()
@@ -667,7 +673,16 @@ class memoryview:
 
     def tobytes(self):
         self._check()
-        return bytes([self._byte(at + i) for at in self._offsets for i in range(self._itemsize)])
+        offsets = self._offsets
+        if isinstance(offsets, range) and (len(offsets) <= 1 or offsets.step == self._itemsize):
+            from array import array
+            start = offsets.start
+            span = start + len(offsets) * self._itemsize
+            if isinstance(self._source, array):
+                return bytes(self._source._buffer[start:span])
+            raw = self._source[start:span]
+            return raw if isinstance(raw, bytes) else bytes(raw)
+        return bytes([self._byte(at + i) for at in offsets for i in range(self._itemsize)])
 
     def __bytes__(self):
         return self.tobytes()
@@ -691,10 +706,9 @@ class memoryview:
             raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
         if self._offsets:
+            if not self.c_contiguous:
+                raise TypeError('memoryview: casts are restricted to C-contiguous views')
             start = self._offsets[0]
-            for index, offset in enumerate(self._offsets):
-                if offset != start + index * self._itemsize:
-                    raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
         if shape is not None and not isinstance(shape, (list, tuple)):
@@ -727,7 +741,7 @@ class memoryview:
         result = memoryview(self)
         result._format = format
         result._itemsize = width
-        result._offsets = list(range(start, start + self.nbytes, width))
+        result._offsets = range(start, start + self.nbytes, width)
         result._shape = dimensions
         return result
 

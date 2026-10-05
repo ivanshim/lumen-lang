@@ -64,6 +64,16 @@ fn whole(v:&Value, bad:&dyn Fn(&str)->String)->Result<i64,String> {
     let n=match v.settled(){Value::Small(i)=>return Ok(i),Value::Flag(b)=>return Ok(b as i64),Value::Huge(i)=>i,_=>return Err(bad("arguments"))};
     Ok(n.to_i64().unwrap_or_else(||if n.is_negative(){i64::MIN}else{i64::MAX}))
 }
+// A count or a maximum split handed where a whole number belongs:
+// anything else, a bare None among them, is refused with the wording
+// the text kind's own `count` uses rather than the generic complaint.
+fn tally(v:&Value)->Result<i64,String>{
+    match v.settled(){
+        Value::Small(i)=>Ok(i),Value::Flag(b)=>Ok(b as i64),
+        Value::Huge(i)=>Ok(i.to_i64().unwrap_or_else(||if i.is_negative(){i64::MIN}else{i64::MAX})),
+        wrong=>Err(format!("TypeError: '{}' object cannot be interpreted as an integer",wrong.kind_word())),
+    }
+}
 fn letters(v:&Value,bad:&dyn Fn(&str)->String)->Result<String,String>{
     match v.settled(){Value::Text(chars)=>Ok(chars.to_string()),_=>Err(bad("arguments"))}
 }
@@ -339,21 +349,30 @@ impl Request<'_> {
     }
     fn case_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 0)?;
-        let mut raised: Vec<u32> = Vec::with_capacity(units.len());
-        for &unit in units {
-            match char::from_u32(unit) {
-                None => raised.push(unit),
-                Some(letter) => {
-                    let cased: Vec<u32> = if self.operation == "upper" {
-                        letter.to_uppercase().map(u32::from).collect()
-                    } else {
-                        letter.to_lowercase().map(u32::from).collect()
-                    };
-                    raised.extend(cased);
+        // The scalars are cased through the same table `case_changed`
+        // uses, so a word-final sigma and the letters around a stowed
+        // surrogate half come out exactly as they do for a plain text;
+        // the stowed half itself is copied through untouched.
+        let shadow: Vec<char> = units.iter().map(|&code| char::from_u32(code).unwrap_or('\u{FFFE}')).collect();
+        let lowering = self.operation == "lower";
+        let mut shaped: Vec<u32> = Vec::with_capacity(units.len());
+        for (place, &code) in units.iter().enumerate() {
+            let Some(letter) = char::from_u32(code) else { shaped.push(code); continue };
+            if lowering {
+                if letter == '\u{3a3}' {
+                    let opened = shadow[..place].iter().rev().copied().find(|c| !crate::unicode::property(*c, 32));
+                    let closed = shadow[place + 1..].iter().copied().find(|c| !crate::unicode::property(*c, 32));
+                    if opened.map_or(false, |c| crate::unicode::property(c, 16)) && !closed.map_or(false, |c| crate::unicode::property(c, 16)) {
+                        shaped.push('\u{3c2}' as u32);
+                        continue;
+                    }
                 }
+                shaped.extend(crate::unicode::altered(letter, 0).chars().map(|c| c as u32));
+            } else {
+                shaped.extend(crate::unicode::altered(letter, 1).chars().map(|c| c as u32));
             }
         }
-        Ok(Value::characters(raised))
+        Ok(Value::characters(shaped))
     }
     fn seek_units(&self, units: &[u32]) -> ResultValue {
         self.takes(1, 3)?;
@@ -374,7 +393,7 @@ impl Request<'_> {
         if begin <= finish {
             let region = &units[begin..finish];
             if sought.is_empty() {
-                if !beyond { answer = Some(begin); }
+                if !beyond { answer = Some(if reverse { finish } else { begin }); }
             } else if sought.len() <= region.len() {
                 let last = region.len() - sought.len();
                 let mut walk: Box<dyn Iterator<Item = usize>> = if reverse { Box::new((0..=last).rev()) } else { Box::new(0..=last) };
@@ -394,7 +413,7 @@ impl Request<'_> {
             Some(numbers) => numbers,
             None => return Err(self.fail("arguments")),
         };
-        let bound = self.number(2, -1)?;
+        let bound = match self.given.get(2) { None => -1, Some(value) => tally(value)? };
         let maximum = if bound < 0 { usize::MAX } else { bound as usize };
         let mut made: Vec<u32> = Vec::new();
         if sought.is_empty() {
@@ -417,7 +436,7 @@ impl Request<'_> {
     }
     fn cut_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 2)?;
-        let bound = self.number(1, -1)?;
+        let bound = match self.given.get(1) { None => -1, Some(value) => tally(value)? };
         let maximum = if bound < 0 { usize::MAX } else { bound as usize };
         let mut chunks: Vec<Value> = Vec::new();
         let delimiter = match self.given.first() {

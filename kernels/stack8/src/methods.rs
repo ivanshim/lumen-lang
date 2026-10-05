@@ -81,6 +81,18 @@ fn integer(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<i64, String> {
     }
 }
 
+// A count, a maximum split or a search bound given where a text method
+// expects one: anything that is no whole number is refused with the
+// wording the text kind itself uses, so a bare code-point text and a
+// plain one complain alike.
+fn whole_count(v: &Value, _fault: &dyn Fn(&str) -> String) -> Result<i64, String> {
+    match v.contents() {
+        Value::Small(n) => Ok(n), Value::Flag(b) => Ok(i64::from(b)),
+        Value::Huge(n) => Ok(n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX })),
+        other => Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+    }
+}
+
 fn text(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<String, String> {
     if let Value::Text(s) = v.contents() { Ok(s.to_string()) } else { Err(fault("arguments")) }
 }
@@ -199,19 +211,14 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         }
         // A text kept apart as bare code points -- a lone half of a
         // surrogate pair among them -- answers the workings that walk
-        // it one unit at a time. A unit a `char` can spell is re-cased
-        // on its own, and a unit no `char` holds passes through as it
-        // stands, so the answer is built the way the receiver was.
+        // it one unit at a time. The re-casing is the text kind's own,
+        // so a sigma at the end of a word and every scalar around a
+        // unit no `char` holds are cased exactly as `str.lower` and
+        // `str.upper` case them.
         Value::Codepoints(row) if op == "upper" || op == "lower" => {
             arity(0, 0)?;
-            let raised = op == "upper";
-            let mut answer = Vec::with_capacity(row.len());
-            for &unit in row.iter() {
-                let Some(letter) = char::from_u32(unit) else { answer.push(unit); continue };
-                if raised { answer.extend(letter.to_uppercase().map(u32::from)); }
-                else { answer.extend(letter.to_lowercase().map(u32::from)); }
-            }
-            return Ok(Value::from_codes(answer));
+            let work = if op == "upper" { crate::strings::TextOp::Upper } else { crate::strings::TextOp::Lower };
+            return Ok(Value::from_codes(crate::strings::recase_units(row, work)));
         }
         // Where a piece stands inside a row of units, counted in units,
         // its bounds read the way every text search reads them. An
@@ -233,7 +240,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             let window: &[u32] = if low <= high { &row[low..high] } else { &[] };
             let mut place = None;
             if sought.is_empty() {
-                if low <= high && !past { place = Some(low); }
+                if low <= high && !past { place = Some(if matches!(op, "rfind" | "rindex") { high } else { low }); }
             } else if sought.len() <= window.len() {
                 let mut reach: Vec<usize> = (0..=window.len() - sought.len()).collect();
                 if matches!(op, "rfind" | "rindex") { reach.reverse(); }
@@ -249,7 +256,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             arity(2, 3)?;
             let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
             let instead = a[1].contents().text_codes().ok_or_else(|| fault("string"))?;
-            let limit = match a.get(2).map(Value::contents) { None | Some(Value::Null) => -1, Some(v) => integer(&v, fault)? };
+            let limit = a.get(2).map_or(Ok(-1), |v| whole_count(v, fault))?;
             let allowed = if limit < 0 { usize::MAX } else { limit as usize };
             let mut answer = Vec::with_capacity(row.len() + instead.len());
             let mut swaps = 0usize;
@@ -279,7 +286,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         // units is a cut. Each piece is handed back as a text of its own.
         Value::Codepoints(row) if op == "split" => {
             arity(0, 2)?;
-            let limit = match a.get(1).map(Value::contents) { None | Some(Value::Null) => -1, Some(v) => integer(&v, fault)? };
+            let limit = a.get(1).map_or(Ok(-1), |v| whole_count(v, fault))?;
             let allowed = if limit < 0 { usize::MAX } else { limit as usize };
             let blank = |unit: u32| char::from_u32(unit).is_some_and(char::is_whitespace) || (28..=31).contains(&unit);
             let mut pieces: Vec<Value> = Vec::new();
