@@ -7831,7 +7831,8 @@ impl<'a> Engine<'a> {
     /// where the method answered with something else.
     fn special_index(&mut self, value: &Value) -> Res<Option<Value>> {
         Ok(match self.special_call(value, 43, Vec::new())? {
-            None => None,
+            None => Self::worth_of(value).map(|inner| inner.contents())
+                .filter(|inner| matches!(inner, Value::Small(_) | Value::Huge(_) | Value::Flag(_))),
             Some(Value::Flag(flag)) => Some(Value::Small(i64::from(flag))),
             Some(whole @ (Value::Small(_) | Value::Huge(_))) => Some(whole),
             Some(other) => {

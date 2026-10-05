@@ -14285,7 +14285,13 @@ impl<'a> Machine<'a> {
     /// where it has none, the number where it answered one, and a
     /// complaint naming the kind where it answered anything else.
     fn stood_for_whole(&mut self, item: &Value) -> Result<Option<Value>, String> {
-        let Some(answer) = self.ask_special(item, 43, &[])? else { return Ok(None) };
+        let answer = match self.ask_special(item, 43, &[])? {
+            Some(answer) => answer,
+            None => match Self::underlying(item).map(|value| value.settled()) {
+                Some(whole @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => whole,
+                _ => return Ok(None),
+            },
+        };
         match answer {
             Value::Flag(truth) => Ok(Some(Value::Small(i64::from(truth)))),
             Value::Small(_) | Value::Huge(_) => Ok(Some(answer)),
@@ -14867,7 +14873,11 @@ impl<'a> Machine<'a> {
             (Prim::Span, _) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => {
                 let mut told = Vec::with_capacity(operands.len());
                 for bound in operands {
-                    told.push(match self.stood_for_whole(bound)? { Some(whole) => whole, None => bound.clone() });
+                    told.push(match self.stood_for_whole(bound)? {
+                        Some(whole) => whole,
+                        None if matches!(bound, Value::Thing(_)) => return Err(self.walk_fault("ext.builtin.range.integer", Some(&bound.kind_word()))),
+                        None => bound.clone(),
+                    });
                 }
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 self.prim(operation, &word, &told)?
