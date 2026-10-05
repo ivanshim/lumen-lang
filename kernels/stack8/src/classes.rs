@@ -840,6 +840,7 @@ impl<'a> Engine<'a> {
         for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
         if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26, vec![]))); }
+        members.push((self.class_word("name").to_string(), Self::adapter(28, vec![Value::text("\0name")])));
         for part in ["property.fget", "property.fset", "property.fdel", "doc", "property.is_abstract"] {
             members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
         }
@@ -870,7 +871,7 @@ impl<'a> Engine<'a> {
         let pieces = self.lang.class_details.get(part).cloned().unwrap_or_default();
         if pieces.len() != 3 { return self.class_refusal(); }
         let named = Self::property_accessor(property, "\0name").map(|n| format!(" '{}'", n.plain())).unwrap_or_default();
-        let of = match thing { Value::Object(o) => o.class_now().name.clone(), Value::Class(c) => if self.class_word("name").is_empty() { c.name.clone() } else { Self::maker_beneath(c).map_or_else(|| c.name.clone(), |maker| maker.python_names.borrow().as_ref().map_or_else(|| maker.name.clone(), |names| names.0.type_text().plain())) }, other => other.plain() };
+        let of = match thing { Value::Object(o) => { let class = o.class_now(); let shown = class.python_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.1.type_text().plain()); shown }, Value::Class(c) => if self.class_word("name").is_empty() { c.name.clone() } else { Self::maker_beneath(c).map_or_else(|| c.name.clone(), |maker| maker.python_names.borrow().as_ref().map_or_else(|| maker.name.clone(), |names| names.0.type_text().plain())) }, other => other.plain() };
         format!("{}{named}{}{of}{}", pieces[0], pieces[1], pieces[2]).into()
     }
     /// The workings of the property class, each handed the property
@@ -898,14 +899,32 @@ impl<'a> Engine<'a> {
                 Ok(Value::Null)
             }
             // A fresh property of the same class, one accessor changed;
-            // its name is left for the class that takes it to give.
+            // its stored name, including None, is carried over.
             23..=25 => {
                 let [accessor] = given else { return Err(self.class_refusal()) };
                 let place = ["\0fget", "\0fset", "\0fdel"][(tag - 23) as usize];
-                let mut fields: Vec<(String, Value)> = property.fields.borrow().iter().filter(|(n, _)| n != place && n != "\0name").cloned().collect();
-                fields.push((place.to_string(), accessor.clone()));
-                self.made += 1;
-                Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: property.class_now().clone(), fields: RefCell::new(fields), mark: self.made })))
+                let kept = |part: &str| if place == part { Some(accessor.clone()) } else { Self::property_accessor(&property, part) };
+                // A copy is built the way any property is, from the
+                // accessors and the docstring the reference carries over:
+                // where the docstring came from a getter it is picked
+                // again from the accessor the copy is made with.
+                let carried = property.fields.borrow().iter().find(|(n, _)| n == "\0getterdoc").map(|(_, v)| matches!(v, Value::Flag(true))).unwrap_or(false);
+                let doc = if carried && kept("\0fget").is_some() { Value::Null } else {
+                    property.fields.borrow().iter().find(|(n, _)| n == "\0doc").map(|(_, v)| v.clone()).unwrap_or(Value::Null)
+                };
+                // The copy is made by calling the class, as the reference
+                // does, so a subclass's own making has its say.
+                let made = self.class_apply(Value::Class(property.class_now().clone()), vec![kept("\0fget").unwrap_or(Value::Null), kept("\0fset").unwrap_or(Value::Null), kept("\0fdel").unwrap_or(Value::Null), doc])?;
+                if let Value::Object(instance) = &made {
+                    let class = instance.class_now();
+                    if self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(&class, known) || class.lineage.iter().any(|base| Rc::ptr_eq(base, known))) {
+                        let stored_name = property.fields.borrow().iter().find(|(key, _)| key == "\0name").map(|(_, value)| value.clone());
+                        if let Some(name) = stored_name {
+                            let _ = Self::write_members(&mut instance.fields.borrow_mut(), "\0name", Some(name), false);
+                        }
+                    }
+                }
+                Ok(made)
             }
             26 => {
                 let parts = ["property.fget", "property.fset", "property.fdel", "property.doc"];
@@ -919,13 +938,52 @@ impl<'a> Engine<'a> {
                     if place >= 4 { return Err(self.class_refusal()); }
                     kept[place] = value;
                 }
-                let mut fields = property.fields.borrow_mut();
-                for (place, value) in ["\0fget", "\0fset", "\0fdel", "\0doc"].iter().zip(kept) { fields.push((place.to_string(), value)); }
+                // Accessors change before the getter's doc is requested, so
+                // a failed lookup leaves the same partial state as Python.
+                let plain = self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &property.class_now()));
+                {
+                    let mut fields = property.fields.borrow_mut();
+                    fields.retain(|(n, _)| !matches!(n.as_str(), "\0fget" | "\0fset" | "\0fdel" | "\0name" | "\0doc" | "\0getterdoc"));
+                    for (place, value) in ["\0fget", "\0fset", "\0fdel"].iter().zip(kept.iter().take(3)) { fields.push((place.to_string(), value.clone())); }
+                    fields.push(("\0doc".to_string(), Value::Null));
+                    fields.push(("\0getterdoc".to_string(), Value::Flag(false)));
+                }
+                // A docstring given is kept as it is; where none was given
+                // the getter's own is taken, and that it came from there is
+                // remembered so a later copy takes the new getter's.
+                let mut doc = kept[3].clone();
+                let mut getter_doc = false;
+                let doc_word = self.class_word("doc").to_string();
+                if matches!(doc, Value::Null) && !matches!(kept[0], Value::Null) {
+                    match self.class_get(kept[0].clone(), &doc_word, false) {
+                        Ok(found) => { if !matches!(found.contents(), Value::Null) { doc = found; getter_doc = true; } }
+                        Err(fault) if self.attribute_fault(&fault) => {}
+                        Err(fault) => return Err(fault),
+                    }
+                }
+                {
+                    let mut fields = property.fields.borrow_mut();
+                    let _ = Self::write_members(&mut fields, "\0doc", Some(doc.clone()), false);
+                    let _ = Self::write_members(&mut fields, "\0getterdoc", Some(Value::Flag(getter_doc)), false);
+                }
+                if !plain {
+                    // A subclass keeps its docstring on the thing itself, as
+                    // the reference does, so the class's own __doc__ does not
+                    // shadow it. A class with nowhere to keep one drops an
+                    // ordinary docstring and refuses one that came from a
+                    // getter, which is the reference's own exception.
+                    let writable = self.property_keeps_doc(&property.class_now());
+                    if writable {
+                        self.class_write(Value::Object(property.clone()), &doc_word, Some(doc), false)?;
+                    } else if getter_doc {
+                        return Err("AttributeError: readonly attribute".into());
+                    }
+                }
                 Ok(Value::Null)
             }
             27 => {
-                let [_, name] = given else { return Err(self.class_refusal()) };
-                let _ = Self::write_members(&mut property.fields.borrow_mut(), "\0name", Some(name.clone()), false);
+                if given.len() != 2 { return Err(format!("TypeError: __set_name__() takes 2 positional arguments but {} were given", given.len()).into()); }
+                let _ = Self::write_members(&mut property.fields.borrow_mut(), "\0name", Some(given[1].clone()), false);
                 Ok(Value::Null)
             }
             _ => Err(self.class_refusal()),
@@ -934,6 +992,7 @@ impl<'a> Engine<'a> {
     /// What a property's kept accessor reads as: the accessor itself, or
     /// for its first string, the one it was given, else its getter's.
     fn property_reading(&mut self, property: &Instance, place: &str) -> Flow<Value> {
+        if place == "\0name" { return self.property_name(property); }
         // Whether the property stands for a question nobody has
         // answered: a plain yes or no, taken from the marks on its
         // getter, its setter and its deleter alike. What a mark holds
@@ -959,6 +1018,113 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(Value::Null)
+    }
+    /// Whether a traceback, or the chain it leads, comes back around to
+    /// another: assigning such a chain would make a loop the reference
+    /// refuses.
+    fn traceback_reaches(from: &Value, target: &Rc<crate::value::Traceback>) -> bool {
+        let mut here = from.clone();
+        loop {
+            let Value::Trace(trace) = here else { return false };
+            if Rc::ptr_eq(&trace, target) { return true; }
+            here = trace.next.borrow().clone();
+        }
+    }
+    /// A traceback built by hand, as `types.TracebackType` builds one:
+    /// what it follows, the frame it stands in, and where in that frame.
+    fn traceback_from_parts(&mut self, args: Vec<Value>) -> Flow<Value> {
+        let parts = ["tb_next", "tb_frame", "tb_lasti", "tb_lineno"];
+        let mut slots: [Option<Value>; 4] = [None, None, None, None];
+        let mut at = 0usize;
+        for (key, value) in self.call_items(args)? {
+            let slot = match key {
+                Some(key) => parts.iter().position(|part| *part == key).ok_or_else(|| format!("TypeError: traceback() got an unexpected keyword argument '{key}'"))?,
+                None => { let slot = at; at += 1; if slot >= 4 { return Err(format!("TypeError: traceback() takes at most 4 arguments ({} given)", at).into()); } slot }
+            };
+            if slots[slot].replace(value).is_some() { return Err(format!("TypeError: traceback() got multiple values for argument '{}'", parts[slot]).into()); }
+        }
+        let mut take = |slot: usize| -> Flow<Value> {
+            slots[slot].take().ok_or_else(|| format!("TypeError: traceback() missing required argument '{}' (pos {})", parts[slot], slot + 1).into())
+        };
+        let next = take(0)?;
+        let frame = take(1)?;
+        let lasti = take(2)?;
+        let lineno = take(3)?;
+        let link = match next.contents() {
+            Value::Null => Value::Null,
+            Value::Trace(_) => next.clone(),
+            other => return Err(format!("TypeError: expected traceback object or None, got '{}'", other.core_kind()).into()),
+        };
+        let Value::Object(holder) = frame.contents() else {
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(&frame)).into());
+        };
+        if self.frame_class.as_ref().map_or(false, |kind| !Rc::ptr_eq(&holder.class_now(), kind)) {
+            return Err(format!("TypeError: traceback() argument 'tb_frame' must be frame, not {}", Self::type_argument_kind(&frame)).into());
+        }
+        let instruction = self.traceback_number(&lasti)?;
+        let line = self.traceback_number(&lineno)?;
+        Ok(Value::Trace(Rc::new(crate::value::Traceback { instruction, location: None, line, frame: holder.clone(), next: RefCell::new(link) })))
+    }
+    /// A traceback's position or line: a whole number through `__index__`,
+    /// which must fit where the reference keeps it.
+    fn traceback_number(&mut self, value: &Value) -> Flow<i64> {
+        let number = match value.contents() {
+            Value::Small(n) => n,
+            Value::Flag(flag) => i64::from(flag),
+            Value::Huge(_) => match self.special_index(value)? {
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                _ => return Err("OverflowError: Python int too large to convert to C int".into()),
+            },
+            Value::Object(_) => match self.special_index(value)? {
+                Some(Value::Small(n)) => n,
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.core_kind()).into()),
+                None => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.core_kind()).into()),
+            },
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
+        };
+        if number < i32::MIN as i64 || number > i32::MAX as i64 {
+            return Err("OverflowError: Python int too large to convert to C int".into());
+        }
+        Ok(number)
+    }
+    /// Whether a property subclass can keep a docstring on the thing
+    /// itself: a class laying out slots keeps one only where a slot
+    /// names it, and the property class, which keeps none, is no
+    /// dictionary for a subclass.
+    fn property_keeps_doc(&self, class: &Rc<Class>) -> bool {
+        let Some(property) = &self.property_class else { return true };
+        let slots_word = self.class_word("slots");
+        let doc_word = self.class_word("doc");
+        let names = self.class_word("namespace");
+        let names_it = |listed: &[Value]| listed.iter().any(|s| matches!(s.contents(), Value::Text(t) if t.as_ref() == doc_word || t.as_ref() == names));
+        let mut current = class.clone();
+        loop {
+            if Rc::ptr_eq(&current, property) { return false; }
+            match Self::own_class_value(&current, &slots_word) {
+                Some(slots) => {
+                    let listed: Vec<Value> = match slots.contents() { Value::Array(v) | Value::Tuple(v) => v.to_vec(), other => vec![other] };
+                    if names_it(&listed) { return true; }
+                }
+                None => return true,
+            }
+            let Some(base) = current.base.clone() else { return false };
+            current = base;
+        }
+    }
+    /// A property's name: the one a class gave it at taking, else the
+    /// getter's own, else a complaint, as the reference has it.
+    fn property_name(&mut self, property: &Instance) -> Flow<Value> {
+        if let Some((_, held)) = property.fields.borrow().iter().find(|(n, _)| n == "\0name") { return Ok(held.clone()); }
+        if let Some(getter) = Self::property_accessor(property, "\0fget") {
+            let name_word = self.class_word("name").to_string();
+            return match self.class_get(getter, &name_word, false) {
+                Ok(held) => Ok(held),
+                Err(fault) if self.attribute_fault(&fault) => Err("AttributeError: 'property' object has no attribute '__name__'".into()),
+                Err(fault) => Err(fault),
+            };
+        }
+        Err("AttributeError: 'property' object has no attribute '__name__'".into())
     }
     /// The hook a class member answers the protocol with, where the
     /// member is a thing whose class furnishes one.
@@ -1831,6 +1997,7 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if self.traceback_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &c)) { return self.traceback_from_parts(args); }
         let allocation = self.class_value(&c,self.class_word("allocate")).filter(|value| {
             !matches!(value, Value::Adapter(entry) if entry.0 == 14)
                 || Self::own_class_value(&c, self.class_word("allocate")).is_some()
@@ -2228,6 +2395,10 @@ impl<'a> Engine<'a> {
                             if let Some(word) = Self::own_kind(class) {
                                 if word != self.class_word("root") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
                             }
+                            // An exception's making is the root's making,
+                            // unbound, so a super's making may be handed
+                            // the class it is to make.
+                            if self.exception_class(class) { return Ok(Self::adapter(1, Vec::new())); }
                         }
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, if name == self.class_word("allocate") { None } else { Some(receiver.clone()) }, dynamic);
@@ -2339,11 +2510,11 @@ impl<'a> Engine<'a> {
         }
         if let Value::Trace(trace) = &subject {
             return match self.lang.trace_fields.iter().position(|key| key == name) {
-                Some(1) => Ok(Value::Small(trace.line as i64)),
-                Some(2) => Ok(trace.next.clone()),
+                Some(1) => Ok(Value::Small(trace.line)),
+                Some(2) => Ok(trace.next.borrow().clone()),
                 Some(3) => Ok(Value::Object(trace.frame.clone())),
                 Some(26) => Ok(Value::Small(trace.instruction)),
-                Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64)),
+                Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2 as i64))),
                 Some(17) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64))),
                 Some(18) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64))),
                 _ => Err(self.missing_member(&subject, name)),
@@ -2497,7 +2668,12 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if name==self.class_word("qualified") { return Ok(Value::text(word)); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
-                if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
+                if name==self.class_word("allocate") {
+                    // Making a property outright allocates the subclass it
+                    // is handed, the way the root's making does.
+                    if *op == Builtin::ClassTool(11) { return Ok(Self::adapter(1, Vec::new())); }
+                    return Ok(Self::adapter(14, vec![Value::text(word)]));
+                }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
                     if let Some(doc) = Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
@@ -3403,6 +3579,21 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if let Value::Trace(trace) = &subject {
+            if self.lang.trace_fields.get(2).map(String::as_str) == Some(name) {
+                return match value {
+                    None => Err(format!("TypeError: can't delete {name} attribute").into()),
+                    Some(Value::Null) => { *trace.next.borrow_mut() = Value::Null; Ok(Value::Null) }
+                    Some(fresh @ Value::Trace(_)) => {
+                        if Self::traceback_reaches(&fresh, trace) { return Err("ValueError: traceback loop detected".into()); }
+                        *trace.next.borrow_mut() = fresh;
+                        Ok(Value::Null)
+                    }
+                    Some(other) => Err(format!("TypeError: expected traceback object, got '{}'", other.core_kind()).into()),
+                };
+            }
+            return Err("AttributeError: readonly attribute".into());
+        }
         if let Value::Object(instance) = &subject {
             if let Some(kind) = Self::own_kind(&instance.class_now()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if name == "__name__" || (kind == "ParamSpec" && name == "__bound__") { return Err("AttributeError: readonly attribute".into()); }
@@ -3547,13 +3738,14 @@ impl<'a> Engine<'a> {
                 if let Some(member)=self.class_value(&o.class_now(),name) {
                     if let Value::Adapter(w)=&member {
                         if w.0==16 {return self.slot_write(&subject,&w.1,value);}
-                        // A property's own document string is kept among
-                        // its fields and takes a write; its accessors do
+                        // A property keeps its docstring and assigned name
+                        // in private fields that take writes; its accessors do
                         // not, as CPython keeps them read-only.
                         if w.0==28 {
-                            if w.1[0].plain() != "\0doc" { return Err(self.class_word("property.readonly").to_string().into()); }
+                            let place = w.1[0].plain();
+                            if !matches!(place.as_str(), "\0doc" | "\0name") { return Err(self.class_word("property.readonly").to_string().into()); }
                             let mut fields = o.fields.borrow_mut();
-                            let _ = Self::write_members(&mut fields, "\0doc", value, false);
+                            let _ = Self::write_members(&mut fields, &place, value, false);
                             return Ok(Value::Null);
                         }
                     }
@@ -4792,6 +4984,10 @@ impl<'a> Engine<'a> {
                     let opened = self.call_items(args)?.into_iter().map(|(key, value)| match key { Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value }).collect::<Vec<_>>();
                     return self.exception_method(o.clone(), name, &opened);
                 }
+            }
+            // An exception's making, asked of a base, is the root's making.
+            if self.exception_class(c) && name == self.class_word("allocate") {
+                return self.class_apply(Self::adapter(1, Vec::new()), args);
             }
             if c.name==self.class_word("root") && name==self.class_word("allocate"){let allocator=self.class_get(Value::Class(c.clone()),name,true)?;return self.class_apply(allocator,args);}
             if c.name==self.class_word("root") {

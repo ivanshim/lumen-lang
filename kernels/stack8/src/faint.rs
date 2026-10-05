@@ -582,7 +582,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         Value::Trace(t) => {
             out.push(Value::Object(t.frame.clone()));
-            out.push(t.next.clone());
+            out.push(t.next.borrow().clone());
         }
         _ => {}
     }

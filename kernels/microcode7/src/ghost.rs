@@ -535,7 +535,7 @@ impl Knot {
                 }
                 Value::Backtrace(t) => {
                     out.push(Knot::Held(Value::Thing(t.activation.clone())));
-                    held(out, &t.following);
+                    held(out, &t.following.borrow());
                 }
                 Value::Shared(c) | Value::Mutable(c, _) => {
                     if let Ok(inner) = c.try_borrow() { held(out, &inner); }
