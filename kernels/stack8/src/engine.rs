@@ -15249,6 +15249,10 @@ impl<'a> Engine<'a> {
                 2
             } else if builtin == Builtin::Bytes(28) && key == "keepends" {
                 1
+            } else if builtin == Builtin::Bytes(4) && key == "sep" {
+                1
+            } else if builtin == Builtin::Bytes(4) && key == "bytes_per_sep" {
+                2
             } else if builtin == Builtin::Bytes(39) && key == "delete" {
                 // bytes.translate(table, /, delete=b'') keeps the dropped
                 // row after the table, read only by name; the receiver
@@ -16109,9 +16113,14 @@ impl<'a> Engine<'a> {
         while at < figures.len() {
             if figures[at].is_ascii_whitespace() || figures[at] == '\u{b}' { at += 1; continue; }
             let high = figures[at].to_digit(16).filter(|_| figures[at].is_ascii()).ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at))?;
-            let low = figures.get(at + 1).and_then(|c| c.to_digit(16)).filter(|_| figures.get(at + 1).map_or(false, char::is_ascii))
-                .ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at + 1))?;
-            row.push((high * 16 + low) as u8); at += 2;
+            at += 1;
+            let low = match figures.get(at).and_then(|c| c.to_digit(16)).filter(|_| figures.get(at).map_or(false, char::is_ascii)) {
+                Some(b) => b,
+                None if at >= figures.len() => return Err("ValueError: fromhex() arg must contain an even number of hexadecimal digits".to_string()),
+                None => return Err(format!("{}{}", self.byte_fault("hex"), at)),
+            };
+            at += 1;
+            row.push((high * 16 + low) as u8);
         }
         Ok(row)
     }
@@ -16121,19 +16130,26 @@ impl<'a> Engine<'a> {
     /// where the number is above nought and from the start where it is
     /// below, and nowhere at all where it is nought.
     fn byte_hex(&self, row: &[u8], given: &[Value]) -> Res<Value> {
-        let bad = || self.byte_fault("arguments");
         let (mark, every) = match given.first() {
             None => (String::new(), 0i64),
-            Some(Value::Text(sep)) => {
-                if sep.chars().count() != 1 { return Err(bad()); }
+            Some(Value::Text(_)) | Some(Value::Bytes(..)) => {
+                let text: String = match &given[0] {
+                    Value::Text(s) => s.to_string(),
+                    Value::Bytes(content, ..) => content.borrow().iter().copied().map(char::from).collect(),
+                    _ => unreachable!(),
+                };
+                if text.chars().count() != 1 { return Err("ValueError: sep must be length 1.".to_string()); }
+                if !text.is_ascii() { return Err("ValueError: sep must be ASCII.".to_string()); }
                 let every = match given.get(1) {
                     None => 1,
-                    Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => n.as_big()?.to_i64().unwrap_or(1),
-                    _ => return Err(bad()),
+                    Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                        n.as_big()?.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())? as i64
+                    }
+                    _ => return Err("TypeError: bytes_per_sep must be an integer".to_string()),
                 };
-                (sep.to_string(), every)
+                (text, every)
             }
-            _ => return Err(bad()),
+            Some(other) => return Err(format!("TypeError: object of type '{}' has no len()", other.core_kind())),
         };
         let size = every.unsigned_abs() as usize;
         let mut written = String::with_capacity(row.len() * 2);
@@ -16958,8 +16974,13 @@ impl<'a> Engine<'a> {
         // the mapping table, which are asked of the kinds themselves
         // and take no row of bytes before them.
         if task == 5 || task == 49 {
-            let [Value::Text(text)] = args else { return Err(bad()); };
-            return Ok(self.byte_make(self.byte_unhex(text)?, task == 49));
+            let spelling = match args {
+                [Value::Text(text)] => text.to_string(),
+                [Value::Bytes(row, ..)] => row.borrow().iter().copied().map(char::from).collect(),
+                [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.core_kind())),
+                _ => return Err(bad()),
+            };
+            return Ok(self.byte_make(self.byte_unhex(&spelling)?, task == 49));
         }
         // The workings that change a changeable row where it lies. The
         // row itself comes first, so the cell the row lives in takes

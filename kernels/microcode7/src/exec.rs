@@ -9208,7 +9208,7 @@ impl<'a> Machine<'a> {
                     // bytes.translate keeps the dropped row after the
                     // table, so its keyword sits one further along than
                     // the decode pair does.
-                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, (39, "delete") => 2, (28, "keepends") => 1, _ => return Err(self.octet_error("arguments").into()) };
+                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, (4, "sep") => 1, (4, "bytes_per_sep") => 2, (39, "delete") => 2, (28, "keepends") => 1, _ => return Err(self.octet_error("arguments").into()) };
                     if values.len() > slot { return Err(self.octet_error("arguments").into()); }
                     while values.len() < slot { values.push(Value::text("utf-8")); }
                     values.push(value);
@@ -11538,17 +11538,20 @@ impl<'a> Machine<'a> {
     /// The bytes that written hexadecimal stands for: two figures to a
     /// byte, with blanks allowed to stand between them.
     fn octets_from_hex(&self, spelling: &str) -> Result<Vec<u8>, String> {
-        let mut waiting: Option<(u8, usize)> = None;
-        let mut content = Vec::new();
-        for (position, ch) in spelling.chars().enumerate() {
-            if waiting.is_none() && (ch.is_ascii_whitespace() || ch == '\x0b') { continue; }
-            let figure = ch.to_digit(16).filter(|_| ch.is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), position))? as u8;
-            match waiting.take() {
-                Some((high, _)) => content.push(high * 16 + figure),
-                None => waiting = Some((figure, position)),
-            }
+        let characters: Vec<char> = spelling.chars().collect();
+        let (mut at, mut content) = (0, Vec::new());
+        while at < characters.len() {
+            if characters[at].is_ascii_whitespace() || characters[at] == '\x0b' { at += 1; continue; }
+            let high = characters[at].to_digit(16).filter(|_| characters[at].is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), at))? as u8;
+            at += 1;
+            let low = match characters.get(at).and_then(|c| c.to_digit(16)).filter(|_| characters.get(at).map_or(false, char::is_ascii)) {
+                Some(b) => b as u8,
+                None if at >= characters.len() => return Err(String::from("ValueError: fromhex() arg must contain an even number of hexadecimal digits")),
+                None => return Err(format!("{}{}", self.octet_error("hex"), at)),
+            };
+            at += 1;
+            content.push(high * 16 + low);
         }
-        if waiting.is_some() { return Err(format!("{}{}", self.octet_error("hex"), spelling.chars().count())); }
         Ok(content)
     }
 
@@ -11559,12 +11562,21 @@ impl<'a> Machine<'a> {
     fn octets_in_hex(&self, content: &[u8], arguments: &[Value]) -> Result<Value, String> {
         let (mark, every) = match arguments.first() {
             None => (String::new(), 0i64),
-            Some(Value::Text(between)) => {
-                if between.chars().count() != 1 { return Err(self.octet_error("arguments")); }
-                let every = match arguments.get(1) { None => 1, Some(n) => self.octet_whole(n)?.to_i64().unwrap_or(1) };
-                (between.to_string(), every)
+            Some(Value::Text(_)) | Some(Value::Octets { .. }) => {
+                let between: String = match &arguments[0] {
+                    Value::Text(text) => text.to_string(),
+                    Value::Octets { cell, .. } => cell.borrow().iter().copied().map(char::from).collect(),
+                    _ => unreachable!(),
+                };
+                if between.chars().count() != 1 { return Err(String::from("ValueError: sep must be length 1.")); }
+                if !between.is_ascii() { return Err(String::from("ValueError: sep must be ASCII.")); }
+                let every = match arguments.get(1) {
+                    None => 1,
+                    Some(n) => self.octet_whole(n)?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))? as i64,
+                };
+                (between, every)
             }
-            _ => return Err(self.octet_error("arguments")),
+            Some(other) => return Err(format!("TypeError: object of type '{}' has no len()", other.kind_word())),
         };
         let run = every.unsigned_abs() as usize;
         let mut spelled = String::with_capacity(content.len() * 2);
@@ -12383,8 +12395,13 @@ impl<'a> Machine<'a> {
             // for, and the mapping table: both are asked of the kinds
             // themselves and take no row of bytes ahead of them.
             5 | 49 => {
-                let [Value::Text(source)] = values else { return Err(wrong()); };
-                return Ok(self.octets(self.octets_from_hex(source)?, operation == 49));
+                let source = match values {
+                    [Value::Text(text)] => text.to_string(),
+                    [Value::Octets { cell, .. }] => cell.borrow().iter().copied().map(char::from).collect(),
+                    [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word())),
+                    _ => return Err(wrong()),
+                };
+                return Ok(self.octets(self.octets_from_hex(&source)?, operation == 49));
             }
             62 => {
                 if values.len() != 2 { return Err(wrong()); }
