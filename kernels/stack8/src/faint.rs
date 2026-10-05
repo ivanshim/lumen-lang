@@ -96,7 +96,8 @@ thread_local! {
     static REFERENCES: RefCell<Vec<Weak<Faint>>> = const { RefCell::new(Vec::new()) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
     /// Whether anything at all is waiting for the engine's next step.
-    static PENDING: Cell<bool> = const { Cell::new(false) };
+    // Bit zero is queued work; bit one marks a nonempty anchor list.
+    static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
@@ -165,6 +166,7 @@ pub fn anchor(object: &Rc<Instance>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         if !all.iter().any(|item| Rc::ptr_eq(item, object)) { all.push(object.clone()); }
+        let _ = PENDING.try_with(|flags| flags.set(flags.get() | 2));
     });
 }
 
@@ -173,11 +175,16 @@ pub fn anchored_values() -> Vec<Value> {
 }
 
 pub fn release_anchor(object: &Rc<Instance>) {
-    let _ = ANCHORED.try_with(|all| all.borrow_mut().retain(|item| !Rc::ptr_eq(item, object)));
+    let _ = ANCHORED.try_with(|objects| {
+        let mut objects = objects.borrow_mut();
+        objects.retain(|item| !Rc::ptr_eq(item, object));
+        if objects.is_empty() { let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1)); }
+    });
 }
 
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+    let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1));
 }
 
 fn anchor_ready() -> bool {
@@ -191,12 +198,17 @@ pub fn name_last_word(word: Option<String>) {
 }
 
 /// Whether the engine has anything to settle before its next step.
+#[inline(always)]
 pub fn pending() -> bool {
-    PENDING.try_with(|p| p.get()).unwrap_or(false) || anchor_ready()
+    match PENDING.try_with(|flags| flags.get()).unwrap_or_default() {
+        0 => false,
+        2 => anchor_ready(),
+        _ => true,
+    }
 }
 
 fn wake() {
-    let _ = PENDING.try_with(|p| p.set(true));
+    let _ = PENDING.try_with(|p| p.set(p.get() | 1));
 }
 
 /// A value somebody may hold weakly has gone.
@@ -296,11 +308,12 @@ pub fn plain_departing() {
 /// the reference object to hand it. Clears the flag; more may gather
 /// while the engine works, so it asks again until nothing comes.
 pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec<(Value, Value)>) {
-    let _ = PENDING.try_with(|p| p.set(false));
+    let _ = PENDING.try_with(|p| p.set(p.get() & 2));
     let mut words = LAST_WORDS.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
+        if kept.is_empty() { let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1)); }
         *all = kept;
         ready
     }).unwrap_or_default();
@@ -404,6 +417,7 @@ struct Node {
 /// hold, and nothing reaching it from anything that has one, is
 /// unreachable by the program.
 pub struct Graph {
+    order: Vec<usize>,
     nodes: HashMap<usize, Node>,
     bookkeeping: HashMap<usize, usize>,
 }
@@ -644,11 +658,13 @@ impl Graph {
 
     fn build(roots: Vec<Value>, bookkeeping: HashMap<usize, usize>) -> Graph {
         let mut nodes: HashMap<usize, Node> = HashMap::new();
+        let mut order = Vec::new();
         let mut open: Vec<usize> = Vec::new();
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
             if !nodes.contains_key(&place) {
                 nodes.insert(place, Node { held: root, reaches: Vec::new(), inward: 0, marked: false });
+                order.push(place);
                 open.push(place);
             }
         }
@@ -669,6 +685,7 @@ impl Graph {
                         Some(node) => node.inward += 1,
                         None => {
                             nodes.insert(at, Node { held: part, reaches: Vec::new(), inward: 1, marked: false });
+                            order.push(at);
                             open.push(at);
                         }
                     }
@@ -677,7 +694,7 @@ impl Graph {
             }
             nodes.get_mut(&place).unwrap().reaches = reached;
         }
-        Graph { nodes, bookkeeping }
+        Graph { nodes, bookkeeping, order }
     }
 
     /// Whether this value is now unreachable once the engine's own
@@ -710,7 +727,10 @@ impl Graph {
                 }
             }
         }
-        self.nodes.values().filter(|n| !n.marked).map(|n| n.held.clone()).collect()
+        self.order.iter().filter_map(|place| {
+            let node = &self.nodes[place];
+            (!node.marked).then(|| node.held.clone())
+        }).collect()
     }
 
     /// Recheck ownership after finalization, retaining only the original

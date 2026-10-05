@@ -14,10 +14,8 @@ def _buffer(data):
         return data.tobytes()
     try:
         view = memoryview(data)
-        view._check()
-        for i in range(1, len(view._offsets)):
-            if view._offsets[i] - view._offsets[i - 1] != view._itemsize:
-                raise BufferError('memoryview: underlying buffer is not C-contiguous')
+        if not view.c_contiguous:
+            raise BufferError('memoryview: underlying buffer is not C-contiguous')
         return view.tobytes()
     except TypeError:
         raise TypeError('object supporting the buffer API required') from None

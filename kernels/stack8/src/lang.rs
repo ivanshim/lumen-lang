@@ -1121,7 +1121,6 @@ pub struct Lang {
     pub native_type_name: Option<String>,
     pub class_base_words: Vec<String>,
     pub default_enclosing: bool,
-    pub posix_words: Vec<String>,
     /// The words for a class's own method that answers a call of the
     /// class itself, and for one that hands over what walking the class
     /// yields.
@@ -2910,7 +2909,6 @@ impl Lang {
             native_type_name: r.head("ext.stmt.class.native.name")?,
             class_base_words: r.strings("ext.stmt.class.bases.resolve")?,
             default_enclosing: r.flag("ext.stmt.fn.defaults.enclosing")?,
-            posix_words: r.strings("ext.builtin.posix")?,
             class_called: r.head("ext.stmt.class.called")?,
             text_ordered: r.flag("ext.op.order.text")?,
             logical_operand: r.flag("ext.op.logical.operand")?,

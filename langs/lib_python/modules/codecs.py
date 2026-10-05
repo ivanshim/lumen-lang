@@ -177,7 +177,23 @@ def _normalize(encoding):
                'iso_8859_10': 'iso8859_10', 'iso_8859_13': 'iso8859_13',
                'iso_8859_14': 'iso8859_14', 'iso_8859_15': 'iso8859_15',
                'latin9': 'iso8859_15', 'l9': 'iso8859_15'}
-    return aliases.get(name, name)
+    if name in aliases:
+        return aliases[name]
+    if name in _charmaps or name in (
+            'ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7',
+            'utf_16', 'utf_16_le', 'utf_16_be',
+            'utf_32', 'utf_32_le', 'utf_32_be',
+            'unicode_escape', 'raw_unicode_escape', 'idna'):
+        return name
+    from encodings.aliases import aliases as encoding_aliases
+    canonical = encoding_aliases.get(name, name)
+    if canonical in _charmaps or canonical in (
+            'ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7',
+            'utf_16', 'utf_16_le', 'utf_16_be',
+            'utf_32', 'utf_32_le', 'utf_32_be',
+            'unicode_escape', 'raw_unicode_escape', 'idna'):
+        return canonical
+    return name
 
 class CodecInfo(tuple):
     _is_text_encoding = True

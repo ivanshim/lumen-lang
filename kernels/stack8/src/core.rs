@@ -82,9 +82,12 @@ impl Value {
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
             Value::Routine(_) => "function",
+            Value::Adapter(function) if function.0 == 180 => "function",
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 131 => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
+            Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
