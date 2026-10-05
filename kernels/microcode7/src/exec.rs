@@ -884,16 +884,55 @@ impl<'a> Machine<'a> {
         self.furnished_kind(place).map_or(false, |ancestor| Self::fault_descends(kind, &ancestor))
     }
 
+    /// The kind an operating-system number names, where the language's
+    /// own OSError was called with that number and a word beside it;
+    /// nothing where the kind is any other, or the number is not one
+    /// the map gives a kind to.
+    fn os_error_kind(&self, kind: &Rc<Blueprint>, args: &[Value]) -> Option<Rc<Blueprint>> {
+        let oserror = self.furnished_kind(20)?;
+        if !Rc::ptr_eq(kind, &oserror) || !(2..=5).contains(&args.len()) { return None; }
+        let number = self.whole_number(args.first()?)?;
+        let name = self.table.strings("ext.builtin.exceptions.os.errno").iter().find_map(|entry| {
+            let (key, word) = entry.split_once(' ')?;
+            (key.parse::<i64>() == Ok(number)).then(|| word.to_owned())
+        })?;
+        match self.fault_kinds.get(&name) { Some(Value::Blueprint(mapped)) => Some(mapped.clone()), _ => None }
+    }
+
+    /// The whole number a value stands for, where it stands for one: a
+    /// small or written-out whole, a truth value, or a thing of a kind
+    /// beneath the builtin whole. A number the machine's own word cannot
+    /// hold answers nothing, since no number the map names is one.
+    fn whole_number(&self, value: &Value) -> Option<i64> {
+        match value.settled() {
+            Value::Small(number) => Some(number),
+            Value::Flag(truth) => Some(i64::from(truth)),
+            Value::Thing(thing) if Self::native_beneath(&thing.of).as_deref() == Some("int") => {
+                match Self::underlying(&Value::Thing(thing))? { Value::Small(number) => Some(number), _ => None }
+            }
+            _ => None,
+        }
+    }
+
+    /// A fault made by a base kind's making: what the base is asked to
+    /// make must descend from it; a gatherer builds from its heading and
+    /// members; every other fault takes its number-to-kind choice and
+    /// its arguments.
+    fn native_fault_new(&mut self, base: Rc<Blueprint>, cls: Rc<Blueprint>, args: Vec<Value>) -> Res {
+        if !Self::fault_descends(&cls, &base) {
+            return Err(format!("TypeError: {}.__new__({}): {} is not a subtype of {}", base.name, cls.name, cls.name, base.name).into());
+        }
+        if base.every_field().iter().any(|(key, _)| key == "\0gathers") {
+            if args.len() != 2 { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()); }
+            let members = match args[1].settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
+            return self.gather_faults(cls, args[0].clone(), members);
+        }
+        let kind = self.os_error_kind(&cls, &args).unwrap_or(cls);
+        Ok(self.make_fault(kind, args, Value::Nil))
+    }
+
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
-        let kind = if self.table.single("ext.builtin.posix").is_some() && row.len() >= 2 && row.len() <= 5
-            && self.furnished_kind(20).is_some_and(|base| Rc::ptr_eq(&base, &kind)) {
-            let tag = row[0].as_big().ok().and_then(|n| n.to_i64()).and_then(|code| {
-                [(1,63),(2,40),(3,64),(4,61),(10,55),(11,53),(13,63),(17,60),(20,62),
-                 (21,41),(32,54),(103,57),(104,59),(110,65),(111,58)]
-                    .iter().find_map(|&(error, index)| if error == code {Some(index)} else {None})
-            });
-            tag.and_then(|index| self.furnished_kind(index)).unwrap_or(kind)
-        } else {kind};
+        let kind = self.os_error_kind(&kind, &row).unwrap_or(kind);
         self.made += 1;
         let mut holds = kind.every_field();
         // The rest of what a fault holds: a traceback that is nil, the
@@ -917,7 +956,7 @@ impl<'a> Machine<'a> {
         } else { None };
         if let Some(written) = &progress_argument { holds.push((String::from("characters_written"), written.clone())); }
         if self.stands_under(&kind, 20) {
-            let numbered = row.len() >= 2;
+            let numbered = (2..=5).contains(&row.len());
             for (at, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
                 holds.push((key.clone(), if numbered && (at != 2 || progress_argument.is_none()) { row.get(at).cloned().unwrap_or(Value::Nil) } else { Value::Nil }));
             }
@@ -1125,6 +1164,7 @@ impl<'a> Machine<'a> {
         let title = kind.name.clone();
         let importing = self.stands_under(&kind, 19);
         let (row, named) = self.open_arguments(supplied)?;
+        let kind = self.os_error_kind(&kind, &row).unwrap_or(kind);
         let locations = if self.stands_under(&kind, 36) { self.syntax_detail_count(&row)? } else { Vec::new() };
         let unicode_arity = if self.stands_under(&kind, 43) || self.stands_under(&kind, 44) { Some(5) }
             else if self.stands_under(&kind, 45) { Some(4) } else { None };
@@ -6536,6 +6576,9 @@ impl<'a> Machine<'a> {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
                     if self.is_fault_kind(&class) {
+                        if self.inherited_entry(&class, self.rules.detail_allocate).is_some() {
+                            return self.construct_ordered(class, values);
+                        }
                         if Self::fault_methods(&class) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
                         return self.fault_from_call(class, values);
                     }
@@ -8398,6 +8441,9 @@ impl<'a> Machine<'a> {
             return self.apply_class_member(answering, given);
         }
         if self.is_fault_kind(&class) {
+            if self.inherited_entry(&class, self.rules.detail_allocate).is_some() {
+                return self.construct_ordered(class, args);
+            }
             if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
             }

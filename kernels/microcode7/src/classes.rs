@@ -1359,6 +1359,12 @@ impl<'a> Machine<'a> {
                         self.root_turns_away(&t.blueprint(),'i')?;
                         Ok(Value::Nil)
                     }
+                    73 if kept.len() == 3 => {
+                        let receiver = kept[0].clone();
+                        let declared = kept[1].bare();
+                        let key = kept[2].bare();
+                        self.next_ancestor_call(receiver, &declared, &key, values)
+                    }
                     73 => self.initialise_type_object(values),
                     70 => self.class_of_parts(values),
                     71 => {
@@ -4535,6 +4541,10 @@ impl<'a> Machine<'a> {
                 if key == self.detail("allocate") { return self.apply_class_member(entry, args); }
                 let method = self.member_binding(entry, Some(receiver.clone()), class.clone())?;
                 return self.apply_class_member(method, args);
+            }
+            if key==self.detail("allocate") && self.is_fault_kind(b) {
+                let Some((Value::Blueprint(cls), rest)) = args.split_first() else { return Err(self.class_unready()) };
+                return Ok(self.native_fault_new(b.clone(), cls.clone(), rest.to_vec())?);
             }
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
                 if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }

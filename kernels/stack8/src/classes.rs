@@ -1192,6 +1192,10 @@ impl<'a> Engine<'a> {
                     drop(fields);
                     Ok(parameter)
                 }
+                44 if w.1.len() == 3 => {
+                    let name = w.1[2].plain();
+                    self.class_super(w.1[0].clone(), &w.1[1].plain(), &name, args)
+                }
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
                     self.data.extend([args[0].clone(), Value::Small(2)]);
@@ -4296,6 +4300,10 @@ impl<'a> Engine<'a> {
                 let bound = if name == self.class_word("allocate") { member }
                     else { self.bind_class_value(member, Some(subject.clone()), receiver.clone())? };
                 return self.class_apply(bound, args);
+            }
+            if self.exception_class(c) && self.class_word("allocate") == name {
+                let Some((Value::Class(cls), rest)) = args.split_first() else { return Err(self.class_refusal()) };
+                return self.native_exception_new(c.clone(), cls.clone(), rest.to_vec());
             }
             if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
                 if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }

@@ -1063,6 +1063,26 @@
     ": '",
     "'"
   ],
+  "ext.builtin.exceptions.os.errno": [
+    "1 PermissionError",
+    "2 FileNotFoundError",
+    "3 ProcessLookupError",
+    "4 InterruptedError",
+    "10 ChildProcessError",
+    "11 BlockingIOError",
+    "13 PermissionError",
+    "17 FileExistsError",
+    "20 NotADirectoryError",
+    "21 IsADirectoryError",
+    "32 BrokenPipeError",
+    "103 ConnectionAbortedError",
+    "104 ConnectionResetError",
+    "108 BrokenPipeError",
+    "110 TimeoutError",
+    "111 ConnectionRefusedError",
+    "114 BlockingIOError",
+    "115 BlockingIOError"
+  ],
   "ext.builtin.exceptions.suppress": [
     "__suppress_context__"
   ],

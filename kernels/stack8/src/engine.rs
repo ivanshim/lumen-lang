@@ -585,6 +585,53 @@ impl<'a> Engine<'a> {
         self.furnished(at).map_or(false, |wanted| Self::exception_beneath(class, &wanted))
     }
 
+    /// The class an operating-system number names, where the language's
+    /// own OSError was called with that number and a word beside it;
+    /// nothing where the class is any other, or the number is not one
+    /// the map gives a class to.
+    fn os_error_class(&self, class: &Rc<Class>, args: &[Value]) -> Option<Rc<Class>> {
+        let oserror = self.furnished(20)?;
+        if !Rc::ptr_eq(class, &oserror) || !(2..=5).contains(&args.len()) { return None; }
+        let number = self.integer_value(args.first()?)?;
+        let name = self.lang.os_errno.iter().find_map(|entry| {
+            let (key, word) = entry.split_once(' ')?;
+            (key.parse::<i64>() == Ok(number)).then(|| word.to_owned())
+        })?;
+        match self.native_exceptions.get(&name) { Some(Value::Class(mapped)) => Some(mapped.clone()), _ => None }
+    }
+
+    /// The whole number a value stands for, where it stands for one: a
+    /// small or written-out whole, a truth value, or a thing of a class
+    /// beneath the builtin whole kind. A number the machine's own word
+    /// cannot hold answers nothing, since no number the map names is one.
+    fn integer_value(&self, value: &Value) -> Option<i64> {
+        match value.contents() {
+            Value::Small(number) => Some(number),
+            Value::Flag(truth) => Some(i64::from(truth)),
+            Value::Object(object) if Self::kind_beneath(&object.class_now()).as_deref() == Some("int") => {
+                match Self::worth_of(&Value::Object(object))? { Value::Small(number) => Some(number), _ => None }
+            }
+            _ => None,
+        }
+    }
+
+    /// A fault made by a base class's making: what the base is asked to
+    /// make must stand beneath it; a gatherer builds from its heading
+    /// and members; every other exception takes its number-to-subclass
+    /// choice and its arguments.
+    fn native_exception_new(&mut self, base: Rc<Class>, cls: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if !Self::exception_beneath(&cls, &base) {
+            return Err(format!("TypeError: {}.__new__({}): {} is not a subtype of {}", base.name, cls.name, cls.name, base.name).into());
+        }
+        if base.all_fields().iter().any(|(name, _)| name == "\0group") {
+            if args.len() != 2 { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()); }
+            let members = match args[1].contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+            return self.make_group(cls, args[0].clone(), members);
+        }
+        let class = self.os_error_class(&cls, &args).unwrap_or(cls);
+        Ok(self.exception_instance(class, args, Value::Null))
+    }
+
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
         let mut class = class;
         if self.lang.posix_word.is_some() && (2..=5).contains(&args.len()) && self.furnished(20).is_some_and(|root| Rc::ptr_eq(&root, &class)) {
@@ -622,7 +669,7 @@ impl<'a> Engine<'a> {
         let written_count = self.stands_on(&class, 53) && matches!(args.get(2), Some(Value::Small(_) | Value::Huge(_) | Value::Flag(_)));
         if written_count { fields.push(("characters_written".into(), args[2].clone())); }
         if self.stands_on(&class, 20) {
-            let numbered = args.len() >= 2;
+            let numbered = (2..=5).contains(&args.len());
             for (at, name) in self.lang.os_members.iter().enumerate() {
                 fields.push((name.clone(), if numbered && !(written_count && at == 2) { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
             }
@@ -785,7 +832,7 @@ impl<'a> Engine<'a> {
     /// tuple; a group's two are its heading and its members; and the
     /// only names a call may give are those of an absent name and the
     /// object it was sought on.
-    fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
+    fn exception_new(&mut self, mut class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
         if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
             let positional = self.call_items(given.clone())?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
             let made = self.exception_instance(class, positional, Value::Null);
@@ -801,6 +848,7 @@ impl<'a> Engine<'a> {
         for (key, value) in self.call_items(given)? {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
         }
+        if let Some(mapped) = self.os_error_class(&class, &args) { class = mapped; }
         let syntax = if self.stands_on(&class, 36) { self.check_syntax_details(&args)? } else { Vec::new() };
         let unicode_arity = if self.stands_on(&class, 43) || self.stands_on(&class, 44) { Some(5) }
             else if self.stands_on(&class, 45) { Some(4) } else { None };
@@ -10696,6 +10744,11 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 if self.exception_class(&class) {
+                    if self.class_value(&class, self.class_word("allocate")).is_some() {
+                        let made = self.class_make(class, args)?;
+                        self.data.push(made);
+                        return Ok(());
+                    }
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
                     let object = self.exception_new(class, args)?;
                     self.data.push(object);

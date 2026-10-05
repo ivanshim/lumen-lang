@@ -158,6 +158,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("runtime_adapters.copyreg", include_str!("runtime_adapters/copyreg.py"), "runtime_adapters/copyreg.py"),
     ("sched", include_str!("sched.py"), "sched.py"),
     ("secrets", include_str!("secrets.py"), "secrets.py"),
+    ("select", include_str!("select.py"), "select.py"),
     ("shlex", include_str!("shlex.py"), "shlex.py"),
     ("shutil", include_str!("shutil.py"), "shutil.py"),
     ("signal", include_str!("signal.py"), "signal.py"),
