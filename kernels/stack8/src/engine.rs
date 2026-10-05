@@ -10777,7 +10777,7 @@ impl<'a> Engine<'a> {
             // A container asked for one of its special members keeps
             // the cell its names share, so that a write through the
             // member is a write every one of those names sees.
-            Action::Grab(name) if self.data.last().is_some_and(|value| matches!(value.contents(), Value::ByteKind(..)) || matches!(value.contents(), Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || mutable && name.as_ref() == "__release_buffer__" || name.as_ref() == "__bytes__" && !mutable)) => {
+            Action::Grab(name) if self.data.last().is_some_and(|value| matches!(value.contents(), Value::ByteKind(..)) || matches!(value.contents(), Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || mutable && name.as_ref() == "__release_buffer__")) => {
                 let receiver = self.drop_top()?;
                 self.class_get(receiver.contents(), name, false)?
             }
@@ -15407,14 +15407,6 @@ impl<'a> Engine<'a> {
                 Ok(value) => Ok(value), Err(Fault::Note(words)) => Err(words),
                 Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
             };
-        }
-        if operation == "__bytes__" {
-            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-            let held = Self::worth_of(&receiver).unwrap_or_else(|| receiver.contents());
-            if let Value::Bytes(row, false, _) = held {
-                return Ok(self.byte_make(row.borrow().clone(), false));
-            }
-            return Err(self.special_fault());
         }
         if operation == "__buffer__" || operation == "__release_buffer__" {
             if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
