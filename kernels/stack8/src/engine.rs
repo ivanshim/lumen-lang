@@ -16503,12 +16503,52 @@ impl<'a> Engine<'a> {
         value.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row)))
     }
 
-    fn byte_row(&self, value: &Value, whole_row: bool) -> Res<Vec<u8>> {
+    /// One byte read off a value that may name a whole number rather
+    /// than stand for one already: a whole-number subclass hands over
+    /// its own worth, and anything else with an `__index__` member
+    /// hands over the number that member names. A number outside a
+    /// byte's bounds is refused in the words for a whole row where the
+    /// row is being built, and in those for one byte everywhere else.
+    fn byte_index(&mut self, value: &Value, whole_row: bool) -> Res<u8> {
+        if matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return self.byte_number(value, whole_row); }
+        if let Value::Object(_) = value {
+            if let Some(worth) = Self::worth_of(value) {
+                if matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return worth.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row)));
+                }
+            }
+            return match self.special_index(value)? {
+                Some(number) => number.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row))),
+                None => Err(self.core_fault("core.integer", &value.core_kind())),
+            };
+        }
+        Err(self.core_fault("core.integer", &value.core_kind()))
+    }
+
+    fn byte_row(&mut self, value: &Value, whole_row: bool) -> Res<Vec<u8>> {
         match value {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
-            Value::Array(row) => row.iter().map(|v| self.byte_number(v, whole_row)).collect(),
+            Value::Array(row) => row.iter().map(|v| self.byte_index(v, whole_row)).collect(),
             _ => Err(self.byte_fault("arguments")),
         }
+    }
+
+    /// A whole number a row of bytes is asked to hold as a count, read
+    /// off a value that stands for one or names one. Nothing where the
+    /// value names none, so the caller may build the row from the
+    /// value's members instead.
+    fn byte_count(&mut self, value: &Value) -> Res<Option<BigInt>> {
+        if matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Ok(Some(value.as_big()?)); }
+        if let Value::Object(_) = value {
+            if let Some(worth) = Self::worth_of(value) {
+                if matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Ok(Some(worth.as_big()?)); }
+            }
+            return match self.special_index(value)? {
+                Some(number) => Ok(Some(number.as_big()?)),
+                None => Ok(None),
+            };
+        }
+        Ok(None)
     }
 
     /// The bytes a value gives up to a row being lengthened: another
@@ -16517,12 +16557,12 @@ impl<'a> Engine<'a> {
     fn byte_taken(&mut self, value: &Value) -> Res<Vec<u8>> {
         match &value.contents() {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
-            Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
+            Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_index(member, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
             other => {
                 let walk = self.core_iterator(other)?;
                 let mut bytes = Vec::new();
-                while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_number(&item, false)?); }
+                while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_index(&item, false)?); }
                 Ok(bytes)
             },
         }
@@ -16830,15 +16870,18 @@ impl<'a> Engine<'a> {
             let row = match args {
                 [] => Vec::new(),
                 [Value::Text(text), encoding] => self.byte_encode(text, self.byte_codec(Some(encoding))?)?,
-                [Value::Small(_) | Value::Huge(_) | Value::Flag(_)] => {
-                    let count = args[0].as_big()?;
-                    if count.is_negative() { return Err(self.byte_fault("negative")); }
-                    let count = count.to_usize().ok_or_else(unready)?;
-                    let mut row = Vec::new();
-                    row.try_reserve_exact(count).map_err(|_| unready())?;
-                    row.resize(count, 0); row
-                }
-                [value] => self.byte_row(value, task == 0)?,
+                [value] => {
+                    let count = self.byte_count(value)?;
+                    if let Some(count) = count {
+                        if count.is_negative() { return Err(self.byte_fault("negative")); }
+                        let count = count.to_usize().ok_or_else(|| self.byte_fault("unready"))?;
+                        let mut row = Vec::new();
+                        row.try_reserve_exact(count).map_err(|_| self.byte_fault("unready"))?;
+                        row.resize(count, 0); row
+                    } else {
+                        self.byte_row(value, task == 0)?
+                    }
+                },
                 _ => return Err(unready()),
             };
             return Ok(self.byte_make(row, task == 1));
@@ -16881,12 +16924,12 @@ impl<'a> Engine<'a> {
             let rest = &args[1..];
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
             match task {
-                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                52 => { counted(1)?; let byte = self.byte_index(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
                 53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                 54 => {
                     counted(2)?;
                     let asked = self.byte_whole(&rest[0])?;
-                    let byte = self.byte_number(&rest[1], false)?;
+                    let byte = self.byte_index(&rest[1], false)?;
                     if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     let mut held = cell.borrow_mut();
                     let at = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
@@ -16904,7 +16947,7 @@ impl<'a> Engine<'a> {
                 }
                 56 => {
                     counted(1)?;
-                    let byte = self.byte_number(&rest[0], false)?;
+                    let byte = self.byte_index(&rest[0], false)?;
                     let mut held = cell.borrow_mut();
                     let Some(at) = held.iter().position(|kept| *kept == byte) else { return Err(self.byte_said("missing", 1)); };
                     if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
@@ -19722,7 +19765,7 @@ impl<'a> Engine<'a> {
                 let v = args.pop().expect("the value");
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
-                    let byte = self.byte_number(&v, false)?;
+                    let byte = self.byte_index(&v, false)?;
                     row.borrow_mut().push(byte);
                     return Ok(target);
                 }
@@ -19768,8 +19811,11 @@ impl<'a> Engine<'a> {
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
                     let index = self.byte_position(&at, row.borrow().len(), *mutable)?;
-                    let byte = self.byte_number(&v, false)?;
-                    row.borrow_mut()[index] = byte;
+                    let byte = self.byte_index(&v, false)?;
+                    let mut held = row.borrow_mut();
+                    if index >= held.len() { drop(held); return Err(self.byte_fault("index")); }
+                    held[index] = byte;
+                    drop(held);
                     return Ok(target);
                 }
                 // A language that makes a place on writing into it finds

@@ -6897,7 +6897,7 @@ impl<'a> Machine<'a> {
                     let held = if let Value::Shared(cell) = held { cell.borrow().clone() } else { held };
                     if let Value::Octets { cell, changeable, .. } = held {
                         if !changeable { return Err(self.octet_error("immutable").into()); }
-                        let byte = self.octet_item(&value, false)?;
+                        let byte = self.octet_index(&value, false)?;
                         if let Some(index) = key {
                             let index = self.octet_at(&index, cell.borrow().len(), changeable)?;
                             cell.borrow_mut()[index] = byte;
@@ -11651,6 +11651,46 @@ impl<'a> Machine<'a> {
         value.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row)))
     }
 
+    /// One byte read off a value that may name a whole number rather
+    /// than stand for one already: a whole-number subclass hands over
+    /// its own worth, and anything else with an `__index__` member
+    /// hands over the number that member names. A number outside a
+    /// byte's bounds is refused in the words for a whole row where the
+    /// row is being built, and in those for one byte everywhere else.
+    fn octet_index(&mut self, value: &Value, whole_row: bool) -> Result<u8, String> {
+        if matches!(value.kind(), Some(Kind::Whole | Kind::Truth)) { return self.octet_item(value, whole_row); }
+        if let Value::Thing(_) = value {
+            if let Some(worth) = Self::underlying(value) {
+                if matches!(worth.kind(), Some(Kind::Whole | Kind::Truth)) {
+                    return worth.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row)));
+                }
+            }
+            return match self.stood_for_whole(value)? {
+                Some(number) => number.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row))),
+                None => Err(self.core_complaint("core.integer", &value.kind_word())),
+            };
+        }
+        Err(self.core_complaint("core.integer", &value.kind_word()))
+    }
+
+    /// A whole number a row of bytes is asked to hold as a count, read
+    /// off a value that stands for one or names one. Nothing where the
+    /// value names none, so the caller may build the row from the
+    /// value's members instead.
+    fn octet_count(&mut self, value: &Value) -> Result<Option<BigInt>, String> {
+        if matches!(value.kind(), Some(Kind::Whole | Kind::Truth)) { return Ok(Some(value.as_big()?)); }
+        if let Value::Thing(_) = value {
+            if let Some(worth) = Self::underlying(value) {
+                if matches!(worth.kind(), Some(Kind::Whole | Kind::Truth)) { return Ok(Some(worth.as_big()?)); }
+            }
+            return match self.stood_for_whole(value)? {
+                Some(number) => Ok(Some(number.as_big()?)),
+                None => Ok(None),
+            };
+        }
+        Ok(None)
+    }
+
     /// A whole number a row of bytes is handed as a place. CPython
     /// names the kind that cannot stand for one.
     fn octet_place(&self, value: &Value) -> Result<i64, String> {
@@ -11668,14 +11708,14 @@ impl<'a> Machine<'a> {
         match &source.settled() {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
-                items.iter().map(|item| self.octet_item(item, false)).collect(),
+                items.iter().map(|item| self.octet_index(item, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
             other => {
                 let source = self.iterated_value(other)?;
                 let mut collected = Vec::new();
                 loop {
                     let Some(next) = self.next_value(&source)? else { return Ok(collected); };
-                    collected.push(self.octet_item(&next, false)?);
+                    collected.push(self.octet_index(&next, false)?);
                 }
             },
         }
@@ -11693,6 +11733,20 @@ impl<'a> Machine<'a> {
                 for item in items.iter() { result.push(self.octet_item(item, whole_row)?); }
                 return Ok(result);
             }
+        }
+        Err(self.octet_error("arguments"))
+    }
+
+    /// A row of bytes gathered from a list, reading each member as the
+    /// whole number it names or stands for, so a member with an
+    /// `__index__` method hands over the number it answers. The
+    /// constructor's road for a list, where every member may be a number in its own right.
+    fn octet_build(&mut self, source: &Value, whole_row: bool) -> Result<Vec<u8>, String> {
+        if let Value::Octets { cell, .. } = source { return Ok(cell.borrow().to_vec()); }
+        if let Value::Vector(items) = source {
+            let mut result = Vec::with_capacity(items.len());
+            for item in items.iter() { result.push(self.octet_index(item, whole_row)?); }
+            return Ok(result);
         }
         Err(self.octet_error("arguments"))
     }
@@ -12273,15 +12327,18 @@ impl<'a> Machine<'a> {
             0 | 1 => {
                 let content = match values.len() {
                     0 => Vec::new(),
-                    1 if matches!(values[0].kind(), Some(Kind::Whole | Kind::Truth)) => {
-                        let quantity = self.octet_whole(&values[0])?;
-                        if quantity < BigInt::zero() { return Err(self.octet_error("negative")); }
-                        let length = quantity.to_usize().ok_or_else(refusal)?;
-                        let mut content = Vec::new();
-                        content.try_reserve(length).map_err(|_| refusal())?;
-                        content.resize(length, 0); content
+                    1 => {
+                        let quantity = self.octet_count(&values[0])?;
+                        if let Some(quantity) = quantity {
+                            if quantity < BigInt::zero() { return Err(self.octet_error("negative")); }
+                            let length = quantity.to_usize().ok_or_else(|| self.octet_error("unready"))?;
+                            let mut content = Vec::new();
+                            content.try_reserve(length).map_err(|_| self.octet_error("unready"))?;
+                            content.resize(length, 0); content
+                        } else {
+                            self.octet_build(&values[0], operation == 0)?
+                        }
                     }
-                    1 => self.octet_gathered(&values[0], true, operation == 0)?,
                     2 => {
                         let Value::Text(s) = &values[0] else { return Err(wrong()); };
                         self.octets_from_text(s, self.octet_encoding(values.get(1))?)?
@@ -12349,12 +12406,12 @@ impl<'a> Machine<'a> {
                 let rest = &values[1..];
                 let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(wrong()) };
                 match operation {
-                    52 => { counted(1)?; let byte = self.octet_item(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                    52 => { counted(1)?; let byte = self.octet_index(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
                     53 => { counted(1)?; let more = self.octet_lengthening(&rest[0])?; if !more.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                     54 => {
                         counted(2)?;
                         let asked = self.octet_place(&rest[0])?;
-                        let byte = self.octet_item(&rest[1], false)?;
+                        let byte = self.octet_index(&rest[1], false)?;
                         if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                         let mut held = cell.borrow_mut();
                         let index = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
@@ -12372,7 +12429,7 @@ impl<'a> Machine<'a> {
                     }
                     56 => {
                         counted(1)?;
-                        let byte = self.octet_item(&rest[0], false)?;
+                        let byte = self.octet_index(&rest[0], false)?;
                         let mut held = cell.borrow_mut();
                         let Some(index) = held.iter().position(|kept| *kept == byte) else { return Err(self.octet_worded("missing", 1)); };
                         if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
@@ -17548,8 +17605,11 @@ impl<'a> Machine<'a> {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
                         let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
-                        let byte = self.octet_item(&v[2], false)?;
-                        cell.borrow_mut()[index] = byte;
+                        let byte = self.octet_index(&v[2], false)?;
+                        let mut held = cell.borrow_mut();
+                        if index >= held.len() { drop(held); return Err(self.octet_error("index")); }
+                        held[index] = byte;
+                        drop(held);
                         v[0].clone()
                     }
                     Value::Text(had) if self.letter_places => {
