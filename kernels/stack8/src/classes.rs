@@ -3175,7 +3175,11 @@ impl<'a> Engine<'a> {
             if let Some(owner) = self.module_holding(&subject) {
                 if self.lang.names_module.first().is_some_and(|word| word == &owner) {
                     let native = self.lang.builtins.get(name);
-                    let restored = value.as_ref().is_some_and(|held| matches!(held.contents(), Value::Native(op, _) if Some(&op) == native));
+                    let restored = value.as_ref().is_some_and(|held| match (held.contents(), native) {
+                        (Value::Native(operation, _), Some(expected)) => operation == *expected,
+                        (Value::ByteKind(mutable, _), Some(Builtin::Bytes(mode @ 0..=1))) => mutable == (*mode == 1),
+                        _ => false,
+                    });
                     if restored { self.changed_builtins.remove(name); }
                     else { self.changed_builtins.insert(name.to_string()); }
                 }

@@ -15151,6 +15151,36 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if self.lang.bind_names && matches!(builtin, Builtin::Bytes(0 | 1)) && !named.is_empty() {
+            let word = match builtin { Builtin::Bytes(0) => "bytes", _ => "bytearray" };
+            if args.len() > 3 { return Err(format!("TypeError: {word}() takes at most 3 arguments ({} given)", args.len())); }
+            let mut fields: Vec<Option<Value>> = (0..3).map(|at| args.get(at).cloned()).collect();
+            for (key, value) in std::mem::take(&mut named) {
+                let at = ["source", "encoding", "errors"].iter().position(|name| *name == key)
+                    .ok_or_else(|| format!("TypeError: {word}() got an unexpected keyword argument '{key}'"))?;
+                if fields[at].is_some() {
+                    return Err(format!("TypeError: argument for {word}() given by name ('{key}') and position ({})", at + 1));
+                }
+                fields[at] = Some(value);
+            }
+            for (at, parameter) in [(1, "encoding"), (2, "errors")] {
+                if let Some(value) = &fields[at] {
+                    let raw = Self::worth_of(value).unwrap_or_else(|| value.contents());
+                    if !matches!(raw, Value::Text(_) | Value::Codepoints(_)) {
+                        let kind = if matches!(raw, Value::Null) { "None".to_string() } else { Self::type_argument_kind(value) };
+                        return Err(format!("TypeError: {word}() argument '{parameter}' must be str, not {kind}"));
+                    }
+                }
+            }
+            let source_is_text = fields[0].as_ref().is_some_and(|value| matches!(Self::worth_of(value).unwrap_or_else(|| value.contents()), Value::Text(_) | Value::Codepoints(_)));
+            match (fields[1].is_some(), fields[2].is_some(), source_is_text) {
+                (true, _, false) => return Err("TypeError: encoding without a string argument".into()),
+                (false, true, false) => return Err("TypeError: errors without a string argument".into()),
+                (false, true, true) => return Err("TypeError: string argument without an encoding".into()),
+                _ => (),
+            }
+            args = fields.into_iter().flatten().collect();
+        }
         if matches!(builtin, Builtin::Bytes(0..=3)) && !named.is_empty() {
             for (key, value) in std::mem::take(&mut named) {
                 let at = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.byte_fault("arguments")) };

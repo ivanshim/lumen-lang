@@ -10446,6 +10446,40 @@ impl<'a> Machine<'a> {
             for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
             return Ok(None);
         }
+        if matches!(op, Prim::Octets(0 | 1)) && self.rules.names_shadow_builtins && !keywords.is_empty() {
+            let constructor = if op == Prim::Octets(0) { "bytes" } else { "bytearray" };
+            if positional.len() > 3 {
+                return Err(format!("TypeError: {constructor}() takes at most 3 arguments ({} given)", positional.len()).into());
+            }
+            let mut slots = [positional.first().cloned(), positional.get(1).cloned(), positional.get(2).cloned()];
+            for (key, supplied) in keywords {
+                let place = match key.as_str() { "source" => 0, "encoding" => 1, "errors" => 2,
+                    _ => return Err(format!("TypeError: {constructor}() got an unexpected keyword argument '{key}'").into()),
+                };
+                if slots[place].replace(supplied).is_some() {
+                    return Err(format!("TypeError: argument for {constructor}() given by name ('{key}') and position ({})", place + 1).into());
+                }
+            }
+            for position in 1..=2 {
+                if let Some(supplied) = &slots[position] {
+                    let ordinary = Self::underlying(supplied).unwrap_or_else(|| supplied.settled());
+                    if !matches!(ordinary, Value::Text(_) | Value::Unpaired(_)) {
+                        let kind = if matches!(ordinary, Value::Nil) { String::from("None") } else { Self::type_argument_kind(supplied) };
+                        return Err(format!("TypeError: {constructor}() argument '{}' must be str, not {kind}", ["source", "encoding", "errors"][position]).into());
+                    }
+                }
+            }
+            if slots[1].is_some() || slots[2].is_some() {
+                let text = slots[0].as_ref().is_some_and(|value| matches!(Self::underlying(value).unwrap_or_else(|| value.settled()), Value::Text(_) | Value::Unpaired(_)));
+                if !text {
+                    return Err(format!("TypeError: {} without a string argument", if slots[1].is_some() { "encoding" } else { "errors" }).into());
+                }
+                if slots[1].is_none() { return Err(String::from("TypeError: string argument without an encoding").into()); }
+            }
+            positional.clear();
+            for value in slots.into_iter().flatten() { positional.push(value); }
+            return Ok(None);
+        }
         if let Prim::Octets(which @ (14 | 15)) = op {
             let mut negative_allowed = false;
             for (key, worth) in keywords {

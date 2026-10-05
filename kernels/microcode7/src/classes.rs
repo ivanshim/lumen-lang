@@ -3509,6 +3509,10 @@ impl<'a> Machine<'a> {
                     let original = self.table.prims.get(key).copied();
                     match replacement.as_ref().map(Value::settled) {
                         Some(Value::Intrinsic(op, _)) if Some(op) == original => { self.displaced_primitives.remove(key); }
+                        Some(Value::OctetKind { changeable, .. }) if matches!(original,
+                            Some(Prim::Octets(tag @ 0..=1)) if changeable == (tag != 0)) => {
+                            self.displaced_primitives.remove(key);
+                        }
                         _ => { self.displaced_primitives.insert(key.to_owned()); }
                     }
                 }
