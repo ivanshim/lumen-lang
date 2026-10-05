@@ -10085,11 +10085,13 @@ impl<'a> Compiler<'a> {
                         let count = self.arguments(&call)?;
                         self.act(Action::Summon(named.as_str().into()), count + 2);
                     } else {
-                        // A parent's member read and not called: the
-                        // super proxy is made, then the member read off
-                        // it, bound to the thing this method runs upon.
+                        // A member of the forebear read and not called:
+                        // the proxy is made and the member read off it,
+                        // as a member of any other value is read.
                         self.discard();
                         self.discard();
+                        self.gathering().needs_class_cell = true;
+                        self.gathering().class_cell_protocol = true;
                         let cell = self.gathering().class_cell.clone();
                         self.read(&cell);
                         self.read(&this);

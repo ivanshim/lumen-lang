@@ -5281,7 +5281,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
-| `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` `__anext__` `__aiter__` | - | - | - | - | - | - | - |
 | `ext.stmt.async.stop` | - | - | `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
@@ -5314,6 +5314,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
+| `ext.stmt.class.detail.abstract` | - | - | `__abstractmethods__` `TypeError: Can't instantiate abstract class ` ` without an implementation for abstract method ` ` without an implementation for abstract methods ` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.abstractmethod` | - | - | `__isabstractmethod__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.arguments.init` | - | - | `TypeError: ` `.__init__() takes exactly one argument (the instance to initialize)` | - | - | - | - | - | - | - |
@@ -5390,6 +5392,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.set` | - | - | `__setattr__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.subclasses` | - | - | `__subclasses__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.type_params` | - | - | `__type_params__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
@@ -5726,7 +5729,14 @@ Frames are allocated on demand when an exception first records its location.
 
 `ext.builtin.text.getnewargs` exposes a string’s reconstruction arguments as a one-item tuple containing a fresh base string.
 `ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
-
+`ext.stmt.class.detail.abstract` names the member a class's maker
+leaves its set of unanswered abstract method names under, and words the
+refusal for making a thing of such a class: the opening, then the middle
+for one name and the middle for many.
+`ext.stmt.class.detail.abstractmethod` names the abstract-method mark a
+wrapped routine answers for through its wrapper.
+`ext.stmt.class.detail.subclasses` names the metaclass method that lists a
+class's living subclasses.
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
 `ext.builtin.core.abs.type` names an unsupported magnitude operand;
 `ext.builtin.core.bool.declined` refuses boolean use of the comparison sentinel.

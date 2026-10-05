@@ -1672,6 +1672,8 @@ impl Value {
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
         match kind {
+            "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
+            "type" if name == "__mro__" => Some(("member", "member_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

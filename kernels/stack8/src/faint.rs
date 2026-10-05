@@ -31,6 +31,7 @@ pub enum Hold {
     Set(Weak<RefCell<Members>>),
     Routine(Weak<Routine>),
     Method(Weak<Instance>, Weak<Routine>, Weak<crate::value::MethodStamp>),
+    Lasts(Value),
 }
 
 impl Hold {
@@ -45,6 +46,7 @@ impl Hold {
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
             Hold::Method(o, r, stamp) => Value::Method(o.upgrade()?, r.upgrade()?, stamp.upgrade()?),
+            Hold::Lasts(value) => value.clone(),
         })
     }
 
@@ -58,6 +60,7 @@ impl Hold {
             Hold::Set(w) => w.strong_count() == 0,
             Hold::Routine(w) => w.strong_count() == 0,
             Hold::Method(o, r, identity) => identity.strong_count() == 0 || o.strong_count() == 0 || r.strong_count() == 0,
+            Hold::Lasts(_) => false,
         }
     }
 }
@@ -127,6 +130,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
         Hold::Set(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Routine(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Method(o, r, _) => places.contains(&(o.as_ptr() as usize)) || places.contains(&(r.as_ptr() as usize)),
+        Hold::Lasts(_) => false,
     };
     let _ = REFERENCES.try_with(|all| {
         all.borrow_mut().retain(|weak| {
