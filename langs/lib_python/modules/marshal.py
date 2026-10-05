@@ -309,4 +309,4 @@ def load(file):
 
 
 def __getattr__(name):
-    raise 'NotImplementedError: marshal.' + name + ' is not supported'
+    raise AttributeError("module 'marshal' has no attribute '" + name + "'")
