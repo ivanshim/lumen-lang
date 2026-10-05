@@ -2184,6 +2184,14 @@ impl<'a> Engine<'a> {
         if matches!(&subject, Value::ByteKind(..)) {
             if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
         }
+        // A row of bytes answers to the methods its kind holds, whose
+        // words are the ones text goes by, bound to the row they were
+        // read from.
+        if let Value::Bytes(_, changeable, _) = &subject {
+            if let Some(working) = self.byte_member(name, *changeable) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), working.to_string()))));
+            }
+        }
         if matches!(&subject,Value::Native(op,_) if !Self::kind_builtin(op)) {
             if let Some(member)=self.builtin_member(&subject,name)? { return Ok(member); }
         }

@@ -2714,6 +2714,14 @@ impl<'a> Machine<'a> {
         if matches!(&value, Value::OctetKind { .. }) {
             if let Some(member) = self.carried_by_kind(&value, key) { return Ok(member); }
         }
+        // A row of bytes answers to the methods its kind keeps, whose
+        // words are the ones text goes by, bound to the row they were
+        // read from.
+        if let Value::Octets { changeable, .. } = &value {
+            if let Some(working) = self.octet_member(key, *changeable) {
+                return Ok(Value::Member(Rc::new(value.clone()), working.to_string()));
+            }
+        }
         if matches!(&value,Value::Intrinsic(op,_) if !Self::names_a_kind(op)) {
             if let Some(member)=self.attribute(&value,key) { return Ok(member); }
         }
