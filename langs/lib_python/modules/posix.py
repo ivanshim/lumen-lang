@@ -540,3 +540,15 @@ def scandir(path=None):
     if path is None:
         path = '.'
     return _ScandirIterator(_descriptor(path) if _is_fd_path(path) else _path(path))
+
+
+def get_inheritable(fd, /):
+    return _call('get_inheritable', _cint(fd))
+
+
+def set_inheritable(fd, inheritable, /):
+    _call('set_inheritable', _cint(fd), bool(_cint(inheritable)))
+
+
+def pipe():
+    return _call('pipe')

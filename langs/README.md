@@ -3634,6 +3634,8 @@ only. The extension labels so far, all from PHP:
   a whole-valued result. Other exact reals retain their former spelling.
   This Python-only switch also enables the `frexp`, `frexp_plain`,
   `ldexp_plain`, `fsum_partial`, `fsum_finite` and `dist_float` workings.
+  It also enables `float_bits32`, `float_bits64`, `bits_float32` and
+  `bits_float64`, the IEEE binary conversions used by numeric arrays.
   Without it these names retain the unknown-working path and its arity.
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
@@ -5968,16 +5970,17 @@ follows `Modules/_io/bytesio.c` and `stringio.c`, while buffered streams and
 text decoding dispatch to the original `_pyio` algorithms. The embedded
 `codecs` adapter provides incremental UTF and single-byte codecs, and the two
 Python kernels provide bytearray resizing, export leases, and buffer writes.
-Real file descriptors remain outside this port; `FileIO` refuses them, and
-`io.open` retains the existing host file adapter. Unsupported codecs still
-raise `LookupError`. The upstream memory tests retain their failures for
+Python `FileIO` uses the POSIX descriptor bridge in both full kernels.
+Filename and custom-opener descriptors are non-inheritable; integer descriptors
+preserve their supplied inheritance flag. Unsupported codecs still raise
+`LookupError`. The upstream memory tests retain their failures for
 collector behavior that cannot yet reclaim a cycle containing a memoryview.
 The review regressions and buffer-protocol comparisons live in
 `scratch/io-memory/`, with expected output produced by Python 3.14.
-
-`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation. SRE operation 9 converts indexed bounds to host ssize_t and clamps them to the subject length before matching. Operation 10 extracts primitive indexed/named captures from immutable text; Python protocol objects retain the adapter conversion path.
 
 Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
+
 
 `ext.builtin.namespace_type` provides the native namespace class used by `sys.implementation` and discovered by the pure Python `types` fallback.
 
@@ -5992,7 +5995,7 @@ the native type name used in exception messages and an immutable type namespace.
 This metadata belongs to the
 class itself and is not inherited by Python subclasses.
 
-`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
+`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. Descriptor operations include read, write, seek, truncate, status flags and terminal checks; read and write retry interrupted calls. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
 
