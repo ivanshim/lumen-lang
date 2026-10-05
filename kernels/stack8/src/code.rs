@@ -759,6 +759,8 @@ pub enum Builtin {
     ZlibNative,
     StructNative,
     BinAscii,
+    StaticNamespace,
+    TraceNative,
     HeapNative,
     ContextNative,
     ReduceNative,

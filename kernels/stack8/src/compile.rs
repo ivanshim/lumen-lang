@@ -509,6 +509,7 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
         let indented = source.get(begin).map_or(false, |t| t.shape == Shape::Open);
         let mut depth = 0usize;
         let mut in_pattern = false;
+        let mut pattern_depth = 0usize;
         for i in begin..source.len() {
             match source[i].shape {
                 Shape::Open => depth += 1,
@@ -517,9 +518,18 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
                 Shape::Finish => break,
                 // A case begins a pattern, whose keyword names are not
                 // names of the class and so are never mangled.
-                Shape::Instr if lang.match_cases.contains(&source[i].lexeme) => in_pattern = true,
+                Shape::Instr if !in_pattern && lang.match_cases.contains(&source[i].lexeme)
+                    && i > 0 && matches!(source[i - 1].shape, Shape::LineEnd | Shape::Open | Shape::Close)
+                    && source.get(i + 1).map_or(false, |next| !matches!(next.shape, Shape::LineEnd | Shape::Finish) && !lang.assign_words.contains(&next.lexeme)) => { in_pattern = true; pattern_depth = 0; },
                 Shape::Instr if in_pattern && lang.match_guards.contains(&source[i].lexeme) => in_pattern = false,
-                Shape::Sign if in_pattern && lang.block_intros.contains(&source[i].lexeme) => in_pattern = false,
+                Shape::Sign if in_pattern => {
+                    match source[i].lexeme.as_str() {
+                        "(" | "[" | "{" => pattern_depth += 1,
+                        ")" | "]" | "}" => pattern_depth = pattern_depth.saturating_sub(1),
+                        _ if pattern_depth == 0 && lang.block_intros.contains(&source[i].lexeme) => in_pattern = false,
+                        _ => {}
+                    }
+                },
                 // A private builtin's spelling is no class's private
                 // name: it keeps its own spelling wherever it is written.
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
@@ -4313,6 +4323,11 @@ impl<'a> Compiler<'a> {
             // A case whose test fits everything leaves no subject for a
             // later case, which the reference refuses to read.
             if unreachable { return Err(self.pattern_fault()); }
+            if !self.lang.trace_native.is_empty() {
+                let row = (self.look().row as u32).saturating_sub(self.before);
+                self.put(Instr::Line(row));
+                self.piece().line = row;
+            }
             self.take();
             self.pattern_values = 0;
             let pattern = self.case_pattern()?;
@@ -5013,6 +5028,8 @@ impl<'a> Compiler<'a> {
     /// two. The condition is read once to find the body, discarded, and
     /// read again after it.
     fn while_stmt(&mut self) -> Res<()> {
+        let loop_row = (self.look().row as u32).saturating_sub(self.before);
+        if !self.lang.trace_native.is_empty() && matches!(self.piece().instrs.last(), Some(Instr::Line(line)) if *line == loop_row) { self.piece().instrs.pop(); }
         self.take();
         let cond_at = self.pos;
         // Skip the condition's tokens for now: parse it once, discard.
@@ -5028,6 +5045,7 @@ impl<'a> Compiler<'a> {
         let after = self.pos;
         let test = self.mark();
         self.land(to_test);
+        if !self.lang.trace_native.is_empty() { self.put(Instr::Line(loop_row)); }
         self.pos = cond_at;
         self.expr(0)?;
         self.pos = after;

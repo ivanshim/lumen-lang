@@ -519,17 +519,27 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     }
     for (begin, end, owner) in suites {
         let mut in_pattern = false;
+        let mut pattern_nesting = 0i32;
         for offset in begin..end {
             let shape = input[offset].shape;
             // A case opens a pattern, whose keyword names are not names of
             // the class and so are never mangled; the guard or the opening
             // of the case's body closes it.
-            if shape == Shape::Bare && table.spells("ext.stmt.match.case", &input[offset].lexeme) {
+            let begins_arm = !in_pattern && shape == Shape::Bare
+                && table.spells("ext.stmt.match.case", &input[offset].lexeme)
+                && offset.checked_sub(1).and_then(|prior| input.get(prior))
+                    .map_or(false, |prior| [Shape::LineEnd, Shape::Open, Shape::Close].contains(&prior.shape))
+                && input.get(offset + 1).map_or(false, |after| after.shape != Shape::LineEnd && after.shape != Shape::Finish && !table.spells("stmt.assign", &after.lexeme));
+            if begins_arm {
                 in_pattern = true;
+                pattern_nesting = 0;
             } else if in_pattern && shape == Shape::Bare && table.spells("ext.stmt.match.guard", &input[offset].lexeme) {
                 in_pattern = false;
-            } else if in_pattern && shape == Shape::Sign && table.spells("block.intro", &input[offset].lexeme) {
-                in_pattern = false;
+            } else if in_pattern && shape == Shape::Sign {
+                let sign = input[offset].lexeme.as_str();
+                if ["(", "[", "{"].contains(&sign) { pattern_nesting += 1; }
+                else if [")", "]", "}"].contains(&sign) { pattern_nesting -= 1; }
+                else if pattern_nesting == 0 && table.spells("block.intro", sign) { in_pattern = false; }
             }
             if shape == Shape::Bare {
                 // A name the table spells for a builtin is that builtin
@@ -2636,8 +2646,9 @@ impl<'a> Builder<'a> {
         }
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
+            let while_loop = self.table.has_any("ext.builtin.trace_native") && self.key("stmt.while");
             let made = self.plain_or_kind()?;
-            return Ok(Form::OnLine(row, 0, Box::new(made)));
+            return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
         }
         self.plain_or_kind()
     }
@@ -2956,12 +2967,14 @@ impl<'a> Builder<'a> {
                 return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true, otherwise: None });
             }
             if self.key("stmt.while") {
+                let loop_row = self.look().row.saturating_sub(self.before);
                 self.advance();
                 let test_at = self.pos;
                 return self.cycle(
                     move |r| {
                         r.pos = test_at;
-                        r.expr(0)
+                        let test = r.expr(0)?;
+                        Ok(if r.table.has_any("ext.builtin.trace_native") { Form::OnLine(loop_row, 0, Box::new(test)) } else { test })
                     },
                     |r| r.body(),
                     None::<fn(&mut Self) -> Res<Form>>,
@@ -6021,6 +6034,7 @@ impl<'a> Builder<'a> {
             // A case whose test fits everything leaves no subject for a
             // later case, which the reference refuses to read.
             if unreachable { return Err(self.bad_case()); }
+            let case_row = (self.look().row as u32).saturating_sub(self.before);
             self.advance();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
@@ -6069,6 +6083,7 @@ impl<'a> Builder<'a> {
                     statements.push(self.stmt()?);
                 }
             }
+            if self.table.has_any("ext.builtin.trace_native") { fits = Form::OnLine(case_row, 0, Box::new(fits)); }
             arms.push((fits, sequence(statements)));
         }
         if arms.is_empty() { return Err(self.bad_case()); }

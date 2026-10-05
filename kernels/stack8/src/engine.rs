@@ -97,6 +97,8 @@ fn watch_host_signals() {
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
+    trace_hook: Value,
+    in_trace_hook: bool,
     running_routine: Option<Rc<Routine>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
@@ -1294,6 +1296,8 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            trace_hook: Value::Null,
+            in_trace_hook: false,
             running_routine: None,
             inline_comp: None,
             location: None,
@@ -1857,7 +1861,7 @@ impl<'a> Engine<'a> {
             .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).collect();
         let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
-            .chain(self.native_exceptions.values()).cloned()
+            .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
             // Weak metadata keys must also be graph candidates: a function
             // owned only by an active local can otherwise be absent, leaving
             // no node from which to mark its still-live attribute dictionary.
@@ -3910,7 +3914,11 @@ impl<'a> Engine<'a> {
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let caller_routine = self.running_routine.replace(program.clone());
-        let outcome = self.run_instrs(program, &mut frame);
+        let outcome = self.trace_event("call", Value::Null).and_then(|()| self.run_instrs(program, &mut frame));
+        let outcome = match outcome {
+            Ok(()) => { let result = self.data.last().cloned().unwrap_or(Value::Null); self.trace_event("return", result) },
+            Err(fault) => { self.trace_event("return", Value::Null)?; Err(fault) },
+        };
         // A signal still left pending as the outermost body's own last
         // statement is done is taken up here, while the body's frame
         // and line still stand: what it raises is the run's ending,
@@ -4299,6 +4307,7 @@ impl<'a> Engine<'a> {
             if !self.lang.trace_fields.is_empty() {
                 self.line = arm.line;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
+                self.trace_event("line", Value::Null)?;
             }
             let mut takes = arm.bare;
             for span in &arm.kinds {
@@ -4965,6 +4974,59 @@ impl<'a> Engine<'a> {
         Value::Adapter(handle)
     }
 
+    fn trace_event(&mut self, event: &str, argument: Value) -> Flow<()> {
+        if self.in_trace_hook || matches!(self.trace_hook, Value::Null) { return Ok(()); }
+        let Some(frame) = self.trace_frame.clone() else { return Ok(()) };
+        if event == "line" { frame.fields.borrow_mut().retain(|(key, _)| key != "\0traced_exception"); }
+        if event == "exception" {
+            if let Value::Tuple(parts) = &argument { frame.fields.borrow_mut().push(("\0traced_exception".into(), parts[1].clone())); }
+        }
+        if event == "line" && frame.fields.borrow().iter().any(|(key, value)| key == "f_trace_lines" && matches!(value, Value::Flag(false))) { return Ok(()); }
+        let callback = if event == "call" { self.trace_hook.clone() } else {
+            frame.fields.borrow().iter().find(|(key, _)| key == "f_trace").map(|(_, value)| value.clone()).unwrap_or(Value::Null)
+        };
+        if matches!(callback, Value::Null) { return Ok(()); }
+        let location = (self.line, self.location);
+        self.in_trace_hook = true;
+        let result = self.call_held(callback, vec![Value::Object(frame.clone()), Value::text(event), argument]);
+        self.in_trace_hook = false;
+        (self.line, self.location) = location;
+        match result {
+            Ok(next) => {
+                let mut fields = frame.fields.borrow_mut();
+                if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "f_trace") { if event == "call" || !matches!(next, Value::Null) { *value = next; } }
+                else { fields.push(("f_trace".into(), next)); }
+                Ok(())
+            }
+            Err(message) => { self.trace_hook = Value::Null; Err(self.carried.take().unwrap_or(Fault::Note(message))) }
+        }
+    }
+
+    fn inspect_instructions(&self, target: &Value) -> Res<Value> {
+        let body = match target.contents() {
+            Value::Routine(body) => body,
+            Value::Adapter(parts) if parts.0 == 7 => match &parts.1[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
+            _ => return Err("TypeError: expected a function or code object".into()),
+        };
+        let mut row = body.declared_on;
+        let mut position = vec![Value::Small(row as i64), Value::Null, Value::Null, Value::Null];
+        let mut entries = Vec::new();
+        for (offset, instruction) in body.instrs.iter().enumerate() {
+            match instruction {
+                Instr::Line(line) => { row = *line; position = vec![Value::Small(row as i64), Value::Null, Value::Null, Value::Null]; }
+                Instr::Location(a, b, c, d) => position = [a, b, c, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
+                _ => {}
+            }
+            let description = format!("{instruction:?}");
+            let opcode = description.split(['(', ' ', '{']).next().unwrap_or("");
+            let jump = matches!(instruction, Instr::Skip(_) | Instr::SkipCmp { .. } | Instr::Depart { .. });
+            let destination = match instruction { Instr::Skip(at) | Instr::SkipCmp { to: at, .. } | Instr::Depart { to: at, .. } => Value::Small(*at as i64), _ => Value::Null };
+            entries.push(Value::tuple(vec![Value::Small(offset as i64), Value::text(opcode), destination, Value::Flag(jump),
+                Value::tuple(position.clone())]));
+        }
+        Ok(Value::tuple(entries))
+    }
+
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let keys = self.lang.trace_fields.clone();
@@ -4990,6 +5052,7 @@ impl<'a> Engine<'a> {
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
+            ("f_trace".into(), Value::Null), ("f_trace_lines".into(), Value::Flag(true)),
         ]) }))
     }
 
@@ -5115,7 +5178,16 @@ impl<'a> Engine<'a> {
             },
             other => other,
         };
-        if let Err(Fault::Thrown(value)) = &result { self.record_trace(value, program); }
+        if let Err(Fault::Thrown(value)) = &result {
+            let already = self.trace_frame.as_ref().is_some_and(|frame| frame.fields.borrow().iter().any(|(key, held)| key == "\0traced_exception" && held.same_place(value)));
+            self.record_trace(value, program);
+            if !already {
+                if let Value::Object(object) = value {
+                    let event = Value::tuple(vec![Value::Class(object.class_now()), value.clone(), self.trace_of(value)]);
+                    self.trace_event("exception", event)?;
+                }
+            }
+        }
         result
     }
 
@@ -5538,6 +5610,7 @@ impl<'a> Engine<'a> {
                     }
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                     self.refresh_observed_frame();
+                    self.trace_event("line", Value::Null)?;
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
                     // business.
@@ -9424,7 +9497,7 @@ impl<'a> Engine<'a> {
                 // A value pattern asks the subject and the value as `==`
                 // does, so a kind answering for its own equality, an
                 // int-derived enum among them, is heard.
-                let told = self.special_dyad(&Action::Eq, &given[*at], subject)?;
+                let told = self.special_dyad(&Action::Eq, subject, &given[*at])?;
                 Ok(self.special_truth(&told)?)
             }
             Pattern::Alternatives(choices) => {
@@ -20474,7 +20547,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -21169,7 +21242,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -21967,7 +22040,7 @@ impl Engine<'_> {
         // one: the value is kept before its cell is opened.
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
-        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative) {
+        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative | Builtin::TraceNative | Builtin::StaticNamespace) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
                 if b == Builtin::Dict && value.core_kind() == "mappingproxy" { *value = value.proxy_dictionary(); continue; }
@@ -22178,6 +22251,33 @@ impl Engine<'_> {
                 arity(1, 5)?;
                 if self.lang.context_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
                 self.contexts.perform(&args)?
+            }
+            Builtin::StaticNamespace => {
+                arity(2, 2)?;
+                if self.lang.static_namespace.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                let subject = args[0].contents();
+                match (&subject, &args[1]) {
+                    (Value::Class(_), Value::Small(0)) => subject.proxy_dictionary(),
+                    (Value::Class(class), Value::Small(1)) => Value::tuple(std::iter::once(class.clone()).chain(class.lineage.iter().cloned()).map(Value::Class).collect()),
+                    (Value::Object(object), Value::Small(0)) => Value::Map(Rc::new(self.fields_entries(object).into())),
+                    (Value::Native(_, _), Value::Small(mode @ (0 | 1))) => {
+                        let key = self.class_word(if *mode == 0 { "namespace" } else { "mro" }).to_owned();
+                        let value = self.class_get(subject, &key, true).map_err(|fault| fault.told(&self.wording()))?;
+                        if *mode == 0 { value.proxy_dictionary() } else { value }
+                    }
+                    (_, Value::Small(0)) => Value::Map(Rc::new(Vec::new().into())),
+                    _ => return Err("TypeError: expected a class for static MRO lookup".into()),
+                }
+            }
+            Builtin::TraceNative => {
+                arity(1, 2)?;
+                if self.lang.trace_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                match args[0] {
+                    Value::Small(0) => self.trace_hook.clone(),
+                    Value::Small(1) if args.len() == 2 => { self.trace_hook = args[1].clone(); Value::Null },
+                    Value::Small(2) if args.len() == 2 => self.inspect_instructions(&args[1])?,
+                    _ => return Err("TypeError: invalid tracing operation".into()),
+                }
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;
