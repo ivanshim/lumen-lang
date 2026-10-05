@@ -480,6 +480,37 @@ pub(crate) fn private_name(owner: &str, name: &str) -> String {
     }
 }
 
+// A soft case identifier is a pattern introducer only in a match suite.
+fn match_suite_at(words: &[Token], arm: usize, lang: &Lang) -> bool {
+    let mut finished_blocks = 0usize;
+    let mut opening = None;
+    for place in (0..arm).rev() {
+        match words[place].shape {
+            Shape::Close => finished_blocks += 1,
+            Shape::Open if finished_blocks != 0 => finished_blocks -= 1,
+            Shape::Open => { opening = Some(place); break; }
+            _ => {}
+        }
+    }
+    let Some(mut end) = opening else { return false };
+    while end != 0 && words[end - 1].shape == Shape::LineEnd { end -= 1; }
+    if end == 0 || words[end - 1].shape != Shape::Sign || !lang.block_intros.contains(&words[end - 1].lexeme) { return false; }
+    let mut enclosed = 0usize;
+    for place in (0..end - 1).rev() {
+        if words[place].shape == Shape::Sign {
+            match words[place].lexeme.as_str() {
+                ")" | "]" | "}" => enclosed += 1,
+                "(" | "[" | "{" => enclosed = enclosed.saturating_sub(1),
+                _ => {}
+            }
+        }
+        if enclosed == 0 && matches!(words[place].shape, Shape::LineEnd | Shape::Open | Shape::Close) {
+            return words.get(place + 1).map_or(false, |head| lang.match_words.contains(&head.lexeme));
+        }
+    }
+    words.first().map_or(false, |head| lang.match_words.contains(&head.lexeme))
+}
+
 fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
     let mut result = source.to_vec();
     if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return result; }
@@ -520,7 +551,8 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
                 // names of the class and so are never mangled.
                 Shape::Instr if !in_pattern && lang.match_cases.contains(&source[i].lexeme)
                     && i > 0 && matches!(source[i - 1].shape, Shape::LineEnd | Shape::Open | Shape::Close)
-                    && source.get(i + 1).map_or(false, |next| !matches!(next.shape, Shape::LineEnd | Shape::Finish) && !lang.assign_words.contains(&next.lexeme)) => { in_pattern = true; pattern_depth = 0; },
+                    && source.get(i + 1).map_or(false, |next| !matches!(next.shape, Shape::LineEnd | Shape::Finish) && !lang.assign_words.contains(&next.lexeme))
+                    && match_suite_at(source, i, lang) => { in_pattern = true; pattern_depth = 0; },
                 Shape::Instr if in_pattern && lang.match_guards.contains(&source[i].lexeme) => in_pattern = false,
                 Shape::Sign if in_pattern => {
                     match source[i].lexeme.as_str() {
@@ -2614,10 +2646,12 @@ impl<'a> Compiler<'a> {
             }
             if word == "case" && self.look_ahead(1).lexeme != ":" {
                 let mut depth = 0usize;
-                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| {
+                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).find_map(|item| {
                     match item.lexeme.as_str() { "(" | "[" | "{" => depth += 1, ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {} }
-                    item.lexeme == ":" && depth == 0
-                });
+                    if depth != 0 { return None; }
+                    if self.lang.assign_words.contains(&item.lexeme) || self.lang.compound.contains_key(&item.lexeme) { return Some(false); }
+                    (item.lexeme == ":").then_some(true)
+                }).unwrap_or(false);
                 if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
             }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {

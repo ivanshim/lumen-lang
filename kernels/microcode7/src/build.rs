@@ -486,6 +486,40 @@ pub(crate) fn member_spelling(class: &str, ident: &str) -> String {
     ident.to_owned()
 }
 
+// Locate the suite containing a case word before treating it as a clause.
+fn inside_matching_arm(input: &[Token], position: usize, table: &Table) -> bool {
+    let mut skipped = 0i32;
+    let mut cursor = position;
+    let entrance = loop {
+        if cursor == 0 { return false; }
+        cursor -= 1;
+        if input[cursor].shape == Shape::Close { skipped += 1; }
+        else if input[cursor].shape == Shape::Open {
+            if skipped == 0 { break cursor; }
+            skipped -= 1;
+        }
+    };
+    cursor = entrance;
+    while cursor > 0 && input[cursor - 1].shape == Shape::LineEnd { cursor -= 1; }
+    let Some(ending) = cursor.checked_sub(1) else { return false };
+    if input[ending].shape != Shape::Sign || !table.spells("block.intro", &input[ending].lexeme) { return false; }
+    cursor = ending;
+    let mut punctuation = 0i32;
+    while cursor > 0 {
+        cursor -= 1;
+        let item = &input[cursor];
+        if item.shape == Shape::Sign {
+            if [")", "]", "}"].contains(&item.lexeme.as_str()) { punctuation += 1; }
+            else if ["(", "[", "{"].contains(&item.lexeme.as_str()) { punctuation -= 1; }
+        }
+        if punctuation == 0 && [Shape::LineEnd, Shape::Open, Shape::Close].contains(&item.shape) {
+            cursor += 1;
+            break;
+        }
+    }
+    input.get(cursor).map_or(false, |head| table.spells("ext.stmt.match", &head.lexeme))
+}
+
 /// Give each class suite its lexical names before collecting scope bindings.
 /// An inner suite replaces the enclosing prefix, including in nested functions.
 fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
@@ -529,7 +563,8 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
                 && table.spells("ext.stmt.match.case", &input[offset].lexeme)
                 && offset.checked_sub(1).and_then(|prior| input.get(prior))
                     .map_or(false, |prior| [Shape::LineEnd, Shape::Open, Shape::Close].contains(&prior.shape))
-                && input.get(offset + 1).map_or(false, |after| after.shape != Shape::LineEnd && after.shape != Shape::Finish && !table.spells("stmt.assign", &after.lexeme));
+                && input.get(offset + 1).map_or(false, |after| after.shape != Shape::LineEnd && after.shape != Shape::Finish && !table.spells("stmt.assign", &after.lexeme))
+                && inside_matching_arm(input, offset, table);
             if begins_arm {
                 in_pattern = true;
                 pattern_nesting = 0;
@@ -2742,11 +2777,15 @@ impl<'a> Builder<'a> {
             }
             if self.look().spelling() == "case" && self.glance(1).lexeme != ":" {
                 let mut nested = 0usize;
-                let arm = self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|token| {
+                let mut arm = false;
+                for token in self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)) {
                     if ["(", "[", "{"].contains(&token.lexeme.as_str()) { nested += 1; }
                     else if [")", "]", "}"].contains(&token.lexeme.as_str()) { nested = nested.saturating_sub(1); }
-                    token.lexeme == ":" && nested == 0
-                });
+                    if nested == 0 {
+                        if self.table.spells("stmt.assign", &token.lexeme) || self.table.compound.contains_key(&token.lexeme) { break; }
+                        if token.lexeme == ":" { arm = true; break; }
+                    }
+                }
                 if arm { return Err("SyntaxError: case statement must be inside match statement".to_owned()); }
             }
             if self.look().spelling() == "lazy" && ["import", "from"].contains(&self.glance(1).spelling()) {
