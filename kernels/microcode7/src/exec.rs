@@ -23346,7 +23346,13 @@ impl<'a> Machine<'a> {
                     return Some(Ok(found));
                 }
                 let cell = self.outermost.cells.borrow().get(at)?.settled();
-                if self.passed_over(name, &cell) { None } else { Some(Err(format!("Undefined variable: {name}"))) }
+                if self.passed_over(name, &cell) { None } else {
+                    // A name the namespace's own book does not hold is
+                    // looked for among the builtins, as the world book
+                    // looks, before it is called missing.
+                    if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
+                    Some(Err(format!("Undefined variable: {name}")))
+                }
             }
             Held::World => {
                 let book = self.world_book.as_ref()?;
@@ -23671,7 +23677,18 @@ impl<'a> Machine<'a> {
         let mut words: Vec<&String> = self.table.prims.keys().chain(self.table.strings("ext.builtin.exceptions")).collect();
         words.sort();
         words.dedup();
-        let entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        let mut entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        // The parent word belongs to every dictionary of builtins: it
+        // is read from here wherever the builtins are read from, as the
+        // module binding reads it.
+        if self.has_class_order() {
+            for word in self.table.strings("ext.stmt.class.parent") {
+                if !entries.iter().any(|(key, _)| key.bare() == *word) {
+                    entries.push((Value::text(&word), Value::Blueprint(self.native_kind(&word))));
+                }
+            }
+        }
+        entries.sort_by(|(a, _), (b, _)| a.bare().cmp(&b.bare()));
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.natives_book = Some(book.clone());
         book

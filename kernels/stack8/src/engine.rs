@@ -765,7 +765,7 @@ impl<'a> Engine<'a> {
         !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
     }
 
-    pub(super) fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+   pub(super) fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
         let mut class = Some(actual);
         while let Some(current) = class {
             if Rc::ptr_eq(current, wanted) { return true; }
@@ -23156,6 +23156,10 @@ impl Engine<'_> {
                     return Some(Ok(value));
                 }
                 if self.left_out(name, &self.world[far].contents()) { return None; }
+                // A name a module's own book does not hold is looked
+                // for among the builtins before it is called missing,
+                // exactly as the outer book looks.
+                if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
                 Some(Err(format!("Undefined variable: {name}")))
             }
             Kept::Outer => {
@@ -23224,7 +23228,7 @@ impl Engine<'_> {
                             None => None,
                         }
                     }
-                    Some(other) => {
+                    Some(other) if !matches!(other, Value::Null) => {
                         let found = self.as_builtins_dictionary(other)
                             .and_then(|dictionary| self.dyn_lookup(&dictionary, name));
                         match found {
@@ -23232,7 +23236,9 @@ impl Engine<'_> {
                             Err(failure) => { self.carried = Some(failure); return Some(Err(self.special_fault())); }
                         }
                     },
-                    None => match self.native_named(name) {
+                    // A dictionary the module does not truly keep, named
+                    // by nothing: the builtins are read the ordinary way.
+                    _ => match self.native_named(name) {
                         Some(held) => Some(held),
                         None => self.kept_by_module(name),
                     },
@@ -23439,6 +23445,17 @@ impl Engine<'_> {
         for name in names {
             if let Some(held) = self.native_named(&name) { pairs.push((Value::text(&name), held)); }
         }
+        // The parent word belongs to every dictionary of builtins: it
+        // is read from here wherever the builtins are read from, as the
+        // module binding reads it.
+        if self.fuller_classes() {
+            for word in self.lang.parent_words.clone() {
+                if !pairs.iter().any(|(key, _)| key.plain() == word) {
+                    pairs.push((Value::text(&word), Value::Class(self.kind_class(&word))));
+                }
+            }
+        }
+        pairs.sort_by(|(a, _), (b, _)| a.plain().cmp(&b.plain()));
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.natives = Some(book.clone());
         book

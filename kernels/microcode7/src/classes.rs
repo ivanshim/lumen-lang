@@ -5046,7 +5046,10 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if let Some(entry) = Self::own_entry(base, key) {
-                    let receiver = if key == self.detail("allocate") || loose { None } else { Some(receiver.clone()) };
+                    // The subclass hook is a class method: it ties to
+                    // the class the thing answers as, loose or not.
+                    let receiver = if key == self.detail("subclass") && loose { Some(Value::Blueprint(actual.clone())) }
+                        else if key == self.detail("allocate") || loose { None } else { Some(receiver.clone()) };
                     return Ok(Some(self.member_binding(entry, receiver, actual.clone())?));
                 }
                 if Self::native_word(base).is_some() || self.is_fault_kind(base) {

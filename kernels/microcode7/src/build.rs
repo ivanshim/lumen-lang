@@ -9636,9 +9636,13 @@ impl<'a> Builder<'a> {
                 let book = self.parts().book.clone().expect("class namespace prepared");
                 self.read(&book.ident.to_string())
             }
-            Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
+            Shape::Bare if !self.in_class_body() && self.place_depth == 0 && !self.under_way.is_empty()
                 && table.spells("ext.stmt.class.detail.kind", &t.spelling())
                 && !self.layers.last().unwrap().idents.contains(&t.lexeme)
+                // An explicit `__class__` anywhere outward keeps its
+                // ordinary meaning; only where nothing has bound it does
+                // the word stand for the hidden cell.
+                && !(1..self.layers.len()).any(|depth| self.layers[depth].idents.iter().any(|named| named == &t.lexeme))
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
                 self.parts().needs_class_cell = true;

@@ -4545,7 +4545,11 @@ impl<'a> Engine<'a> {
                 }
             }
             if let Some(value) = Self::own_class_value(class, name) {
-                return Ok(Some(self.bind_class_value(value, if name == self.class_word("allocate") || loose { None } else { Some(receiver.clone()) }, dynamic)?));
+                // The subclass hook is a class method: it binds to the
+                // class the thing answers as, loose or not.
+                let subject = if name == self.class_word("subclass") && loose { Some(Value::Class(dynamic.clone())) }
+                    else if name == self.class_word("allocate") || loose { None } else { Some(receiver.clone()) };
+                return Ok(Some(self.bind_class_value(value, subject, dynamic)?));
             }
             if Self::own_kind(class).is_some() || self.exception_class(class) || self.is_metaclass_root(class) {
                 let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");

@@ -10065,9 +10065,14 @@ impl<'a> Compiler<'a> {
                 let book = self.gathering().book.clone().expect("class namespace prepared");
                 self.read(&book);
             }
-            Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
+            // The class's kind word stands for the hidden cell only
+            // where no function around has given the name a binding of
+            // its own: an explicit `__class__` anywhere outward keeps
+            // its ordinary meaning.
+            Shape::Instr if !self.in_class_body() && !self.writing_place && !self.gathered.is_empty()
                 && lang.class_details.get("kind").map_or(false, |words| words.iter().any(|w| w == tok.spelling()))
                 && !self.piece().idents.contains(&tok.lexeme)
+                && !(1..self.pieces.len()).any(|depth| self.pieces[depth].idents.iter().any(|named| named == &tok.lexeme))
                 && !self.comprehension_names.iter().any(|(name, _)| name == &tok.lexeme) => {
                 self.take();
                 self.gathering().needs_class_cell = true;
