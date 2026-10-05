@@ -832,14 +832,27 @@ fn words_of(table: &Table) -> Names<'_> {
 impl<'a> Machine<'a> {
 
     fn given_faults(table: &Table) -> HashMap<String, Value> {
-        let mut chain: Vec<Rc<Blueprint>> = Vec::new();
-        for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {
-            let parent = match number {
+        let names = table.strings("ext.builtin.exceptions");
+        let mut chain: Vec<Option<Rc<Blueprint>>> = vec![None; names.len()];
+        let parent_of = |number| match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 | 58 | 59 | 63..=65 => Some(20), 42 => Some(19),
                 57 | 60..=62 => Some(59), 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
-            };
+        };
+        let mut order: Vec<usize> = (0..names.len()).collect();
+        order.sort_by_key(|number| {
+            let mut depth = 0;
+            let mut parent = parent_of(*number);
+            while let Some(above) = parent.filter(|above| *above < names.len()) {
+                depth += 1;
+                parent = parent_of(above);
+            }
+            depth
+        });
+        for number in order {
+            let word = &names[number];
+            let parent = parent_of(number);
             let mut seed = Vec::new();
             match number {
                 0 => seed.push(("\0fault-kind".to_string(), Value::Flag(true))),
@@ -851,7 +864,7 @@ impl<'a> Machine<'a> {
                 37 => seed.push(("\0gathers".to_string(), Value::Flag(false))),
                 38 => {
                     seed.push(("\0gathers".to_string(), Value::Flag(true)));
-                    if let Some(ordinary) = chain.get(1) { seed.push(("\0also-under".to_string(), Value::Blueprint(ordinary.clone()))); }
+                    if let Some(Some(ordinary)) = chain.get(1) { seed.push(("\0also-under".to_string(), Value::Blueprint(ordinary.clone()))); }
                 }
                 19 => seed.push(("\0import-fault".to_owned(), Value::Flag(true))),
                 43 => seed.push(("\0unicode-encode".to_string(), Value::Flag(true))),
@@ -866,13 +879,13 @@ impl<'a> Machine<'a> {
                 shared.push(("__new__".to_owned(), Value::Wrapped(82, crate::tuples::Sequence::plain(Vec::new()))));
             }
             let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-                name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
+                name: word.clone(), under: parent.and_then(|p| chain.get(p).and_then(Clone::clone)),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
                 shared: RefCell::new(shared), constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
             };
-            chain.push(Rc::new(kind));
+            chain[number] = Some(Rc::new(kind));
         }
-        chain.into_iter().map(|b| (b.name.clone(), Value::Blueprint(b))).collect()
+        chain.into_iter().flatten().map(|b| (b.name.clone(), Value::Blueprint(b))).collect()
     }
 
     fn is_fault_kind(&self, kind: &Blueprint) -> bool {
@@ -24138,8 +24151,22 @@ impl<'a> Machine<'a> {
         match held {
             Value::Mutable(cell, _) | Value::Shared(cell) => { let value = cell.borrow().clone(); self.mapping_read(&value, name) },
             Value::Dict(entries) => Ok(entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, v)| v.clone())),
-            Value::Attributes(space) => Ok(self.attribute_entries(space).into_iter()
-                .find(|entry| spells_key(&entry.0, name)).map(|entry| entry.1)),
+            Value::Attributes(space) => {
+                let members = space.holds.borrow();
+                if members.iter().any(|entry| entry.0 == "\0loaded-module")
+                    && members.iter().all(|entry| entry.0 != "\0keys" && entry.0 != "\0dictionary") {
+                    // Reading one imported binding need not materialize every
+                    // key and value in the module's namespace.
+                    return Ok(members.iter().find(|entry| entry.0 == name && Self::visible_name(&entry.0)
+                        && !matches!(entry.1.settled(), Value::Unset)).map(|entry| match &entry.1 {
+                            Value::Shared(binding) => binding.borrow().clone(),
+                            value => value.clone(),
+                        }));
+                }
+                drop(members);
+                Ok(self.attribute_entries(space).into_iter()
+                    .find(|entry| spells_key(&entry.0, name)).map(|entry| entry.1))
+            },
             Value::Window(owner, 'm') => { let owner = owner.as_ref().clone(); self.mapping_read(&owner, name) }
             _ => match self.prim(Prim::At, "", &[held.clone(), Value::text(name)]) {
                 Ok(v) => Ok(Some(v)),

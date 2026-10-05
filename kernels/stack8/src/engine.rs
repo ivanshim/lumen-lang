@@ -534,8 +534,14 @@ impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
         let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(59), Some(20), Some(20), Some(59), Some(59), Some(59), Some(20), Some(20), Some(20)];
-        let mut classes: Vec<Rc<Class>> = Vec::new();
-        for (at, name) in names.iter().enumerate() {
+        let mut classes: Vec<Option<Rc<Class>>> = vec![None; names.len()];
+        let mut pending: Vec<usize> = (0..names.len()).collect();
+        while !pending.is_empty() {
+            let ready = pending.iter().position(|at| parents.get(*at).copied().flatten()
+                .filter(|parent| *parent < classes.len()).is_none_or(|parent| classes[parent].is_some()))
+                .expect("the native exception ancestry is acyclic");
+            let at = pending.remove(ready);
+            let name = &names[at];
             let mut fields = Vec::new();
             if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
             if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
@@ -545,7 +551,7 @@ impl<'a> Engine<'a> {
             if at == 19 { fields.push(("\0import-error".into(), Value::Flag(true))); }
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
             if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
-            if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
+            if at == 38 { if let Some(Some(ordinary)) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
             // A group's own maker, so that a subclass's __new__ can reach
             // it through super() as the reference's does.
             let mut shared = Vec::new();
@@ -556,13 +562,13 @@ impl<'a> Engine<'a> {
             if at == 43 { fields.push(("\0unicode-encode".into(), Value::Flag(true))); }
             if at == 44 { fields.push(("\0unicode-decode".into(), Value::Flag(true))); }
             if at == 45 { fields.push(("\0unicode-translate".into(), Value::Flag(true))); }
-            classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
-                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
+            classes[at] = Some(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).and_then(Clone::clone)),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
-        classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
+        classes.into_iter().flatten().map(|class| (class.name.clone(), Value::Class(class))).collect()
     }
 
     /// Letters this run has a fair chance of never having spelled
