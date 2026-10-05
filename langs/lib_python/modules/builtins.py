@@ -179,64 +179,97 @@ IsADirectoryError = IsADirectoryError
 # out whole, at close (or at an explicit flush) -- so nothing here
 # streams, but everything the two reference tests that need open() ask
 # of a file, this file answers.
+
+def _slurp_descriptor(descriptor):
+    import posix
+    pieces = []
+    while True:
+        piece = posix.read(descriptor, 65536)
+        if not piece:
+            break
+        pieces.append(piece)
+    return b''.join(pieces)
+
+
+def _spill_descriptor(descriptor, data):
+    import posix
+    total = 0
+    while total < len(data):
+        written = posix.write(descriptor, data[total:total + 65536])
+        if not written:
+            break
+        total += written
+    return total
+
+
 class _HostFile:
-    def __init__(self, name, mode, encoding=None, errors=None):
+    def __init__(self, name, mode, encoding=None, errors=None, newline=None, closefd=True):
         self.name = name
         self.mode = mode
         self._binary = 'b' in mode
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
         self.errors = errors if errors is not None else 'strict'
+        self.newline = newline
         self.closed = False
         self._descriptor = None
         self._pos = 0
         self._dirty = False
         # Line-at-a-time reading is what both the reference tests and
-        # the probe lean on hardest, so the whole of what is left to
-        # read is split into lines once, the first time a line is
-        # asked for, rather than this file being rescanned from the
-        # front for every `\n` -- letting a many-line file be walked
-        # in time proportional to its own length rather than its
-        # square. `read` and `seek` empty this cache, since either may
-        # move `_pos` somewhere the cache does not account for; the
-        # next line asked for after either then rebuilds it.
+        # the probe lean on hardest, so the binary side splits the whole
+        # of what is left into lines once, the first time a line is
+        # asked for. The text side instead keeps the canonical text
+        # wrapper over the bytes just brought in, so its encoding,
+        # errors and newline rules are the reference's own and its
+        # decoding stays incremental.
         self._lines = None
         self._lines_at = 0
         self._lines_pos = 0
+        self._text = None
+        self._from_fd = isinstance(name, int)
+        self._closefd = closefd
         reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
         writing = 'w' in mode or 'x' in mode
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
-        if writing:
+        if self._from_fd:
+            if writing:
+                raw = b''
+                self._dirty = True
+            else:
+                raw = _slurp_descriptor(name)
+                self._dirty = False
+        elif writing:
             import posix
             flags = posix.O_WRONLY | posix.O_CREAT
             flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
             fd = posix.open(name, flags, 0o666)
             posix.close(fd)
-        if writing:
-            self._dirty = True
             if _host_file_exists(name) and _host_file_kind(name) == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            self._buffer = b'' if self._binary else ''
-        elif appending:
-            if _host_file_exists(name):
-                if _host_file_kind(name) == 2:
-                    raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
-                self._buffer = brought if brought is not False else b'' if self._binary else ''
-            else:
-                self._buffer = b'' if self._binary else ''
-            self._pos = len(self._buffer)
+            raw = b''
+            self._dirty = True
         else:
             kind = _host_file_kind(name)
             if kind == 0:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
-            if brought is False:
+            raw = _host_file_read_bytes(name)
+            if raw is False:
                 raise OSError(5, 'Input/output error', name)
-            self._buffer = brought
+            self._dirty = False
+        if self._binary:
+            self._buffer = raw
+            if appending:
+                self._pos = len(raw)
+        else:
+            import _pyio
+            self._buffer = None
+            self._text = _pyio.TextIOWrapper(
+                _pyio.BytesIO(raw), self.encoding, self.errors, self.newline)
+            if appending:
+                self._text.seek(0, 2)
 
     def _open(self):
         if self.closed:
@@ -248,21 +281,6 @@ class _HostFile:
     def writable(self):
         return 'w' in self.mode or 'x' in self.mode or 'a' in self.mode or '+' in self.mode
 
-    def _read_host(self, name):
-        if not self._binary:
-            return _host_file_read(name)
-        import posix
-        fd = posix.open(name, posix.O_RDONLY)
-        try:
-            data = b''
-            while True:
-                piece = posix.read(fd, 65536)
-                if not piece:
-                    return data
-                data += piece
-        finally:
-            posix.close(fd)
-
     def _carried(self, text):
         return (text if isinstance(text, bytes) else text.encode('utf-8')) if self._binary else text
 
@@ -270,12 +288,14 @@ class _HostFile:
         self._open()
         if not self.readable():
             raise OSError('File not open for reading')
+        if self._text is not None:
+            return self._text.read(size)
         if size is None or size < 0:
             size = len(self._buffer) - self._pos
         value = self._buffer[self._pos:self._pos + size]
         self._pos += len(value)
         self._lines = None
-        return self._carried(value)
+        return value
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
@@ -291,6 +311,8 @@ class _HostFile:
 
     def readline(self, size=-1):
         self._open()
+        if self._text is not None:
+            return self._text.readline(size)
         if size is not None and size >= 0:
             start = self._pos
             limit = min(len(self._buffer), start + size)
@@ -310,6 +332,8 @@ class _HostFile:
 
     def readlines(self, hint=-1):
         self._open()
+        if self._text is not None:
+            return self._text.readlines(hint)
         if hint is None or hint < 0:
             self._ensure_lines()
             remaining = self._lines[self._lines_at:]
@@ -344,10 +368,14 @@ class _HostFile:
         self._open()
         if not self.writable():
             raise ValueError('File not open for writing')
-        if self._binary:
-            data = memoryview(data).tobytes()
-        elif not isinstance(data, str):
-            raise TypeError('write() argument must be str, not ' + type(data).__name__)
+        if self._text is not None:
+            if not isinstance(data, str):
+                raise TypeError('write() argument must be str, not ' + type(data).__name__)
+            self._dirty = True
+            return self._text.write(data)
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
+        data = bytes(data)
         self._buffer = self._buffer[:self._pos] + data + self._buffer[self._pos + len(data):]
         self._pos += len(data)
         self._dirty = True
@@ -360,45 +388,58 @@ class _HostFile:
 
     def flush(self):
         self._open()
-        if self._dirty:
-            if self._binary:
-                import posix
-                descriptor = posix.open(self.name, posix.O_WRONLY | posix.O_CREAT | posix.O_TRUNC, 0o666)
-                try:
-                    pending = self._buffer
-                    while pending:
-                        written = posix.write(descriptor, pending)
-                        pending = pending[written:]
-                    wrote = len(self._buffer)
-                finally:
-                    posix.close(descriptor)
-            else:
-                wrote = _host_file_write(self.name, self._buffer)
-            if wrote is False:
-                raise FileNotFoundError(2, 'No such file or directory', self.name)
-            self._dirty = False
+        if not self._dirty:
+            return
+        if self._text is not None:
+            self._text.flush()
+            data = bytes(self._text.buffer.getvalue())
+        else:
+            data = bytes(self._buffer)
+        if self._from_fd:
+            import posix
+            posix.lseek(self.name, 0, 0)
+            _spill_descriptor(self.name, data)
+            posix.ftruncate(self.name, len(data))
+        else:
+            import posix
+            descriptor = posix.open(self.name, posix.O_WRONLY | posix.O_CREAT | posix.O_TRUNC, 0o666)
+            try:
+                _spill_descriptor(descriptor, data)
+            finally:
+                posix.close(descriptor)
+        self._dirty = False
 
     def fileno(self):
         self._open()
         self.flush()
+        if self._from_fd:
+            return self.name
         import posix
         if self._descriptor is None:
             flags = posix.O_RDWR if '+' in self.mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
             self._descriptor = posix.open(self.name, flags)
-        position = self._pos if self._binary else len(self._buffer[:self._pos].encode(self.encoding, self.errors))
+        position = self._text.buffer.tell() if self._text is not None else self._pos
         posix.lseek(self._descriptor, position, 0)
         return self._descriptor
 
     def close(self):
         if self.closed:
             return
-        if self.writable():
-            self.flush()
-        if self._descriptor is not None:
-            import posix
-            posix.close(self._descriptor)
-            self._descriptor = None
-        self.closed = True
+        try:
+            if self.writable():
+                self.flush()
+        finally:
+            if self._from_fd and self._closefd:
+                import posix
+                try:
+                    posix.close(self.name)
+                except OSError:
+                    pass
+            if self._descriptor is not None:
+                import posix
+                posix.close(self._descriptor)
+                self._descriptor = None
+            self.closed = True
 
     def __enter__(self):
         self._open()
@@ -410,6 +451,8 @@ class _HostFile:
 
     def tell(self):
         self._open()
+        if self._text is not None:
+            return self._text.tell()
         return self._pos
 
     def seekable(self):
@@ -417,6 +460,8 @@ class _HostFile:
 
     def seek(self, offset, whence=0):
         self._open()
+        if self._text is not None:
+            return self._text.seek(offset, whence)
         if whence == 1:
             offset += self._pos
         elif whence == 2:
@@ -426,7 +471,6 @@ class _HostFile:
 
     def __repr__(self):
         return "<_io.TextIOWrapper name='" + self.name + "' mode='" + self.mode + "'>"
-
 
 def breakpoint(*args, **kws):
     import sys
@@ -441,16 +485,26 @@ def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline
     # A null byte inside the name is refused before the name is looked
     # at any further, the way the reference refuses it, whatever the
     # mode.
-    if isinstance(file, (bytes, bytearray)) and b'\x00' in bytes(file):
-        raise ValueError('embedded null byte')
-    if not isinstance(file, str):
-        raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
-    if '\x00' in file:
-        raise ValueError('embedded null byte')
+    if not isinstance(file, int):
+        if not isinstance(file, (str, bytes, bytearray)) and hasattr(type(file), '__fspath__'):
+            file = type(file).__fspath__(file)
+        if isinstance(file, (bytes, bytearray)) and b'\x00' in bytes(file):
+            raise ValueError('embedded null byte')
+        if not isinstance(file, str):
+            raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
+        if '\x00' in file:
+            raise ValueError('embedded null byte')
     for letter in mode:
         if letter not in 'rwaxb+t':
             raise ValueError("invalid mode: '" + mode + "'")
-    return _HostFile(file, mode, encoding, errors)
+    if 'b' in mode:
+        if encoding is not None:
+            raise ValueError("binary mode doesn't take an encoding argument")
+        if errors is not None:
+            raise ValueError("binary mode doesn't take an errors argument")
+        if newline is not None:
+            raise ValueError("binary mode doesn't take a newline argument")
+    return _HostFile(file, mode, encoding, errors, newline, closefd)
 
 
 def open(*args, **kwargs):

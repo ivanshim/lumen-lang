@@ -25963,8 +25963,12 @@ impl Machine<'_> {
                     if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
                 }
                 if input.len() == 2 || iter_stop_exception.is_some() {
-                    if input.len() == 2 && !matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_) | Value::Wrapped(3, _)) {
-                        return Err("TypeError: iter(v, w): v must be callable".to_owned());
+                    if input.len() == 2 {
+                        let named = matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_));
+                        let handed = self.table.flag("ext.op.arithmetic.python_numbers") && matches!(input[0], Value::Wrapped(3, _));
+                        if !named && !handed {
+                            return Err("TypeError: iter(v, w): v must be callable".to_owned());
+                        }
                     }
                     let sentinel = input.get(1).cloned().unwrap_or(Value::Nil);
                     return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: sentinel, stop_exception: iter_stop_exception.clone() }));

@@ -41,8 +41,41 @@ def mkdtemp(suffix=None, prefix=None, dir=None):
     return made
 
 
+_stemp_serial = 0
+
+
+def _candidate_names(dir, prefix, suffix):
+    # A name no other caller of this program can take, because the
+    # create below is exclusive and a name already taken is only
+    # skipped over.
+    global _stemp_serial
+    while True:
+        _stemp_serial += 1
+        yield os.path.join(dir, "%s%d_%d%s" % (prefix, os.getpid(), _stemp_serial, suffix))
+
+
 def mkstemp(suffix=None, prefix=None, dir=None, text=False):
-    raise 'NotImplementedError: tempfile.mkstemp needs a file to be created and opened, which this runtime does not carry'
+    if suffix is None:
+        suffix = ''
+    if prefix is None:
+        prefix = template
+    if dir is None:
+        dir = gettempdir()
+    for candidate in _candidate_names(dir, prefix, suffix):
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+        try:
+            descriptor = os.open(candidate, flags, 0o600)
+        except FileExistsError:
+            continue
+        if text:
+            try:
+                return open(descriptor, 'w+', encoding='utf-8', errors='strict'), candidate
+            except BaseException:
+                os.close(descriptor)
+                os.unlink(candidate)
+                raise
+        return descriptor, candidate
+    raise FileExistsError(17, 'File exists')
 
 
 def mktemp(suffix='', prefix=template, dir=None):

@@ -769,7 +769,7 @@ def getincrementaldecoder(encoding):
     if codec.incrementaldecoder is not None:
         return codec.incrementaldecoder
     name = _normalize(encoding)
-    if name in ('utf_8', 'utf_8_sig', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'ascii', 'latin_1') or name in _charmaps:
+    if name in ('utf_8', 'utf_8_sig', 'utf_7', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'ascii', 'latin_1') or name in _charmaps:
         return lambda errors='strict': _IncrementalDecoder(name, errors)
     raise LookupError(encoding)
 
@@ -778,6 +778,6 @@ def getincrementalencoder(encoding):
     if codec.incrementalencoder is not None:
         return codec.incrementalencoder
     name = _normalize(encoding)
-    if name in ('utf_8', 'utf_8_sig', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'ascii', 'latin_1') or name in _charmaps:
+    if name in ('utf_8', 'utf_8_sig', 'utf_7', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'ascii', 'latin_1') or name in _charmaps:
         return lambda errors='strict': _IncrementalEncoder(name, errors)
     raise LookupError(encoding)
