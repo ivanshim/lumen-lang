@@ -81,6 +81,9 @@ impl<'a> Engine<'a> {
             c.shared.borrow_mut().push(("__buffer__".into(), Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.__buffer__")))));
             if word == "bytearray" { c.shared.borrow_mut().push(("__release_buffer__".into(), Value::Native(Builtin::ValueMethod, Rc::from("bytearray.__release_buffer__")))); }
         }
+        if word == "bytes" {
+            c.shared.borrow_mut().push(("__bytes__".into(), Value::Native(Builtin::ValueMethod, Rc::from("bytes.__bytes__"))));
+        }
         if let Some(sample) = self.kind_sample(word) {
             let names = self.kind_member_names(&sample);
             for name in names {
@@ -2080,10 +2083,22 @@ impl<'a> Engine<'a> {
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
             }
         }
-        if ["__buffer__", "__release_buffer__"].contains(&name) && Lang::spells(&self.lang.builtin_bases, "bytes") {
+        if ["__buffer__", "__release_buffer__", "__bytes__"].contains(&name) && Lang::spells(&self.lang.builtin_bases, "bytes") {
             let bytes = match subject.contents() {
-                Value::ByteKind(mutable, _) | Value::Bytes(_, mutable, _) => name == "__buffer__" || mutable,
-                Value::Class(class) => matches!(Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref(), Some("bytearray")) || name == "__buffer__" && Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref() == Some("bytes"),
+                Value::ByteKind(mutable, _) | Value::Bytes(_, mutable, _) => match name {
+                    "__buffer__" => true,
+                    "__release_buffer__" => mutable,
+                    _ => !mutable,
+                },
+                Value::Class(class) => {
+                    let kind = Self::own_kind(&class).or_else(|| Self::kind_beneath(&class));
+                    let kind = kind.as_deref();
+                    match name {
+                        "__buffer__" => kind == Some("bytearray") || kind == Some("bytes"),
+                        "__release_buffer__" => kind == Some("bytearray"),
+                        _ => kind == Some("bytes"),
+                    }
+                }
                 _ => false,
             };
             if bytes {

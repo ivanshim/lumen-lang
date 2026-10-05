@@ -8958,6 +8958,14 @@ impl<'a> Machine<'a> {
             return self.value_of(&call, &self.outermost.clone());
         }
 
+        if name == "__bytes__" {
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            let held = Self::underlying(&receiver).unwrap_or_else(|| receiver.settled());
+            if let Value::Octets { cell, changeable: false, .. } = held {
+                return Ok(self.octets(cell.borrow().to_vec(), false));
+            }
+            return Err(self.bad_answer().into());
+        }
         if name == "__buffer__" || name == "__release_buffer__" {
             if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             let namespace = self.load_namespace("_buffer")?;
@@ -16362,8 +16370,8 @@ impl<'a> Machine<'a> {
                 let quantity = self.repeat_count(times)?;
                 let cell = cell.borrow();
                 let mut result = Vec::new();
-                let size = quantity.checked_mul(cell.len()).ok_or_else(|| self.octet_error("unready"))?;
-                result.try_reserve_exact(size).map_err(|_| self.octet_error("unready"))?;
+                let size = quantity.checked_mul(cell.len()).ok_or_else(|| "OverflowError: repeated bytes are too long".to_string())?;
+                result.try_reserve_exact(size).map_err(|_| String::from("MemoryError: "))?;
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
             }

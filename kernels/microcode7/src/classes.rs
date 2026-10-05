@@ -90,6 +90,9 @@ impl<'a> Machine<'a> {
             kind.shared.borrow_mut().push(("__buffer__".to_owned(), Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{word}.__buffer__")))));
             if word == "bytearray" { kind.shared.borrow_mut().push(("__release_buffer__".to_owned(), Value::Intrinsic(Prim::ValueMethod, Rc::from("bytearray.__release_buffer__")))); }
         }
+        if word == "bytes" {
+            kind.shared.borrow_mut().push(("__bytes__".to_owned(), Value::Intrinsic(Prim::ValueMethod, Rc::from("bytes.__bytes__"))));
+        }
         if let Some(representative) = self.kind_stand_in(word) {
             let owner = Value::Blueprint(kind.clone());
             let known = self.native_directory(&representative);
@@ -2785,10 +2788,22 @@ impl<'a> Machine<'a> {
             let native_class = self.native_kind(&word);
             if let Some(inherited) = self.from_the_root(key, false, &native_class) { return Ok(inherited); }
         }
-        if self.table.spells("ext.stmt.class.builtin", "bytes") && (key == "__buffer__" || key == "__release_buffer__") {
+        if self.table.spells("ext.stmt.class.builtin", "bytes") && (key == "__buffer__" || key == "__release_buffer__" || key == "__bytes__") {
             let provider = match &value {
-                Value::OctetKind { changeable, .. } | Value::Octets { changeable, .. } => key == "__buffer__" || *changeable,
-                Value::Blueprint(class) => Self::native_word(class).or_else(|| Self::native_beneath(class)).as_deref().is_some_and(|word| word == "bytearray" || key == "__buffer__" && word == "bytes"),
+                Value::OctetKind { changeable, .. } | Value::Octets { changeable, .. } => match key {
+                    "__buffer__" => true,
+                    "__release_buffer__" => *changeable,
+                    _ => !*changeable,
+                },
+                Value::Blueprint(class) => {
+                    let word = Self::native_word(class).or_else(|| Self::native_beneath(class));
+                    let word = word.as_deref();
+                    match key {
+                        "__buffer__" => word == Some("bytearray") || word == Some("bytes"),
+                        "__release_buffer__" => word == Some("bytearray"),
+                        _ => word == Some("bytes"),
+                    }
+                }
                 _ => false,
             };
             if provider {
