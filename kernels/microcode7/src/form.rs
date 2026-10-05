@@ -200,6 +200,9 @@ pub enum Prim {
     There,
     Gone,
     Linked,
+    /// A fresh empty file made where the path names
+    /// (ext.builtin.file.create).
+    FileCreate,
     /// A directory's own entries, by name; a fresh directory made
     /// uniquely under one already there; and a directory taken away
     /// with everything under it (ext.builtin.dir.*).
@@ -210,6 +213,8 @@ pub enum Prim {
     /// A single directory raised at the place named, no others
     /// raised on the way there (ext.builtin.dir.make_one).
     DirOne,
+    /// One directory taken away where it stands, and nothing else
+    /// (ext.builtin.dir.remove).
     /// The folder a run takes itself over to, short paths opening
     /// from there ever after (ext.builtin.dir.change).
     DirStep,

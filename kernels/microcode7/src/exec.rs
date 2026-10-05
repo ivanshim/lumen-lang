@@ -931,7 +931,7 @@ impl<'a> Machine<'a> {
         if base.every_field().iter().any(|(key, _)| key == "\0gathers") {
             if args.len() != 2 { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()); }
             let members = match args[1].settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
-            return self.gather_faults(cls, args[0].clone(), members);
+            return self.gather_faults(cls, args[0].clone(), args[1].clone(), members);
         }
         let kind = self.os_error_kind(&cls, &args).unwrap_or(cls);
         Ok(self.make_fault(kind, args, Value::Nil))
@@ -969,7 +969,12 @@ impl<'a> Machine<'a> {
             if let ([opening, middle, colon, quote], true) = (self.table.strings("ext.builtin.exceptions.os.message"), numbered) {
                 let mut told = format!("{opening}{}{middle}{}", row[0].render(self.wording()), row[1].render(self.wording()));
                 if let Some(named) = row.get(2) {
-                    if progress_argument.is_none() && !matches!(named, Value::Nil) { told = format!("{told}{colon}{}{quote}", named.render(self.wording())); }
+                    if progress_argument.is_none() && !matches!(named, Value::Nil) {
+                        told.push_str(&format!("{colon}{}{quote}", named.render(self.wording())));
+                        if let Some(other) = row.get(4) {
+                            if !matches!(other, Value::Nil) { told.push_str(&format!(" -> {quote}{}{quote}", other.render(self.wording()))); }
+                        }
+                    }
                 }
                 holds.push(("\0told-as".to_string(), Value::text(&told)));
             }
@@ -1019,7 +1024,7 @@ impl<'a> Machine<'a> {
         if self.stands_under(&kind, 36) { holds.push((String::from("_metadata"), Value::Nil)); }
         let mut row = row;
         if self.stands_under(&kind, 20) {
-            let second_file = row.get(4).cloned().unwrap_or(Value::Nil);
+            let second_file = if matches!(row.len(), 2..=5) { row.get(4).cloned().unwrap_or(Value::Nil) } else { Value::Nil };
             holds.push((String::from("filename2"), second_file));
             if progress_argument.is_none() && row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
         }
@@ -13595,11 +13600,13 @@ impl<'a> Machine<'a> {
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
                     None => {
-                        if let Some(name) = self.namespace_holding(subject) {
-                            return Ok(match self.namespace_file_path(&name) {
-                                Some(file) => format!("<module '{name}' from '{file}'>"),
-                                None => format!("<module '{name}' (built-in)>"),
-                            });
+                        let imported = self.namespace_holding(subject).is_some();
+                        if imported || Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
+                            match self.describe_module(subject.clone()) {
+                                Ok(text) => return Ok(text.bare()),
+                                Err(Escape::Error(error)) => return Err(error),
+                                Err(escape) => { self.got_away = Some(escape); return Err(String::new()); },
+                            }
                         }
                         let module = self.rules.detail_main;
                         Ok(if t.blueprint().under.is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_owned() }
@@ -15323,11 +15330,10 @@ impl<'a> Machine<'a> {
             },
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
-                // A blueprint drawn with several parents goes by each of
-                // their names, the whole of its gathered line holding
-                // every one of them.
-                Value::Flag(matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)
-                    || t.blueprint().ancestry.iter().any(|parent| parent.name == class.name)))
+                let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry.iter().any(|parent| parent.name == class.name));
+                // The run's own module objects answer to the native module kind.
+                let module = Self::native_beneath(class).as_deref() == Some("module") && self.namespace_holding(one).is_some();
+                Value::Flag(named || module)
             }
             (Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
             _ => return Ok(None),
@@ -17904,24 +17910,24 @@ impl<'a> Machine<'a> {
                 // as readily as from the start, and holds no place at
                 // all beyond itself: writing there is told of in the
                 // words for a place written into.
-                if let (true, Value::Vector(items)) = (self.works_sequences(), &v[0]) {
+                if let (true, Value::Vector(items)) = (self.works_sequences(), &standing) {
                     let offset = match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None };
                     // A key of some other kind names no place in a row.
                     // Writing at one is refused by the two kinds, just
                     // as reading at one is, and the row stays a row
                     // instead of becoming a map keyed by its places.
                     if offset.is_none() && !matches!(&v[1], Value::Span(_)) {
-                        return Err(self.key_refused(&v[0], &v[1]));
+                        return Err(self.key_refused(&standing, &v[1]));
                     }
                     if let Some(offset) = offset {
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
-                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&v[0])); }
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&standing)); }
                         let mut all = items.as_ref().clone();
                         all[position as usize] = v[2].clone();
                         return Ok(Value::Vector(crate::tuples::Sequence::plain(all)));
                     }
                 }
-                match &v[0] {
+                match &standing {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
                         let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
@@ -18028,6 +18034,21 @@ impl<'a> Machine<'a> {
                 match std::fs::write(place, bytes) {
                     Ok(()) => Value::Small(size as i64),
                     Err(_) => Value::Flag(false),
+                }
+            }
+            // A fresh empty file made at the path named: nothing where
+            // it stands afterwards, or the host's own number and words.
+            Prim::FileCreate => {
+                n(1)?;
+                let w = self.wording();
+                match std::fs::File::create(v[0].render(w)) {
+                    Ok(_) => Value::Nil,
+                    Err(problem) => {
+                        let number = problem.raw_os_error().unwrap_or(5) as i64;
+                        let words = problem.to_string();
+                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
+                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
+                    }
                 }
             }
             Prim::There => {
@@ -21351,7 +21372,7 @@ impl<'a> Machine<'a> {
             };
         }
         if let Value::Window(owner, 'm') = target { return self.element(&owner.proxy_pairs(), at, how); }
-        if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
+        if matches!(target, Value::Mutable(..) | Value::Shared(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;
             // A thing kept beside its hash comes back as the thing.
@@ -25764,7 +25785,9 @@ impl Machine<'_> {
                     let root=self.common_ancestor();
                     if Rc::ptr_eq(&root,class){return Ok(true);}
                     let actual=match item {
-                        Value::Thing(thing)=>Some(thing.blueprint().clone()),
+                        Value::Thing(thing) => Some(if self.namespace_holding(item).is_some() {
+                            match self.kind_named_after(item) { Value::Blueprint(kind) => kind, _ => thing.blueprint() }
+                        } else { thing.blueprint() }),
                         Value::Blueprint(held)=>Some(Self::builder_over(held).unwrap_or_else(||self.builder_blueprint())),
                         _=>None,
                     };
@@ -25777,6 +25800,8 @@ impl Machine<'_> {
                 // kind's own name, no word standing in its place.
                 if let Some(word) = Self::native_beneath(class) {
                     if !self.table.prims.contains_key(&word) {
+                        // The run’s own module objects answer to the native module kind.
+                        if word == "module" && Self::native_word(class).as_deref() == Some("module") && self.namespace_holding(item).is_some() { return Ok(true); }
                         if let Value::Thing(thing) = item {
                             return Ok(std::iter::once(&thing.blueprint()).chain(thing.blueprint().ancestry.iter()).any(|parent| Rc::ptr_eq(parent, class)));
                         }

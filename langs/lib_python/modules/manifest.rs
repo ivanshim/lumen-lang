@@ -187,6 +187,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.support._hypothesis_stubs.strategies", include_str!("test/support/_hypothesis_stubs/strategies.py"), "test/support/_hypothesis_stubs/strategies.py"),
     ("test.support.hashlib_helper", include_str!("test/support/hashlib_helper.py"), "test/support/hashlib_helper.py"),
     ("test.support.hypothesis_helper", include_str!("test/support/hypothesis_helper.py"), "test/support/hypothesis_helper.py"),
+    ("test.support.i18n_helper", include_str!("test/support/i18n_helper.py"), "test/support/i18n_helper.py"),
     ("test.support.import_helper", include_str!("test/support/import_helper.py"), "test/support/import_helper.py"),
     ("test.support.isolation", include_str!("test/support/isolation.py"), "test/support/isolation.py"),
     ("test.support.numbers", include_str!("test/support/numbers.py"), "test/support/numbers.py"),

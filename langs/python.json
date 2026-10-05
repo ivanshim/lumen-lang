@@ -78,6 +78,9 @@
   "ext.builtin.file.remove": [
     "__remove_file"
   ],
+  "ext.builtin.file.create": [
+    "__file_create"
+  ],
   "ext.builtin.dir.list": [
     "__list_dir"
   ],

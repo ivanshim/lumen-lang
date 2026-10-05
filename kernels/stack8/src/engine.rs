@@ -630,24 +630,14 @@ impl<'a> Engine<'a> {
         if base.all_fields().iter().any(|(name, _)| name == "\0group") {
             if args.len() != 2 { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()); }
             let members = match args[1].contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
-            return self.make_group(cls, args[0].clone(), members);
+            return self.make_group(cls, args[0].clone(), args[1].clone(), members);
         }
         let class = self.os_error_class(&cls, &args).unwrap_or(cls);
         Ok(self.exception_instance(class, args, Value::Null))
     }
 
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
-        let mut class = class;
-        if self.lang.posix_word.is_some() && (2..=5).contains(&args.len()) && self.furnished(20).is_some_and(|root| Rc::ptr_eq(&root, &class)) {
-            let number = args[0].as_big().ok().and_then(|n| n.to_i64());
-            let at = match number {
-                Some(2) => Some(40), Some(21) => Some(41), Some(11) => Some(53), Some(32) => Some(54),
-                Some(10) => Some(55), Some(103) => Some(57), Some(111) => Some(58), Some(104) => Some(59),
-                Some(17) => Some(60), Some(4) => Some(61), Some(20) => Some(62), Some(1 | 13) => Some(63),
-                Some(3) => Some(64), Some(110) => Some(65), _ => None,
-            };
-            if let Some(specific) = at.and_then(|at| self.furnished(at)) { class = specific; }
-        }
+        let class = self.os_error_class(&class, &args).unwrap_or(class);
         let mut fields = class.all_fields();
         let sp = self.wording();
         // The fuller account of an exception: a traceback standing as
@@ -7515,9 +7505,12 @@ impl<'a> Engine<'a> {
                     _ => Err(format!("TypeError: {} returned non-string (type {})", if place == 0 { "__str__" } else { "__repr__" }, answer.core_kind())),
                 },
                 None => {
-                    if let Some(path) = self.module_holding(value) {
-                        let origin = self.module_file_path(&path).map_or_else(|| " (built-in)".to_owned(), |file| format!(" from '{file}'"));
-                        return Ok(format!("<module '{path}'{origin}>"));
+                    if self.module_holding(value).is_some() || Self::kind_beneath(&object.class_now()).as_deref() == Some("module") {
+                        return match self.module_repr_value(value.clone()) {
+                            Ok(text) => Ok(text.plain()),
+                            Err(Fault::Note(message)) => Err(message),
+                            Err(raised) => { self.carried = Some(raised); Err(String::new()) },
+                        };
                     }
                     let module = self.class_word("main");
                     Ok(if object.class_now().base.is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
@@ -9151,7 +9144,10 @@ impl<'a> Engine<'a> {
             }
             Builtin::InstanceOf if args.len() == 2 => {
                 let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
-                Value::Flag(matches!(&args[0], Value::Object(o) if o.class_now().named(&class.name, false)))
+                let named = matches!(&args[0], Value::Object(o) if o.class_now().named(&class.name, false));
+                // The run's own module objects answer to the native module kind.
+                let module = Self::own_kind(class).as_deref() == Some("module") && self.module_holding(&args[0]).is_some();
+                Value::Flag(named || module)
             }
             Builtin::Repr | Builtin::Ascii | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
             _ => return Ok(None),
@@ -18029,6 +18025,22 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
             }
+            // A fresh empty file made at the path given: nothing where
+            // it stands afterwards, and the host's own number and words
+            // where it could not be made.
+            Builtin::FileCreate => {
+                arity(1)?;
+                let sp = self.wording();
+                match std::fs::File::create(args[0].display(&sp)) {
+                    Ok(_) => Value::Null,
+                    Err(problem) => {
+                        let number = problem.raw_os_error().unwrap_or(5) as i64;
+                        let words = problem.to_string();
+                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
+                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
+                    }
+                }
+            }
             // A directory's own entries, in no particular order but
             // sorted here for a run to answer the same way twice: the
             // bare name of each, with no directory before it. False
@@ -21839,7 +21851,9 @@ impl Engine<'_> {
                 let root = self.root_class();
                 if Rc::ptr_eq(class, &root) { return Ok(true); }
                 if let Value::Object(object) = value {
-                    let actual = object.class_now();
+                    let actual = if self.module_holding(value).is_some() {
+                        match self.named_kind(value) { Value::Class(kind) => kind, _ => object.class_now() }
+                    } else { object.class_now() };
                     return Ok(Self::contains_class(&actual, class));
                 }
                 if let Value::Class(held) = value {
@@ -21852,6 +21866,8 @@ impl Engine<'_> {
             // name, there being no builtin word to ask in its place.
             if let Some(kind) = Self::kind_beneath(class) {
                 if !self.lang.builtins.contains_key(&kind) {
+                    // The run's own module objects answer to the native module kind.
+                    if kind == "module" && Self::own_kind(class).as_deref() == Some("module") && self.module_holding(value).is_some() { return Ok(true); }
                     return Ok(match value {
                         Value::Object(o) => Rc::ptr_eq(&o.class_now(), class) || o.class_now().lineage.iter().any(|c| Rc::ptr_eq(c, class)),
                         _ => Self::own_kind(class).is_some() && value.core_kind() == kind,
@@ -22703,7 +22719,7 @@ impl Engine<'_> {
                     // A member read by name reads through the cell a
                     // module keeps it in, as a member read in the
                     // program does.
-                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } }
+                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else if self.lang.syntax_members.is_empty() { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } else { let keep = match &fields[at].1 { Value::Bond(cell) => matches!(&*cell.borrow(), Value::Array(_) | Value::Set(_) | Value::SetWalk(..) | Value::Map(_) | Value::Bytes(..)), _ => false }; if keep { fields[at].1.clone() } else { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } } }
                         else if b == Builtin::GetAttr && args.len() == 3 { args[2].clone() }
                         else { let words = &self.lang.core_words["core.attribute"]; return Err(format!("{}{}{}{}{}", words[0], o.class_now().name, words[1], attr, words[2])); },
                 }

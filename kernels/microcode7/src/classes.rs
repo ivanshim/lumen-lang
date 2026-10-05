@@ -76,6 +76,19 @@ impl<'a> Machine<'a> {
                 kind.shared.borrow_mut().push((self.detail("call").to_owned(), Self::wrap(79, Vec::new())));
             }
         }
+        if word == "module" && !self.detail("kind").is_empty() {
+            if let Some(key) = self.table.single("ext.stmt.class.constructor") {
+                kind.shared.borrow_mut().push((key.to_owned(), Self::wrap(2, vec![Value::text("module")])));
+            }
+        }
+        if word == "module" && !self.detail("kind").is_empty() {
+            let dictionary = self.detail("namespace").to_owned();
+            kind.shared.borrow_mut().push((dictionary.clone(), Self::wrap(32,
+                vec![Value::text(&dictionary), Value::Blueprint(kind.clone()), Value::Small(-1)])));
+            if let Some(represent) = self.table.strings("ext.stmt.class.special").get(1) {
+                kind.shared.borrow_mut().push((represent.clone(), Self::wrap(60, vec![Value::text(word), Value::text(represent)])));
+            }
+        }
         self.native_kinds.push((word.to_owned(),kind.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for (at, key) in self.table.strings("ext.stmt.class.special").iter().enumerate() {
@@ -290,6 +303,115 @@ impl<'a> Machine<'a> {
     }
     /// A thing of a blueprint standing on a native kind, its worth made
     /// by the primitive of that kind from what was given.
+    fn optional_module_entry(&mut self, owner: &Value, key: &str) -> Res<Option<Value>> {
+        match self.read_class_member(owner.clone(), key, false) {
+            Ok(held) => Ok(Some(held.settled())),
+            Err(escape) if self.missing_member_escape(&escape) => { Ok(None) },
+            Err(escape) => Err(escape),
+        }
+    }
+    fn module_wording(&mut self, held: &Value, represent: bool) -> Res<String> {
+        match self.object_words(held, represent) {
+            Ok(words) => Ok(words),
+            Err(error) => Err(self.got_away.take().unwrap_or(Escape::Error(error))),
+        }
+    }
+    fn namespace_provider_entries(&mut self, provider: &Value) -> Res<Option<Value>> {
+        let module = ["_frozen_importlib_external", "importlib._bootstrap_external"].iter()
+            .find_map(|name| self.imported.get(*name).cloned());
+        match module {
+            None => Ok(None),
+            Some(module) => {
+                let Some(class) = self.optional_module_entry(&module, "NamespaceLoader")? else { return Ok(None); };
+                if matches!(class, Value::Nil) { return Ok(None); }
+                let belongs = self.work_on_class(0, vec![provider.clone(), class])?;
+                if !belongs.is_true() { return Ok(None); }
+                let paths = self.read_class_member(provider.clone(), "_path", false)?;
+                let entries = self.gathered_members(&paths)?;
+                Ok(Some(Value::Vector(Rc::new(entries).into())))
+            }
+        }
+    }
+    pub(super) fn describe_module(&mut self, receiver: Value) -> Res {
+        let native = match &receiver { Value::Thing(t) => Self::native_beneath(&t.blueprint()).as_deref() == Some("module"), _ => false };
+        if !native && self.namespace_holding(&receiver).is_none() {
+            return Err(format!("TypeError: descriptor '__repr__' requires a 'module' object but received a '{}'", Self::type_argument_kind(&receiver)).into());
+        }
+        let loader = self.optional_module_entry(&receiver, "__loader__")?.unwrap_or(Value::Nil);
+        let specification = self.optional_module_entry(&receiver, "__spec__")?.unwrap_or(Value::Nil);
+        if self.prim(Prim::Truthful, "bool", std::slice::from_ref(&specification))?.is_true() {
+            let declared = self.read_class_member(specification.clone(), "name", false)?.settled();
+            let title = match declared { Value::Nil => Value::text("?"), _ => declared.clone() };
+            let source = self.read_class_member(specification.clone(), "origin", false)?.settled();
+            let result;
+            if matches!(source, Value::Nil) {
+                let provider = self.read_class_member(specification, "loader", false)?.settled();
+                let name = self.module_wording(&title, true)?;
+                result = if matches!(provider, Value::Nil) { format!("<module {name}>") }
+                    else { match self.namespace_provider_entries(&provider)? {
+                        Some(paths) => format!("<module {name} (namespace) from {}>", self.module_wording(&paths, true)?),
+                        None => format!("<module {name} ({})>", self.module_wording(&provider, true)?),
+                    } };
+            } else {
+                let located = self.read_class_member(specification, "has_location", false)?;
+                let from_file = self.prim(Prim::Truthful, "bool", &[located])?.is_true();
+                let name = self.module_wording(if from_file { &title } else { &declared }, true)?;
+                let origin = self.module_wording(&source, from_file)?;
+                result = if from_file { format!("<module {name} from {origin}>") } else { format!("<module {name} ({origin})>") };
+            }
+            return Ok(Value::text(&result));
+        }
+        let name_value = self.optional_module_entry(&receiver, "__name__")?.unwrap_or_else(|| Value::text("?"));
+        let name = self.module_wording(&name_value, true)?;
+        let suffix = match self.optional_module_entry(&receiver, "__file__")? {
+            Some(path) => format!(" from {}", self.module_wording(&path, true)?),
+            None if matches!(loader, Value::Nil) => String::new(),
+            None => format!(" ({})", self.module_wording(&loader, true)?),
+        };
+        Ok(Value::text(&format!("<module {name}{suffix}>")))
+    }
+    fn fill_module(&mut self, target: Value, handed: Vec<Value>) -> Res {
+        match &target {
+            Value::Thing(thing) if Self::native_beneath(&thing.blueprint()).as_deref() == Some("module") || self.namespace_holding(&target).is_some() => (),
+            _ => return Err(format!("TypeError: descriptor '__init__' requires a 'module' object but received a '{}'", Self::type_argument_kind(&target)).into()),
+        }
+        let (plain, named) = self.open_arguments(handed)?;
+        let count = plain.len() + named.len();
+        if count > 2 { return Err(format!("TypeError: module() takes at most 2 arguments ({count} given)").into()); }
+        let mut name = plain.first().cloned();
+        let mut doc = plain.get(1).cloned();
+        let mut unknown = None;
+        for (key, item) in named {
+            match key.as_str() {
+                "name" | "doc" => {
+                    let index = if key == "name" { 1 } else { 2 };
+                    if plain.len() >= index { return Err(format!("TypeError: argument for module() given by name ('{key}') and position ({index})").into()); }
+                    if index == 1 { name = Some(item); } else { doc = Some(item); }
+                }
+                _ => unknown = Some(key),
+            }
+        }
+        let name = name.ok_or_else(|| "TypeError: module() missing required argument 'name' (pos 1)".to_owned())?;
+        if let Some(key) = unknown { return Err(format!("TypeError: module() got an unexpected keyword argument '{key}'").into()); }
+        let raw = Self::underlying(&name).unwrap_or_else(|| name.settled());
+        if !matches!(raw, Value::Text(_) | Value::Unpaired(_)) {
+            let described = match raw { Value::Nil => String::from("None"), _ => Self::type_argument_kind(&name) };
+            return Err(format!("TypeError: module() argument 'name' must be str, not {described}").into());
+        }
+        let updates = [("__name__", name), ("__doc__", doc.unwrap_or(Value::Nil)), ("__package__", Value::Nil), ("__loader__", Value::Nil), ("__spec__", Value::Nil)];
+        let Value::Thing(thing) = target else { unreachable!() };
+        let mapping = thing.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
+        for (key, item) in updates {
+            if let Some(book) = &mapping { Self::write_into_book(book, key, Some(item)); continue; }
+            let mut attributes = thing.holds.borrow_mut();
+            match attributes.iter_mut().find(|entry| entry.0 == key) {
+                Some((_, Value::Shared(cell))) => *cell.borrow_mut() = item,
+                Some(entry) => entry.1 = item,
+                None => attributes.push((key.to_owned(), item)),
+            }
+        }
+        Ok(Value::Nil)
+    }
     fn thing_over_native(&mut self,class:Rc<Blueprint>,word:&str,given:Vec<Value>)->Res {
         if word == "Union" { return Err(String::from("TypeError: cannot create 'typing.Union' instances").into()); }
         if word == "cell" {
@@ -304,15 +426,6 @@ impl<'a> Machine<'a> {
             if !matches!(self.work_on_class(2, vec![values[0].clone()])?, Value::Flag(true)) { return Err(String::from("TypeError: first argument must be callable").into()); }
             if matches!(values[1], Value::Nil) { return Err(String::from("TypeError: instance must not be None").into()); }
             return Ok(Self::wrap(132, values));
-        }
-        if word == "module" {
-            let (values, named) = self.open_arguments(given)?;
-            if values.is_empty() || values.len() > 2 || !named.is_empty() { return Err(String::from("TypeError: module() takes at most 2 arguments").into()); }
-            if !matches!(values[0].settled(), Value::Text(_)) { return Err(format!("TypeError: module() argument 'name' must be str, not {}", values[0].kind_word()).into()); }
-            let entries = [("__name__", values[0].clone()), ("__doc__", values.get(1).cloned().unwrap_or(Value::Nil)),
-                ("__package__", Value::Nil), ("__loader__", Value::Nil), ("__spec__", Value::Nil)].into_iter().map(|(name, v)| (name.to_owned(), v)).collect();
-            self.made += 1;
-            return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: class, holds: RefCell::new(entries), turn: self.made })));
         }
         if word == "mappingproxy" {
             let (positional, keywords) = self.open_arguments(given)?;
@@ -381,6 +494,16 @@ impl<'a> Machine<'a> {
             if given.len() != 2 { return Err("TypeError: method expected 2 arguments".to_owned().into()); }
             if matches!(given[1].settled(), Value::Nil) { return Err("TypeError: instance must not be None".to_owned().into()); }
             return Ok(Self::wrap(3, given));
+        }
+        // A module made by hand: ModuleType is the run's own module
+        // kind, so calling it makes a thing carrying the name it was
+        // handed and, when one was handed, its documentation.
+        if word=="module" {
+            // The module initializer, possibly overridden, fills the
+            // namespace after allocation rather than here.
+            let holds = Vec::new();
+            self.made+=1;
+            return Ok(Value::Thing(Rc::new(Thing{reclassified:RefCell::new(None), of:class, holds:RefCell::new(holds), turn:self.made})));
         }
         let Some(op)=self.table.prims.get(word).copied()else{return Err(self.class_unready());};
         let (positional,named)=self.open_arguments(given)?;
@@ -816,6 +939,15 @@ impl<'a> Machine<'a> {
         Ok(format!("\0slot:{name}:{:p}",Rc::as_ptr(declared)))
     }
     fn slot_value(&self,thing:&Value,parts:&[Value])->Res {
+        if matches!(parts.get(2), Some(Value::Small(-1))) {
+            match thing {
+                Value::Thing(owner) if self.namespace_holding(thing).is_some() || Self::native_beneath(&owner.blueprint()).as_deref() == Some("module") => {
+                    let space = owner.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
+                    return Ok(space.unwrap_or_else(|| Value::Attributes(owner.clone())));
+                }
+                _ => return Err(format!("TypeError: descriptor '__dict__' for 'module' objects doesn't apply to a '{}' object", Self::type_argument_kind(thing)).into()),
+            }
+        }
         let key=self.slot_key(thing,parts)?;
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if parts[0].bare() == "__weakref__" && self.table.has_any("ext.builtin.weak.get") {
@@ -825,6 +957,10 @@ impl<'a> Machine<'a> {
         held.ok_or_else(||self.absent_attribute(thing,&parts[0].bare()))
     }
     fn slot_change(&self,thing:&Value,parts:&[Value],replacement:Option<Value>)->Res {
+        if parts.get(2).is_some_and(|item| matches!(item, Value::Small(-1))) {
+            let _ = self.slot_value(thing, parts)?;
+            return Err(self.detail("property.readonly").to_owned().into());
+        }
         let key=self.slot_key(thing,parts)?;
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if parts[0].bare() == "__weakref__" && self.table.has_any("ext.builtin.weak.get") { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", t.blueprint().name).into()); }
@@ -1347,6 +1483,11 @@ impl<'a> Machine<'a> {
                         if values.len()>1{self.root_turns_away(c,'n')?;}
                         self.made+=1;Ok(Value::Thing(Rc::new(Thing{reclassified: RefCell::new(None), of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))
                     }
+                    2 if kept.first().map_or(false, |item| item.bare() == "module") => {
+                        let mut handed = values.into_iter();
+                        let target = handed.next().ok_or_else(|| "TypeError: descriptor '__init__' of 'module' object needs an argument".to_owned())?;
+                        self.fill_module(target, handed.collect())
+                    }
                     2 if kept.first().is_some_and(|v| v.bare() == "__init_subclass__") => {
                         let (positional, keywords) = self.open_arguments(values)?;
                         let Some(Value::Blueprint(owner)) = positional.first() else { return Err(self.class_unready()); };
@@ -1480,6 +1621,9 @@ impl<'a> Machine<'a> {
                         let entry=kept[1].bare();
                         let word=kept[0].bare();
                         if values.is_empty() {
+                            if word == "module" && self.table.strings("ext.stmt.class.special").get(1).is_some_and(|name| name == &entry) {
+                                return Err("TypeError: descriptor '__repr__' of 'module' object needs an argument".to_owned().into());
+                            }
                             let words=self.table.strings("ext.stmt.class.detail.descriptor.unbound");
                             return if words.len()==3 {
                                 Err(format!("{}{word}{}{entry}{}",words[0],words[1],words[2]).into())
@@ -1498,6 +1642,10 @@ impl<'a> Machine<'a> {
                         // not the class's: `set.union(s, ...)` for `s`
                         // a subclass of `set` works upon what `s` keeps
                         // of a set.
+                        if word == "module" && self.table.strings("ext.stmt.class.special").get(1).is_some_and(|key| key == &entry) {
+                            if !values.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", values.len()).into()); }
+                            return self.describe_module(subject);
+                        }
                         let receiver=match &subject {
                             Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref()==Some(word.as_str()) =>
                                 Self::underlying(&subject).unwrap_or_else(||subject.clone()),
@@ -2005,7 +2153,13 @@ impl<'a> Machine<'a> {
         if !named.is_empty(){return named.into();}
         // A thing and a blueprint go by their own name; anything else
         // by the name its kind goes under.
-        let name=match value{Value::Thing(t)=>t.blueprint().name.clone(),Value::Blueprint(b)=>b.name.clone(),other=>other.kind_word()};
+        let name=match value{Value::Thing(t) => {
+            let blueprint = t.blueprint();
+            let public = if Self::native_word(&blueprint).is_some() {
+                blueprint.presentation.as_ref().and_then(|s| s.strip_suffix("'>")?.strip_prefix("<class '")).map(String::from)
+            } else { None };
+            public.unwrap_or_else(|| blueprint.name.clone())
+        },Value::Blueprint(b)=>b.name.clone(),other=>other.kind_word()};
         let parts=self.table.strings("ext.stmt.class.detail.attribute.amiss");
         if parts.len()<3{return self.class_unready();}
         format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
@@ -2050,6 +2204,8 @@ impl<'a> Machine<'a> {
         }
         match &entry {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(133 | 60 | 120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
@@ -3098,7 +3254,7 @@ impl<'a> Machine<'a> {
             }
             if let Some(root)=self.from_the_root(key,false,b){return Ok(root);}
         }else if let Value::Thing(t)=&value {
-            if self.namespace_holding(&value).is_some() || t.blueprint().name == "ModuleType" {
+            if self.namespace_holding(&value).is_some() || Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
                 let title = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
                 let dictionary = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
                 let lookup = |wanted: &str| {
@@ -3216,6 +3372,9 @@ impl<'a> Machine<'a> {
             }
             if key==self.detail("namespace"){
                 if let Some(descriptor)=self.inherited_entry(&t.blueprint(),key) {
+                    if Self::native_beneath(&t.blueprint()).as_deref() == Some("module") && !self.writes_too(&descriptor) {
+                        if let Some(held) = t.holds.borrow().iter().find(|entry| entry.0 == key).map(|entry| entry.1.clone()) { return Ok(held); }
+                    }
                     return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
                 }
                 // A blueprint naming its slots without the namespace among them has things without one.
@@ -3669,7 +3828,7 @@ impl<'a> Machine<'a> {
                     if key.starts_with("st_") {return Err("AttributeError: readonly attribute".to_string().into());}
                     return Err(format!("AttributeError: 'os.stat_result' object has no attribute '{}' and no __dict__ for setting new attributes", key).into());
                 }
-                if self.namespace_holding(&subject).is_some() || t.blueprint().name == "ModuleType" {
+                if self.namespace_holding(&subject).is_some() || Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
                     let evaluator = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
                     if key == evaluator {
                         match replacement.as_ref() {
@@ -3737,6 +3896,15 @@ impl<'a> Machine<'a> {
                         self.through_descriptor(&entry,hook,given)?;
                         return Ok(Value::Nil);
                     }
+                }
+                if key == self.detail("namespace") && self.namespace_holding(&subject).is_some()
+                    && self.inherited_entry(&t.blueprint(), key).is_none() {
+                    return Err(self.detail("property.readonly").to_owned().into());
+                }
+                if key == self.detail("namespace") && Self::native_beneath(&t.blueprint()).as_deref() == Some("module")
+                    && self.inherited_entry(&t.blueprint(), key).is_some() {
+                    if !Self::change_entry(&mut t.holds.borrow_mut(), key, replacement) { return Err(self.absent_attribute(&subject, key)); }
+                    return Ok(Value::Nil);
                 }
                 // The thing's own namespace handed back to it, an entry
                 // having been put in through it, is already in place.
@@ -4200,6 +4368,9 @@ impl<'a> Machine<'a> {
     /// own for, named as the reference names that kind. It is built
     /// once and kept, so two askings answer with the very same one.
     pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
+        if let Value::Thing(thing) = value {
+            if Self::native_beneath(&thing.blueprint()).as_deref() == Some("module") { return Value::Blueprint(thing.blueprint()); }
+        }
         let word=if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
@@ -4276,6 +4447,12 @@ impl<'a> Machine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
+        // The run’s own module objects answer to the native module kind.
+        if !class_only && self.namespace_holding(&subject.settled()).is_some() {
+            if let (Value::Blueprint(actual), Value::Blueprint(expected)) = (self.kind_named_after(&subject.settled()), choice.settled()) {
+                return Ok(Self::ancestry_includes(&actual, &expected));
+            }
+        }
         if let Value::Tuple(options)|Value::Vector(options)=choice {
             for option in options.iter() { if self.is_beneath(subject,option,class_only)? { return Ok(true); } }
             return Ok(false);
@@ -4432,7 +4609,7 @@ impl<'a> Machine<'a> {
             return match read {
                 // A member read by name reads through the cell a namespace
                 // keeps it in, as the program's own member read does.
-                Ok(v)=>Ok(if op==6{Value::Flag(true)}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
+                Ok(v)=>Ok(if op==6{Value::Flag(true)}else if self.table.has_any("ext.builtin.exceptions.syntax"){let keep=match &v{Value::Shared(cell)=>matches!(&*cell.borrow(),Value::Vector(_)|Value::Set(_)|Value::SetCursor{..}|Value::Dict(_)|Value::Octets{..}),_=>false};if keep{v}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(escape) if self.missing_member_escape(&escape)=>{
                     if op == 6 || values.len() == 3 {
                         self.sought_in_vain.take();
@@ -4471,21 +4648,20 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            if let Value::Thing(object) = &values[0] {
-                let blueprint = object.blueprint();
-                if Self::native_beneath(&blueprint).as_deref() == Some("module") || blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType") {
-                    if let Some(dict) = Self::own_entry(&blueprint, self.detail("namespace")) {
-                        if !matches!(dict.settled(), Value::Dict(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()); }
-                    }
-                }
-            }
             if let Value::Thing(module) = &values[0] {
                 let blueprint=module.blueprint();
-                let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module") || blueprint.name == "ModuleType" || blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType");
+                let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module");
                 let class_directory=self.table.strings("ext.stmt.class.special").get(75)
                     .and_then(|word| self.inherited_entry(&blueprint,word)).is_some();
                 if (module_kind || self.namespace_holding(&values[0]).is_some()) && !class_directory {
-                    let entries=self.attribute_entries(module);
+                    let namespace_key = self.detail("namespace").to_owned();
+                    let dictionary = self.read_class_member(values[0].clone(), &namespace_key, false)?;
+                    let map = Self::underlying(&dictionary).unwrap_or(dictionary).settled();
+                    let entries = match map {
+                        Value::Attributes(owner) => self.attribute_entries(&owner),
+                        Value::Dict(pairs) => pairs.iter().map(|entry| (entry.0.clone(), entry.1.clone())).collect(),
+                        _ => return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()),
+                    };
                     if let Some(word)=self.table.strings("ext.stmt.class.special").get(75) {
                         if let Some((_,method))=entries.iter().find(|(key,_)| key.bare()==*word) {
                             let answer=self.apply_class_member(method.clone(),Vec::new())?;
@@ -4494,10 +4670,9 @@ impl<'a> Machine<'a> {
                             return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                         }
                     }
-                    let mut names: Vec<_> = entries.into_iter()
-                        .map(|(key, _)| key.bare()).collect();
-                    names.sort();
-                    return Ok(Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|name| Value::text(name)).collect())));
+                    let keys = entries.into_iter().map(|entry| entry.0).collect();
+                    let ordered = self.arranged(keys, &Value::Nil, false).map_err(Escape::from)?;
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                 }
             }
             // A thing with a directory method of its own answers with it,
@@ -4562,7 +4737,9 @@ impl<'a> Machine<'a> {
             // through the worth the thing keeps.
             if let Some(word)=Self::native_word(b) {
                 if key==self.detail("allocate"){return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);}
+                if word == "module" && self.table.strings("ext.stmt.class.special").get(1).is_some_and(|name| name == key) { return self.describe_module(receiver); }
                 if self.table.single("ext.stmt.class.constructor")==Some(key){
+                    if word == "module" { return self.fill_module(receiver, args); }
                     return match Self::underlying(&receiver) {
                         Some(under) if matches!(under.settled(), Value::Set(_) | Value::Vector(_) | Value::Dict(_)) => {
                             let (positional, named) = self.open_arguments(args)?;
@@ -4607,7 +4784,11 @@ impl<'a> Machine<'a> {
                 return Ok(self.native_fault_new(b.clone(), cls.clone(), rest.to_vec())?);
             }
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
-                if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
+                if let Value::Thing(t) = &receiver {
+                    let (mut plain, names) = self.open_arguments(args)?;
+                    plain.extend(names.into_iter().map(|(word, item)| Value::Couple(Rc::new((Value::text(&word), item)))));
+                    return self.fault_method(t.clone(), key, &plain);
+                }
             }
             if b.name==self.detail("root") && key==self.detail("allocate"){let f=self.read_class_member(Value::Blueprint((*b).clone()),key,true)?;return self.apply_class_member(f,args);}
             if b.name==self.detail("root") {

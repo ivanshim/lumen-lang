@@ -799,11 +799,11 @@ class memoryview:
 # quit, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds
-# the operating system raises besides FileNotFoundError and
-# IsADirectoryError -- BlockingIOError, BrokenPipeError,
-# ChildProcessError, ConnectionError and its four kinds,
-# FileExistsError, InterruptedError, NotADirectoryError,
-# PermissionError, ProcessLookupError and TimeoutError -- along with
+# the operating system raises besides FileNotFoundError,
+# IsADirectoryError, NotADirectoryError and PermissionError --
+# BlockingIOError, BrokenPipeError, ChildProcessError,
+# ConnectionError and its four kinds, FileExistsError,
+# InterruptedError, ProcessLookupError and TimeoutError -- along with
 # the old spellings EnvironmentError and IOError.
 
 
