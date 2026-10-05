@@ -552,10 +552,10 @@ impl<'a> Engine<'a> {
             if at == 43 { fields.push(("\0unicode-encode".into(), Value::Flag(true))); }
             if at == 44 { fields.push(("\0unicode-decode".into(), Value::Flag(true))); }
             if at == 45 { fields.push(("\0unicode-translate".into(), Value::Flag(true))); }
-            classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+            classes.push(Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -775,7 +775,9 @@ impl<'a> Engine<'a> {
             }
             // A class written with several bases is beneath each of
             // them, the whole of its gathered line holding every one.
-            if current.lineage.iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
+            if current.lineage.borrow().iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
+            // An order a metaclass's own mro supplied is complete.
+            if current.mro_adopted.get() { return false; }
             class = current.base.as_ref();
         }
         false
@@ -1265,9 +1267,9 @@ impl<'a> Engine<'a> {
         } else { Value::Blank }).collect();
         if !lang.catch_as.is_empty() {
             if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
-                world[slot] = Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+                world[slot] = Value::Class(Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None,
                     name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }));
             }
         }
@@ -2237,7 +2239,7 @@ impl<'a> Engine<'a> {
             if let Some(Value::Class(class)) = self.native_exceptions.get(&self.lang.special_stop[0]).cloned() {
                 return Some(self.exception_instance(class, vec![], Value::Null));
             }
-            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
+            let class = Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.made += 1;
             return Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
         }
@@ -4652,8 +4654,8 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = value else { return None };
         let named = |name: &String| names.iter().any(|word| word == name);
         let actual = object.class_now();
-        if self.lang.fuller_classes && !actual.lineage.is_empty() {
-            for current in std::iter::once(actual.as_ref()).chain(actual.lineage.iter().map(Rc::as_ref)) {
+        if self.lang.fuller_classes && !actual.lineage.borrow().is_empty() {
+            for current in std::iter::once(actual.as_ref()).chain(actual.lineage.borrow().iter().map(Rc::as_ref)) {
                 if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
                 if let Some((_, routine)) = current.methods.iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
                 if let Some(word) = Self::own_kind(current) {
@@ -4971,9 +4973,9 @@ impl<'a> Engine<'a> {
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
-                let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", keys[9])),
+                let class = Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -6001,7 +6003,7 @@ impl<'a> Engine<'a> {
     /// into and is copied before the class method fills it.
     fn frozen_beneath(value: &Value) -> bool {
         let Value::Object(o) = value else { return false };
-        o.class_now().name == "frozendict" || o.class_now().lineage.iter().any(|base| base.name == "frozendict")
+        o.class_now().name == "frozendict" || o.class_now().lineage.borrow().iter().any(|base| base.name == "frozendict")
     }
 
     /// A frozendict's rows as a fresh map that may be written.
@@ -6074,8 +6076,8 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
         let actual = object.class_now();
-        if self.lang.fuller_classes && !actual.lineage.is_empty() {
-            for current in std::iter::once(actual.as_ref()).chain(actual.lineage.iter().map(Rc::as_ref)) {
+        if self.lang.fuller_classes && !actual.lineage.borrow().is_empty() {
+            for current in std::iter::once(actual.as_ref()).chain(actual.lineage.borrow().iter().map(Rc::as_ref)) {
                 if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) {
                     if Self::own_kind(current).is_some() && matches!(value, Value::Adapter(slot) if slot.0 == 29) { return None; }
                     return Some(value.clone());
@@ -7970,7 +7972,8 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = value else { return false };
         let class = object.class_now();
         let Some(method) = self.special_method(value, slot) else { return false };
-        std::iter::once(class.clone()).chain(class.lineage.iter().cloned()).any(|base| {
+        let forebears: Vec<Rc<Class>> = class.lineage.borrow().iter().cloned().collect();
+        std::iter::once(class.clone()).chain(forebears).any(|base| {
             if !base.constants.iter().any(|(key, _)| key == "\0native-name") { return false; }
             let sequence = self.class_value(&base, "__abc_tpflags__").is_some_and(|v| matches!(v.contents(), Value::Small(bits) if bits & 32 != 0));
             let name = &self.lang.class_special[slot];
@@ -10677,7 +10680,7 @@ impl<'a> Engine<'a> {
                     self.data.push(result);return Ok(());
                 }
                 Value::Class(Rc::new(Class {
-                    lineage: Vec::new(), direct: Vec::new(), outline: None,
+                    lineage: RefCell::new(Vec::new()), direct: Vec::new(), outline: None,
                     name: plan.name.clone(),
                     base,
                     answers,
@@ -10686,7 +10689,7 @@ impl<'a> Engine<'a> {
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
-                    weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                    weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }))
             }
             Action::Make => {
@@ -11581,10 +11584,10 @@ impl<'a> Engine<'a> {
                     Some(Value::Class(native)) => self.exception_instance(native, if unsaid { Vec::new() } else { vec![message] }, Value::Null),
                     _ => {
                         let class = Rc::new(Class {
-                            lineage: Vec::new(), direct: Vec::new(), outline: None,
+                            lineage: RefCell::new(Vec::new()), direct: Vec::new(), outline: None,
                             name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
                             answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
-                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                         });
                         self.made += 1;
                         let fields = if bare { Vec::new() } else { vec![("message".to_string(), message)] };
@@ -18679,10 +18682,10 @@ impl<'a> Engine<'a> {
                     shared.push((word.to_string(), value.clone()));
                 }
                 if self.fuller_classes() { return self.form_class(title.to_string(), vec![parent.clone()], shared).map_err(|f| f.told(&self.wording())); }
-                Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+                Value::Class(Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None,
                     name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                    constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                    constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }))
             }
             Builtin::Sre => return crate::sre::call(args),
@@ -18855,7 +18858,7 @@ impl<'a> Engine<'a> {
                 let mut named = Vec::new();
                 let mut hierarchy = Vec::new();
                 if let Some(class) = of {
-                    if class.lineage.is_empty() {
+                    if class.lineage.borrow().is_empty() {
                         let mut next = Some(class);
                         while let Some(parent) = next {
                             next = parent.base.clone();
@@ -18863,7 +18866,7 @@ impl<'a> Engine<'a> {
                         }
                     } else {
                         hierarchy.push(class.clone());
-                        hierarchy.extend(class.lineage.iter().cloned());
+                        hierarchy.extend(class.lineage.borrow().iter().cloned());
                     }
                 }
                 for class in hierarchy {
@@ -20022,9 +20025,9 @@ impl<'a> Engine<'a> {
                 // that names one for it is answered with a class so named.
                 if let (Value::Trace(_), Some(word)) = (&args[0], &self.lang.exception_traceback) {
                     return Ok(Value::Class(Rc::new(Class {
-                        lineage: Vec::new(), direct: Vec::new(), outline: None, name: word.clone(), base: None,
+                        lineage: RefCell::new(Vec::new()), direct: Vec::new(), outline: None, name: word.clone(), base: None,
                         answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                        constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                        constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                     })));
                 }
                 // A thing is of no kind the core knows, so a language
@@ -21725,7 +21728,7 @@ impl Engine<'_> {
             if let Some(kind) = Self::kind_beneath(class) {
                 if !self.lang.builtins.contains_key(&kind) {
                     return Ok(match value {
-                        Value::Object(o) => Rc::ptr_eq(&o.class_now(), class) || o.class_now().lineage.iter().any(|c| Rc::ptr_eq(c, class)),
+                        Value::Object(o) => Rc::ptr_eq(&o.class_now(), class) || o.class_now().lineage.borrow().iter().any(|c| Rc::ptr_eq(c, class)),
                         _ => Self::own_kind(class).is_some() && value.core_kind() == kind,
                     });
                 }
@@ -21737,7 +21740,7 @@ impl Engine<'_> {
             // `answers`.
             return Ok(matches!(value, Value::Object(o) if {
                 let held = &o.class_now();
-                held.named(&class.name, false) || held.lineage.iter().any(|b| b.named(&class.name, false))
+                held.named(&class.name, false) || held.lineage.borrow().iter().any(|b| b.named(&class.name, false))
             }));
         }
         // A thing of a class standing on a builtin kind is of that
@@ -22794,7 +22797,7 @@ impl Engine<'_> {
         fields.push(("\0module-owner".into(), Value::text(path)));
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
+            class: Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
             fields: RefCell::new(fields), mark: self.made,
         });
         let links = names.iter().enumerate().map(|(i, name)|
@@ -22835,9 +22838,9 @@ impl Engine<'_> {
             if !name.is_empty() && !self.modules.contains_key(&name) {
                 let book = self.outer_book_made();
                 self.made += 1;
-                let class = Rc::new(Class { name: name.clone(), base: None, direct: vec![], lineage: vec![], outline: Some(format!("<module '{name}'>")),
+                let class = Rc::new(Class { name: name.clone(), base: None, direct: vec![], lineage: RefCell::new(vec![]), outline: Some(format!("<module '{name}'>")),
                     answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![],
-                    python_names: RefCell::new(None), shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots:false, sealed: std::cell::Cell::new(false) });
+                    python_names: RefCell::new(None), shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots:false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false) });
                 let main = Value::Object(Rc::new(Instance { class, replacement_class: RefCell::new(None),
                     fields: RefCell::new(vec![("\0namespace".into(), Value::Bond(book))]), mark: self.made }));
                 self.modules.insert(name, main);
@@ -23372,7 +23375,7 @@ impl Engine<'_> {
         let requested = asked.as_ref().map(Value::contents).or(implicit);
         let custom = requested.as_ref().is_some_and(|value| match value {
             Value::Native(Builtin::SortOf, _) => false,
-            Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage.iter().any(|base| self.is_metaclass_root(base)),
+            Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage.borrow().iter().any(|base| self.is_metaclass_root(base)),
             _ => true,
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|base| self.type_base(base)).collect::<Flow<Vec<_>>>()? };
@@ -23611,7 +23614,7 @@ impl Engine<'_> {
         let book = self.outer_book_made();
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), declares_slots: false, weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false) }),
+            class: Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), declares_slots: false, weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false) }),
             fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
         });
         self.modules.insert(main.clone(), Value::Object(object));
@@ -23702,8 +23705,8 @@ impl Engine<'_> {
     fn code_class(&mut self) -> Rc<Class> {
         if let Some(class) = &self.code_class { return class.clone(); }
         let class = Rc::new(Class {
-            direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
-            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+            direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
+            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
         });
         self.code_class = Some(class.clone());
         class

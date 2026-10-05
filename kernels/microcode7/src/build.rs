@@ -9376,9 +9376,9 @@ impl<'a> Builder<'a> {
         }
         if table.spells("ext.stmt.class.special.stop", &t.spelling()) && !table.spells("ext.builtin.exceptions", &t.spelling()) {
             self.advance();
-            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
-                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), type_names: std::cell::RefCell::new(None),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), type_names: std::cell::RefCell::new(None),
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
@@ -9513,6 +9513,14 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling())
                 && self.uses_bound_callable(&t.lexeme) => {
                 self.advance();
+                // A method that names the parent word at all carries
+                // the class's hidden cell, however the word was bound.
+                if table.has_any("ext.stmt.class.detail.root") && !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                    self.parts().needs_class_cell = true;
+                    self.parts().class_cell_protocol = true;
+                    let hidden = self.parts().completed_class.ident.to_string();
+                    self.lexical_address(&hidden, false);
+                }
                 let target = self.read(&t.lexeme);
                 if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
                     self.advance();
@@ -9535,10 +9543,18 @@ impl<'a> Builder<'a> {
             }
             // Standing alone the parent word is a name like another:
             // the program's own `super`, where it gave the name one, is
-            // what the reading finds.
+            // what the reading finds. A method that names it at all
+            // carries the class's hidden cell, as the reference has
+            // every naming of the word count as a use of it.
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.spelling())
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
                 self.advance();
+                if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                    self.parts().needs_class_cell = true;
+                    self.parts().class_cell_protocol = true;
+                    let hidden = self.parts().completed_class.ident.to_string();
+                    self.lexical_address(&hidden, false);
+                }
                 self.read(&t.lexeme)
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling()) => {
@@ -9565,7 +9581,14 @@ impl<'a> Builder<'a> {
                         // The parent word is a name the program may have
                         // given a meaning of its own, so it is read where
                         // names are read and what it stands for is called
-                        // with the arguments written.
+                        // with the arguments written. A method that names
+                        // it at all carries the class's hidden cell.
+                        if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                            self.parts().needs_class_cell = true;
+                            self.parts().class_cell_protocol = true;
+                            let hidden = self.parts().completed_class.ident.to_string();
+                            self.lexical_address(&hidden, false);
+                        }
                         let callable = self.read(&t.lexeme);
                         return self.subscript(invoke(callable, extra));
                     }

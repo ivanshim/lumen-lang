@@ -9768,7 +9768,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
@@ -9909,6 +9909,16 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling())
                 && self.builtin_shadowed(&tok.lexeme) => {
                 self.take();
+                // A method that names the parent word at all carries
+                // the class's hidden cell, however the word was shadowed.
+                if lang.class_details.get("root").map_or(false, |v| !v.is_empty()) && !self.in_class_body() && !self.gathered.is_empty() {
+                    self.gathering().needs_class_cell = true;
+                    self.gathering().class_cell_protocol = true;
+                    if !self.discovering {
+                        let cell = self.gathering().class_cell.clone();
+                        self.enclosing_cell(self.pieces.len() - 1, &cell);
+                    }
+                }
                 if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
                     self.take();
                     let count = self.arguments_of(&tok.lexeme, &call)?;
@@ -9934,8 +9944,18 @@ impl<'a> Compiler<'a> {
                 && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
                 // Standing alone the parent word is a name like another:
                 // the program's own `super`, where it gave the name one,
-                // is what the reading finds.
+                // is what the reading finds. A method that names it at
+                // all carries the class's hidden cell, as the reference
+                // has every naming of the word count as a use of it.
                 self.take();
+                if !self.in_class_body() && !self.gathered.is_empty() {
+                    self.gathering().needs_class_cell = true;
+                    self.gathering().class_cell_protocol = true;
+                    if !self.discovering {
+                        let cell = self.gathering().class_cell.clone();
+                        self.enclosing_cell(self.pieces.len() - 1, &cell);
+                    }
+                }
                 self.read(&tok.lexeme);
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling()) => {
@@ -9956,6 +9976,14 @@ impl<'a> Compiler<'a> {
                     // those two are read without complaint so the call
                     // can say which one was not there to give.
                     if extra > 0 {
+                        if !self.in_class_body() && !self.gathered.is_empty() {
+                            self.gathering().needs_class_cell = true;
+                            self.gathering().class_cell_protocol = true;
+                            if !self.discovering {
+                                let cell = self.gathering().class_cell.clone();
+                                self.enclosing_cell(self.pieces.len() - 1, &cell);
+                            }
+                        }
                         self.read(&tok.lexeme);
                         self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
                         return self.indexing(from);

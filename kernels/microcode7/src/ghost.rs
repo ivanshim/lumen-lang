@@ -494,7 +494,7 @@ impl Knot {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
-                    for parent in b.under.iter().chain(&b.ancestry).chain(&b.parents).chain(&b.answers) {
+                    for parent in b.under.iter().chain(b.ancestry.borrow().iter()).chain(&b.parents).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
                     }
                 }

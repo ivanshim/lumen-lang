@@ -475,7 +475,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
             out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
-            out.extend(c.lineage.iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
+            out.extend(c.lineage.borrow().iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
