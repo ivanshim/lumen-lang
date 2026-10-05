@@ -1116,6 +1116,15 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     let source = input.as_ref();
     let text = drop_comments(source, table);
     let src: Vec<char> = text.chars().collect();
+    // Extended builtin spellings start with the identifier just read.
+    // Bare names cannot extend it; keep only punctuation continuations.
+    let mut continued: std::collections::HashMap<String, Vec<&String>> = std::collections::HashMap::new();
+    for name in table.prims.keys().chain(table.strings("ext.builtin.print.file.output").iter()).chain(table.strings("ext.builtin.print.file.error").iter()) {
+        let head: String = name.chars().enumerate()
+            .take_while(|(index, letter)| *index == 0 || table.extends_name(*letter))
+            .map(|(_, letter)| letter).collect();
+        if head.len() < name.len() { continued.entry(head).or_default().push(name); }
+    }
     let quotes = table.letters("lexical.string_quotes");
     let raw = table.letters("lexical.raw_quotes");
     let weaving = table.letters("ext.lexical.interpolating_quotes");
@@ -1511,7 +1520,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             let mut s: String = src[if led { pos + 1 } else { pos }..k].iter().collect();
             let mut longest = 0;
             let routed = !table.strings("ext.builtin.print.redirect").is_empty();
-            for name in table.prims.keys().chain(table.strings("ext.builtin.print.file.output").iter()).chain(table.strings("ext.builtin.print.file.error").iter()) {
+            for &name in continued.get(&s).into_iter().flatten() {
                 if name.len() > s.len() && name.starts_with(s.as_str()) {
                     // With the printer routed through the module, a stream
                     // name is a chain of members to be followed one at a
