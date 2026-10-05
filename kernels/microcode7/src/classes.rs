@@ -390,7 +390,7 @@ impl<'a> Machine<'a> {
             let Prim::ClassWork(operation) = op else { unreachable!() };
             self.work_on_class(operation, values)?
         } else if self.table.has_any("ext.stmt.class.builder") && op == Prim::Dictionary { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
-        let made = if word == "str" { Self::underlying(&made).unwrap_or(made) } else { made };
+        let made = if matches!(word, "str" | "bytes" | "bytearray") { Self::underlying(&made).unwrap_or(made) } else { made };
         let kept=match made.settled(){
             held @ (Value::Vector(_)|Value::Dict(_))=>Value::Mutable(Rc::new(RefCell::new(held)),true),
             other=>other,

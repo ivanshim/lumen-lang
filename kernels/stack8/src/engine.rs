@@ -15389,6 +15389,26 @@ impl<'a> Engine<'a> {
             crate::strings::keywords(op, &mut args, named, self.lang)?;
             return self.builtin(builtin, name, &mut args);
         }
+        // The byte methods whose keywords land in fixed slots (split,
+        // rsplit, hex and expandtabs) bind each keyword to its own slot,
+        // so the order they are written in and any slot left unspoken do
+        // not matter; the unspoken slots stand as None.
+        if matches!(builtin, Builtin::Bytes(4 | 8 | 23 | 33)) && !named.is_empty() {
+            for (key, value) in std::mem::take(&mut named) {
+                let slot = match (builtin, key.as_str()) {
+                    (Builtin::Bytes(4), "sep") => 1,
+                    (Builtin::Bytes(4), "bytes_per_sep") => 2,
+                    (Builtin::Bytes(8 | 23), "sep") => 1,
+                    (Builtin::Bytes(8 | 23), "maxsplit") => 2,
+                    (Builtin::Bytes(33), "tabsize") => 1,
+                    _ => return Err(self.byte_fault("arguments")),
+                };
+                while args.len() <= slot { args.push(Value::Null); }
+                if !matches!(args[slot], Value::Null) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+                args[slot] = value;
+            }
+            return self.builtin(builtin, name, &mut args);
+        }
         for (key, value) in named {
             let place = if builtin == Builtin::Sum && self.lang.core_words.get("start").map_or(false, |words| Lang::spells(words, &key)) {
                 1
@@ -15404,16 +15424,6 @@ impl<'a> Engine<'a> {
                 if args.len() == 1 { args.push(Value::text(&self.byte_codec_name(Self::CODEC_WIDE))); }
                 2
             } else if builtin == Builtin::Bytes(28) && key == "keepends" {
-                1
-            } else if builtin == Builtin::Bytes(4) && key == "sep" {
-                1
-            } else if builtin == Builtin::Bytes(4) && key == "bytes_per_sep" {
-                2
-            } else if matches!(builtin, Builtin::Bytes(8 | 23)) && key == "sep" {
-                1
-            } else if matches!(builtin, Builtin::Bytes(8 | 23)) && key == "maxsplit" {
-                2
-            } else if builtin == Builtin::Bytes(33) && key == "tabsize" {
                 1
             } else if builtin == Builtin::Bytes(39) && key == "delete" {
                 // bytes.translate(table, /, delete=b'') keeps the dropped
@@ -16325,7 +16335,7 @@ impl<'a> Engine<'a> {
                 if text.chars().count() != 1 { return Err("ValueError: sep must be length 1.".to_string()); }
                 if !text.is_ascii() { return Err("ValueError: sep must be ASCII.".to_string()); }
                 let every = match given.get(1) {
-                    None => 1,
+                    None | Some(Value::Null) => 1,
                     Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
                         n.as_big()?.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())? as i64
                     }
@@ -16409,10 +16419,25 @@ impl<'a> Engine<'a> {
             // two that will not answer below nought refuse instead.
             13 | 18 | 19 | 20 | 21 if (1..=3).contains(&given.len()) => {
                 let needle = sought(&given[0])?;
-                let (from, upto) = limits(given.get(1), given.get(2))?;
+                // The place a search begins is clipped only below
+                // nought, and the place it ends is clipped to the row,
+                // so a start past the row finds nothing at all.
+                let start = match given.get(1).filter(|v| !matches!(v, Value::Null)) { Some(v) => whole(v)?, None => 0 };
+                let start = if start < 0 { start.saturating_add(row.len() as i64).max(0) } else { start };
+                let end = match given.get(2).filter(|v| !matches!(v, Value::Null)) { Some(v) => whole(v)?, None => row.len() as i64 };
+                let end = if end < 0 { end.saturating_add(row.len() as i64).max(0) } else { end.min(row.len() as i64) };
+                if end - start < needle.len() as i64 {
+                    return if task == 18 { Ok(Value::Small(0)) }
+                        else if matches!(task, 19 | 21) { Err(self.byte_fault("missing")) }
+                        else { Ok(Value::Small(-1)) };
+                }
+                if needle.is_empty() {
+                    return Ok(Value::Small(if task == 18 { end - start + 1 }
+                        else if matches!(task, 20 | 21) { end } else { start }));
+                }
+                let (from, upto) = (start.max(0) as usize, end as usize);
                 let piece = &row[from..upto];
                 if task == 18 {
-                    if needle.is_empty() { return Ok(Value::Small(piece.len() as i64 + 1)); }
                     let (mut seen, mut at) = (0i64, 0usize);
                     while let Some(found) = seek(&piece[at..], &needle, false) { seen += 1; at += found + needle.len(); }
                     return Ok(Value::Small(seen));
@@ -17306,7 +17331,7 @@ impl<'a> Engine<'a> {
         let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
         let count = |v: Option<&Value>| -> Res<usize> {
             match v {
-                None => Ok(usize::MAX),
+                None | Some(Value::Null) => Ok(usize::MAX),
                 Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
                     let n = v.as_big()?;
                     Ok(n.to_usize().unwrap_or(usize::MAX))

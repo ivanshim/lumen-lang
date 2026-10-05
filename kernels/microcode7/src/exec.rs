@@ -6899,11 +6899,23 @@ impl<'a> Machine<'a> {
                     let held = if let Value::Shared(cell) = held { cell.borrow().clone() } else { held };
                     if let Value::Octets { cell, changeable, .. } = held {
                         if !changeable { return Err(self.octet_error("immutable").into()); }
-                        let byte = self.octet_index(&value, false)?;
-                        if let Some(index) = key {
-                            let index = self.octet_at(&index, cell.borrow().len(), changeable)?;
-                            cell.borrow_mut()[index] = byte;
-                        } else { cell.borrow_mut().push(byte); }
+                        match key {
+                            Some(index) => {
+                                // The place is named before the value is
+                                // read, so a value whose __index__ shrinks
+                                // the row is refused by the place, and the
+                                // bounds are checked again after it ran.
+                                let place = self.octet_at(&index, cell.borrow().len(), changeable)?;
+                                let byte = self.octet_index(&value, false)?;
+                                let mut held = cell.borrow_mut();
+                                if place >= held.len() { drop(held); return Err(self.octet_error("index").into()); }
+                                held[place] = byte;
+                            }
+                            None => {
+                                let byte = self.octet_index(&value, false)?;
+                                cell.borrow_mut().push(byte);
+                            }
+                        }
                         return Ok(Value::Nil);
                     }
                     // The byte inspection must not keep a list snapshot
@@ -9212,8 +9224,8 @@ impl<'a> Machine<'a> {
                 let mut values = vec![actual]; values.extend(arguments);
                 let mut handed = keywords;
                 handed.sort_by_key(|(key, _)| match (operation, key.as_str()) {
-                    (3, "encoding") | (4, "sep") | (28, "keepends") => 0,
-                    (3, "errors") | (4, "bytes_per_sep") | (39, "delete") => 1,
+                    (3, "encoding") | (4, "sep") | (8 | 23, "sep") | (28, "keepends") | (33, "tabsize") => 0,
+                    (3, "errors") | (4, "bytes_per_sep") | (8 | 23, "maxsplit") | (39, "delete") => 1,
                     _ => 2,
                 });
                 for (key, value) in handed {
@@ -9222,7 +9234,10 @@ impl<'a> Machine<'a> {
                     // the decode pair does.
                     let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, (4, "sep") => 1, (4, "bytes_per_sep") => 2, (8 | 23, "sep") => 1, (8 | 23, "maxsplit") => 2, (33, "tabsize") => 1, (39, "delete") => 2, (28, "keepends") => 1, _ => return Err(self.octet_error("arguments").into()) };
                     if values.len() > slot { return Err(self.octet_error("arguments").into()); }
-                    while values.len() < slot { values.push(Value::text("utf-8")); }
+                    // The decode pair fills an omitted place with utf-8;
+                    // split, rsplit, hex and expandtabs fill it with None.
+                    let fill = if operation == 3 { Value::text("utf-8") } else { Value::Nil };
+                    while values.len() < slot { values.push(fill.clone()); }
                     values.push(value);
                 }
                 return self.octet_routine(operation, &values).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
@@ -10158,6 +10173,21 @@ impl<'a> Machine<'a> {
                 positional[place] = worth;
             }
             for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
+            return Ok(None);
+        }
+        // The bytes and bytearray constructors take encoding and errors
+        // by name, beside the source that must be a string when either is
+        // given; an alias of the builtin reaches the same road.
+        if let Prim::Octets(0 | 1) = op {
+            let source_is_text = positional.first().map_or(false, |v| matches!(v.settled(), Value::Text(_)));
+            for (key, value) in keywords {
+                let slot = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.builtin_keyword_fault(&key).into()) };
+                if positional.len() > slot { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
+                if !source_is_text { return Err(format!("TypeError: {} without a string argument", key).into()); }
+                if slot == 2 && positional.len() < 2 { return Err(String::from("TypeError: string argument without an encoding").into()); }
+                while positional.len() <= slot { positional.push(Value::Nil); }
+                positional[slot] = value;
+            }
             return Ok(None);
         }
         if let Prim::Octets(which @ (14 | 15)) = op {
@@ -12051,10 +12081,25 @@ impl<'a> Machine<'a> {
             // that give no place below nought refuse instead.
             13 | 18 | 19 | 20 | 21 if (1..=3).contains(&arguments.len()) => {
                 let part = looked_for(&arguments[0])?;
-                let (opens, closes) = bounds(given(1), given(2))?;
+                // The place a search begins is clipped only below
+                // nought, and the place it ends is clipped to the row,
+                // so a start past the row finds nothing at all.
+                let start = match given(1) { Some(v) => counted(v)?, None => 0 };
+                let start = if start < 0 { start.saturating_add(content.len() as i64).max(0) } else { start };
+                let end = match given(2) { Some(v) => counted(v)?, None => content.len() as i64 };
+                let end = if end < 0 { end.saturating_add(content.len() as i64).max(0) } else { end.min(content.len() as i64) };
+                if end - start < part.len() as i64 {
+                    return if operation == 18 { Ok(Value::Small(0)) }
+                        else if matches!(operation, 19 | 21) { Err(self.octet_error("missing")) }
+                        else { Ok(Value::Small(-1)) };
+                }
+                if part.is_empty() {
+                    return Ok(Value::Small(if operation == 18 { end - start + 1 }
+                        else if matches!(operation, 20 | 21) { end } else { start }));
+                }
+                let (opens, closes) = (start.max(0) as usize, end as usize);
                 let middle = &content[opens..closes];
                 if operation == 18 {
-                    if part.is_empty() { return Ok(Value::Small(middle.len() as i64 + 1)); }
                     let mut tally = 0i64;
                     let mut cursor = 0usize;
                     while let Some(step) = scan(&middle[cursor..], &part, false) {
