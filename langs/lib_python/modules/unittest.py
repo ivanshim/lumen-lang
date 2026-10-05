@@ -48,6 +48,10 @@ class TestResult:
     def wasSuccessful(self):
         return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
 
+class TextTestResult(TestResult):
+    def __repr__(self):
+        return '<unittest.runner.TextTestResult run=%d errors=%d failures=%d>' % (self.testsRun, len(self.errors), len(self.failures))
+
 class TestCase:
     _test_case = True
     failureException = AssertionError
@@ -230,11 +234,20 @@ class TestCase:
                 self._result.errors = [*self._result.errors, [self._method, _message(outcome[1], outcome[2]), self.id()]]
         return successful
 
+    def countTestCases(self):
+        return 1
+
+    def __call__(self, result=None):
+        return self.run(result)
+
     def shortDescription(self):
         return None
 
     def assertIsSubclass(self, cls, superclass, msg=None):
         self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
+
+    def assertNotIsSubclass(self, cls, superclass, msg=None):
+        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
 
     def assertNotIsInstance(self, value, kind, msg=None):
         self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
@@ -324,12 +337,43 @@ class TestCase:
     def assertEndsWith(self, text, suffix, msg=None):
         self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
+    def _tail_type_check(self, text, tails, msg):
+        # A prefix or suffix handed a kind it cannot compare fails with
+        # the kind named, the way CPython's own tail check does.
+        if not isinstance(tails, tuple):
+            tails = (tails,)
+        for tail in tails:
+            if isinstance(tail, str):
+                if not isinstance(text, str):
+                    self._check(False, 'Expected str, not ' + _class_name(text), msg)
+            elif isinstance(tail, (bytes, bytearray)):
+                if not isinstance(text, (bytes, bytearray)):
+                    self._check(False, 'Expected bytes, not ' + _class_name(text), msg)
+
+    def assertNotEndsWith(self, text, suffix, msg=None):
+        try:
+            if not text.endswith(suffix):
+                return
+        except (AttributeError, TypeError):
+            self._tail_type_check(text, suffix, msg)
+            raise
+        if isinstance(suffix, tuple):
+            for part in suffix:
+                if text.endswith(part):
+                    suffix = part
+                    break
+        self._check(False, _representation(text) + ' ends with ' + _representation(suffix), msg)
+
     def _run_test(self):
         if getattr(self, '__unittest_skip__', False):
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
-            getattr(self, self._method)()
+            outcome = _host_call_outcome(getattr(self, self._method))
+            if not outcome[0]:
+                if isinstance(outcome[1], BaseException):
+                    raise outcome[1]
+                raise RuntimeError(outcome[2])
         finally:
             self.tearDown()
 
@@ -437,6 +481,12 @@ class TestSuite:
         for test in tests:
             self.addTest(test)
 
+    def countTestCases(self):
+        return sum(test.countTestCases() for test in self.tests)
+
+    def __call__(self, result):
+        return self.run(result)
+
     def _fixture(self, name, result):
         if self.class_ is None or getattr(self.class_, '__unittest_skip__', False):
             return True
@@ -462,15 +512,64 @@ class TestSuite:
                 self._fixture('tearDownClass', result)
         return result
 
+class _FailedTest(TestCase):
+    def __init__(self, name, error):
+        super().__init__('runTest')
+        self._test_module = name
+        self._error = error
+
+    def runTest(self):
+        raise self._error
+
+
 class TestLoader:
+    suiteClass = TestSuite
+    testMethodPrefix = 'test'
+    testNamePatterns = None
+    sortTestMethodsUsing = staticmethod(lambda a, b: (a > b) - (a < b))
+    _top_level_dir = None
+
+    def __init__(self):
+        self.errors = []
+        self._loading_packages = set()
+
     def getTestCaseNames(self, cls):
-        return _ordered([name for name in _host_class_methods(cls) if name[:4] == 'test'])
+        # dir includes every base in the C3 order; getattr resolves overrides,
+        # including non-callable attributes that hide inherited test methods.
+        names = []
+        for name in dir(cls):
+            if not name.startswith(self.testMethodPrefix) or not callable(getattr(cls, name)):
+                continue
+            if self.testNamePatterns is not None:
+                from fnmatch import fnmatchcase
+                full = cls.__module__ + '.' + cls.__qualname__ + '.' + name
+                if not any(fnmatchcase(full, pattern) for pattern in self.testNamePatterns):
+                    continue
+            names.append(name)
+        if self.sortTestMethodsUsing:
+            compare = self.sortTestMethodsUsing
+            for position in range(1, len(names)):
+                name = names[position]
+                cursor = position
+                while cursor and compare(name, names[cursor - 1]) < 0:
+                    names[cursor] = names[cursor - 1]
+                    cursor -= 1
+                names[cursor] = name
+        return names
+
+    def _failed(self, name, error):
+        self.errors.append(str(error))
+        return self.suiteClass([_FailedTest(name, error)])
 
     def loadTestsFromTestCase(self, cls):
+        if issubclass(cls, TestSuite):
+            raise TypeError('Test cases should not be derived from TestSuite')
+        if cls is TestCase or getattr(cls, '__abstractmethods__', None):
+            return self.suiteClass()
         methods = self.getTestCaseNames(cls)
-        if len(methods) == 0 and getattr(cls, 'runTest', None) is not None:
+        if len(methods) == 0 and hasattr(cls, 'runTest'):
             methods = ['runTest']
-        suite = TestSuite([cls(name) for name in methods])
+        suite = self.suiteClass([cls(name) for name in methods])
         suite.class_ = cls
         return suite
 
@@ -481,28 +580,157 @@ class TestLoader:
         else:
             if type(module) == type(''):
                 module = _host_load_module(module)
-            names = _host_program_namespace(module)
+            names = {name: getattr(module, name) for name in dir(module)}
             module_name = _class_name(module)
-        suite = TestSuite()
+        suite = self.suiteClass()
         for name in _ordered(list(names)):
-            # The namespace carries the host's own workings beside the
-            # program's names, and those are not spelled as a program
-            # can spell them. Only a name the program could have
-            # written is looked at.
-            if not _spellable(name):
+            # The host's main frame also contains private compiler bindings.
+            if module_name == '__main__' and (name.startswith('#') or name.startswith('\0')):
                 continue
             cls = names[name]
-            if isinstance(cls, TestCase) or not getattr(cls, '_test_case', False):
+            if not isinstance(cls, type) or not issubclass(cls, TestCase) or cls is TestCase:
                 continue
             tests = self.loadTestsFromTestCase(cls)
-            for test in tests.tests:
+            for test in tests:
                 test._test_module = module_name
             suite.addTest(tests)
+        hook = names.get('load_tests')
+        if hook is not None:
+            try:
+                return hook(self, suite, pattern)
+            except Exception as error:
+                return self._failed(module_name, error)
         return suite
 
-    def discover(self, start_dir, pattern='test*.py', top_level_dir=None):
-        raise 'NotImplementedError: test discovery needs filesystem access'
+    def loadTestsFromNames(self, names, module=None):
+        return self.suiteClass(self.loadTestsFromName(name, module) for name in names)
 
+    def loadTestsFromName(self, name, module=None):
+        parts = name.split('.')
+        if module is None:
+            for length in range(len(parts), 0, -1):
+                try:
+                    module = _host_load_module('.'.join(parts[:length]))
+                    parts = parts[length:]
+                    break
+                except ImportError as error:
+                    if length == 1:
+                        return self._failed(name, error)
+        obj = module
+        parent = None
+        for part in parts:
+            parent = obj
+            try:
+                obj = getattr(obj, part)
+            except AttributeError as error:
+                return self._failed(name, error)
+        if isinstance(obj, type) and issubclass(obj, TestCase):
+            return self.loadTestsFromTestCase(obj)
+        if isinstance(parent, type) and issubclass(parent, TestCase):
+            return self.suiteClass([parent(parts[-1])])
+        if isinstance(obj, TestSuite):
+            return obj
+        if callable(obj):
+            result = obj()
+            if isinstance(result, TestSuite):
+                return result
+            if isinstance(result, TestCase):
+                return self.suiteClass([result])
+            raise TypeError('calling %s returned %s, not a test' % (obj, result))
+        import types
+        if isinstance(obj, types.ModuleType):
+            return self.loadTestsFromModule(obj)
+        raise TypeError("don't know how to make test from: %s" % obj)
+
+    def discover(self, start_dir, pattern='test*.py', top_level_dir=None):
+        import os
+        import sys
+        previous = self._top_level_dir
+        implicit = top_level_dir is None and previous is None
+        top = top_level_dir if top_level_dir is not None else previous
+        if not os.path.isdir(start_dir):
+            module = _host_load_module(start_dir)
+            start_dir = os.path.dirname(module.__file__)
+            if implicit:
+                top = start_dir
+                for part in module.__name__.split('.'):
+                    top = os.path.dirname(top)
+        start_dir = os.path.abspath(start_dir)
+        top = os.path.abspath(top if top is not None else start_dir)
+        if top not in sys.path:
+            sys.path.insert(0, top)
+        self._top_level_dir = top
+        try:
+            if start_dir != top and not os.path.isfile(os.path.join(start_dir, '__init__.py')):
+                raise ImportError('Start directory is not importable: %r' % start_dir)
+            return self.suiteClass(self._find_tests(start_dir, pattern))
+        finally:
+            self._top_level_dir = previous
+
+    def _get_name_from_path(self, path):
+        import os
+        path = os.path.abspath(path)
+        if path == self._top_level_dir:
+            return '.'
+        prefix = self._top_level_dir.rstrip('/') + '/'
+        if not path.startswith(prefix):
+            raise AssertionError('Path must be within the project')
+        return os.path.splitext(path[len(prefix):])[0].replace('/', '.')
+
+    def _match_path(self, path, full_path, pattern):
+        from fnmatch import fnmatch
+        return fnmatch(path, pattern)
+
+    def _find_tests(self, start_dir, pattern):
+        import os
+        name = self._get_name_from_path(start_dir)
+        if name != '.' and name not in self._loading_packages:
+            tests, recurse = self._find_test_path(start_dir, pattern)
+            if tests is not None:
+                yield tests
+            if not recurse:
+                return
+        for path in sorted(os.listdir(start_dir)):
+            full = os.path.join(start_dir, path)
+            tests, recurse = self._find_test_path(full, pattern)
+            if tests is not None:
+                yield tests
+            if recurse:
+                name = self._get_name_from_path(full)
+                self._loading_packages.add(name)
+                try:
+                    yield from self._find_tests(full, pattern)
+                finally:
+                    self._loading_packages.discard(name)
+
+    def _find_test_path(self, full_path, pattern):
+        import os
+        package = os.path.isdir(full_path)
+        basename = os.path.basename(full_path)
+        if package:
+            if not os.path.isfile(os.path.join(full_path, '__init__.py')):
+                return None, False
+        elif not basename.endswith('.py') or not _spellable(basename[:-3]) or not self._match_path(basename, full_path, pattern):
+            return None, False
+        name = self._get_name_from_path(full_path)
+        try:
+            module = _host_load_module(name)
+        except SkipTest as error:
+            return self.suiteClass([_FailedTest(name, error)]), False
+        except Exception as error:
+            return self._failed(name, error), False
+        if package:
+            self._loading_packages.add(name)
+        try:
+            tests = self.loadTestsFromModule(module, pattern=pattern)
+            return tests, package and getattr(module, 'load_tests', None) is None
+        finally:
+            if package:
+                self._loading_packages.discard(name)
+
+
+TestLoader.loadTestsFromModule._honours_load_tests = True
+defaultTestLoader = TestLoader()
 
 def main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     return _main(module, exit, verbosity, argv, testRunner)
@@ -726,7 +954,7 @@ class TextTestRunner:
 
     def run(self, test):
         self._progress = ""
-        result = TestResult()
+        result = TextTestResult()
         if self.resultclass is not None:
             result = self.resultclass()
         started = _host_clock()
@@ -808,26 +1036,8 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     suite = loader.loadTestsFromModule(module)
     only = _only_classes()
     if only is not None:
-        # Keep the loader's class and method order when running a long file
-        # in parts. A plain class name selects every method in that class.
-        selected = []
-        for tests in suite.tests:
-            if not isinstance(tests, TestSuite):
-                if type(tests).__name__ in only or tests.id() in only:
-                    selected.append(tests)
-                continue
-            if tests.class_ is None:
-                continue
-            name = tests.class_.__name__
-            if name in only:
-                selected.append(tests)
-            else:
-                methods = [test for test in tests.tests if name + '.' + test._method in only]
-                if len(methods) > 0:
-                    part = TestSuite(methods)
-                    part.class_ = tests.class_
-                    selected.append(part)
-        suite = TestSuite(selected)
+        selected = _select_tests(suite, only)
+        suite = TestSuite() if selected is None else selected
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)
@@ -836,6 +1046,20 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
             raise SystemExit('test run failed')
         __finish()
     return _TestProgram(result)
+
+
+def _select_tests(suite, names):
+    if not isinstance(suite, TestSuite):
+        cls = type(suite).__name__
+        method = getattr(suite, '_method', '')
+        return suite if cls in names or cls + '.' + method in names or suite.id() in names else None
+    selected = TestSuite()
+    selected.class_ = suite.class_
+    for test in suite:
+        kept = _select_tests(test, names)
+        if kept is not None:
+            selected.addTest(kept)
+    return selected if selected.countTestCases() else None
 
 
 def _only_classes():

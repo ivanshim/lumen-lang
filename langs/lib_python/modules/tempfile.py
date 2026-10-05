@@ -94,6 +94,11 @@ class _TemporaryFileCloser:
                 if self.delete and self.delete_on_close:
                     self.cleanup()
 
+    def __del__(self):
+        # Let go of without a close or a context exit: clean up all the
+        # same, as CPython's closer does from its own __del__.
+        self.cleanup()
+
 
 class _TemporaryFileWrapper:
     def __init__(self, file, name, delete=True, delete_on_close=True):
@@ -131,20 +136,29 @@ def NamedTemporaryFile(mode='w+b', buffering=-1, encoding=None, newline=None, su
     if suffix is None:
         suffix = ''
     import time
+    # The file is made exclusively through the host's open, the way
+    # CPython's _mkstemp_inner asks for O_CREAT|O_EXCL; if wrapping it
+    # then fails, it is removed again rather than left behind.
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
     for _ in range(100):
         _name_counter += 1
         seed = int(time.time() * 1000000)
         name = dir + '/' + '%s%06x%04x%s' % (prefix, seed % 16777216, _name_counter % 65536, suffix)
-        made = __make_file(name)
-        if made is True:
-            break
-        if made is not False:
-            if made == 2:
-                raise FileNotFoundError(2, 'No such file or directory', dir)
-            raise OSError(made, None, name)
+        try:
+            fd = os.open(name, flags, 0o600)
+        except FileExistsError:
+            continue
+        except FileNotFoundError:
+            raise FileNotFoundError(2, 'No such file or directory', dir)
+        break
     else:
         raise FileExistsError(17, 'File exists', name)
-    file = open(name, mode, buffering=buffering, encoding=encoding, errors=errors, newline=newline)
+    try:
+        os.close(fd)
+        file = open(name, mode, buffering=buffering, encoding=encoding, errors=errors, newline=newline)
+    except BaseException:
+        os.unlink(name)
+        raise
     if delete:
         return _TemporaryFileWrapper(file, name, delete, delete_on_close)
     return file

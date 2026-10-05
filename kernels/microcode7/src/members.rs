@@ -29,6 +29,7 @@ const KIND_MEMBERS: &[(&str, &str)] = &[
              isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
     ("list", "append extend insert pop remove sort reverse copy clear index count"),
     ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
+    ("bytearray", "copy"),
     ("tuple", "index count"),
     ("range", "index count"),
     ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
@@ -110,11 +111,18 @@ impl Request<'_> {
             return Ok(Value::Dict(Rc::new(entries.into())).keep(false));
         }
         match self.target.settled(){
+            Value::Octets { cell, changeable: true, lead } if self.operation=="copy" => {
+                self.takes(0,0)?;
+                let copied=cell.borrow().to_vec();
+                Ok(Value::Octets { cell:Rc::new(std::cell::RefCell::new(copied)),changeable:true,lead })
+            },
             Value::Text(chars)=>self.on_text(&chars),
             // A row of numbers holding a stowed surrogate half still
             // answers the six category questions, each of which
             // reads one character at a time and never hands any of
             // them back out.
+            Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
+            Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
@@ -155,11 +163,9 @@ impl Request<'_> {
         }
         if self.operation=="as_integer_ratio"{
             let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(r)=>return Err(if r.above.is_zero() { String::from("ValueError: cannot convert NaN to integer ratio") } else { String::from("OverflowError: cannot convert Infinity to integer ratio") }),other=>(other.as_big()?,BigInt::from(1))};
-            let mut divisor=pair.0.abs();let mut remainder=pair.1.clone();
-            while !remainder.is_zero(){let next=&divisor%&remainder;divisor=remainder;remainder=next;}
             // The two whole numbers are handed back as a tuple, which
             // is what they are, and not a row that only reads like one.
-            return Ok(Value::tuple(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)]));
+            return Ok(Value::tuple(vec![Value::from_big(pair.0),Value::from_big(pair.1)]));
         }
         if self.operation=="hex" && real {
             let Value::Frac(ratio)=value else {unreachable!()};
@@ -292,6 +298,41 @@ impl Request<'_> {
         if reverse{chunks.reverse();}
         Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.iter().map(|part|Value::text(part)).collect::<Vec<_>>())).keep(true))
     }
+    fn trim_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 1)?;
+        let custom = match self.given.first().map(Value::settled) {
+            Some(Value::Nil) | None => None,
+            Some(chars) => Some(chars.character_numbers().ok_or_else(|| self.fail("arguments"))?),
+        };
+        let discard = |unit: &u32| match &custom {
+            Some(chars) => chars.iter().any(|c| c == unit),
+            None => matches!(*unit, 0x1c..=0x1f) || char::from_u32(*unit).is_some_and(char::is_whitespace),
+        };
+        let low = if self.operation == "rstrip" { 0 } else { units.iter().position(|n| !discard(n)).unwrap_or(units.len()) };
+        let high = if self.operation == "lstrip" { units.len() } else { units.iter().rposition(|n| !discard(n)).map_or(0, |p| p + 1) };
+        Ok(Value::characters(units[low..high.max(low)].to_vec()))
+    }
+    fn affix_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(1, 3)?;
+        let raw = self.number(1, 0)?;
+        let beginning = place(raw, units.len());
+        let ending = place(self.number(2, units.len() as i64)?, units.len());
+        let span = units.get(beginning..ending).unwrap_or(&[]);
+        let in_bounds = raw <= units.len() as i64 && beginning <= ending;
+        let choices = match self.given[0].settled() {
+            Value::Row(items) | Value::Tuple(items) => items.to_vec(),
+            item => vec![item],
+        };
+        for choice in choices {
+            let sought = choice.settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+            let fits = match self.operation {
+                "endswith" => span.ends_with(&sought),
+                _ => span.starts_with(&sought),
+            };
+            if fits && in_bounds { return Ok(Value::Flag(true)); }
+        }
+        Ok(Value::Flag(false))
+    }
     fn search_text(&self,s:&str)->ResultValue{
         self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;
         let lo=place(raw,length);let hi=place(self.number(2,length as i64)?,length);
@@ -368,7 +409,8 @@ impl Request<'_> {
                 self.takes(0,0)?;
                 let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
                 self.replace(Value::Dict(Rc::new(entries.into())))?;
-                return Ok(Value::tuple(vec![key,value]));
+                let raw = if let Value::Keyed(item, _) = key { item.as_ref().clone() } else { key };
+                return Ok(Value::tuple(vec![raw,value]));
             }
             "keys"|"values"|"items"=>{
                 self.takes(0,0)?;

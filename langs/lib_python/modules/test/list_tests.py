@@ -1,4 +1,3 @@
-# Source: CPython Lib/test/list_tests.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """
 Tests common to list and UserList.UserList
 """

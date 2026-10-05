@@ -9,6 +9,10 @@ exists = _path.exists
 isfile = _path.isfile
 isdir = _path.isdir
 isabs = _path.isabs
+splitdrive = _path.splitdrive
 abspath = _path.abspath
 realpath = _path.realpath
 normcase = _path.normcase
+islink = _path.islink
+
+lexists = _path.lexists

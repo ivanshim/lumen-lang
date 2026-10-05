@@ -13,7 +13,10 @@ def _index(c):
     return n
 
 def category(c):
-    return _categories[_index(c)]
+    if not isinstance(c, str) or len(c) != 1:
+        raise TypeError('unicodedata.category() argument must be a unicode character')
+    n = ord(c)
+    return _categories[n] if n < 256 else __sre_native(6, n)
 
 def name(c, default=None):
     answer = _names[_index(c)]
@@ -33,7 +36,7 @@ def lookup(name):
     for i in range(256):
         if _names[i] != '' and _names[i] == name:
             return chr(i)
-    raise 'KeyError: Unicode name is absent from the Latin-1 table'
+    return __sre_native(5, name)
 
 def normalize(form, text):
     if form not in _forms:

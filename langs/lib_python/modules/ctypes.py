@@ -1,3 +1,3 @@
-# Stub: no operations of this module are implemented yet.
-def __getattr__(name):
-    raise 'NotImplementedError: ctypes.' + name + ' is not supported'
+# The foreign-function interface is unavailable in this runtime. Fail the
+# optional import instead of advertising a module with no usable operations.
+raise ImportError('ctypes requires a native foreign-function interface')

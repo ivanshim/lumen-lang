@@ -29,6 +29,7 @@ use std::path::Path;
 use std::process;
 
 mod web;
+mod python_versions;
 
 mod embedded_modules {
     include!("../langs/lib_python/modules/manifest.rs");
@@ -182,6 +183,7 @@ struct Invocation {
     /// A language to write the program in instead of running it (microcode11 only).
     emit: Option<Language>,
     program_args: Vec<String>,
+    python: Option<&'static python_versions::PythonVersion>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -549,6 +551,7 @@ fn run_all() {
     // to a file to say this: the words travel with the run.
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
+    if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
 
     let written = fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
@@ -606,11 +609,14 @@ fn run_all() {
         let modules = root.join("langs/lib_python/modules");
         request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
     }
-    for (name, source, file) in embedded_modules::MODULES {
-        request.push(("MODULE".to_string(), name.to_string(), source.to_string(), false));
+    let overlay = inv.python.map_or(&[][..], |v| v.modules);
+    for (name, source, file) in overlay.iter().chain(embedded_modules::MODULES.iter().filter(|(name, ..)| !overlay.iter().any(|(overlaid, ..)| overlaid == name))) {
+        let source = inv.python.map_or_else(|| source.to_string(), |v| v.module_source(name, source));
+        request.push(("MODULE".to_string(), name.to_string(), source, false));
         request.push(("MODULE_FILE".to_string(), name.to_string(), file.to_string(), false));
     }
-    for (name, member) in embedded_modules::MODULE_ALIASES {
+    let aliases = inv.python.map_or(&[][..], |v| v.aliases);
+    for (name, member) in aliases.iter().chain(embedded_modules::MODULE_ALIASES.iter().filter(|(name, ..)| !aliases.iter().any(|(overlaid, ..)| overlaid == name))) {
         request.push(("MODULE_ALIAS".to_string(), name.to_string(), member.to_string(), false));
     }
     // Where the program itself lies. A definition may give names to
@@ -712,7 +718,7 @@ fn run_all() {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] [--serve <address|port>] [-d setting=worth] [-n] [-v] <file> [program args...]",
+        "Usage: {} [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--lang <name|extension|definition.json>] [--emit <name|extension|definition.json>] [--python <version>] [--serve <address|port>] [-d setting=worth] [-n] [-v] <file> [program args...]",
         program
     );
     process::exit(1);
@@ -857,6 +863,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut serve: Option<String> = None;
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
+    let mut python: Option<String> = None;
     let mut file: Option<String> = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
@@ -887,6 +894,24 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     process::exit(1);
                 }
                 language = Some(language_from_flag(&said(&rest[1])));
+                rest = &rest[2..];
+            }
+            Some("--python") => {
+                // For other languages, options after the source stay program arguments.
+                if let Some(source) = &file {
+                    let python_source = language.as_ref().map_or_else(|| {
+                        match env::var("LUMEN_LANG") {
+                            Ok(value) if !value.trim().is_empty() => language_from_flag(&value).name() == "python",
+                            _ => language_from_extension(source).as_deref() == Some("python"),
+                        }
+                    }, |language| language.name() == "python");
+                    if !python_source { break; }
+                }
+                if rest.len() < 2 {
+                    eprintln!("Error: --python requires a version; Supported releases: {}", python_versions::VERSIONS.iter().map(|v| v.release).collect::<Vec<_>>().join(", "));
+                    process::exit(1);
+                }
+                python = Some(said(&rest[1]));
                 rest = &rest[2..];
             }
             Some("--serve") => {
@@ -937,6 +962,23 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 emit = Some(language_from_flag(&said(&rest[1])));
                 rest = &rest[2..];
             }
+            Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2)
+                && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")) => {
+                let (module, used) = if flag == "-m" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let entry = embedded_modules::MODULES.iter().find(|entry| entry.0 == format!("{module}.__main__"))
+                    .or_else(|| embedded_modules::MODULES.iter().find(|entry| entry.0 == module));
+                let Some((_, source, _)) = entry else { eprintln!("No module named {module}"); process::exit(1); };
+                let Some(mut directory) = fresh_private_dir() else { eprintln!("Cannot create module script"); process::exit(1); };
+                directory.push("__main__.py");
+                if let Err(error) = fs::write(&directory, source) { eprintln!("Cannot create module script: {error}"); process::exit(1); }
+                file = Some(directory.to_string_lossy().into_owned());
+                language = Some(language_from_flag("python"));
+                rest = &rest[used..];
+                break;
+            }
             Some(_) | None if file.is_none() && !rest.is_empty() => {
                 file = Some(said(&rest[0]));
                 rest = &rest[1..];
@@ -982,7 +1024,19 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     });
 
-    Invocation { kernel, file, serve, language, emit, program_args: rest.iter().map(said).collect() }
+    let mut language = language;
+    let python = if language.name() == "python" {
+        let version = python_versions::select(python.as_deref(), &file).unwrap_or_else(|e| { eprintln!("{e}"); process::exit(1) });
+        let base = match &language {
+            Language::Named(name) => lumen_microcode11::embedded(name).unwrap().to_string(),
+            Language::File { text, .. } => text.clone(),
+        };
+        let path = language.given().unwrap();
+        let text = version.definition(&base).unwrap_or_else(|e| { eprintln!("Error: {e}"); process::exit(1) });
+        language = Language::File { name: "python".to_string(), path, text };
+        Some(version)
+    } else { None };
+    Invocation { kernel, file, serve, language, emit, python, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

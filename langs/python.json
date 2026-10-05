@@ -44,20 +44,13 @@
   "ext.builtin.complex.zero": [
     "ZeroDivisionError: division by zero"
   ],
+  "ext.builtin.posix": ["__posix"],
+  "ext.builtin.loader.source": ["__loader_source"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
   "ext.builtin.file.kind": [
     "__file_kind"
-  ],
-  "ext.builtin.file.stat": [
-    "__file_stat"
-  ],
-  "ext.builtin.file.make": [
-    "__make_file"
-  ],
-  "ext.builtin.loader.source": [
-    "__loader_source"
   ],
   "ext.builtin.weak.make": [
     "__weak_make"
@@ -96,9 +89,12 @@
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
+  "ext.builtin.at_end": ["__at_end"],
   "ext.builtin.host.info": [
     "__host_info"
   ],
+  "ext.builtin.text.scan_ascii": ["__text_scan_ascii"],
+  "ext.builtin.json.scanstring": ["__json_string_scan"],
   "ext.builtin.subprocess": [
     "__subprocess"
   ],
@@ -128,6 +124,9 @@
   ],
   "ext.builtin.method.fromhex": [
     "float.fromhex"
+  ],
+  "ext.builtin.method.getformat": [
+    "float.__getformat__"
   ],
   "ext.builtin.method.from_number": [
     "float.from_number"
@@ -165,7 +164,43 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
-  "ext.lexical.identifier.reserved": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"],
+  "ext.lexical.identifier.reserved": [
+    "False",
+    "None",
+    "True",
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "class",
+    "continue",
+    "def",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "try",
+    "while",
+    "with",
+    "yield"
+  ],
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -174,6 +209,9 @@
     "' and '",
     "'"
   ],
+  "ext.stmt.class.native.name": ["__native_type_name__"],
+  "ext.stmt.class.bases.resolve": ["__mro_entries__", "__orig_bases__"],
+  "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
     "__annotations__"
   ],
@@ -587,6 +625,7 @@
   "ext.builtin.bytes.hex": [
     "hex"
   ],
+  "ext.builtin.bytes.resize": ["resize"],
   "ext.builtin.bytes._export": ["_export"],
   "ext.builtin.bytes.join": [
     "join"
@@ -647,6 +686,7 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
+  "ext.builtin.sre": ["__sre_native"],
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -814,7 +854,9 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
-  "ext.builtin.heap_native": ["__heap_native__"],
+  "ext.builtin.heap_native": [
+    "__heap_native__"
+  ],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -888,7 +930,12 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "BlockingIOError",
+    "PermissionError",
+    "FileExistsError",
+    "NotADirectoryError",
+    "BrokenPipeError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -966,7 +1013,16 @@
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
   ],
-  "ext.builtin.exceptions.syntax": ["msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line"],
+  "ext.builtin.exceptions.syntax": [
+    "msg",
+    "filename",
+    "lineno",
+    "offset",
+    "text",
+    "end_lineno",
+    "end_offset",
+    "print_file_and_line"
+  ],
   "ext.builtin.exceptions.unicode": [
     "encoding",
     "object",
@@ -1045,8 +1101,16 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.frexp": true,
+  "ext.builtin.math.fsum": true,
+  "ext.builtin._random": [
+    "__random"
+  ],
+  "ext.stmt.class.parent.bind": true,
   "ext.builtin.math.sumprod": true,
+  "ext.builtin.random.words": true,
   "ext.system.module.path": ["__path__"],
+  "ext.system.module.package": ["__package__"],
   "ext.builtin.max": [
     "max"
   ],
@@ -1064,6 +1128,8 @@
     "' has no attribute '",
     "'"
   ],
+  "ext.builtin.storage.get": ["__storage_get"],
+  "ext.builtin.storage.set": ["__storage_set"],
   "ext.builtin.member.get": [
     "getattr"
   ],
@@ -1096,6 +1162,7 @@
   "ext.builtin.method.clear": [
     "clear"
   ],
+  "ext.builtin.method.take_bytes": ["take_bytes", "bytearray.take_bytes"],
   "ext.builtin.method.copy": [
     "copy"
   ],
@@ -1580,7 +1647,9 @@
     "center",
     "str.center"
   ],
-  "ext.builtin.uncaught": ["__uncaught"],
+  "ext.builtin.uncaught": [
+    "__uncaught"
+  ],
   "ext.builtin.text.complaint": [
     "TypeError:",
     "ValueError:",
@@ -1811,7 +1880,10 @@
     "split",
     "str.split"
   ],
-  "ext.builtin.text.getnewargs": ["__getnewargs__", "str.__getnewargs__"],
+  "ext.builtin.text.getnewargs": [
+    "__getnewargs__",
+    "str.__getnewargs__"
+  ],
   "ext.builtin.text.splitlines": [
     "splitlines",
     "str.splitlines"
@@ -1845,7 +1917,10 @@
     "str.zfill"
   ],
   "ext.builtin.to_int.digits": 4300,
-  "ext.builtin.to_int.digits.state": ["sys", "_int_max_str_digits"],
+  "ext.builtin.to_int.digits.state": [
+    "sys",
+    "_int_max_str_digits"
+  ],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
     " digits) for integer string conversion"
@@ -2408,8 +2483,8 @@
     ": %b requires a bytes-like object, or an object that implements __bytes__, not "
   ],
   "ext.op.rem.format.character": [
-    "TypeError: format argument",
-    ": %c requires ",
+    "TypeError: ",
+    "%c requires ",
     ", not "
   ],
   "ext.op.rem.format.character.range": [
@@ -2418,8 +2493,9 @@
     ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format %",
-    " at position "
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index "
   ],
   "ext.op.rem.format.few": [
     "TypeError: not enough arguments for format string (got ",
@@ -2440,9 +2516,9 @@
     "OverflowError: cannot convert float infinity to integer"
   ],
   "ext.op.rem.format.integer": [
-    "TypeError: format argument",
-    ": %",
-    " requires an integer, not "
+    "TypeError: ",
+    "%",
+    " format: an integer is required, not "
   ],
   "ext.op.rem.format.many": [
     "TypeError: not all arguments converted during ",
@@ -2469,9 +2545,9 @@
     "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
-    "TypeError: format argument",
-    ": %",
-    " requires a real number, not "
+    "TypeError: ",
+    "%",
+    " format: a real number is required, not "
   ],
   "ext.op.rem.format.real": [
     "TypeError: format argument",
@@ -2662,8 +2738,23 @@
   "ext.stmt.class.detail.allocate": [
     "__new__"
   ],
-  "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__"],
-  "ext.stmt.class.detail.code.replace": ["replace", "co_linetable"],
+  "ext.stmt.class.detail.code.fields": [
+    "co_name",
+    "co_qualname",
+    "co_posonlyargcount",
+    "co_kwonlyargcount",
+    "co_nlocals",
+    "co_names",
+    "co_consts",
+    "co_flags",
+    "co_filename",
+    "co_firstlineno",
+    "__annotate__"
+  ],
+  "ext.stmt.class.detail.code.replace": [
+    "replace",
+    "co_linetable"
+  ],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
   ],
@@ -2677,8 +2768,100 @@
     "' object attribute '",
     "' is read-only"
   ],
+  "ext.stmt.class.detail.native.protocols": [
+    "str",
+    "__add__ __contains__ __eq__ __format__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __sizeof__ __str__",
+    "int",
+    "__abs__ __add__ __and__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __index__ __int__ __invert__ __le__ __lshift__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __or__ __pos__ __pow__ __radd__ __rand__ __rdivmod__ __repr__ __rfloordiv__ __rlshift__ __rmod__ __rmul__ __ror__ __round__ __rpow__ __rrshift__ __rshift__ __rsub__ __rtruediv__ __rxor__ __sizeof__ __sub__ __truediv__ __trunc__ __xor__",
+    "bool",
+    "__and__ __invert__ __new__ __or__ __rand__ __repr__ __ror__ __rxor__ __xor__",
+    "float",
+    "__abs__ __add__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getformat__ __getnewargs__ __gt__ __hash__ __int__ __le__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __rdivmod__ __repr__ __rfloordiv__ __rmod__ __rmul__ __round__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__ __trunc__",
+    "complex",
+    "__abs__ __add__ __bool__ __complex__ __eq__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __le__ __lt__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __repr__ __rmul__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__",
+    "list",
+    "__add__ __class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __reversed__ __rmul__ __setitem__ __sizeof__",
+    "tuple",
+    "__add__ __class_getitem__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __rmul__",
+    "dict",
+    "__class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __init__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __setitem__ __sizeof__",
+    "set",
+    "__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iand__ __init__ __ior__ __isub__ __iter__ __ixor__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__",
+    "frozenset",
+    "__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__",
+    "bytes",
+    "__add__ __buffer__ __bytes__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __str__",
+    "bytearray",
+    "__add__ __alloc__ __buffer__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __reduce__ __reduce_ex__ __release_buffer__ __repr__ __rmod__ __rmul__ __setitem__ __sizeof__ __str__",
+    "range",
+    "__bool__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __reduce__ __repr__ __reversed__",
+    "slice",
+    "__eq__ __ge__ __gt__ __hash__ __le__ __lt__ __ne__ __new__ __reduce__ __repr__",
+    "enumerate",
+    "__class_getitem__ __iter__ __new__ __next__ __reduce__",
+    "zip",
+    "__iter__ __new__ __next__ __reduce__ __setstate__",
+    "map",
+    "__iter__ __new__ __next__ __reduce__ __setstate__",
+    "filter",
+    "__iter__ __new__ __next__ __reduce__",
+    "reversed",
+    "__iter__ __length_hint__ __new__ __next__ __reduce__ __setstate__",
+    "list_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "list_reverseiterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "tuple_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "str_ascii_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "str_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "range_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "longrange_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "set_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_keyiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_valueiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_itemiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_reversekeyiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_reversevalueiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "dict_reverseitemiterator",
+    "__iter__ __length_hint__ __next__ __reduce__",
+    "bytes_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "bytearray_iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__",
+    "callable_iterator",
+    "__iter__ __next__ __reduce__",
+    "dict_keys",
+    "__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__",
+    "dict_values",
+    "__iter__ __len__ __repr__ __reversed__",
+    "dict_items",
+    "__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__",
+    "mappingproxy",
+    "__class_getitem__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __str__",
+    "generator",
+    "__class_getitem__ __del__ __iter__ __next__ __repr__ __sizeof__",
+    "iterator",
+    "__iter__ __length_hint__ __next__ __reduce__ __setstate__"
+  ],
+  "ext.stmt.class.detail.base": [
+    "__base__"
+  ],
   "ext.stmt.class.detail.bases": [
     "__bases__"
+  ],
+  "ext.stmt.class.detail.base": [
+    "__base__"
   ],
   "ext.stmt.class.detail.call": [
     "__call__"
@@ -2716,6 +2899,10 @@
   "ext.stmt.class.detail.module": [
     "__module__"
   ],
+  "ext.stmt.class.detail.module.spec": ["__spec__"],
+  "ext.stmt.class.detail.module.path": ["__path__"],
+  "ext.stmt.class.detail.mro.entries": ["__mro_entries__"],
+  "ext.stmt.class.detail.original.bases": ["__orig_bases__"],
   "ext.stmt.class.detail.mro": [
     "__mro__"
   ],
@@ -2752,6 +2939,7 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.namespace_type": ["__namespace_type"],
   "ext.builtin.inline_values": ["_has_inline_values"],
   "ext.stmt.class.detail.flags": ["__flags__"],
   "ext.stmt.class.detail.prepare": ["__prepare__"],
@@ -2854,6 +3042,9 @@
     "() requires a code object with ",
     " free vars, not "
   ],
+  "ext.stmt.class.detail.classcell": [
+    "__classcell__"
+  ],
   "ext.stmt.class.detail.cell.contents": [
     "cell_contents"
   ],
@@ -2884,7 +3075,13 @@
     ".__new__() takes exactly one argument (the type to instantiate)"
   ],
   "ext.stmt.class.detail.integer.layout": [
-    "__basicsize__", "__itemsize__", "__sizeof__", "24", "4", "30", "32"
+    "__basicsize__",
+    "__itemsize__",
+    "__sizeof__",
+    "24",
+    "4",
+    "30",
+    "32"
   ],
   "ext.stmt.class.detail.root.members": [
     "__eq__",
@@ -3125,7 +3322,10 @@
     "' from '",
     "'"
   ],
-  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
+  "ext.stmt.import.nonpackage": [
+    "; '",
+    "' is not a package"
+  ],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
@@ -3284,6 +3484,7 @@
   "ext.stmt.yield.send": [
     "send"
   ],
+  "ext.stmt.yield.input": [".0"],
   "ext.stmt.yield.suspends": true,
   "ext.stmt.yield.throw": [
     "throw"
@@ -3578,9 +3779,23 @@
     "RecursionError: maximum recursion depth exceeded"
   ],
   "ext.system.recursion.limit": 1000,
-  "ext.system.recursion.variable": ["sys", "_recursion_limit"],
+  "ext.system.recursion.variable": [
+    "sys",
+    "_recursion_limit"
+  ],
   "ext.system.module.doc": [
     "__doc__"
+  ],
+  "ext.builtin.build_class": [
+    "__build_class__"
+  ],
+  "ext.stmt.class.builder": [
+    "__build_class__",
+    "NameError: __build_class__ not found"
+  ],
+  "ext.system.module.kind": [
+    "types",
+    "ModuleType"
   ],
   "ext.system.module.builtins": [
     "__builtins__"

@@ -70,6 +70,7 @@ pub enum Prim {
     MakeHeir,
     CallResult,
     CopyWorth,
+    Regex,
     LoadModule,
     IsInstance,
     WriteMember,
@@ -150,6 +151,8 @@ pub enum Prim {
     AsChars,
     /// The value, specification and conversion of a field in text.
     RenderField,
+    TemplateField,
+    TemplateParts,
     /// Stop upon reaching a character the run cannot represent.
     UnheldText,
     /// The value made a flag.
@@ -225,13 +228,12 @@ pub enum Prim {
     Collect,
     /// What a path names: a file, a directory, or neither.
     PathSort,
+    // The text of the file the run began from.
+    LoaderSource,
     /// The measurements of the file a path names, as a row of ten, or
     /// the host's reason number where it names none.
-    PathStat,
     /// An empty file brought into being where the path named none.
-    PathMake,
     /// The source text of the file the run was begun with.
-    LoaderSource,
     /// The host's facts as a row: directory, system, machine, surroundings.
     HostRow,
     /// Everything the host's own shell wrote out, having been handed a
@@ -247,7 +249,10 @@ pub enum Prim {
     /// at a time (ext.builtin.subprocess): one word, told which step it
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
+ AsciiRun,
+    JsonStringScan,
     Subprocess,
+    Posix,
     /// The host's signals, one word told which step it is on
     /// (ext.builtin.signal): give a number what answers for it, ask
     /// what a number was given, or leave a number to be taken up where
@@ -321,6 +326,14 @@ pub enum Prim {
     /// definition has no words of its own for. One label covers them
     /// all, since the one power lent is the working at the width.
     Reckon,
+    /// The Mersenne Twister a library module draws its chance from,
+    /// named by the first worth handed over and worked on the rest
+    /// (ext.builtin._random): a drawing stream opened, set going from
+    /// a whole number or from the system's own disorder, drawn on at
+    /// the width's 53 bits or as a stretch of whole bits, and told or
+    /// put back to where it stands. One label covers them all, since
+    /// the one stream kept is the kernel's own.
+    Chance,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,
@@ -408,6 +421,7 @@ pub enum Prim {
     /// its stead answers with that one, and so on until one does not; a
     /// thing that is its own walk is wound back and answers with itself;
     /// anything else answers with itself.
+    IteratorInput,
     Walked,
     AwaitResult,
     AsyncGathered,
@@ -789,6 +803,10 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub annotation_is_text: bool,
+    pub annotation_protocol: bool,
+    /// The live class namespace slot and, when used by methods, its class cell.
+    pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub referenced: Vec<String>,

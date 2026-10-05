@@ -1,4 +1,3 @@
-# Source: CPython Lib/tokenize.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Tokenization help for Python programs.
 
 tokenize(readline) is a generator that breaks a stream of bytes into

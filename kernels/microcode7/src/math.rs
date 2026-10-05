@@ -42,8 +42,19 @@ pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under:
         };
     }
     let (above, beneath) = if beneath.is_negative() { (-above, -beneath) } else { (above, beneath) };
-    let g = above.gcd(&beneath);
-    let (above, beneath) = if g.is_one() { (above, beneath) } else { (&above / &g, &beneath / &g) };
+    let (above, beneath) = match beneath.trailing_zeros() {
+        // Powers of two have no odd factors: reduction is an exact shift,
+        // also for negative numerators, and needs no division or GCD.
+        Some(twos) if twos + 1 == beneath.bits() => {
+            let common = twos.min(above.trailing_zeros().unwrap());
+            if common == 0 { (above, beneath) }
+            else { (above >> common, beneath >> common) }
+        }
+        _ => {
+            let g = above.gcd(&beneath);
+            if g.is_one() { (above, beneath) } else { (&above / &g, &beneath / &g) }
+        }
+    };
     if places.is_none() && beneath.is_one() {
         Value::from_big(above)
     } else {
@@ -261,8 +272,63 @@ pub fn whole_part(v: &Value) -> Option<BigInt> {
 
 /// A real-valued working named by word, over the reals of the width:
 /// what it gives, or nothing at all where no working goes by that name.
+/// The log of the gamma curve: the Lanczos ratio with the reference
+/// fallback's own coefficients, read small end first below five and as a
+/// ratio in one-over-x above it, and the negative half of the line
+/// answered through the sine of a whole turn with its whole and half
+/// turns folded away. The numbers and their order are the library's
+/// own, so both spellings come to the one real of the width.
+pub fn log_gamma(x: f64) -> f64 {
+    // The exact unit values and the tiny-argument limit precede Lanczos.
+    if x == 1.0 || x == 2.0 { return 0.0; }
+    let magnitude=x.abs();
+    if magnitude<1e-20 { return -magnitude.ln(); }
+    const G: f64 = 6.02468004077673;
+    const TOP: [f64; 13] = [23531376880.41076, 42919803642.6491, 35711959237.35567, 17921034426.03721,
+        6039542586.352028, 1439720407.3117216, 248874557.86205417, 31426415.585400194,
+        2876370.6289353725, 186056.26539522348, 8071.672002365816, 210.82427775157936, 2.5066282746310002];
+    const BOTTOM: [f64; 13] = [0.0, 39916800.0, 120543840.0, 150917976.0, 105258076.0,
+        45995730.0, 13339535.0, 2637558.0, 357423.0, 32670.0, 1925.0, 66.0, 1.0];
+    let ratio = |v: f64| -> f64 {
+        let (mut above, mut below) = (0.0f64, 0.0f64);
+        if v < 5.0 {
+            let mut at: i32 = 12;
+            loop {
+                above = above * v + TOP[at as usize];
+                below = below * v + BOTTOM[at as usize];
+                if at == 0 { break; }
+                at -= 1;
+            }
+        } else {
+            for at in 0..13 {
+                above = above / v + TOP[at];
+                below = below / v + BOTTOM[at];
+            }
+        }
+        above / below
+    };
+    let size = x.abs();
+    let mut out = ratio(size).ln() - G;
+    out = (size - 0.5).mul_add((size + G - 0.5).ln() - 1.0, out);
+    if x < 0.0 {
+        let folded = size % 2.0;
+        let circle = std::f64::consts::PI;
+        let leg = (2.0 * folded + 0.5) as i64;
+        let sine = match leg {
+            0 => (circle * folded).sin(),
+            1 => (circle * (folded - 0.5)).cos(),
+            2 => (circle * (1.0 - folded)).sin(),
+            3 => -(circle * (folded - 1.5)).cos(),
+            _ => (circle * (folded - 2.0)).sin(),
+        };
+        out = 1.1447298858494002 - sine.abs().ln() - size.ln() - out;
+    }
+    out
+}
+
 pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
     Some(match named {
+        "lgamma" => log_gamma(one),
         "atan2" => one.atan2(two),
         "hypot" => one.hypot(two),
         "pow" => one.powf(two),
@@ -286,6 +352,7 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
         "log1p" => one.ln_1p(),
         "log10" => one.log10(),
         "log2" => one.log2(),
+        "fabs" => one.abs(),
         "sin" => one.sin(),
         "cos" => one.cos(),
         "tan" => one.tan(),
@@ -355,7 +422,7 @@ fn scaled_by_twos(mut real: f64, mut power: i64) -> f64 {
 
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+        "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "ldexp_plain" | "nextafter" | "fmin" | "fmax" | "fsum_partial" | "fsum_finite" | "dist_float" => 2,
         "fma" => 3,
         _ => 1,
     }
@@ -444,4 +511,68 @@ fn divide_integers(dividend: &BigInt, divisor: &BigInt) -> Result<Value, String>
     let answer = rounded.to_f64().unwrap_or(f64::INFINITY) * scale * sign;
     if !answer.is_finite() { Err(too_large) }
     else { Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)) }
+}
+
+/// Split a binary float into a signed half-to-one fraction and a power of two.
+pub fn decomposed(number: f64) -> (f64, i64) {
+    if number == 0.0 || !number.is_finite() { return (number, 0); }
+    let encoding = number.to_bits();
+    let biased = (encoding >> 52) & 0x7ff;
+    if biased == 0 {
+        let (fraction, shift) = decomposed(number * 2f64.powi(54));
+        return (fraction, shift - 54);
+    }
+    let normalized = encoding ^ ((biased ^ 0x3fe) << 52);
+    (f64::from_bits(normalized), biased as i64 - 0x3fe)
+}
+
+// CPython's expansion algorithm, Modules/mathmodule.c at 8e6e75d9102e;
+// PSF license: tests/python/LICENSE.
+pub fn summed_expansion(input: impl Iterator<Item = Result<f64, String>>) -> Result<f64, String> {
+    let mut pieces = Vec::<f64>::new();
+    let mut exceptional = 0.0;
+    let mut infinity_balance = 0.0f64;
+    for delivered in input {
+        let initial = delivered?;
+        let mut accumulator = initial;
+        let mut survivors = 0usize;
+        for position in 0..pieces.len() {
+            let other = pieces[position];
+            let (big, small) = if accumulator.abs() < other.abs() { (other, accumulator) } else { (accumulator, other) };
+            accumulator = big + small;
+            let residual = small - (accumulator - big);
+            if residual != 0.0 { pieces[survivors] = residual; survivors += 1; }
+        }
+        pieces.resize(survivors, 0.0);
+        match accumulator {
+            number if number == 0.0 => {},
+            number if number.is_finite() => pieces.push(number),
+            _ if initial.is_finite() => return Err(String::from("OverflowError: intermediate overflow in fsum")),
+            _ => {
+                if initial.is_infinite() { infinity_balance += initial; }
+                exceptional += initial;
+                pieces.truncate(0);
+            }
+        }
+    }
+    if exceptional != 0.0 {
+        return if infinity_balance.is_nan() { Err(String::from("ValueError: -inf + inf in fsum")) } else { Ok(exceptional) };
+    }
+    let mut answer = pieces.pop().unwrap_or_default();
+    let mut remainder = 0.0;
+    loop {
+        let Some(term) = pieces.pop() else { break; };
+        let before = answer;
+        answer += term;
+        remainder = term - (answer - before);
+        if remainder != 0.0 { break; }
+    }
+    if let Some(next) = pieces.last() {
+        if remainder < 0.0 && *next < 0.0 || remainder > 0.0 && *next > 0.0 {
+            let doubled = remainder + remainder;
+            let rounded = answer + doubled;
+            if rounded - answer == doubled { answer = rounded; }
+        }
+    }
+    Ok(answer)
 }

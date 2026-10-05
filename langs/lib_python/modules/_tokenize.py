@@ -7,6 +7,14 @@
 # the way out, this port keeps the decoded text and its columns are
 # character columns throughout, which is the same number the C produces.
 
+# The suite's re module is still growing its flag roster, while tokenize.py
+# compiles its cookie patterns with re.ASCII.  Supply the standard value
+# (CPython Lib/re/__init__.py: ASCII = A = 256) only when re does not name
+# it yet; the bit is passed through to re's engine unchanged.
+import re as _re
+if not hasattr(_re, 'ASCII'):
+    _re.ASCII = _re.A = 256
+
 import warnings as _warnings
 
 # Token types (CPython Include/internal/pycore_token.h).
@@ -215,16 +223,16 @@ def _inside_fstring_expr_at_top(mode):
 # character columns already, so the C byte-to-character conversion is the
 # identity here.
 def _syntaxerror_range(tok, msg, col_offset, end_col_offset):
-    errtext = tok.buf[tok.line_start:tok.cur]
+    errtext = ''.join(tok.bufc[tok.line_start:tok.cur])
     if col_offset == -1:
         col_offset = len(errtext)
     if end_col_offset == -1:
         end_col_offset = col_offset
-    rest = tok.buf[tok.line_start:]
+    rest = ''.join(tok.bufc[tok.line_start:])
     nl = rest.find('\n')
     line_len = nl if nl != -1 else len(rest)
     if line_len != tok.cur - tok.line_start:
-        errtext = tok.buf[tok.line_start:tok.line_start + line_len]
+        errtext = ''.join(tok.bufc[tok.line_start:tok.line_start + line_len])
     raise SyntaxError(msg, ('<string>', tok.lineno, col_offset, errtext,
                             tok.lineno, end_col_offset))
 
@@ -259,7 +267,8 @@ def _parser_warn(tok, msg):
 # tok_underflow_readline.
 def _underflow_readline(tok):
     if tok.start is None and not _inside_fstring(tok):
-        tok.buf = ''
+        tok.bufc = []
+        tok.line_null = False
         tok.cur = 0
         tok.inp = 0
     try:
@@ -273,15 +282,18 @@ def _underflow_readline(tok):
     else:
         if not isinstance(line, str):
             raise TypeError('readline() returned a non-string object')
-    tok.buf = tok.buf[:tok.inp] + line
-    tok.inp = len(tok.buf)
+    # The character row only ever grows, exactly as the C tokenizer's
+    # buffer does, and one character read off it never rescans the text.
+    tok.bufc.extend(line)
+    tok.inp = len(tok.bufc)
+    tok.line_null = '\x00' in line
     tok.line_start = tok.cur
     if tok.inp == tok.cur:
         tok.done = E_EOF
         return 0
     tok.implicit_newline = False
-    if tok.buf[tok.inp - 1] != '\n':
-        tok.buf += '\n'
+    if tok.bufc[tok.inp - 1] != '\n':
+        tok.bufc.append('\n')
         tok.inp += 1
         tok.implicit_newline = True
     tok.lineno += 1
@@ -293,7 +305,7 @@ def _underflow_readline(tok):
 def _nextc(tok):
     while True:
         if tok.cur != tok.inp:
-            c = tok.buf[tok.cur]
+            c = tok.bufc[tok.cur]
             tok.cur += 1
             return c
         if tok.done != E_OK:
@@ -302,7 +314,7 @@ def _nextc(tok):
             tok.cur = tok.inp
             return None
         tok.line_start = tok.cur
-        if '\x00' in tok.buf[tok.line_start:tok.inp]:
+        if tok.line_null:
             _syntaxerror(tok, 'source code cannot contain null bytes')
 
 
@@ -367,7 +379,7 @@ def _verify_end_of_number(tok, c, kind):
 def _verify_identifier(tok):
     if tok.tok_extra_tokens:
         return True
-    s = tok.buf[tok.start:tok.cur]
+    s = ''.join(tok.bufc[tok.start:tok.cur])
     invalid = len(s)
     if not s[0].isidentifier():
         invalid = 0
@@ -434,7 +446,7 @@ def _check_string_prefixes(tok, saw_b, saw_r, saw_u, saw_f, saw_t):
 
 # Parser/lexer/lexer.c: the f_string_quote label of tok_get_normal_mode.
 def _f_string_quote(tok, c):
-    first = tok.buf[tok.start]
+    first = tok.bufc[tok.start]
     if first.lower() in ('f', 'r', 't') and (c == "'" or c == '"'):
         quote = c
         quote_size = 1
@@ -468,13 +480,13 @@ def _f_string_quote(tok, c):
         string_kind = FSTRING
         low = first.lower()
         if low == 't':
-            mode.raw = tok.buf[tok.start + 1].lower() == 'r'
+            mode.raw = tok.bufc[tok.start + 1].lower() == 'r'
             string_kind = TSTRING
         elif low == 'f':
-            mode.raw = tok.buf[tok.start + 1].lower() == 'r'
+            mode.raw = tok.bufc[tok.start + 1].lower() == 'r'
         else:
             mode.raw = True
-            if tok.buf[tok.start + 1].lower() == 't':
+            if tok.bufc[tok.start + 1].lower() == 't':
                 string_kind = TSTRING
         mode.string_kind = string_kind
         mode.curly_bracket_depth = 0
@@ -1149,7 +1161,7 @@ class TokenizerIter(object):
             offset = tok.inp
             if offset < 0:
                 offset = 0
-            err.offset = len(tok.buf[:offset].encode('utf-8'))
+            err.offset = len(''.join(tok.bufc[:offset]).encode('utf-8'))
             err.end_lineno = tok.lineno
             raise err
         if tok.done == E_TOKEN:
@@ -1173,7 +1185,7 @@ class TokenizerIter(object):
             msg = 'unknown tokenization error'
         # The C decodes the line (without its trailing newline) and counts
         # one character past its end for the column.
-        error_line = tok.buf[:tok.inp - 1]
+        error_line = ''.join(tok.bufc[:tok.inp - 1])
         offset = len(error_line) + 1
         raise errtype(msg, ('<string>', tok.lineno, offset, error_line,
                             None, None))
@@ -1188,7 +1200,7 @@ class TokenizerIter(object):
         if tstart is None or tend is None:
             string = ''
         else:
-            string = tok.buf[tstart:tend]
+            string = ''.join(tok.bufc[tstart:tend])
 
         is_trailing_token = type_ == ENDMARKER or (
             type_ == DEDENT and tok.done == E_EOF)
@@ -1206,7 +1218,7 @@ class TokenizerIter(object):
             # _get_current_line: the line is fetched once per tok.lineno and
             # then served from the cache.
             if tok.lineno != self.last_lineno:
-                line = tok.buf[line_start:line_start + size]
+                line = ''.join(tok.bufc[line_start:line_start + size])
                 self.last_line = line
             else:
                 line = self.last_line
@@ -1240,7 +1252,7 @@ class TokenizerIter(object):
                 type_ = OP
             elif type_ == NEWLINE:
                 if not tok.implicit_newline:
-                    if tok.buf[tok.start] == '\r':
+                    if tok.bufc[tok.start] == '\r':
                         string = '\r\n'
                     else:
                         string = '\n'

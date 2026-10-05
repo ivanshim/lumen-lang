@@ -16,12 +16,20 @@ use crate::form::{Prim, Routine};
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
+    pub capture_slots: RefCell<HashSet<usize>>,
     pub outer: Option<Rc<Env>>,
+    /// Slots used by closures after this call returns.
+
+    pub weak_callback_frame: Cell<bool>,
+}
+
+impl Drop for Env {
+    fn drop(&mut self) { crate::ghost::anything_departing(); }
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false) })
     }
 }
 
@@ -110,17 +118,15 @@ pub struct Progression {
 }
 
 impl Progression {
-    /// Where the three bounds each sit inside a machine word, the size
-    /// of the walk and every member of it can be reckoned in the wider
-    /// word, sparing the great numbers. A stride of nought is refused
-    /// here and left to the older road, which answers as it always did.
+    /// Use wide integers when the bounds, their difference and a
+    /// nonzero step fit. Other progressions retain the big integer path.
     fn plain_bounds(&self) -> Option<(i128, i128, i128)> {
-        let stride = i128::from(self.stride.to_i64()?);
-        if stride == 0 { return None; }
-        let first = i128::from(self.first.to_i64()?);
-        let limit = i128::from(self.limit.to_i64()?);
-        let span = if stride < 0 { first - limit } else { limit - first };
-        let size = if span > 0 { (span - 1) / stride.abs() + 1 } else { 0 };
+        let first=self.first.to_i128()?;
+        let limit=self.limit.to_i128()?;
+        let stride=self.stride.to_i128()?;
+        let magnitude=stride.checked_abs().filter(|step|*step!=0)?;
+        let span=if stride<0 {first.checked_sub(limit)?} else {limit.checked_sub(first)?};
+        let size=if span<=0 {0} else {(span-1)/magnitude+1};
         Some((first, stride, size))
     }
 
@@ -137,11 +143,12 @@ impl Progression {
         // A loop over a progression asks this at every turn, so the
         // plain answer is given without a great number being made.
         if let Some((first, stride, size)) = self.plain_bounds() {
-            if let Some(asked) = position.to_i64() {
-                let mut offset = i128::from(asked);
-                if offset < 0 { offset += size; }
-                if offset < 0 || offset >= size { return None; }
-                return Some(Value::Small((first + stride * offset) as i64));
+            if let Some(asked)=position.to_i128() {
+                let offset=if asked<0 {asked+size} else {asked};
+                if !(0..size).contains(&offset) {return None;}
+                if let Some(member)=stride.checked_mul(offset).and_then(|jump|first.checked_add(jump)) {
+                    return Some(if let Ok(word)=i64::try_from(member) {Value::Small(word)} else {Value::from_big(BigInt::from(member))});
+                }
             }
         }
         let count = self.count();
@@ -210,6 +217,12 @@ pub struct TraceLink {
     pub following: Value,
 }
 
+#[derive(Debug)]
+pub struct MethodMark;
+impl Drop for MethodMark {
+    fn drop(&mut self) { crate::ghost::anything_departing(); }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Unpaired(Rc<[u32]>),
@@ -264,7 +277,7 @@ pub enum Value {
     Thing(Rc<Thing>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
-    Method(Rc<Routine>, Rc<Thing>),
+    Method(Rc<Routine>, Rc<Thing>, Rc<MethodMark>),
     Adorned(Rc<Adornment>),
     /// A weak hold on a thing behind a pointer: it keeps nothing about
     /// and gives the thing back only while it is still there.
@@ -457,6 +470,12 @@ impl MapStore {
         self.pairs[at].1 = value;
     }
 
+    /// The pairs themselves, read only: a blueprint that spells its
+    /// slots as a mapping reads each name off a key.
+    pub fn pairs(&self) -> &[(Value, Value)] {
+        &self.pairs
+    }
+
     /// Add a key already proven absent and already known by its own
     /// address, growing the pairs and the place together so a map
     /// built up key by key never has its place emptied and walked
@@ -552,6 +571,8 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
 }
 
 impl Value {
+    pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
+
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
 
     pub fn point_kept(&self) -> bool {
@@ -570,11 +591,24 @@ impl Value {
         self
     }
 
+    pub fn proxy_pairs(&self) -> Value {
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = self { return cell.borrow().proxy_pairs(); }
+        if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
+        if let Value::Blueprint(blueprint) = self {
+            let fields = blueprint.shared.borrow();
+            return Value::Dict(Rc::new(fields.iter().filter_map(|(word, held)| {
+                if word.starts_with('\0') || word.starts_with('#') { None }
+                else { Some((Value::text(word), held.clone())) }
+            }).collect()));
+        }
+        self.settled()
+    }
+
     pub fn settled(&self) -> Value {
         if let Value::Mutable(place, _) | Value::Shared(place) = self { return place.borrow().settled(); }
         if let Value::Window(owner, portion) = self {
             let mut items=Vec::new();
-            if let Value::Dict(entries)=owner.settled() {
+            if let Value::Dict(entries)=owner.proxy_pairs() {
                 // A window upon the pairs shows each of them as a
                 // tuple, which is what it is: a pair written between
                 // round marks, of the kind a pair may be a key by, and
@@ -600,9 +634,16 @@ impl Value {
     }
 
     pub fn keep(self, quoted: bool) -> Value {
-        if let Value::Shared(cell) = self { return Value::Mutable(cell, quoted); }
+        if let Value::Shared(cell) = self {
+            crate::ghost::note_container(&cell);
+            return Value::Mutable(cell, quoted);
+        }
         if matches!(self, Value::Vector(_) | Value::Dict(_)) {
-            Value::Mutable(Rc::new(RefCell::new(self)), quoted)
+            {
+                let storage = Rc::new(RefCell::new(self));
+                crate::ghost::note_container(&storage);
+                Value::Mutable(storage, quoted)
+            }
         } else { self }
     }
 
@@ -684,10 +725,17 @@ impl Value {
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
             Value::Intrinsic(_, name) => Ok(["intrinsic/", name.as_ref()].concat()),
+            Value::OctetKind { changeable, .. } => Ok(format!("octetkind/{changeable}")),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
+            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut address = format!("native/{tag}");
+                for item in items.iter() { address.push_str(&format!("/{:?}", item.hash_address()?)); }
+                Ok(address)
+            }
+            Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
-            Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
+            Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
 
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
@@ -706,6 +754,10 @@ impl Value {
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
+            // A loose member descriptor is addressed by the descriptor it
+            // is kept as: two readings of the same member, and of the
+            // same member on the same kind, are the one address.
+            Value::Wrapped(60, parts) => Ok(format!("descriptor:{:p}", Rc::as_ptr(parts))),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
                 // Nothing under the line marks a worth off the scale.
@@ -1063,6 +1115,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Refusal(a), Value::Refusal(b)) => a == b,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -1071,9 +1124,22 @@ impl Value {
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
-            (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Method(p, a, _), Value::Method(q, b, _)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
-            (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+            (Value::Thing(a), Value::Thing(b)) => {
+                let is_union = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "Union"));
+                if is_union(a) && is_union(b) {
+                    let args = |thing: &Thing| thing.holds.borrow().iter().find_map(|(name, item)| {
+                        if name != "__args__" { return None; }
+                        if let Value::Tuple(row) = item { Some(row.to_vec()) } else { None }
+                    });
+                    if let (Some(left), Some(right)) = (args(a), args(b)) {
+                        return left.len() == right.len() && right.iter().all(|item| left.iter().any(|candidate| candidate.equals(item)));
+                    }
+                    return false;
+                }
+                Rc::ptr_eq(a, b)
+            },
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
             // Code read off two routines is the one code where both
@@ -1085,6 +1151,7 @@ impl Value {
             // A routine bound to a value is the one bound method where it
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
+            (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,
@@ -1156,7 +1223,7 @@ impl Value {
             Value::Mutable(cell, true) => within_cell(cell, |inner| inner.repr(&w)),
             Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
-            Value::Window(owner, 'm') => format!("mappingproxy({})", owner.settled().repr(&w)),
+            Value::Window(owner, 'm') => format!("mappingproxy({})", owner.proxy_pairs().repr(&w)),
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
@@ -1401,7 +1468,7 @@ impl Value {
                 let title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
                 format!("<function {title} at 0x1>")
             }
-            Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(p, _, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => {
                 if let Some(title) = b.python_title() { return format!("<class '{title}'>"); }
@@ -1429,7 +1496,10 @@ impl Value {
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
-            Value::Thing(t) => format!("<object {}>", t.blueprint().name),
+            Value::Thing(t) => match t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display") {
+                Some(entry) => entry.1.bare(),
+                None => format!("<object {}>", t.blueprint().name),
+            },
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
@@ -1458,7 +1528,7 @@ impl Value {
                 out.push(')');
             }
             Value::Adorned(a) => out.push_str(&format!("d{:p}", Rc::as_ptr(a))),
-            Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
+            Value::Method(p, t, _) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),
@@ -1481,7 +1551,11 @@ impl Value {
     /// attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
         match kind {
+            "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
+            "function" if name == "__globals__" => Some(("member", "member_descriptor")),
+            "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),
             "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
             "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
             "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
@@ -1598,6 +1672,8 @@ pub struct Blueprint {
     /// program's can reach it: the class takes no write to a member of
     /// it and stands as no class's base.
     pub sealed: Cell<bool>,
+    /// Instance slot storage established when the class was constructed.
+    pub has_slot_storage: bool,
 }
 
 impl Blueprint {
@@ -1650,7 +1726,8 @@ impl Blueprint {
             true => self.name.eq_ignore_ascii_case(name),
             false => self.name == name,
         };
-        it || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
+        it
+            || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
             || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
@@ -1828,7 +1905,10 @@ pub fn ungrouped_figures(chars: &str, marks: &[char]) -> Option<String> {
 pub fn worth_of_binary(x: f64, figures: usize) -> Value {
     match binary_worth(x) {
         // A nought that came out under nought holds on to its minus.
-        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), x.is_sign_negative()),
+        Some((above, beneath)) => Value::Frac(Rc::new(Ratio {
+            float_style: false, above, beneath, places: Some(figures),
+            under: x == 0.0 && x.is_sign_negative(), pointed: false,
+        })),
         None => past_the_numbers(x, figures),
     }
 }
@@ -1864,6 +1944,9 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (rest, -1074i64),
         _ => (rest | (1u64 << 52), step - 1075),
     };
+    // Return lowest terms directly, including subnormal mantissas.
+    let cancelled = run.trailing_zeros();
+    let (run, halvings) = (run >> cancelled, halvings + cancelled as i64);
     let mut above = BigInt::from(run);
     if under {
         above = -above;
@@ -2179,6 +2262,11 @@ pub(crate) fn decimal_roundtrip(worth: f64) -> String {
 /// the exact remainder choose the last one. No rounded quotient is used.
 fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let exact_dyadic = above.bits() < 54 && beneath.bits() < 1076
+        && beneath.trailing_zeros().is_some_and(|shift| shift + 1 == beneath.bits());
+    // No quotient or remainder is needed when all bits already fit the
+    // binary format; whole numbers use its integer rounding directly.
+    if exact_dyadic || beneath.is_one() { return nearest_binary(above, beneath); }
     let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
     let positive = above.abs();
     let divisor = beneath.abs();

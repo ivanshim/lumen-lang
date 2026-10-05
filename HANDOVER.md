@@ -8,7 +8,7 @@ diary that used to live here is in `HISTORY.md`; read it when a question
 starts with "why is it like this".
 
 **Branch for work:** `claude/codebase-familiarization-t6vjhi`, reset to
-`main` after each batch merges. **Goal:** all 60 reference files in `tests/python/`
+`main` after each batch merges. **Goal:** all 60 reference files in the Python suite directory from `langs/python/versions.json`
 (CPython 3.14.8's own tests, tag v3.14.8 / 8e6e75d9102e) pass on both full kernels, `stack8` and
 `microcode7`, without weakening a test or a fixture.
 
@@ -193,7 +193,7 @@ independence check, before merging.
   `Claude-Session` lines; worker commits keep their own. Pull-request
   bodies end with the Claude Code line and the session URL. No model or
   AI names anywhere else.
-- Never weaken a test or a fixture; `tests/python/`'s test files are never edited. CPython's own
+- Never weaken a test or a fixture; the Python suite directory from `langs/python/versions.json`'s test files are never edited. CPython's own
   support data that they read (`mathdata/*.txt`, `test_import/data/…`) may be added there, byte for
   byte from the suite's CPython commit (`tests/README.md`), where the tests look for it.
 - One open pull request at a time; batch verified fixes into it.

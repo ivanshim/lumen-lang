@@ -2404,3 +2404,109 @@ other replaced-file regression was fixed. tests/README.md records the pin and th
 Measured on both kernels, the sixty files count 3218 of 3596 against the CPython 3.14.8 suite (3291 of 3735 against
 the 3.16.0a0 snapshot before). The merged full check agrees on 1182 scratch programs and passes every gate; the one
 MathTests part that exceeds Lambda's 870-second limit and microcode7's slowest itertools class were counted separately.
+
+### 1az. The re-pin merged as #531; batch 20x: PEP 649 and 695 in both kernels, native type bases, frozen exec, generator resurrection
+
+The first batch measured against the CPython 3.14.8 suite (§1ay) is kernel work. Five branches, each certified on its
+own tip by a full check with no scratch mismatch and every gate passing:
+
+- fix/perf-mc7-slow: microcode7 speed for the slowest suites. Native float math inputs dispatch directly, binary
+  summation keeps its partials in the math backend, and list writes no longer copy snapshots; test_heapq now completes
+  on microcode7 (69/69 on both kernels). No count change; it removes timeouts.
+- fix/pep649-695: deferred annotations (PEP 649) and type-parameter syntax (PEP 695) compiled lazily in both kernels,
+  with native annotation and type-parameter objects and one shared Generic class for the public and native sides.
+- fix/type-base: native classes honour stored module metadata, Python C3 lookup respects native protocol entries, and
+  descriptor wrappers refuse keywords with CPython's wording.
+- fix/frozen-exec: stored Python descriptor values are called without interpreting strings, and native set methods bind
+  to their callable operations.
+- fix/generator-resurrection: suspended generators are refused in the default reduction paths, and list subclasses
+  respect an overridden allocation.
+
+GPT-6.1 Sol workers wrote the branches and the integration. An independent integration review by GPT-6 Astra found one
+interaction the sixty counted files could not see: the class-builder path from fix/frozen-exec returned before the
+implicit Generic base that fix/pep649-695 inserts, so `class C[T]: pass` kept its `__type_params__` but lost its
+Generic ancestry and inherited subscription. The repair carries the generic-class context into both kernels' Python
+class builders and appends the real shared Generic base after any explicit bases, leaving metaclass selection and
+custom `__build_class__` dispatch to ordinary construction; the PEP branch's identity, scope and subscription probes
+again print CPython's output on both kernels.
+
+The pull request's own CI then caught what the checks had not: stack8 printed the right traceback for
+`a, b = forever()` (an infinite generator) and then overflowed its stack while finalizing the abandoned generator, a
+crash from fix/generator-resurrection. The Lambda checker compared only a crashing program's first error line, so it
+now also treats a death by signal as a mismatch, and an earlier build was swept for other crashes (none). stack8 now
+closes a suspended generator once, while the engine is alive, and never rebuilds one during teardown; every
+generators-* scratch program exits with its expected status on both kernels. microcode7 still skips some finalizers at
+shutdown while exiting cleanly; that is left for later work.
+
+Measured on both kernels, the sixty files count 3224 of 3596 (3218 before): test_builtin 108 to 112, test_functools 152
+to 153, test_generators 54 to 55; no passing test was lost. The merged full check agrees on 1182 scratch programs with
+no mismatch and passes every gate (lumen 522/522, PHP 318/318, Python 128/128); kernel independence reports no problem.
+
+### 1ba. Batch 20x merged as #532; Python release selection
+
+The owner asked for lumen to say which CPython release it is identical with, and to keep the reference tests per
+release. One GPT-6.1 Sol worker built it; an independent review accepted it, and after 20x merged it was brought up
+to date and checked again.
+
+- `langs/python/versions.json` is the release table: each supported minor series (now 3.14) names its pinned release
+  (3.14.8: tag, commit, date), its test folder and its library and label overlays. The window is two minor versions.
+- The reference suite now lives in `tests/python-3.14.8/`, named by the full release, byte for byte as before; scripts,
+  counts and saved measurements are bound to the full release they measured.
+- `--python` on the command line, then `LUMEN_PYTHON`, then the configuration, then the newest release choose the
+  version. No version gives the newest; `x.y` gives that series' pinned release; an exact `x.y.z` that is pinned
+  runs silently; another micro release of a supported series runs the pinned one with a warning; anything else is an
+  error and lumen exits.
+
+Measured on both kernels, the sixty files count 3224 of 3596, identical file by file to batch 20x: the move changes no
+result. The full check agrees on 1182 scratch programs with no mismatch and passes every gate; kernel independence
+reports no problem.
+
+### 1bb. The Python release selection merged as #533; batch 20y: io, re, types, weakref and the core standard library
+
+The first standard-library batch on the CPython 3.14.8 suite. Eight branches, each reviewed and accepted on its own,
+were merged one at a time by a GPT-6 Astra integrator; GPT-6.1 Sol workers wrote most of them.
+
+- fix/stdlib-io: CPython's own io.py and _pyio.py in memory over an _io adapter — from now the one io; every other
+  branch's BytesIO / TextIOWrapper stand-in was dropped. The runtime unittest now discovers inherited test methods and
+  honours load_tests, as CPython's loader does.
+- fix/support-helpers: the test.support helpers the suite needs.
+- fix/stdlib-re: CPython's re package over a faithful _sre; copyreg is the upstream file.
+- fix/stdlib-types: CPython's types.py and the native objects its fallbacks probe (MethodType identity, mappingproxy).
+- fix/stdlib-weakref: upstream weakref and _weakrefset over native weak primitives.
+- fix/stdlib-collections, fix/stdlib-string, fix/stdlib-random: CPython's modules and their tests.
+
+The integration audit's requirements hold: one canonical test.support.subTests awaits coroutine test methods,
+inspect.iscoroutinefunction sees through partials, partial methods and coroutine markers, and an async test with a
+failing assertion fails on both kernels, directly and through a partial. Every CPython-derived file was checked against
+the v3.14.8 tag (138 files); added tests live in tests/python-3.14.8/.
+
+Measured on both kernels: 4107 (stack8) and 4106 (microcode7) of 4520, over 70 files, from 3224 of 3596 over 60 — new
+files include test_re 151/166, test_weakref 123/137, test_weakset 46/46, test_memoryio 179/184, test_collections 112/116,
+test_random 111/116, test_string 41/42. Three totals changed because discovery is now correct: test_bigmem 61→166,
+test_functools 326→325, test_str 138→139 — exactly what CPython 3.14's own loader counts in those files. test_io runs
+whole on the remote at 485 of 669 on both kernels but exceeds Lambda's time limit; test_types waits for _datetime. The
+merged full check agrees on 1194 scratch programs with no mismatch and passes every gate; kernel independence reports no
+problem.
+
+### 1bc. Batch 20y merged as #534; batch 20z: json, enum, statistics, ipaddress, html, pprint and four small modules
+
+The second standard-library batch on the CPython 3.14.8 suite, on top of 20y's CPython io and re. Nine branches, each
+reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the branches came from GPT-6.1
+Sol, DeepSeek V4 Pro, DeepSeek V4.1 Flash and MiMo-V2.6-Pro workers.
+
+- fix/fixture-audit: the typinganndata fixtures restored to v3.14.8, now that types.new_class is faithful (grammar
+  75/75 and opcodes 8/8 hold).
+- fix/stdlib-html, fix/stdlib-pprint (with difflib), fix/stdlib-json, fix/stdlib-ipaddress (with urllib.parse),
+  fix/stdlib-enum, fix/stdlib-statistics: CPython's modules and their tests.
+- fix/trial-mimo-graphlib (graphlib, colorsys) and fix/trial-dsflash-quopri (quopri, sched).
+
+Every branch's own io or re stand-in was dropped for main's CPython versions, and one test.support stays. json now
+imports through CPython re and its eight earlier scratch mismatches are gone; one scratch record moved to CPython's own
+wording (`type() takes 1 or 3 arguments`). Every CPython-derived file was checked against the v3.14.8 tag (226 files).
+
+Measured: 5813 (stack8) and 5845 (microcode7) of 6335, over 83 files, from 4107 / 4106 of 4520 over 70. New files:
+test_enum 1007 (stack8) / 1053 (microcode7) of 1081, test_ipaddress 211/211, test_json 188 / 185 of 225, test_htmlparser
+66/68, test_urlparse 73/77, test_difflib 56/59, test_pprint 44/45, test_graphlib 17/17, test_quopri 11/11,
+test_colorsys 8/8, test_sched 9/11, test_html 2/2. test_statistics measures 409/415 on both kernels class by class but
+exceeds Lambda's time limit as a whole file. The full check of the final merge agrees on 1194 scratch programs with no
+mismatch, passes every gate and shows no regression or kernel disagreement; kernel independence reports no problem.

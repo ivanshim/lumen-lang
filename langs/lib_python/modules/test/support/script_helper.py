@@ -80,6 +80,20 @@ class _PythonRunResult:
     def __repr__(self):
         return '_PythonRunResult(%r, %r, %r)' % (self.rc, self.out, self.err)
 
+    def __eq__(self, other):
+        if isinstance(other, (_PythonRunResult, tuple)):
+            return (self.rc, self.out, self.err) == tuple(other)
+        return NotImplemented
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __hash__(self):
+        return hash((self.rc, self.out, self.err))
+
 
 def _assert_python(expected_success, *args, **env_vars):
     file, rest = _to_file_args(args)
