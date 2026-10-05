@@ -968,6 +968,7 @@ impl<'a> Engine<'a> {
                 140 => {
                     let subscript = args.last().cloned().unwrap_or(Value::Null).contents();
                     let members: Vec<Value> = match subscript { Value::Tuple(row) => row.iter().cloned().collect(), other => vec![other] };
+                    if members.is_empty() { return Err("TypeError: Cannot take a Union of no types.".into()); }
                     let mut folded: Option<Value> = None;
                     for member in members {
                         folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member) });

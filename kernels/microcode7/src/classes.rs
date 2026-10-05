@@ -1099,7 +1099,11 @@ impl<'a> Machine<'a> {
                     }
                     140 => {
                         let subscript = values.last().cloned().unwrap_or(Value::Nil).settled();
-                        let members: Vec<Value> = match subscript { Value::Tuple(row) => row.to_vec(), other => vec![other] };
+                        let members: Vec<Value> = match subscript {
+                            Value::Tuple(row) if row.is_empty() => return Err(String::from("TypeError: Cannot take a Union of no types.").into()),
+                            Value::Tuple(row) => row.to_vec(),
+                            other => vec![other],
+                        };
                         let mut folded: Option<Value> = None;
                         for member in members {
                             folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member]) });
