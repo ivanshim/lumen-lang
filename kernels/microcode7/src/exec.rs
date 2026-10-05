@@ -9196,7 +9196,13 @@ impl<'a> Machine<'a> {
             let operation = if name == "encode" { Some(2) } else { self.octet_member(name, changeable).and_then(Self::octet_operation) };
             if let Some(operation) = operation {
                 let mut values = vec![actual]; values.extend(arguments);
-                for (key, value) in keywords {
+                let mut handed = keywords;
+                handed.sort_by_key(|(key, _)| match (operation, key.as_str()) {
+                    (3, "encoding") | (4, "sep") | (28, "keepends") => 0,
+                    (3, "errors") | (4, "bytes_per_sep") | (39, "delete") => 1,
+                    _ => 2,
+                });
+                for (key, value) in handed {
                     // bytes.translate keeps the dropped row after the
                     // table, so its keyword sits one further along than
                     // the decode pair does.
