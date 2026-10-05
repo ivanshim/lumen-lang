@@ -74,6 +74,9 @@ impl Value {
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            Self::Wrapped(122, _) => "function",
+            Self::Wrapped(31, held) => match held.is_empty() { true => "wrapper_descriptor", false => "method-wrapper" },
+            Self::Wrapped(78, _) => "wrapper_descriptor",
             Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
             Self::Wrapped(133, _) => "method_descriptor",
             Self::Wrapped(134, _) => "builtin_function_or_method",
@@ -86,6 +89,9 @@ impl Value {
             Self::Wrapped(143, _) => "function",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
+            Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {
+                if let Some(Self::Blueprint(_)) = parts.get(1) { "method" } else { "builtin_function_or_method" }
+            },
             Self::Wrapped(3, _) => "method-wrapper",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -217,6 +223,8 @@ impl Value {
             Self::Wrapped(9, kept) => (std::rc::Rc::as_ptr(kept) as usize / 16) as i64,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
+            Self::Wrapped(8, names) => return names.first().and_then(|word| word.hash_number()),
+
             // The bounds folded one after another, as a tuple's parts are,
             // with no length folded in after them.
             Self::Span(bounds) => {

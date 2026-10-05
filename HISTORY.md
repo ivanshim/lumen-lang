@@ -2535,3 +2535,27 @@ test_hmac 42/100, test_hashlib 32/82, test_decimal 84/286 (two class parts excee
 Some large files exceed Lambda's time limit on one or both kernels and count as run nothing. The full check of the
 final merge agrees on 1194 scratch programs with no mismatch, passes every gate and shows no regression or kernel
 disagreement; kernel independence reports no problem.
+
+### 1be. Batch 21a merged as #536; batch 21b: exception groups, walrus, timeit, optparse, datetime, and the kernels agreeing on enum and json
+
+Seven branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, MiMo-V2.6-Pro and Kimi K3 workers, most finished by GPT-6.1 Sol after reviews.
+
+- fix/agree-enum-json: the two kernels now pass the same tests in test_enum and test_json (53 disagreements resolved).
+- fix/dsflash-exctests (OSError subclass mapping for 2 to 5 arguments; exception_hierarchy, exception_variations),
+  fix/dsflash-walrus (named expressions), fix/mimo-timeit (per-creation function identity; timeit),
+  fix/dsflash-excgroup (exception groups, typechecks), fix/dsflash-optparse (getopt, optparse, read-only module
+  __dict__), fix/stdlib-datetime (CPython datetime, _pydatetime, _strptime, calendar).
+
+The first full check showed three slowdowns introduced by the merges (stack8 dataclasses 294 → 579 s, generators
+148 → 220 s, microcode7 fstring 164 → 199 s). Timing each merge found two causes — repeated reverse scans of stack8's
+identifier roster during eval/exec aliasing, and microcode7 rebuilding its builtin continuation index on every nested
+source scan — and both were fixed: dataclasses 303 s, generators 135 s, fstring 79 s. test_array is now counted in
+class parts, since microcode7 needs longer than Lambda allows for the whole file (on main as well).
+
+Measured: 8641 (stack8) and 8631 (microcode7) of 9607, over 118 files, from 6509 / 6487 of 7407 / 7348 over 108. New
+files: test_exception_group 53/53, test_named_expressions 74/74, test_timeit 41/41, test_typechecks 6/6, test_optparse
+151/154, test_getopt 9/10, test_exception_variations 30/30, test_exception_hierarchy 15/16, test_datetime 498/553,
+test_statistics 365/371; test_enum 1059/1081 and test_json on both kernels; test_array 833/892 on both. The full check
+of the final commit agrees on 1194 scratch programs with no mismatch, passes every gate, and shows no regression or
+kernel disagreement; kernel independence reports no problem.

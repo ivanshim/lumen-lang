@@ -128,10 +128,37 @@ def set_int_max_str_digits(maxdigits):
 # of a real terminal, whatever the host's own stdio happens to be, so
 # isatty() always answers no and a test that only runs against a tty
 # takes its own skip road instead of finding an attribute missing.
-class _BinaryInput:
+class _StandardStream:
+    closed = False
+
+    def _ensure_open(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+
+    def __enter__(self):
+        self._ensure_open()
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.close()
+
+    def close(self):
+        if not self.closed:
+            self.flush()
+            self.closed = True
+            buffer = getattr(self, 'buffer', None)
+            if buffer is not None and buffer is not self:
+                buffer.close()
+
+    def flush(self):
+        self._ensure_open()
+
+class _BinaryInput(_StandardStream):
     def read(self, size=-1):
+        self._ensure_open()
         return _host_stream_read(size, False, True)
     def readline(self, size=-1):
+        self._ensure_open()
         return _host_stream_read(size, True, True)
     def readlines(self, hint=-1):
         return list(self)
@@ -145,48 +172,56 @@ class _BinaryInput:
     def isatty(self):
         return False
 
-class _BinaryOutput:
+class _BinaryOutput(_StandardStream):
     def __init__(self, error=False):
         self.error = error
     def write(self, data):
+        self._ensure_open()
         return _host_stream_write(data, self.error, True)
     def flush(self):
-        pass
+        self._ensure_open()
     def isatty(self):
         return False
 
-class _Output:
-    buffer = _BinaryOutput()
+class _Output(_StandardStream):
+    def __init__(self):
+        self.buffer = _BinaryOutput()
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
+        self._ensure_open()
         return _host_stream_write(*args, False)
 
     def flush(self):
-        pass
+        self._ensure_open()
 
     def isatty(self):
         return False
 
-class _Error:
-    buffer = _BinaryOutput(True)
+class _Error(_StandardStream):
+    def __init__(self):
+        self.buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
+        self._ensure_open()
         return _host_stream_write(*args, True)
 
     def flush(self):
-        pass
+        self._ensure_open()
 
     def isatty(self):
         return False
 
-class _Input:
-    buffer = _BinaryInput()
+class _Input(_BinaryInput):
+    def __init__(self):
+        self.buffer = _BinaryInput()
     def read(self, size=-1):
+        self._ensure_open()
         return _host_stream_read(size, False)
 
     def readline(self, size=-1):
+        self._ensure_open()
         return _host_stream_read(size, True)
 
     def isatty(self):
@@ -287,6 +322,14 @@ prefix = base_prefix
 base_exec_prefix = base_prefix
 exec_prefix = base_prefix
 
+# The interpreter stands alone, so the installation it names is itself:
+# the same prefix Python would compute for its own home, here the place
+# the binary stands.
+prefix = executable.rsplit('/', 1)[0] if '/' in executable else ''
+base_prefix = prefix
+exec_prefix = prefix
+base_exec_prefix = prefix
+
 float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111
@@ -296,7 +339,29 @@ def intern(string):
         raise 'TypeError: intern() argument must be str'
     return string
 
+# The builtin kinds whose rough count below stands for them and their
+# subclasses that say nothing of their own measurement.
+_sizeof_bases = (str, list, int, float, bytes, bytearray, tuple, set,
+                 frozenset, dict, bool, complex)
+
+
 def getsizeof(value, default=None):
+    # A type of the program's own may say how it is measured, and its
+    # answer is honoured before any rough count. The reference asks the
+    # type's own method, never an attribute set on the instance, and
+    # requires a non-negative integer.
+    for base in type(value).__mro__:
+        if base is object or base in _sizeof_bases:
+            break
+        if '__sizeof__' in base.__dict__:
+            measured = type(value).__sizeof__(value)
+            if not isinstance(measured, int):
+                raise TypeError('__sizeof__() should return int, got ' + type(measured).__name__)
+            if measured < 0:
+                if default is not None:
+                    return default
+                raise ValueError('__sizeof__() should return >= 0')
+            return measured
     # A rough count of the value's payload and its enclosing record.
     if isinstance(value, str):
         largest = max((ord(char) for char in value), default=0)
