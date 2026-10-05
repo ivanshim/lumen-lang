@@ -859,7 +859,7 @@ impl<'a> Machine<'a> {
                 45 => seed.push(("\0unicode-translate".to_string(), Value::Flag(true))),
                 _ => {}
             }
-            let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+            let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: Some(format!("<class '{word}'>")),
                 name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
                 shared: RefCell::new(vec![("__module__".to_owned(), Value::text("builtins"))]), constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
