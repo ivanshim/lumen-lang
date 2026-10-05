@@ -1147,6 +1147,15 @@ impl<'a> Machine<'a> {
                     let Some(i)=parts.iter().position(|p|self.detail(p)==key) else{return Err(self.argument_fault("ext.syntax.call.amiss.unknown",Some(&key)).into())};
                     taken[i]=v;
                 }
+                // Clear native metadata and install the supplied callbacks
+                // first; a doc lookup error must not restore older callbacks.
+                let plain=self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(known,&property.blueprint()));
+                {
+                    let mut holds=property.holds.borrow_mut();
+                    holds.retain(|(key,_)| !["\0fget", "\0fset", "\0fdel", "\0name", "\0doc", "\0getterdoc"].contains(&key.as_str()));
+                    for (key,v) in ["\0fget","\0fset","\0fdel"].into_iter().zip(taken.iter().take(3)) { holds.push((key.to_owned(),v.clone())); }
+                    holds.extend([(String::from("\0doc"),Value::Nil),(String::from("\0getterdoc"),Value::Flag(false))]);
+                }
                 // A docstring given is kept as it is; where none was given
                 // the getter's own is taken, and that it came from there is
                 // remembered so a later copy takes the new getter's.
@@ -1160,13 +1169,10 @@ impl<'a> Machine<'a> {
                         Err(escaped)=>return Err(escaped),
                     }
                 }
-                let plain=self.property_kind.as_ref().map_or(false,|known| Rc::ptr_eq(known,&property.blueprint()));
                 {
                     let mut holds=property.holds.borrow_mut();
-                    holds.retain(|(key,_)| !["\0fget", "\0fset", "\0fdel", "\0name", "\0doc", "\0getterdoc", "__doc__"].contains(&key.as_str()));
-                    for (key,v) in ["\0fget","\0fset","\0fdel"].into_iter().zip(taken.iter().take(3)) { holds.push((key.to_owned(),v.clone())); }
-                    holds.push(("\0doc".to_owned(),doc.clone()));
-                    holds.push(("\0getterdoc".to_owned(),Value::Flag(getter_doc)));
+                    Self::change_entry(&mut holds,"\0doc",Some(doc.clone()));
+                    Self::change_entry(&mut holds,"\0getterdoc",Some(Value::Flag(getter_doc)));
                 }
                 if !plain {
                     // A subclass keeps its docstring on the thing itself, as

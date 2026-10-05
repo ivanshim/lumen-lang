@@ -934,6 +934,16 @@ impl<'a> Engine<'a> {
                     if place >= 4 { return Err(self.class_refusal()); }
                     kept[place] = value;
                 }
+                // Accessors change before the getter's doc is requested, so
+                // a failed lookup leaves the same partial state as Python.
+                let plain = self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &property.class_now()));
+                {
+                    let mut fields = property.fields.borrow_mut();
+                    fields.retain(|(n, _)| !matches!(n.as_str(), "\0fget" | "\0fset" | "\0fdel" | "\0name" | "\0doc" | "\0getterdoc"));
+                    for (place, value) in ["\0fget", "\0fset", "\0fdel"].iter().zip(kept.iter().take(3)) { fields.push((place.to_string(), value.clone())); }
+                    fields.push(("\0doc".to_string(), Value::Null));
+                    fields.push(("\0getterdoc".to_string(), Value::Flag(false)));
+                }
                 // A docstring given is kept as it is; where none was given
                 // the getter's own is taken, and that it came from there is
                 // remembered so a later copy takes the new getter's.
@@ -947,13 +957,10 @@ impl<'a> Engine<'a> {
                         Err(fault) => return Err(fault),
                     }
                 }
-                let plain = self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &property.class_now()));
                 {
                     let mut fields = property.fields.borrow_mut();
-                    fields.retain(|(n, _)| !matches!(n.as_str(), "\0fget" | "\0fset" | "\0fdel" | "\0name" | "\0doc" | "\0getterdoc" | "__doc__"));
-                    for (place, value) in ["\0fget", "\0fset", "\0fdel"].iter().zip(kept.iter().take(3)) { fields.push((place.to_string(), value.clone())); }
-                    fields.push(("\0doc".to_string(), doc.clone()));
-                    fields.push(("\0getterdoc".to_string(), Value::Flag(getter_doc)));
+                    let _ = Self::write_members(&mut fields, "\0doc", Some(doc.clone()), false);
+                    let _ = Self::write_members(&mut fields, "\0getterdoc", Some(Value::Flag(getter_doc)), false);
                 }
                 if !plain {
                     // A subclass keeps its docstring on the thing itself, as
