@@ -502,6 +502,7 @@ impl Knot {
                     if let Ok(g) = g.try_borrow() { g.reaches(out); }
                 }
                 Value::Routine(p) => {
+                    if let Some(source) = &p.definition { out.push(Knot::Held(Value::Routine(source.clone()))); }
                     if let Some(a) = &p.annotator { out.push(Knot::Held(Value::Routine(a.clone()))); }
                     for v in &p.literals { held(out, v); }
                     if let Some(v) = &p.globe { held(out, v); }

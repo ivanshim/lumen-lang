@@ -172,6 +172,23 @@ setattr(__load_module('builtins'), 'bytearray', bytearray)
 
 FileNotFoundError = FileNotFoundError
 IsADirectoryError = IsADirectoryError
+BlockingIOError = BlockingIOError
+ChildProcessError = ChildProcessError
+ConnectionError = ConnectionError
+BrokenPipeError = BrokenPipeError
+ConnectionAbortedError = ConnectionAbortedError
+ConnectionRefusedError = ConnectionRefusedError
+ConnectionResetError = ConnectionResetError
+FileExistsError = FileExistsError
+InterruptedError = InterruptedError
+NotADirectoryError = NotADirectoryError
+PermissionError = PermissionError
+ProcessLookupError = ProcessLookupError
+TimeoutError = TimeoutError
+
+# The older spellings of OSError are the same class under other names.
+EnvironmentError = OSError
+IOError = OSError
 
 # A file read from or written to the host's own disk. What backs it is
 # whichever whole-file primitive the kernel carries -- a read brings
@@ -782,11 +799,11 @@ class memoryview:
 # quit, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds
-# the operating system raises besides FileNotFoundError and
-# IsADirectoryError -- BlockingIOError, BrokenPipeError,
-# ChildProcessError, ConnectionError and its four kinds,
-# FileExistsError, InterruptedError, NotADirectoryError,
-# PermissionError, ProcessLookupError and TimeoutError -- along with
+# the operating system raises besides FileNotFoundError,
+# IsADirectoryError, NotADirectoryError and PermissionError --
+# BlockingIOError, BrokenPipeError, ChildProcessError,
+# ConnectionError and its four kinds, FileExistsError,
+# InterruptedError, ProcessLookupError and TimeoutError -- along with
 # the old spellings EnvironmentError and IOError.
 
 
