@@ -95,6 +95,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("encodings.aliases", include_str!("encodings/aliases.py"), "encodings/aliases.py"),
     ("enum", include_str!("enum.py"), "enum.py"),
     ("errno", include_str!("errno.py"), "errno.py"),
+    ("filecmp", include_str!("filecmp.py"), "filecmp.py"),
     ("fnmatch", include_str!("fnmatch.py"), "fnmatch.py"),
     ("fractions", include_str!("fractions.py"), "fractions.py"),
     ("functools", concat!(include_str!("functools.py"), "\n", include_str!("runtime_adapters/functools.py")), "functools.py"),
