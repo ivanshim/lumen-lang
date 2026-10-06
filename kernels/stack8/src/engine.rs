@@ -146,6 +146,10 @@ pub struct Engine<'a> {
     builtins_view: Option<Value>,
     class_body_capture: Option<(Rc<Routine>, Option<Value>)>,
     code_class: Option<Rc<Class>>,
+    /// The future flags in force for text read as the run goes: a code
+    /// value's own where one is run, else the running text's, as the
+    /// reference reads them from the calling frame.
+    text_future_bits: std::cell::Cell<i64>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
     fresh_routines: bool,
@@ -1421,6 +1425,7 @@ impl<'a> Engine<'a> {
             line: 0,
             trace_frame: None,
             running_routine: None,
+            text_future_bits: std::cell::Cell::new(0),
             inline_comp: None,
             location: None,
             frame_class: None,
@@ -9110,6 +9115,22 @@ impl<'a> Engine<'a> {
                     answer
                 } else {
                     match &args[0] {
+                        Value::Object(object) if Self::own_kind(&object.class_now()).as_deref() == Some("code") => {
+                            // A code value hashes the way it compares:
+                            // by the text, manner and flags it keeps;
+                            // the file it names is no part of it.
+                            let mut folded = 2870177450012600261u64;
+                            for (_, value) in object.fields.borrow().iter().filter(|(key, _)| key != "filename" && key != "co_filename") {
+                                match value.contents().core_hash() {
+                                    Some(one) => {
+                                        folded = folded.wrapping_add((one as u64).wrapping_mul(14029467366897019727));
+                                        folded = folded.rotate_left(31).wrapping_mul(11400714785074694791);
+                                    }
+                                    None => return Err(self.special_fault()),
+                                }
+                            }
+                            Value::Small(if folded == u64::MAX { 1546275796 } else { folded as i64 })
+                        }
                         Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
                         Value::Class(_) => Value::Small(args[0].core_hash().ok_or_else(|| self.special_fault())?),
                         Value::Small(_) | Value::Huge(_) => args[0].clone(),
@@ -24813,6 +24834,11 @@ impl Engine<'_> {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
         let allow_top_await = flags & 8192 != 0;
+        // The future flags in force: those the call names, and — unless
+        // it says not to inherit — those of the text now running, the
+        // way the reference reads them from the calling frame's code.
+        let caller_future = if matches!(args.get(4).map(Value::contents), Some(Value::Flag(true)) | Some(Value::Small(1..))) { 0 } else { self.running_routine.as_ref().map_or(0, |body| body.future_bits) };
+        let future_bits = flags & 0x1FE0010 | caller_future;
         // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
         // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
         // where the language names an incomplete-input fault, a reading
@@ -24844,6 +24870,7 @@ impl Engine<'_> {
         trial.value_only = mode == 1;
         trial.interactive = mode == 2;
         trial.allow_top_level_await = allow_top_await;
+        trial.future_bits = future_bits;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             if allow_incomplete && mode != 0 && !Self::past_reading_complaint(&said) {
                 if let Some(place) = Self::incomplete_stopped(&tokens, trial.stopped_at, trial.stopped_column, mode, counted, false) {
@@ -24877,13 +24904,15 @@ impl Engine<'_> {
                 Err(Fault::Note(told)) => return Err(told),
                 Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
             };
-            let parse = match self.import_member(&module, "ast", "parse") {
+            let parse = match self.import_member(&module, "ast", "_parse_for_compile") {
                 Ok(parse) => parse,
                 Err(Fault::Note(told)) => return Err(told),
                 Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
             };
             let manner = self.lang.compile_modes[mode].clone();
-            return match self.class_apply(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner)]) {
+            let type_comments = i64::from(flags & 0x1000 != 0);
+            let optimize = match args.get(5).map(Value::contents) { Some(Value::Small(n)) => n, _ => -1 };
+            return match self.class_apply(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize)]) {
                 Ok(tree) => Ok(tree),
                 Err(Fault::Note(told)) => Err(told),
                 Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
@@ -24891,7 +24920,7 @@ impl Engine<'_> {
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
-        let bits = (if trial.top_level_coroutine { 128 } else { 0 }) | (if trial.future_annotations { 0x1000000 } else { 0 });
+        let bits = (if trial.top_level_coroutine { 128 } else { 0 }) | trial.future_bits;
         let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1))];
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
@@ -25037,17 +25066,23 @@ impl Engine<'_> {
             }
         }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
-        let (source, file, mode, top_await) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
-            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+        // The future flags a reading is made under: a code value's own
+        // where one is run, else the running text's, the way the
+        // reference reads them from the calling frame's code.
+        let caller_future = self.running_routine.as_ref().map_or(0, |body| body.future_bits);
+        let (source, file, mode, top_await, future_bits) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, caller_future),
+            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, caller_future),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
                 let asynchronous = fields.iter().any(|(name, value)| name == "co_flags" && matches!(value, Value::Small(bits) if bits & 128 != 0));
-                (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous)
+                let held_bits = fields.iter().find_map(|(name, value)| if name == "co_flags" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0);
+                (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous, held_bits)
             }
             _ => return Err(self.core_fault("core.arity", name)),
         };
+        self.text_future_bits.set(future_bits);
         if args.len() > 4 || (weighing && args.len() > 3) { return Err(self.core_fault("core.arity", name)); }
         if args.len() == 4 && !matches!(args[3], Value::Null) {
             return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.into());
@@ -25164,6 +25199,7 @@ impl Engine<'_> {
         });
         self.registry.value_only = mode == 1;
         self.registry.allow_top_level_await = top_await;
+        self.registry.future_bits = self.text_future_bits.get();
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
@@ -25253,6 +25289,7 @@ impl Engine<'_> {
         {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
             registry.allow_top_level_await = top_await;
+            registry.future_bits = self.text_future_bits.get();
             if compiled.is_none() {
                 registry.value_only = mode == 1;
                 registry.interactive = mode == 2;

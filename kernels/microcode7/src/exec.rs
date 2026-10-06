@@ -656,6 +656,13 @@ pub struct Machine<'a> {
     /// while the run goes is a piece of the same program and is built
     /// knowing it.
     pub knows_cells: (HashMap<String, Vec<bool>>, HashMap<String, Vec<String>>, std::collections::HashSet<String>),
+    /// The future flags in force for text read as the run goes: a code
+    /// value's own where one is run, else the running text's, as the
+    /// reference reads them from the calling frame.
+    text_future_bits: std::cell::Cell<i64>,
+    /// The future flags the entry text was built with: its run stands
+    /// in no call's frame, so they are kept aside here.
+    top_future_bits: std::cell::Cell<i64>,
     /// The names of the frame each call is running in, innermost last,
     /// so that text read while the run goes can be built knowing them.
     frames_named: Vec<Rc<Routine>>,
@@ -1841,6 +1848,8 @@ impl<'a> Machine<'a> {
             would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
+            text_future_bits: std::cell::Cell::new(0),
+            top_future_bits: std::cell::Cell::new(0),
             text_within: None,
             text_caller_book: None,
             hearer: RefCell::new(None),
@@ -3325,7 +3334,8 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[]) {
+        let caller_future = self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits);
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[], caller_future) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -3448,6 +3458,7 @@ impl<'a> Machine<'a> {
     pub fn run_main(&mut self, program: &Rc<Routine>) -> Result<(), String> {
         let body = &program.body;
         self.active_trace = self.activation(program, &self.outermost.clone(), None);
+        self.top_future_bits.set(program.future_bits);
         let top = self.outermost.clone();
         let ran = self.value_of(body, &top);
         // A signal still waiting once the program's own last form has
@@ -15311,6 +15322,18 @@ impl<'a> Machine<'a> {
                     _ => return Err(self.bad_answer()),
                 },
                 None => match one {
+                    Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("code") => {
+                        // A code value hashes the way it weighs: by the
+                        // text, manner and flags it keeps; the file it
+                        // names is no part of it.
+                        let mut accum: u64 = 2_870_177_450_012_600_261;
+                        for (_, worth) in t.holds.borrow().iter().filter(|(name, _)| name != "filename" && name != "co_filename") {
+                            let lane = match worth.settled().hash_number() { Some(number) => number as u64, None => return Err(self.bad_answer()) };
+                            accum = accum.wrapping_add(lane.wrapping_mul(14_029_467_366_897_019_727)).rotate_left(31);
+                            accum = accum.wrapping_mul(11_400_714_785_074_694_791);
+                        }
+                        Value::Small(if accum == u64::MAX { 1_546_275_796 } else { accum as i64 })
+                    }
                     Value::Thing(t) if self.appointed(one, 2).is_none() => Value::Small(t.turn as i64),
                     Value::Small(_) | Value::Huge(_) => one.clone(),
                     Value::Flag(b) => Value::Small(*b as i64),
@@ -24978,7 +25001,7 @@ impl<'a> Machine<'a> {
                 piece.row = last_row; piece.column = last_col; piece.end_row = last_row; piece.end_column = last_col;
             }
         }
-        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2);
+        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0);
         let (said, row, cols) = match built {
             Ok(_) => return Some(Self::spent_place(source)),
             Err(fault) => fault,
@@ -25047,6 +25070,11 @@ impl<'a> Machine<'a> {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
         let top_await = flags & 8192 != 0;
+        // The future flags in force: those the call names, and — unless
+        // it says not to inherit — those of the text now running, the
+        // way the reference reads them from the calling frame's code.
+        let caller_future = if matches!(v.get(4).map(Value::settled), Some(Value::Flag(true)) | Some(Value::Small(1..))) { 0 } else { self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits) };
+        let future_bits = flags & 0x1FE0010 | caller_future;
         // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
         // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
         // where the language names a fault for input cut short, a
@@ -25075,7 +25103,7 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
             }
         };
-        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2) {
+        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits) {
             Ok(built) => built,
             Err((said, row, cols)) => {
                 if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
@@ -25107,20 +25135,22 @@ impl<'a> Machine<'a> {
             // PyCF_ONLY_AST: the value handed back is the library's
             // syntax tree of the text rather than a code value.
             let space = self.load_namespace("ast")?;
-            let parse = match self.read_class_member(space, "parse", true) {
+            let parse = match self.read_class_member(space, "_parse_for_compile", true) {
                 Ok(parse) => parse.settled(),
                 Err(Escape::Error(told)) => return Err(told),
                 Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
             };
             let manner = self.table.strings("ext.builtin.compile.modes")[mode].clone();
-            return match self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner)]) {
+            let type_comments = i64::from(flags & 0x1000 != 0);
+            let optimize = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
+            return match self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize)]) {
                 Ok(tree) => Ok(tree),
                 Err(Escape::Error(told)) => Err(told),
                 Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
             };
         }
         let kind = self.code_blueprint();
-        let bits = (if built.program.generator { 128 } else { 0 }) | (if built.future_annotations { 0x1000000 } else { 0 });
+        let bits = (if built.program.generator { 128 } else { 0 }) | built.future_bits;
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
@@ -25282,17 +25312,23 @@ impl<'a> Machine<'a> {
             }
         }
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
-        let (source, file, mode, top_await) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
-            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+        // The future flags a reading is made under: a code value's own
+        // where one is run, else the running text's, the way the
+        // reference reads them from the calling frame's code.
+        let caller_future = self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits);
+        let (source, file, mode, top_await, future_bits) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, caller_future),
+            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, caller_future),
             Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
                 let async_code = holds.iter().any(|(name, worth)| name == "co_flags" && matches!(worth, Value::Small(flags) if flags & 128 != 0));
-                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code)
+                let held_bits = holds.iter().find_map(|(name, worth)| if name == "co_flags" { match worth.settled() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0);
+                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code, held_bits)
             }
             _ => return Err(self.core_complaint("core.arity", name)),
         };
+        self.text_future_bits.set(future_bits);
         if v.len() > 4 || (weighing && v.len() > 3) { return Err(self.core_complaint("core.arity", name)); }
         if v.len() == 4 && !matches!(v[3], Value::Nil) {
             return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.to_owned());
@@ -25438,7 +25474,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get()) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -25525,7 +25561,7 @@ impl<'a> Machine<'a> {
     /// text leaves is to be written out.
     fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get())
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
