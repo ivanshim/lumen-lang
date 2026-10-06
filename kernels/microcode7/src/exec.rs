@@ -535,7 +535,14 @@ pub struct Machine<'a> {
     /// asked. Only a yes is kept here. A claim later registered can turn
     /// a no into a yes but never a yes into a no, so a no is worked out
     /// afresh and this list can never answer stale.
-    beneath_yes: HashMap<(usize, usize, bool), (Rc<Blueprint>, Rc<Blueprint>)>,
+    /// The abc kind's own yeses, one for each pairing of a thing's own
+    /// kind and the kind it was weighed against. Kept only for the
+    /// standard abc kind, so that no other kind's hook is ever passed
+    /// over and no answer is taken from a thing's own member.
+    abc_instances: HashMap<(usize, usize), (Rc<Blueprint>, Rc<Blueprint>)>,
+    /// The run's own abc.ABCMeta kind, asked of the abc module once and
+    /// kept, or nothing where the module was never reached.
+    abc_meta: Option<Rc<Blueprint>>,
     stack_origin: usize,
     fixed_native_directories: RefCell<std::collections::BTreeMap<char, Vec<String>>>,
     descriptor_files: std::collections::BTreeMap<i32, std::fs::File>,
@@ -1791,7 +1798,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), beneath_yes: HashMap::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), abc_instances: HashMap::new(), abc_meta: None, written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()),
             descriptor_files: std::collections::BTreeMap::new(),
@@ -25983,20 +25990,50 @@ impl Machine<'_> {
     }
 
     /// Whether `item` is of the kind `expected`, with a yes already
-    /// found for this very pairing of a thing's kind and the kind it is
-    /// weighed against handed straight back, so the kinds are not walked
-    /// once more. A no is never kept: a claim registered later may turn
-    /// it into a yes.
+    /// The run's own abc.ABCMeta kind, asked of the abc module once and
+    /// kept. Nothing stands there for a program that never reached the
+    /// module, and then nothing is answered from a memory at all.
+    fn standard_abc_meta(&mut self) -> Option<Rc<Blueprint>> {
+        if let Some(kept)=&self.abc_meta { return Some(kept.clone()); }
+        let mut found=self.imported.get("abc").and_then(|module| Self::namespace_class(module,"ABCMeta"));
+        if found.is_none() {
+            for module in self.imported.values() {
+                if let Some(kind)=Self::namespace_class(module,"ABCMeta") { found=Some(kind); break; }
+            }
+        }
+        if let Some(kind)=&found { self.abc_meta=Some(kind.clone()); }
+        found
+    }
+    /// The class a module keeps under a name, where it keeps one at all.
+    fn namespace_class(module:&Value,name:&str)->Option<Rc<Blueprint>> {
+        let Value::Thing(namespace)=module else { return None; };
+        namespace.holds.borrow().iter().find(|(key,_)| key==name)
+            .and_then(|(_,held)| match held.settled() { Value::Blueprint(kind)=>Some(kind), _=>None })
+    }
+    /// Whether `item` is of the kind `expected`. Only the standard abc
+    /// kind answers from the memory, exactly as the reference's own
+    /// _py_abc keeps a yes for a pair of classes; every other kind, and
+    /// every thing whose own kind is spoken for by a member of its own,
+    /// is asked afresh, so no hook is passed over and no answer is taken
+    /// from a thing's own state.
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
         if let (Value::Thing(thing), Value::Blueprint(class)) = (item, expected) {
-            let own=thing.blueprint();
-            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)) { return Ok(true); }
+            if !thing.holds.borrow().iter().any(|(key,_)| key=="__class__") {
+                let own=thing.blueprint();
+                if self.abc_instances.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize)) { return Ok(true); }
+            }
         }
         let verdict = self.core_belongs_at(item, expected)?;
         if verdict {
             if let (Value::Thing(thing), Value::Blueprint(class)) = (item, expected) {
-                let own=thing.blueprint();
-                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)).or_insert((own,class.clone()));
+                if !thing.holds.borrow().iter().any(|(key,_)| key=="__class__") {
+                    if let Some(abc)=self.standard_abc_meta() {
+                        if Self::builder_over(class).is_some_and(|builder| Rc::ptr_eq(&builder,&abc)) {
+                            let own=thing.blueprint();
+                            self.abc_instances.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize)).or_insert((own,class.clone()));
+                        }
+                    }
+                }
             }
         }
         Ok(verdict)

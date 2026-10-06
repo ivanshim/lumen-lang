@@ -1411,7 +1411,11 @@ impl<'a> Machine<'a> {
                                 Ok(Value::Small(mark))=>{
                                     let mut request=vec![kept[0].clone(),Value::Small(mark)];
                                     request.extend(values.into_iter().skip(1));
-                                    return self.apply_class_member(Value::text("__random"),request);
+                                    let (mut input, keywords)=self.open_arguments(request)?;
+                                    if let Some(answer)=self.builtin_names(Prim::Chance, "__random", &mut input, keywords)? { return Ok(answer); }
+                                    let result=self.prim(Prim::Chance, "__random", &input);
+                                    if let Some(raised)=self.got_away.take() { return Err(raised); }
+                                    return Ok(result?);
                                 }
                                 Err(error) if !self.missing_member_escape(&error)=>return Err(error),
                                 _=>{},
@@ -1620,7 +1624,15 @@ impl<'a> Machine<'a> {
                             None => Err(self.core_complaint("core.exhausted", "").into()),
                         }
                     }
-                    3 | 132=>{values.insert(0,kept[1].clone());if self.table.has_any("ext.stmt.class.builder"){self.apply_held(kept[0].clone(),values)}else{self.apply_class_member(kept[0].clone(),values)}},
+                    3 | 132=>{
+                        // A binding of the drawing stream is handed its
+                        // thing and called where it stands, with no
+                        // second reading of the call put between.
+                        values.insert(0,kept[1].clone());
+                        if matches!(&kept[0],Value::Wrapped(133,_)) { self.apply_class_member(kept[0].clone(),values) }
+                        else if self.table.has_any("ext.stmt.class.builder") { self.apply_held(kept[0].clone(),values) }
+                        else { self.apply_class_member(kept[0].clone(),values) }
+                    },
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
                     // upon, the rest being what the entry itself takes.
@@ -4472,27 +4484,7 @@ impl<'a> Machine<'a> {
         }
         false
     }
-    /// Whether `subject` stands beneath `choice`, as the reference
-    /// weighs it. A pair of a thing's kind and the kind it is asked
-    /// against names one answer for the whole run, so a yes already
-    /// found is handed back without walking the kinds once more. A no
-    /// is never kept, since a claim registered later may turn it into a
-    /// yes.
     fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
-        if let (Value::Thing(thing), Value::Blueprint(kind)) = (subject, choice) {
-            let own=thing.blueprint();
-            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(kind) as usize, class_only)) { return Ok(true); }
-        }
-        let verdict=self.is_beneath_at(subject,choice,class_only)?;
-        if verdict {
-            if let (Value::Thing(thing), Value::Blueprint(kind)) = (subject, choice) {
-                let own=thing.blueprint();
-                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(kind) as usize, class_only)).or_insert((own,kind.clone()));
-            }
-        }
-        Ok(verdict)
-    }
-    fn is_beneath_at(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let Value::Mutable(cell, _) | Value::Shared(cell) = subject { let held = cell.borrow().clone(); return self.is_beneath(&held, choice, class_only); }
         if let Value::Mutable(cell, _) | Value::Shared(cell) = choice { let held = cell.borrow().clone(); return self.is_beneath(subject, &held, class_only); }
         if matches!(choice, Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union")) {

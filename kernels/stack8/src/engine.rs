@@ -188,12 +188,14 @@ pub struct Engine<'a> {
     /// name, so that asking twice for `dict.__repr__` answers the very
     /// descriptor asked the first time.
     loose_members: RefCell<HashMap<String, Value>>,
-    /// Pairs already found to stand beneath one another: a thing's own
-    /// class and the class it was weighed against, with which question
-    /// was asked. Only a yes is kept. A claim registered later can turn
-    /// a no into a yes but never a yes into a no, so a no is always
-    /// worked out afresh and this list cannot answer stale.
-    beneath_yes: HashMap<(usize, usize, bool), (Rc<Class>, Rc<Class>)>,
+    /// The abc kind's own yeses, one for each pairing of a thing's own
+    /// class and the class it was weighed against. Kept only for the
+    /// standard abc kind, so that no other kind's hook is ever passed
+    /// over and no answer is taken from a thing's own member.
+    abc_instances: HashMap<(usize, usize), (Rc<Class>, Rc<Class>)>,
+    /// The run's own abc.ABCMeta class, asked of the abc module once and
+    /// kept, or nothing where the module was never reached.
+    abc_meta: Option<Rc<Class>>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -1421,7 +1423,7 @@ impl<'a> Engine<'a> {
             memo: HashMap::new(),
             core_ids: HashMap::new(),
             loose_members: RefCell::new(HashMap::new()),
-            beneath_yes: HashMap::new(),
+            abc_instances: HashMap::new(), abc_meta: None,
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -21921,20 +21923,42 @@ impl Engine<'_> {
     }
 
     /// Whether `value` is of the class `kind`, with a yes already found
-    /// for this very pairing of a thing's class and the class it is
-    /// asked against handed straight back, so the classes are not walked
-    /// once more. A no is never kept: a claim registered later may turn
-    /// it into a yes.
+    /// The run's own abc.ABCMeta class, asked of the abc module once and
+    /// kept. Nothing stands there for a program that never reached the
+    /// module, and then nothing is answered from a memory at all.
+    fn standard_abc_meta(&mut self) -> Option<Rc<Class>> {
+        if let Some(kept)=&self.abc_meta { return Some(kept.clone()); }
+        let found=self.modules.get("abc").and_then(|module| match module {
+            Value::Object(space)=>space.fields.borrow().iter().find_map(|(key,held)| if key=="ABCMeta" { match held.contents() { Value::Class(kind)=>Some(kind.clone()), _=>None } } else { None }),
+            _=>None,
+        });
+        if let Some(kind)=&found { self.abc_meta=Some(kind.clone()); }
+        found
+    }
+    /// Whether `value` is of the class `kind`. Only the standard abc kind
+    /// answers from the memory, exactly as the reference's own _py_abc
+    /// keeps a yes for a pair of classes; every other kind, and every
+    /// thing whose own class is spoken for by a member of its own, is
+    /// asked afresh, so no hook is passed over and no answer is taken
+    /// from a thing's own state.
     fn core_isinstance(&mut self, value: &Value, kind: &Value) -> Res<bool> {
         if let (Value::Object(object), Value::Class(class)) = (value, kind) {
-            let own=object.class_now();
-            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)) { return Ok(true); }
+            if !object.fields.borrow().iter().any(|(key,_)| key=="__class__") {
+                let own=object.class_now();
+                if self.abc_instances.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize)) { return Ok(true); }
+            }
         }
         let verdict=self.core_isinstance_at(value,kind)?;
         if verdict {
             if let (Value::Object(object), Value::Class(class)) = (value, kind) {
-                let own=object.class_now();
-                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)).or_insert((own,class.clone()));
+                if !object.fields.borrow().iter().any(|(key,_)| key=="__class__") {
+                    if let Some(abc)=self.standard_abc_meta() {
+                        if Self::maker_beneath(class).is_some_and(|maker| Rc::ptr_eq(&maker,&abc)) {
+                            let own=object.class_now();
+                            self.abc_instances.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize)).or_insert((own,class.clone()));
+                        }
+                    }
+                }
             }
         }
         Ok(verdict)
