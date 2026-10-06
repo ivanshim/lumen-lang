@@ -23910,13 +23910,15 @@ impl Engine<'_> {
     /// the outermost dictionary has been handed out.
     fn book_of(&self, far: usize) -> Option<Kept> {
         let ident = self.registry.idents.get(far)?;
-        if let Some(rest) = ident.strip_prefix("\0module:") {
-            let path = rest.splitn(3, ':').nth(1)?;
-            if let Some(at) = self.module_books.iter().position(|(name, _)| name == path) { return Some(Kept::Module(at)); }
+        if !self.module_books.is_empty() {
+            if let Some(rest) = ident.strip_prefix("\0module:") {
+                let path = rest.splitn(3, ':').nth(1)?;
+                if let Some(at) = self.module_books.iter().position(|(name, _)| name == path) { return Some(Kept::Module(at)); }
+            }
         }
         if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
-        let name = self.registry.idents.get(far)?;
-        if !Self::public_name(name.rsplit(':').next().unwrap_or(name)) { return None; }
+        let name = ident;
+        if !Self::public_name(name.rfind(':').map_or(name.as_str(), |at| &name[at + 1..])) { return None; }
         if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
         if self.outer_book.is_some() && Self::public_name(name) { return Some(Kept::Outer); }
         None
