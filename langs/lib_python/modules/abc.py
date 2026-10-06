@@ -1,151 +1,189 @@
-# Abstract base classes. ABCMeta is a real metaclass: it refuses to make
-# a thing of a class that still carries an abstract method nobody has
-# answered, abstractmethod is what marks one, and register claims a
-# class for a kind it does not stand under.
-#
-# isinstance and issubclass ask a class's metaclass before they read the
-# class a thing was built from, so the claims below are honoured: a
-# claim made for a kind is a claim for every kind that kind stands
-# under, and a kind may speak for whatever answers to the right names
-# through __subclasshook__.
+# Source: CPython Lib/abc.py at v3.14.8 / 8e6e75d9102e; PSF License.
+# Copyright 2007 Google, Inc. All Rights Reserved.
+# Licensed to PSF under a Contributor Agreement.
 
-# Which classes have been claimed for which kind: each entry holds the
-# kind and the classes claimed for it. Classes are told apart by which
-# one they are rather than by name, so the claims are kept as pairs.
-_claimed = []
-_cache_token = 0
-
-def get_cache_token():
-    return _cache_token
-
-# The questions under way, so that a kind whose claims lead back to it
-# does not send the same question round for ever.
-_asking = []
+"""Abstract Base Classes (ABCs) according to PEP 3119."""
 
 
-def _claims_for(kind):
-    for entry in _claimed:
-        if entry[0] is kind:
-            return entry[1]
-    return None
+def abstractmethod(funcobj):
+    """A decorator indicating abstract methods.
+
+    Requires that the metaclass is ABCMeta or derived from it.  A
+    class that has a metaclass derived from ABCMeta cannot be
+    instantiated unless all of its abstract methods are overridden.
+    The abstract methods can be called using any of the normal
+    'super' call mechanisms.  abstractmethod() may be used to declare
+    abstract methods for properties and descriptors.
+
+    Usage:
+
+        class C(metaclass=ABCMeta):
+            @abstractmethod
+            def my_abstract_method(self, arg1, arg2, argN):
+                ...
+    """
+    funcobj.__isabstractmethod__ = True
+    return funcobj
 
 
-def _stands_under(subclass, cls):
-    # Whether subclass really inherits cls. Read from the line of
-    # forebears rather than asked of issubclass, which would come
-    # straight back here.
-    if subclass is cls:
-        return True
-    line = getattr(subclass, '__mro__', None)
-    if line is None:
-        return False
-    for forebear in line:
-        if forebear is cls:
-            return True
-    return False
+class abstractclassmethod(classmethod):
+    """A decorator indicating abstract classmethods.
+
+    Deprecated, use 'classmethod' with 'abstractmethod' instead:
+
+        class C(ABC):
+            @classmethod
+            @abstractmethod
+            def my_abstract_classmethod(cls, ...):
+                ...
+
+    """
+
+    __isabstractmethod__ = True
+
+    def __init__(self, callable):
+        callable.__isabstractmethod__ = True
+        super().__init__(callable)
 
 
-def _counts_as(cls, subclass):
-    # The kind speaks first, where it has something to say about what a
-    # class answers to.
-    hook = getattr(cls, '__subclasshook__', None)
-    if hook is not None:
-        told = hook(subclass)
-        if told is not NotImplemented:
-            return bool(told)
-    if _stands_under(subclass, cls):
-        return True
-    # A claim made for cls, or for any kind standing under cls, counts:
-    # claiming int for Integral claims it for Number as well.
-    for entry in _claimed:
-        if entry[0] is cls or _stands_under(entry[0], cls):
-            for claimed in entry[1]:
-                if claimed is subclass or _stands_under(subclass, claimed):
-                    return True
-                # A claim may name a kind the reader cannot weigh one
-                # class against; such a claim holds for the very class
-                # it names and for nothing else.
-                try:
-                    if issubclass(subclass, claimed):
-                        return True
-                except Exception:
-                    pass
-    return False
+class abstractstaticmethod(staticmethod):
+    """A decorator indicating abstract staticmethods.
+
+    Deprecated, use 'staticmethod' with 'abstractmethod' instead:
+
+        class C(ABC):
+            @staticmethod
+            @abstractmethod
+            def my_abstract_staticmethod(...):
+                ...
+
+    """
+
+    __isabstractmethod__ = True
+
+    def __init__(self, callable):
+        callable.__isabstractmethod__ = True
+        super().__init__(callable)
 
 
-class ABCMeta(type):
-    # The names nobody has answered, gathered the way the reference
-    # gathers them when the class is made: what the body itself left
-    # marked, and what it kept marked from the kinds beneath it.
-    def __new__(mcls, name, bases, namespace, **kwargs):
-        cls = super().__new__(mcls, name, bases, namespace)
-        abstracts = set()
-        for key, value in namespace.items():
-            if getattr(value, '__isabstractmethod__', False):
-                abstracts.add(key)
-        for base in bases:
-            for key in getattr(base, '__abstractmethods__', ()):
-                value = getattr(cls, key, None)
-                if getattr(value, '__isabstractmethod__', False):
-                    abstracts.add(key)
-        cls.__abstractmethods__ = frozenset(abstracts)
-        return cls
+class abstractproperty(property):
+    """A decorator indicating abstract properties.
 
-    def __call__(cls, *args, **kwargs):
-        missing = sorted(getattr(cls, '__abstractmethods__', ()))
-        if missing:
-            raise TypeError("Can't instantiate abstract class %s without an implementation for abstract method%s %s"
-                            % (cls.__name__, 's' if len(missing) > 1 else '', ', '.join("'%s'" % name for name in missing)))
-        return super().__call__(*args, **kwargs)
+    Deprecated, use 'property' with 'abstractmethod' instead:
 
-    def register(cls, subclass):
-        global _cache_token
-        claimed = _claims_for(cls)
-        if claimed is None:
-            claimed = []
-            _claimed.append((cls, claimed))
-        for already in claimed:
-            if already is subclass:
-                return subclass
-        claimed.append(subclass)
-        _cache_token += 1
-        return subclass
+        class C(ABC):
+            @property
+            @abstractmethod
+            def my_abstract_property(self):
+                ...
 
-    def __instancecheck__(cls, instance):
-        return cls.__subclasscheck__(type(instance))
+    """
 
-    def __subclasscheck__(cls, subclass):
-        for pair in _asking:
-            if pair[0] is cls and pair[1] is subclass:
-                return False
-        _asking.append((cls, subclass))
-        try:
-            return _counts_as(cls, subclass)
-        finally:
-            _asking.pop()
+    __isabstractmethod__ = True
 
 
-class ABC(metaclass=ABCMeta):
-    @classmethod
-    def __subclasshook__(cls, subclass):
-        return NotImplemented
+try:
+    from _abc import (get_cache_token, _abc_init, _abc_register,
+                      _abc_instancecheck, _abc_subclasscheck, _get_dump,
+                      _reset_registry, _reset_caches)
+except ImportError:
+    from _py_abc import ABCMeta, get_cache_token
+    ABCMeta.__module__ = 'abc'
+else:
+    class ABCMeta(type):
+        """Metaclass for defining Abstract Base Classes (ABCs).
 
+        Use this metaclass to create an ABC.  An ABC can be subclassed
+        directly, and then acts as a mix-in class.  You can also register
+        unrelated concrete classes (even built-in classes) and unrelated
+        ABCs as 'virtual subclasses' -- these and their descendants will
+        be considered subclasses of the registering ABC by the built-in
+        issubclass() function, but the registering ABC won't show up in
+        their MRO (Method Resolution Order) nor will method
+        implementations defined by the registering ABC be callable (not
+        even via super()).
+        """
+        def __new__(mcls, name, bases, namespace, /, **kwargs):
+            cls = super().__new__(mcls, name, bases, namespace, **kwargs)
+            _abc_init(cls)
+            return cls
 
-def abstractmethod(function):
-    function.__isabstractmethod__ = True
-    return function
+        def register(cls, subclass):
+            """Register a virtual subclass of an ABC.
+
+            Returns the subclass, to allow usage as a class decorator.
+            """
+            return _abc_register(cls, subclass)
+
+        def __instancecheck__(cls, instance):
+            """Override for isinstance(instance, cls)."""
+            return _abc_instancecheck(cls, instance)
+
+        def __subclasscheck__(cls, subclass):
+            """Override for issubclass(subclass, cls)."""
+            return _abc_subclasscheck(cls, subclass)
+
+        def _dump_registry(cls, file=None):
+            """Debug helper to print the ABC registry."""
+            print(f"Class: {cls.__module__}.{cls.__qualname__}", file=file)
+            print(f"Inv. counter: {get_cache_token()}", file=file)
+            (_abc_registry, _abc_cache, _abc_negative_cache,
+             _abc_negative_cache_version) = _get_dump(cls)
+            print(f"_abc_registry: {_abc_registry!r}", file=file)
+            print(f"_abc_cache: {_abc_cache!r}", file=file)
+            print(f"_abc_negative_cache: {_abc_negative_cache!r}", file=file)
+            print(f"_abc_negative_cache_version: {_abc_negative_cache_version!r}",
+                  file=file)
+
+        def _abc_registry_clear(cls):
+            """Clear the registry (for debugging or testing)."""
+            _reset_registry(cls)
+
+        def _abc_caches_clear(cls):
+            """Clear the caches (for debugging or testing)."""
+            _reset_caches(cls)
+
 
 def update_abstractmethods(cls):
+    """Recalculate the set of abstract methods of an abstract class.
+
+    If a class has had one of its abstract methods implemented after the
+    class was created, the method will not be considered implemented until
+    this function is called. Alternatively, if a new abstract method has been
+    added to the class, it will only be considered an abstract method of the
+    class after this function is called.
+
+    This function should be called before any use is made of the class,
+    usually in class decorators that add methods to the subject class.
+
+    Returns cls, to allow usage as a class decorator.
+
+    If cls is not an instance of ABCMeta, does nothing.
+    """
     if not hasattr(cls, '__abstractmethods__'):
+        # We check for __abstractmethods__ here because cls might by a C
+        # implementation or a python implementation (especially during
+        # testing), and we want to handle both cases.
         return cls
+
     abstracts = set()
-    for base in cls.__bases__:
-        for name in getattr(base, '__abstractmethods__', ()):
+    # Check the existing abstract methods of the parents, keep only the ones
+    # that are not implemented.
+    for scls in cls.__bases__:
+        for name in getattr(scls, '__abstractmethods__', ()):
             value = getattr(cls, name, None)
-            if getattr(value, '__isabstractmethod__', False):
+            if getattr(value, "__isabstractmethod__", False):
                 abstracts.add(name)
+    # Also add any other newly added abstract methods.
     for name, value in cls.__dict__.items():
-        if getattr(value, '__isabstractmethod__', False):
+        if getattr(value, "__isabstractmethod__", False):
             abstracts.add(name)
     cls.__abstractmethods__ = frozenset(abstracts)
     return cls
+
+
+class ABC(metaclass=ABCMeta):
+    """Helper class that provides a standard way to create an ABC using
+    inheritance.
+    """
+    __slots__ = ()
