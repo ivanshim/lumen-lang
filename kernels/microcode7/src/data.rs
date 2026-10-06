@@ -212,9 +212,9 @@ pub struct TraceLink {
     /// Preorder position of the executing expression in the compiled form tree.
     pub instruction: i64,
     pub extent: Option<(u32, u32, u32, u32)>,
-    pub location: u32,
+    pub location: i64,
     pub activation: Rc<Thing>,
-    pub following: Value,
+    pub following: RefCell<Value>,
 }
 
 #[derive(Debug)]
@@ -677,6 +677,10 @@ impl Value {
                 // is the dictionary's own reckoning of where the thing
                 // lies and no part of the key a window upon it shows.
                 for (key,value) in entries.iter() {
+                    // A pair whose place is still empty stands for a name
+                    // not yet written: a namespace that shows it shows a
+                    // name it does not have, so the window passes it by.
+                    if matches!(value.settled(), Value::Unset) { continue; }
                     let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
                     // A reading of the map itself walks, and is
                     // measured, the very way its keys are: it is asked
@@ -783,6 +787,7 @@ impl Value {
             Value::Intrinsic(_, name) => Ok(["intrinsic/", name.as_ref()].concat()),
             Value::OctetKind { changeable, .. } => Ok(format!("octetkind/{changeable}")),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
+            Value::Wrapped(8, names) => Ok(format!("kind/{names:?}")),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
                 let mut address = format!("native/{tag}");
@@ -1640,7 +1645,12 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
+        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
+            || kind == "bytearray" && name == "__release_buffer__" {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
+            "type" if matches!(name, "__dict__" | "__mro__") => Some(if name == "__dict__" { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

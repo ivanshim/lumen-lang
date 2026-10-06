@@ -1,4 +1,4 @@
-# Source: CPython 3b564385e4c9, Lib/os.py PathLike; PSF License.
+# Extracted PathLike class from CPython v3.14.8 Lib/os.py; PSF License.
 from abc import ABC, abstractmethod
 import abc
 from types import GenericAlias
