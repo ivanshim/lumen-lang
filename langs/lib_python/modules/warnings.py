@@ -79,12 +79,14 @@ def _location(stacklevel):
         raise TypeError('stacklevel must be an integer')
     import sys
     frame = sys._getframe(max(stacklevel, 1) + 1)
-    return [frame.f_code.co_filename, frame.f_lineno]
+    return [frame.f_code.co_filename, frame.f_lineno,
+            frame.f_globals.get('__name__', '<string>')]
 
 
 def _outside(prefixes, stacklevel):
     # Begin at warn's caller, then count the requested external callers.
     # Prefix matches do not consume any of the requested depth.
+    import sys
     calls = __warning_calls()
     remaining = max(2, stacklevel) - 1
     for at in range(2, len(calls)):
@@ -94,8 +96,8 @@ def _outside(prefixes, stacklevel):
             continue
         remaining -= 1
         if remaining == 0:
-            return [file, frame['line']]
-    return ['<sys>', 0]
+            return [file, frame['line'], sys._getframe(at + 1).f_globals.get('__name__', '<string>')]
+    return ['<sys>', 0, '<sys>']
 
 def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=()):
     if not isinstance(stacklevel, int) and not hasattr(type(stacklevel), '__index__'):
@@ -120,15 +122,14 @@ def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixe
     else:
         place = _location(stacklevel)
     filename = place[0]
-    module = filename
-    for position in range(len(filename)):
-        if filename[position] == '/':
-            module = filename[position + 1:]
-    if module[-3:] == '.py':
-        module = module[:-3]
-    import sys
-    if filename == sys.argv[0]:
-        module = '__main__'
+    # Module filters follow the caller's globals, independently of its
+    # filename and function metadata. An explicit None disables warnings;
+    # absent or non-string namespace names use the anonymous-code name.
+    module = place[2]
+    if module is None:
+        return None
+    if not isinstance(module, str):
+        module = '<string>'
     _warn(message, category, filename, place[1], module, source)
 
 

@@ -2,8 +2,8 @@
 # out again afterwards. Only the patching a test here asks for is
 # written: an attribute of a thing already in hand, replaced by a stand-in
 # that records its calls and answers what it was told to answer. The
-# wider library -- specs, autospeccing, patching by dotted name, the
-# magic methods -- refuses by name rather than standing in for itself.
+# wider library -- specs, autospeccing and unsupported magic methods --
+# refuses by name rather than standing in for itself.
 
 class _Sentinel:
     def __init__(self, word):
@@ -225,7 +225,7 @@ class MagicMock(Mock):
 
 
 class _Patch:
-    def __init__(self, target, attribute, new, create, made, new_callable=None):
+    def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=Mock):
         if new_callable is not None and new is not DEFAULT:
             raise ValueError("Cannot use 'new' and 'new_callable' together")
         self.target = target
@@ -234,6 +234,7 @@ class _Patch:
         self.create = create
         self.made = made
         self.new_callable = new_callable
+        self.default_factory = default_factory
         self.temporary = None
         self.held = DEFAULT
 
@@ -246,9 +247,12 @@ class _Patch:
             self.held = DEFAULT
         if self.new is DEFAULT:
             if self.new_callable is not None:
-                self.temporary = self.new_callable(**self.made)
+                options = dict(self.made)
+                if isinstance(self.new_callable, type) and issubclass(self.new_callable, Mock):
+                    options['name'] = self.attribute
+                self.temporary = self.new_callable(**options)
             else:
-                self.temporary = Mock(name=self.attribute, **self.made)
+                self.temporary = self.default_factory(name=self.attribute, **self.made)
         else:
             self.temporary = self.new
         setattr(self.target, self.attribute, self.temporary)
@@ -293,10 +297,11 @@ class _MultiplePatch:
     # handed back in a dictionary. Should one patch refuse to start, the
     # patches already started are undone again before the fault escapes.
     def __init__(self, target, values, create=False, new_callable=None):
+        self.target = target
         self.patches = []
         self.created = {}
         for name, value in values.items():
-            one = _Patch(target, name, value, create, {}, new_callable)
+            one = _Patch(target, name, value, create, {}, new_callable, MagicMock)
             self.patches.append(one)
             if value is DEFAULT:
                 self.created[name] = one
@@ -304,7 +309,14 @@ class _MultiplePatch:
     def __enter__(self):
         started = []
         try:
+            # Resolve string targets when entering, so module and object paths
+            # see the current bindings rather than those at patch construction.
+            target = self.target
+            if isinstance(target, str):
+                import pkgutil
+                target = pkgutil.resolve_name(target)
             for one in self.patches:
+                one.target = target
                 one.start()
                 started.append(one)
         except BaseException:

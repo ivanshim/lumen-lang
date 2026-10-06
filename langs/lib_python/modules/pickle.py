@@ -463,10 +463,14 @@ def _escape_decode(data):
     # Decode errors take precedence over warnings, including warnings
     # promoted to exceptions. Report only the first invalid escape,
     # after producing the decoded bytes, as PyBytes_DecodeEscape does.
+    # Skip internal wrappers so loads, load and Unpickler.load all warn at
+    # their public caller, with its filename, line and module filters.
     if first_invalid_escape > 0xff:
-        warnings.warn('b"\\%o" is an invalid octal escape sequence. Such sequences will not work in the future. ' % first_invalid_escape, DeprecationWarning)
+        warnings.warn('b"\\%o" is an invalid octal escape sequence. Such sequences will not work in the future. ' % first_invalid_escape, DeprecationWarning,
+                      skip_file_prefixes=(__file__,))
     elif first_invalid_escape != -1:
-        warnings.warn('b"\\%c" is an invalid escape sequence. Such sequences will not work in the future. ' % first_invalid_escape, DeprecationWarning)
+        warnings.warn('b"\\%c" is an invalid escape sequence. Such sequences will not work in the future. ' % first_invalid_escape, DeprecationWarning,
+                      skip_file_prefixes=(__file__,))
     return result
 
 def _read_protocol(data, encoding='ASCII', errors='strict'):
