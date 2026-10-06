@@ -25,13 +25,15 @@ def _as_fd(item):
         fd = meth()
         if not isinstance(fd, int):
             raise TypeError('fileno() returned a non-integer')
+    # PyLong_AsInt reads the stored integer, bypassing subclass hooks.
+    fd = int.__index__(fd)
     if fd > 2147483647 or fd < -2147483648:
         raise OverflowError('Python int too large to convert to C int')
     if fd < 0:
         raise ValueError('file descriptor cannot be a negative integer (%d)' % (fd,))
     if fd >= FD_SETSIZE:
         raise ValueError('filedescriptor out of range in select()')
-    return int(fd)
+    return fd
 
 
 class _Select:
@@ -39,7 +41,18 @@ class _Select:
     # builtin, and builtins stored as class attributes (selectors.py keeps
     # `_select = select.select` on SelectSelector) do not bind as methods,
     # so neither may this one.
-    def __call__(self, rlist, wlist, xlist, timeout=None):
+    def __call__(self, /, *args, **kwargs):
+        # The C entry point rejects keywords before checking positional
+        # arity. Keep that order and its errors on this callable bridge.
+        if kwargs:
+            raise TypeError('select.select() takes no keyword arguments')
+        count = len(args)
+        if count < 3:
+            raise TypeError('select expected at least 3 arguments, got %d' % count)
+        if count > 4:
+            raise TypeError('select expected at most 4 arguments, got %d' % count)
+        rlist, wlist, xlist = args[:3]
+        timeout = args[3] if count == 4 else None
         if timeout is None:
             usec = -1
         else:
