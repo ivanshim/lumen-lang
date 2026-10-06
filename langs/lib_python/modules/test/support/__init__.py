@@ -65,8 +65,6 @@ refcount_test = cpython_only
 
 # Nothing stands behind os.fork in this library yet; a test that needs
 # a forked process says so by stepping aside.
-def requires_fork():
-    return unittest.skipUnless(hasattr(os, 'fork'), 'requires working os.fork()')
 
 # The memory-exhaustion tests turn off that implementation's allocator
 # through its own C test module, so they are its internals too.
@@ -789,6 +787,8 @@ def check__all__(test_case, module, name_of_module=None, extra=(),
             expected.add(name)
     test_case.assertCountEqual(module.__all__, expected)
 
+
+
 # From CPython Lib/test/support at v3.14.8 / 8e6e75d9102e, PSF License.
 import functools
 PGO = False
@@ -1230,6 +1230,7 @@ def infinite_recursion(max_depth=None):
     depth = max(depth - 1, 1)  # Ignore infinite_recursion() frame.
     limit = depth + max_depth
     return set_recursion_limit(limit)
+SHORT_TIMEOUT = 30.0
 
 
 def walk_class_hierarchy(top, *, topdown=True):

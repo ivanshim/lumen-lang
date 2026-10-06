@@ -119,17 +119,19 @@ def _global_name(value):
             if candidate is value:
                 return (module_name, name)
     namespace = __program_namespace()
-    for name in namespace:
-        candidate = namespace[name]
+    for binding in namespace:
+        if binding.startswith('#') or binding.startswith('\0'):
+            continue
+        candidate = namespace[binding]
         if candidate is value:
             # Instances are global only when their reduction says so.
             if isinstance(value, type) or callable(value):
                 try:
-                    published = _global('__main__', name)
+                    published = _global('__main__', binding)
                 except (AttributeError, KeyError):
                     continue
                 if published is value:
-                    return ('__main__', name)
+                    return ('__main__', binding)
     if name is not None and module is not None and isinstance(value, type):
         return (module, name)
     return None

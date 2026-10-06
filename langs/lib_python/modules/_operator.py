@@ -49,10 +49,8 @@ class _DigestComparison:
                     converted.append(bytes(operand))
                     continue
                 view = memoryview(operand)
-                view._check()
-                for i in range(1, len(view._offsets)):
-                    if view._offsets[i] - view._offsets[i - 1] != view._itemsize:
-                        raise BufferError('memoryview: underlying buffer is not C-contiguous')
+                if not view.c_contiguous:
+                    raise BufferError('memoryview: underlying buffer is not C-contiguous')
                 converted.append(view.tobytes())
             a, b = converted
         return _native_compare(2, a, b)
