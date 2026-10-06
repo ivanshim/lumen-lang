@@ -67,6 +67,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("calendar", include_str!("calendar.py"), "calendar.py"),
     ("cmath", include_str!("cmath.py"), "cmath.py"),
     ("codecs", include_str!("codecs.py"), "codecs.py"),
+    ("codeop", include_str!("codeop.py"), "codeop.py"),
     ("collections.abc", include_str!("collections/abc.py"), "collections/abc.py"),
     ("collections", include_str!("collections.py"), "collections/__init__.py"),
     ("colorsys", include_str!("colorsys.py"), "colorsys.py"),
