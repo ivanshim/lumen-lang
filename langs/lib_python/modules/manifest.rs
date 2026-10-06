@@ -179,6 +179,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("sysconfig", include_str!("sysconfig.py"), "sysconfig.py"),
     ("tempfile", include_str!("tempfile.py"), "tempfile.py"),
     ("test", include_str!("test/__init__.py"), "test/__init__.py"),
+    ("test.audiotests", include_str!("test/audiotests.py"), "test/audiotests.py"),
     ("test.datetimetester", include_str!("test/datetimetester.py"), "test/datetimetester.py"),
     ("test.list_tests", include_str!("test/list_tests.py"), "test/list_tests.py"),
     ("test.mapping_tests", include_str!("test/mapping_tests.py"), "test/mapping_tests.py"),
@@ -242,6 +243,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("urllib.parse", include_str!("urllib/parse.py"), "urllib/parse.py"),
     ("urllib", include_str!("urllib.py"), "urllib/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
+    ("wave", include_str!("wave.py"), "wave.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
