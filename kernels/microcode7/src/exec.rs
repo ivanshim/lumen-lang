@@ -5513,7 +5513,7 @@ impl<'a> Machine<'a> {
     }
 
     fn activation_instruction(activation: &Rc<Thing>) -> i64 {
-        activation.holds.borrow().iter().find_map(|(word, value)| match (word.as_str(), value) {
+        activation.holds.borrow().iter().rev().find_map(|(word, value)| match (word.as_str(), value) {
             ("\0instruction", Value::Small(at)) => Some(*at),
             _ => None,
         }).unwrap_or(-1)
@@ -5521,7 +5521,7 @@ impl<'a> Machine<'a> {
 
     fn stand_at_instruction(&self, at: i64) {
         if let Some(activation) = &self.active_trace {
-            if let Some((_, value)) = activation.holds.borrow_mut().iter_mut().find(|(word, _)| word == "\0instruction") {
+            if let Some((_, value)) = activation.holds.borrow_mut().iter_mut().rev().find(|(word, _)| word == "\0instruction") {
                 *value = Value::Small(at);
             }
         }
@@ -23920,7 +23920,10 @@ impl Machine<'_> {
             if let Some((owner, _)) = split { self.load_namespace(owner)?; }
         }
         let beginning = self.idents.len();
-        let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
+        // The seats a wider world already holds are taken as empty names:
+        // nothing reads them, only their number moves the new ones along.
+        let mut hidden: Vec<String> = Vec::with_capacity(beginning);
+        hidden.resize(beginning, String::new());
         let filename = own_file.as_deref().unwrap_or(path);
         let ready = match self.text_tokens(&text, 0) {
             Ok(ready) => ready,
@@ -26076,7 +26079,10 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let beginning = self.idents.len();
-        let prior: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
+        // The seats a wider world already holds are taken as empty names:
+        // nothing reads them, only their number moves the new ones along.
+        let mut prior: Vec<String> = Vec::with_capacity(beginning);
+        prior.resize(beginning, String::new());
         // Executed code resolves builtin spellings through its live names,
         // so a supplied global or local binding can replace them later.
         let shadowed: Vec<String> = self.table.prims.keys().cloned().collect();

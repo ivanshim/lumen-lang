@@ -22,6 +22,7 @@
 // Const k; Act add; Write x` into Bump, and `Read a; b; Act cmp; Skip`
 // into SkipCmp.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -39,11 +40,33 @@ thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
 }
 
+/// A hasher for the compiler's own name tables. Identifiers are looked
+/// up more than anything else the compiler touches, and they are short;
+/// the default hash pays for collision resistance these tables have no
+/// adversary for.
+#[derive(Default)]
+struct NameHash(u64);
+impl std::hash::Hasher for NameHash {
+    fn finish(&self) -> u64 { self.0 }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut state = if self.0 == 0 { 0xcbf29ce484222325 } else { self.0 };
+        for byte in bytes { state ^= u64::from(*byte); state = state.wrapping_mul(0x100000001b3); }
+        self.0 = state;
+    }
+}
+#[derive(Default)]
+struct NameHasher;
+impl std::hash::BuildHasher for NameHasher {
+    type Hasher = NameHash;
+    fn build_hasher(&self) -> NameHash { NameHash(0) }
+}
+type NameMap<V> = HashMap<String, V, NameHasher>;
+
 /// The global names, each with a slot.
 #[derive(Default)]
 pub struct Registry {
-    index: HashMap<String, usize>,
-    module_index: HashMap<String, HashMap<String, usize>>,
+    index: NameMap<usize>,
+    module_index: NameMap<HashMap<String, usize>>,
     pub idents: Vec<String>,
     /// Whether the next reading is of one expression alone, as text
     /// handed over to be weighed is: nothing may follow it. The mark is
@@ -514,8 +537,10 @@ pub(crate) fn private_name(owner: &str, name: &str) -> String {
     }
 }
 
-fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
-    let mut result = source.to_vec();
+fn private_tokens<'a>(source: &'a [Token], lang: &Lang) -> Cow<'a, [Token]> {
+    // A copy is made only where a private name is actually rewritten:
+    // most texts have none, and every token copied is a string's worth.
+    let mut result: Cow<'a, [Token]> = Cow::Borrowed(source);
     if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return result; }
     // Work from the original spelling on every pass, including the body
     // of an inner class whose enclosing body has already been visited.
@@ -551,7 +576,7 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
                 // A private builtin's spelling is no class's private
                 // name: it keeps its own spelling wherever it is written.
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
-                Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
+                Shape::Instr => result.to_mut()[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
                 _ => {}
             }
         }
@@ -575,7 +600,7 @@ fn compile_pass(
 ) -> Res<Rc<Routine>> {
     let spelled = tokens;
     let renamed = private_tokens(tokens, lang);
-    let tokens = renamed.as_slice();
+    let tokens = renamed.as_ref();
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();

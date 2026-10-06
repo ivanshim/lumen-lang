@@ -49,26 +49,43 @@ impl FxHasher {
     fn add(&mut self, word: usize) {
         self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
     }
+    /// Fold a key. A short one takes every byte; the long label names
+    /// the roster writes are sampled at both ends and the middle, which
+    /// parts them just as well and costs a settled handful of words.
+    #[inline]
+    fn fold(&mut self, bytes: &[u8]) {
+        if bytes.len() > 16 {
+            let len = bytes.len();
+            self.add(len);
+            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
+            self.add(usize::from_ne_bytes(bytes[len - 8..].try_into().unwrap()));
+            let middle = len / 2;
+            self.add(u32::from_ne_bytes(bytes[middle - 2..middle + 2].try_into().unwrap()) as usize);
+            return;
+        }
+        let mut rest = bytes;
+        while rest.len() >= 8 {
+            self.add(usize::from_ne_bytes(rest[..8].try_into().unwrap()));
+            rest = &rest[8..];
+        }
+        if rest.len() >= 4 {
+            self.add(u32::from_ne_bytes(rest[..4].try_into().unwrap()) as usize);
+            rest = &rest[4..];
+        }
+        if rest.len() >= 2 {
+            self.add(u16::from_ne_bytes(rest[..2].try_into().unwrap()) as usize);
+            rest = &rest[2..];
+        }
+        if let Some(&last) = rest.first() {
+            self.add(last as usize);
+        }
+    }
 }
 
 impl std::hash::Hasher for FxHasher {
     #[inline]
-    fn write(&mut self, mut bytes: &[u8]) {
-        while bytes.len() >= 8 {
-            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
-            bytes = &bytes[8..];
-        }
-        if bytes.len() >= 4 {
-            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
-            bytes = &bytes[4..];
-        }
-        if bytes.len() >= 2 {
-            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
-            bytes = &bytes[2..];
-        }
-        if let Some(&last) = bytes.first() {
-            self.add(last as usize);
-        }
+    fn write(&mut self, bytes: &[u8]) {
+        self.fold(bytes);
     }
     #[inline]
     fn finish(&self) -> u64 {

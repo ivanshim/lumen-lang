@@ -5278,12 +5278,18 @@ impl<'a> Engine<'a> {
 
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
-        let keys = self.lang.trace_fields.clone();
+        // Only the fields a frame carries are taken: the whole roster
+        // is sixteen names, and a call should not copy the ten it has
+        // no use for.
+        let (label, declared_key, code_key, back_key, watched_key, free_key) = {
+            let trace = &self.lang.trace_fields;
+            (trace[9].clone(), trace[4].clone(), trace[5].clone(), trace[11].clone(), trace[12].clone(), trace[13].clone())
+        };
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
-                let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", keys[9])),
-                    name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
+                let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", label)),
+                    name: label, base: None, answers: Vec::new(), fields: Vec::new(),
                     reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
                 self.frame_class = Some(class.clone());
                 class
@@ -5293,10 +5299,10 @@ impl<'a> Engine<'a> {
         let code = Value::Null;
         self.made += 1;
         Some(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
-            (keys[4].clone(), Value::Small(program.declared_on as i64)),
-            (keys[5].clone(), code),
-            (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
-            (keys[12].clone(), Value::Null), (keys[13].clone(), Value::Null),
+            (declared_key, Value::Small(program.declared_on as i64)),
+            (code_key, code),
+            (back_key, back.map_or(Value::Null, Value::Object)),
+            (watched_key, Value::Null), (free_key, Value::Null),
             ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if name.starts_with('#') && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
@@ -5373,7 +5379,7 @@ impl<'a> Engine<'a> {
     }
 
     fn frame_instruction(frame: &Rc<Instance>) -> i64 {
-        frame.fields.borrow().iter().find_map(|(name, value)| match (name.as_str(), value) {
+        frame.fields.borrow().iter().rev().find_map(|(name, value)| match (name.as_str(), value) {
             ("\0instruction", Value::Small(position)) => Some(*position),
             _ => None,
         }).unwrap_or(-1)
@@ -5497,7 +5503,7 @@ impl<'a> Engine<'a> {
                 }
             }
             if let Some(active) = &self.trace_frame {
-                if let Some((_, position)) = active.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") {
+                if let Some((_, position)) = active.fields.borrow_mut().iter_mut().rev().find(|(name, _)| name == "\0instruction") {
                     *position = Value::Small(pc as i64);
                 }
             }
@@ -23491,7 +23497,9 @@ impl Engine<'_> {
         }
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
-        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        // The slots a wider registry already holds are put in as empty
+        // names: only their count matters, since nothing names them.
+        local.idents.resize(offset, String::new());
         let filename = own_file.as_deref().unwrap_or(path);
         let tokens = match self.text_tokens(&source, 0) {
             Ok(tokens) => tokens,
@@ -25666,7 +25674,9 @@ impl Engine<'_> {
         };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
-        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        // The slots a wider registry already holds are put in as empty
+        // names: only their count matters, since nothing names them.
+        local.idents.resize(offset, String::new());
         // A dynamic namespace can bind any builtin spelling, including
         // after this code is compiled. Use the name lookup path for each.
         local.program_bound.extend(self.lang.builtins.keys().cloned());
