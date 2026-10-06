@@ -11,6 +11,10 @@ argv = __program_namespace()['__program_argv']
 # placed ahead of the embedded library merely because it contains a script.
 path = [__file__.rsplit('/', 1)[0]]
 maxsize = 9223372036854775807
+# Where a written bytecode cache would live, and whether one is
+# written: the reference reads both while naming a cache file.
+pycache_prefix = None
+dont_write_bytecode = True
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'
 hexversion = 0x030e08f0
@@ -21,7 +25,7 @@ platform = 'linux'
 # of measuring this kernel against machinery it does not have.
 _Implementation = __namespace_type()
 implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
-                                 hexversion=0x000200f0, cache_tag=None)
+                                 hexversion=0x000200f0, cache_tag='lumen-314')
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
@@ -230,6 +234,15 @@ class _Input(_BinaryInput):
 stdout = _Output()
 stderr = _Error()
 stdin = _Input()
+# The three streams stand where the reference keeps its text
+# wrappers, so a representation picks the member written for
+# that class name; each also carries the channel it stands for.
+_Output.__name__ = 'TextIOWrapper'
+_Error.__name__ = 'TextIOWrapper'
+_Input.__name__ = 'TextIOWrapper'
+stdout.name = '<stdout>'
+stderr.name = '<stderr>'
+stdin.name = '<stdin>'
 __stdout__ = stdout
 __stderr__ = stderr
 __stdin__ = stdin
