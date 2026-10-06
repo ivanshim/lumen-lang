@@ -9472,7 +9472,9 @@ impl<'a> Machine<'a> {
                         match (keyword.as_str(), value.settled()) {
                             ("co_consts", replacement @ Value::Tuple(_)) => {
                                 holds.iter_mut().find(|(word, _)| word == "co_consts").unwrap().1 = replacement;
-                                holds.push(("\0literal_overrides".to_owned(), Value::Flag(true)));
+                                if holds.iter().all(|(word, _)| word != "\0literal_overrides") {
+                                    holds.push(("\0literal_overrides".to_owned(), Value::Flag(true)));
+                                }
                             }
                             ("co_consts", _) => return Err(String::from("TypeError: co_consts must be tuple").into()),
                             _ => return Err(format!("NotImplementedError: replacement of compiled source {keyword} is unavailable").into()),
@@ -13392,6 +13394,10 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));
             }
         }
+        if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Wrapped(7, _)) {
+            let number = Value::Small(Value::code_worth_hash(value).ok_or_else(|| self.bad_answer())?);
+            return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));
+        }
         if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Thing(_) | Value::Tuple(_)) {
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
@@ -15864,6 +15870,7 @@ impl<'a> Machine<'a> {
                 // nothing: such a thing cannot be a key.
                 return Err(self.core_complaint("core.unhashable", &one.kind_word()));
             }
+            (Prim::Hashed, [code @ Value::Wrapped(7, _)]) => Value::Small(Value::code_worth_hash(code).ok_or_else(|| self.bad_answer())?),
             (Prim::Hashed, [one]) => match self.ask_special(one, 8, &[])? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
                 Some(answer) => match Self::underlying(&answer).map(|v| v.settled()) {
@@ -15876,7 +15883,7 @@ impl<'a> Machine<'a> {
                         // text, manner and flags it keeps; the file it
                         // names is no part of it.
                         let mut accum: u64 = 2_870_177_450_012_600_261;
-                        for (_, worth) in t.holds.borrow().iter().filter(|(name, _)| name != "filename" && name != "co_filename") {
+                        for (_, worth) in t.holds.borrow().iter().filter(|(name, _)| Value::source_code_attribute(name)) {
                             let lane = match Value::code_worth_hash(&worth.settled()) { Some(number) => number as u64, None => return Err(self.bad_answer()) };
                             accum = accum.wrapping_add(lane.wrapping_mul(14_029_467_366_897_019_727)).rotate_left(31);
                             accum = accum.wrapping_mul(11_400_714_785_074_694_791);
@@ -22629,8 +22636,8 @@ impl<'a> Machine<'a> {
     /// may reach the set itself.
     fn needs_set_methods(item: &Value) -> bool {
         match item {
-            Value::Thing(_) | Value::Keyed(..) => true,
-            Value::Tuple(_) => item.hash_address().is_err(),
+            Value::Thing(_) | Value::Keyed(..) | Value::Wrapped(7, _) => true,
+            Value::Tuple(members) => members.iter().any(Self::needs_set_methods) || item.hash_address().is_err(),
             _ => false,
         }
     }
@@ -22644,7 +22651,7 @@ impl<'a> Machine<'a> {
             if !address.starts_with(&opening) { continue; }
             if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
         }
-        let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, _ => 0 }, _ => 0 };
+        let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Wrapped(7, body) => Rc::as_ptr(body) as usize, _ => 0 }, _ => 0 };
         Ok(format!("{opening}{identity:x}"))
     }
 

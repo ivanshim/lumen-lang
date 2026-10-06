@@ -1269,31 +1269,63 @@ impl Value {
         }
     }
 
-    /// Two code values' fields agree where they agree in content: a
-    /// nested code value compares by the text its routine was read from
-    /// and how it was called, the way the reference's co_consts compare
-    /// their code objects recursively.
+    /// Select the content fields of a compiled source, excluding its file
+    /// and the private markers used when its constants are replaced.
+    pub(crate) fn code_content_field(key: &str) -> bool {
+        matches!(key, "source" | "mode" | "co_flags" | "co_firstlineno" | "co_consts")
+    }
+
+    /// Describe a routine's body within its token stream and its current
+    /// constant table. Source and boundary identify the compiled instructions;
+    /// replacements change the constants, not that original stream.
+    fn routine_content(body: &crate::code::Routine) -> Value {
+        Value::tuple(vec![
+            Value::Text(body.source_tokens.clone()), Value::Small(body.source_end as i64),
+            Value::text(&body.ident), Value::Small(body.declared_on as i64),
+            Value::Small(body.code_flags), Value::Small(body.future_bits),
+            Value::Flag(body.generator), Value::Flag(body.lineless),
+            Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
+            Value::Small(body.least as i64),
+            body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
+            Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.idents.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.code_constants.clone()),
+        ])
+    }
+
+    /// Compare code constants recursively rather than comparing routine
+    /// handles or their compilation-wide source alone.
     fn code_field_eq(one: &Value, two: &Value) -> bool {
+        if one.same_place(two) { return true; }
         match (one, two) {
             (Value::Adapter(p), Value::Adapter(q)) if p.0 == 7 && q.0 == 7 => match (p.1.first(), q.1.first()) {
                 (Some(Value::Routine(a)), Some(Value::Routine(b))) =>
-                    a.source_tokens == b.source_tokens && a.formals == b.formals && a.code_flags == b.code_flags && a.generator == b.generator,
+                    Self::code_field_eq(&Self::routine_content(a), &Self::routine_content(b)),
                 _ => Rc::ptr_eq(p, q),
             },
+            (Value::Routine(a), Value::Routine(b)) => Self::code_field_eq(&Self::routine_content(a), &Self::routine_content(b)),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| Self::code_field_eq(x, y)),
-            _ => one.equals(two),
+            (Value::Small(_) | Value::Huge(_), Value::Small(_) | Value::Huge(_)) => one.equals(two),
+            (Value::Real(a), Value::Real(b)) => one.equals(two) && (!a.p.is_zero() || a.below == b.below),
+            // Constant types and the two float zeros are part of code content.
+            _ => std::mem::discriminant(one) == std::mem::discriminant(two) && one.equals(two),
         }
     }
 
-    /// The hash a code value's field owes the comparison: a nested code
-    /// value hashes by the text its routine was read from, so two fields
-    /// that compare equal hash alike.
+    /// Hash the same recursive content used by code comparison.
     pub(crate) fn code_field_hash(value: &Value) -> Option<i64> {
         match value {
             Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
-                Some(Value::Routine(body)) => Value::Text(body.source_tokens.clone()).core_hash(),
-                _ => value.core_hash(),
+                Some(Value::Routine(body)) => Self::code_field_hash(&Self::routine_content(body)),
+                _ => Some((Rc::as_ptr(parts) as usize >> 4) as i64),
             },
+            Value::Routine(body) => Self::code_field_hash(&Self::routine_content(body)),
+            Value::Object(object) if object.class_now().constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
+                let fields = object.fields.borrow().iter().filter(|(key, _)| Self::code_content_field(key)).map(|(_, value)| value.contents()).collect();
+                Self::code_field_hash(&Value::tuple(fields))
+            }
             Value::Tuple(items) => {
                 let mut h = 2870177450012600261u64;
                 for item in items.iter() {
@@ -1387,23 +1419,15 @@ impl Value {
                 // compares its code objects' bytecode; the file each
                 // names is no part of it.
                 if native(a).as_deref() == Some("code") && native(b).as_deref() == Some("code") {
-                    let held = |object: &Rc<Instance>| object.fields.borrow().iter().filter(|(key, _)| key != "filename" && key != "co_filename").map(|(_, value)| value.contents()).collect::<Vec<_>>();
+                    let held = |object: &Rc<Instance>| object.fields.borrow().iter().filter(|(key, _)| Self::code_content_field(key)).map(|(_, value)| value.contents()).collect::<Vec<_>>();
                     let (one, two) = (held(a), held(b));
                     return one.len() == two.len() && one.iter().zip(two.iter()).all(|(x, y)| Self::code_field_eq(x, y));
                 }
                 Rc::ptr_eq(a, b)
             },
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
-            // Two readings of code are alike where they read the very
-            // same body, however the routines they came from were
-            // written over since.
-            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 7 && b.0 == 7 => match (a.1.first(), b.1.first()) {
-                (Some(Value::Routine(x)), Some(Value::Routine(y))) => {
-                    let body = |r: &Rc<crate::code::Routine>| r.revised.borrow().as_ref().map_or_else(|| r.instrs.clone(), |now| now.instrs.clone());
-                    Rc::ptr_eq(&body(x), &body(y))
-                }
-                _ => Rc::ptr_eq(a, b),
-            },
+            // Compare routine-backed code by content, like code constants.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 7 && b.0 == 7 => Self::code_field_eq(self, other),
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
                 a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
             },

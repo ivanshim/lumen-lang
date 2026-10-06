@@ -6086,6 +6086,10 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
             }
         }
+        if matches!(key, Value::Adapter(parts) if parts.0 == 7) && !self.lang.class_special.is_empty() {
+            let hash = Value::code_field_hash(key).ok_or_else(|| self.special_fault())?;
+            return Ok(Value::Hashed(Rc::new((key.clone(), Value::Small(hash)))));
+        }
         if matches!(key, Value::Object(_) | Value::Tuple(_)) && !self.lang.class_special.is_empty() {
             let hash = self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())?;
             return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
@@ -9358,6 +9362,7 @@ impl<'a> Engine<'a> {
                 // A loose member descriptor hashes by what it is kept as,
                 // even where its kind names no hash method of its own.
                 if let Value::Adapter(held) = &args[0] {
+                    if held.0 == 7 { return Ok(Value::code_field_hash(&args[0]).map(Value::Small)); }
                     return Ok(Some(Value::Small(Rc::as_ptr(held) as usize as i64)));
                 }
                 if matches!(args[0], Value::Native(..) | Value::ByteKind(..)) {
@@ -9380,7 +9385,7 @@ impl<'a> Engine<'a> {
                             // by the text, manner and flags it keeps;
                             // the file it names is no part of it.
                             let mut folded = 2870177450012600261u64;
-                            for (_, value) in object.fields.borrow().iter().filter(|(key, _)| key != "filename" && key != "co_filename") {
+                            for (_, value) in object.fields.borrow().iter().filter(|(key, _)| Value::code_content_field(key)) {
                                 match Value::code_field_hash(&value.contents()) {
                                     Some(one) => {
                                         folded = folded.wrapping_add((one as u64).wrapping_mul(14029467366897019727));
@@ -15186,7 +15191,8 @@ impl<'a> Engine<'a> {
     /// set.
     fn set_needs_protocol(value: &Value) -> bool {
         matches!(value, Value::Object(_) | Value::Hashed(_))
-            || matches!(value, Value::Tuple(_)) && value.member_key().is_err()
+            || matches!(value, Value::Adapter(parts) if parts.0 == 7)
+            || matches!(value, Value::Tuple(parts) if parts.iter().any(Self::set_needs_protocol) || value.member_key().is_err())
     }
 
     fn set_place(&mut self, members: &[(String, Value)], value: &Value) -> Res<String> {
@@ -15198,7 +15204,7 @@ impl<'a> Engine<'a> {
             if !key.starts_with(&opening) { continue; }
             if self.special_keys_equal(held, &wanted)? { return Ok(key.clone()); }
         }
-        let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Object(o) => Rc::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, _ => 0 }, _ => 0 };
+        let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Object(o) => Rc::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Adapter(parts) if parts.0 == 7 => Rc::as_ptr(parts) as usize, _ => 0 }, _ => 0 };
         Ok(format!("{opening}{identity:x}"))
     }
 
@@ -16058,7 +16064,9 @@ impl<'a> Engine<'a> {
                         if key != "co_consts" { return Err(format!("NotImplementedError: compiled source replacement of {key} is unavailable")); }
                         let Value::Tuple(constants) = value.contents() else { return Err("TypeError: co_consts must be tuple".into()); };
                         fields.iter_mut().find(|(name, _)| name == "co_consts").unwrap().1 = Value::tuple(constants.as_ref().clone());
-                        fields.push(("\0replace_constants".to_string(), Value::Flag(true)));
+                        if !fields.iter().any(|(name, _)| name == "\0replace_constants") {
+                            fields.push(("\0replace_constants".to_string(), Value::Flag(true)));
+                        }
                     }
                     self.made += 1;
                     return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: object.class_now(), fields: RefCell::new(fields), mark: self.made })));
