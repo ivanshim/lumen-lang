@@ -840,7 +840,7 @@ impl<'a> Machine<'a> {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 | 58 | 59 | 63..=65 => Some(20), 42 => Some(19),
-                57 | 60..=62 => Some(59), 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
+                57 | 60..=62 => Some(59), 43 | 44 | 45 => Some(22), 46 | 66 => Some(36), 47 => Some(46), _ => Some(1),
         };
         let mut order: Vec<usize> = (0..names.len()).collect();
         order.sort_by_key(|number| {
@@ -24195,9 +24195,10 @@ impl<'a> Machine<'a> {
     /// The blueprint of a code value, made once.
     fn code_blueprint(&mut self) -> Rc<Blueprint> {
         if let Some(kind) = &self.code_kind { return kind.clone(); }
+        let word = self.table.single("ext.builtin.compile.kind").unwrap_or_default().to_owned();
         let kind = Rc::new(Blueprint {
-            parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.builtin.compile.kind").unwrap_or_default().to_owned(),
-            under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
+            parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: word.clone(),
+            under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: vec![("\0native".to_owned(), Value::text(&word))], shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
         });
         self.code_kind = Some(kind.clone());
         kind
@@ -24688,6 +24689,328 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
+    /// Where a text that simply ran out ran out: the line holding its
+    /// last character and that character's place in it, one-based, with
+    /// no end; a text without characters stands at no line at all.
+    fn spent_place(source: &str) -> (u32, usize, u32, i64) {
+        let mut place = (0u32, 0usize, 0u32, -1i64);
+        let mut on_line = 0u32;
+        for piece in source.split_inclusive('\n') {
+            on_line += 1;
+            if !piece.is_empty() { place = (on_line, piece.chars().count(), on_line, -1); }
+        }
+        place
+    }
+
+    /// The input-cut-short fault the language names, staged at a place
+    /// with the line's own text, the way any syntax fault is staged.
+    /// None where the language names no such fault, so the caller keeps
+    /// the complaint it first had.
+    fn text_incomplete(&mut self, file: &str, place: (u32, usize, u32, i64), source: &str) -> Option<String> {
+        let words = self.table.strings("ext.builtin.compile.incomplete");
+        let (Some(kind_name), Some(wording)) = (words.first(), words.get(1)) else { return None };
+        let Some(Value::Blueprint(kind)) = self.fault_kinds.get(kind_name).cloned() else { return None };
+        let (row, offset, end_row, end_offset) = place;
+        let text = match row {
+            0 => String::new(),
+            _ => source.split_inclusive('\n').nth(row as usize - 1).unwrap_or("").to_owned(),
+        };
+        let details = Value::tuple(vec![Value::text(file), Value::Small(i64::from(row)), Value::Small(offset as i64), Value::text(&text), Value::Small(i64::from(end_row)), Value::Small(end_offset)]);
+        let fault = self.make_fault(kind, vec![Value::text(wording), details], Value::Nil);
+        self.keep_context(&fault);
+        self.got_away = Some(Escape::Thrown(fault));
+        Some(String::new())
+    }
+
+    /// Text that ended inside an indented block without a final line
+    /// break, read with the dedent left unimplied, meets the refusal
+    /// the reference gives it: a plain syntax fault standing at the end
+    /// of the text's last line.
+    fn text_left_inside_block(&mut self, file: &str, source: &str) -> String {
+        let Some(kind_name) = self.table.strings("ext.builtin.exceptions").get(36).cloned() else { return "SyntaxError: invalid syntax".to_owned() };
+        let Some(Value::Blueprint(kind)) = self.fault_kinds.get(&kind_name).cloned() else { return "SyntaxError: invalid syntax".to_owned() };
+        let (row, _, _, _) = Self::spent_place(source);
+        let line_text = match row {
+            0 => String::new(),
+            _ => source.split_inclusive('\n').nth(row as usize - 1).unwrap_or("").trim_end_matches('\n').to_owned(),
+        };
+        let details = Value::tuple(vec![Value::text(file), Value::Small(i64::from(row)), Value::Small(0), Value::text(&line_text), Value::Small(i64::from(row)), Value::Small(0)]);
+        let fault = self.make_fault(kind, vec![Value::text("invalid syntax"), details], Value::Nil);
+        self.keep_context(&fault);
+        self.got_away = Some(Escape::Thrown(fault));
+        String::new()
+    }
+
+    /// Whether the string opening at a one-based place in the text runs
+    /// to the text's end without meeting a line break it does not
+    /// escape: only then does the reference call the input cut short.
+    fn string_runs_out(source: &str, row: u32, column: usize) -> bool {
+        let letters: Vec<char> = source.chars().collect();
+        let mut at = 0usize;
+        let mut on_line = 1u32;
+        while on_line < row {
+            match letters.get(at) {
+                Some('\n') => { at += 1; on_line += 1; }
+                Some(_) => at += 1,
+                None => return false,
+            }
+        }
+        at += column.saturating_sub(1);
+        while letters.get(at).is_some_and(|c| c.is_ascii_alphabetic()) { at += 1; }
+        let Some(&quote) = letters.get(at) else { return false };
+        if quote != '\'' && quote != '"' { return false; }
+        at += 1;
+        loop {
+            match letters.get(at) {
+                None => return true,
+                Some('\\') => {
+                    at += 1;
+                    if letters.get(at) == Some(&'\r') { at += 1; }
+                    at += 1;
+                }
+                Some(&c) if c == '\n' || c == quote => return false,
+                Some(_) => at += 1,
+            }
+        }
+    }
+
+    /// Whether a string the reading found unterminated cuts the input
+    /// short: it does where its own text runs out, except that one
+    /// expression's reading never reaches past a top-level `=`, and a
+    /// statement reading keeps its implied final line break.
+    fn string_cut_short(mode: usize, source: &str, row: u32, column: usize) -> bool {
+        if mode == 1 && Self::assignment_before(source, row, column, mode) { return false; }
+        Self::string_runs_out(source, row, column)
+    }
+
+    /// Whether an `=` that begins an assignment stands ahead of a place
+    /// in the text, outside any bracket — a question only one
+    /// expression's reading asks, since it refuses there before it ever
+    /// reaches the place. Always false for the statement readings.
+    fn assignment_before(source: &str, row: u32, column: usize, mode: usize) -> bool {
+        if mode != 1 { return false; }
+        let letters: Vec<char> = source.chars().collect();
+        let mut at = 0usize;
+        let mut on_line = 1u32;
+        while on_line < row {
+            match letters.get(at) {
+                Some('\n') => { at += 1; on_line += 1; }
+                Some(_) => at += 1,
+                None => return false,
+            }
+        }
+        let stop = (at + column.saturating_sub(1)).min(letters.len());
+        let mut depth = 0usize;
+        let mut i = 0usize;
+        while i < stop {
+            let c = letters[i];
+            if c == '(' || c == '[' || c == '{' { depth += 1; }
+            if c == ')' || c == ']' || c == '}' { depth = depth.saturating_sub(1); }
+            if c == '=' && depth == 0 {
+                let pair = letters.get(i + 1) == Some(&'=');
+                let joined = i > 0 && matches!(letters[i - 1], '=' | '!' | '<' | '>' | ':');
+                if !pair && !joined { return true; }
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// A block the end of the text found still to come: the reference
+    /// calls the input cut short where nothing readable stands past the
+    /// line the complaint names, or where what stands there is the
+    /// text's last word and its own reading met the end.
+    fn incomplete_awaited_block(wording: &str, tokens: &[crate::scan::Token], source: &str) -> Option<(u32, usize, u32, i64)> {
+        let (_, tail) = wording.rsplit_once(" on line ")?;
+        let line: u32 = tail.trim().parse().ok()?;
+        // A lambda awaits one expression, not a block: the reading
+        // breaks on the line break it finds, and only a text that ends
+        // before any is an input cut short.
+        if wording.contains("'lambda' statement") {
+            return (!source.ends_with('\n')).then(|| Self::spent_place(source));
+        }
+        use crate::scan::Shape;
+        let finish = tokens.iter().find(|piece| piece.shape == Shape::Finish)?;
+        let next = tokens.iter().find(|piece| piece.row > line && !matches!(piece.shape, Shape::Lead | Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish));
+        let Some(token) = next else { return Some(Self::spent_place(source)) };
+        let end_row = token.end_row.max(token.row);
+        let end_column = if token.end_column > 0 { token.end_column } else { token.column + token.lexeme.chars().count() };
+        (end_row == finish.row && end_column == finish.column).then(|| (token.row, token.column, end_row, end_column as i64))
+    }
+
+    /// Whether a reading that stopped over a token stopped because the
+    /// text ran out there: the stop is the stream's own end, a boundary
+    /// the indenting pass laid at the end, or the text's last word,
+    /// number or sign, whose own reading met the end — but never a
+    /// finished string, whose reading stops at its closing quote. The
+    /// place the reference reports the fault at comes back with it.
+    fn incomplete_stuck(tokens: &[crate::scan::Token], row: u32, column: usize, mode: usize, source: &str, bracketed: bool) -> Option<(u32, usize, u32, i64)> {
+        use crate::scan::Shape;
+        if row == 0 { return None; }
+        let finish = tokens.iter().find(|piece| piece.shape == Shape::Finish)?;
+        let token = match tokens.iter().filter(|piece| piece.shape != Shape::Lead).find(|piece| piece.row == row && piece.column == column) {
+            Some(piece) => piece,
+            None => tokens.iter().find(|piece| piece.row == row && piece.column == column)?,
+        };
+        let over_end = token.row == finish.row && token.column == finish.column;
+        // The stream's own end, reached while more was sought, is an
+        // input cut short — but where the text keeps its final line
+        // break and no bracket holds it open, the reading broke on that
+        // line break, a plain fault.
+        if token.shape == Shape::Finish {
+            let bare = tokens.iter().all(|piece| matches!(piece.shape, Shape::Lead | Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish));
+            return (bracketed || bare || !source.ends_with('\n')).then(|| Self::spent_place(source));
+        }
+        if matches!(token.shape, Shape::Open | Shape::Close) { return over_end.then(|| Self::spent_place(source)); }
+        if token.shape == Shape::LineEnd { return (mode != 0 && over_end).then(|| Self::spent_place(source)); }
+        if matches!(token.shape, Shape::Quote | Shape::ByteQuote | Shape::WovenEnd) { return None; }
+        if token.shape == Shape::Unheld { return Self::string_cut_short(mode, source, row, column).then(|| (token.row, token.column, token.row, -1)); }
+        let end_row = token.end_row.max(token.row);
+        let end_column = if token.end_column > 0 { token.end_column } else { token.column + token.lexeme.chars().count() };
+        (end_row == finish.row && end_column == finish.column).then(|| (token.row, token.column, end_row, end_column as i64))
+    }
+
+    /// Complaints made only once a text has read clean through, about
+    /// what a statement does rather than how it is shaped: the
+    /// reference never calls such a fault an input cut short.
+    fn beyond_reading_complaint(said: &str) -> bool {
+        let wording = said.split_once(": ").map(|(_, words)| words).unwrap_or(said);
+        const LATE: &[&str] = &[
+            "cannot assign to", "'return' outside function", "'break' outside loop", "'continue' not properly in loop",
+            "'yield' ", "comprehension inner loop ", "duplicate argument ", "name ", "annotated name ",
+            "future feature ", "not a chance", "from __future__ imports", "import * only allowed at module level",
+            "nonlocal declaration not allowed at module level", "default 'except:' must be last",
+        ];
+        LATE.iter().any(|front| wording.starts_with(front))
+    }
+
+    /// Whether text the reading itself refused was refused only because
+    /// it ran out: an unterminated string meeting the text's end, an
+    /// unclosed bracket holding a clean reading, a statement the end
+    /// caught mid-shape, or a block the end found still to come. The
+    /// place the reference reports the fault at comes back with it.
+    fn incomplete_refused(&mut self, said: &str, row: u32, column: usize, mode: usize, source: &str, top_await: bool) -> Option<(u32, usize, u32, i64)> {
+        let wording = said.split_once(": ").map(|(_, words)| words).unwrap_or(said);
+        if wording.starts_with("unterminated triple-quoted") {
+            return (!Self::assignment_before(source, row, column, mode)).then_some((row, column, row, -1));
+        }
+        if wording.starts_with("unterminated string literal") || wording.starts_with("unterminated f-string literal") {
+            return Self::string_cut_short(mode, source, row, column).then_some((row, column, row, -1));
+        }
+        if wording.ends_with("was never closed") { return self.incomplete_gap(mode, source, top_await); }
+        if wording == "unexpected EOF while parsing" {
+            let bare_backslash = mode != 0 && source.ends_with('\\');
+            if bare_backslash || Self::assignment_before(source, row, column, mode) { return None; }
+            return Some(Self::spent_place(source));
+        }
+        if wording.starts_with("expected an indented block") {
+            let scanned = crate::scan::scan_position(source, self.table).ok()?;
+            return Self::incomplete_awaited_block(wording, &scanned, source);
+        }
+        if row == 0 && mode != 0 && source.is_empty() && wording == "invalid syntax" {
+            return Some((0, 0, 0, -1));
+        }
+        let string_amiss = self.table.single("ext.lexical.string.amiss").unwrap_or_default().to_owned();
+        if wording == "invalid syntax" || !string_amiss.is_empty() && wording == string_amiss {
+            // A string whose reading was cut short at the text's end is
+            // named by its more generic word here.
+            return Self::string_cut_short(mode, source, row, column).then_some((row, column, row, -1));
+        }
+        None
+    }
+
+    /// A bracket left open where the text ran out makes the input
+    /// incomplete only where what it holds so far reads clean: close
+    /// the brackets the text left open and read the result — an input
+    /// still refused within the text's own span was wrong all along,
+    /// and only one refused past it, or not refused, ran out.
+    fn incomplete_gap(&mut self, mode: usize, source: &str, top_await: bool) -> Option<(u32, usize, u32, i64)> {
+        let scanned = crate::scan::scan_position(source, self.table).ok()?;
+        let mut opened: Vec<char> = Vec::new();
+        for piece in &scanned {
+            if piece.shape != crate::scan::Shape::Sign { continue; }
+            match piece.lexeme.as_str() {
+                "(" | "[" | "{" => opened.push(piece.lexeme.chars().next()?),
+                ")" | "]" | "}" => { opened.pop(); }
+                _ => {}
+            }
+        }
+        if opened.is_empty() { return None; }
+        let mut completed = source.to_string();
+        for bracket in opened.iter().rev() {
+            completed.push(match bracket { '(' => ')', '[' => ']', _ => '}' });
+        }
+        // Read the text with its brackets closed, then take the closers
+        // back out of the reading: where the reading of what remains
+        // stops tells whether the text simply ran out. A bracket open
+        // past a line break reads on past it, so the stop's own place
+        // decides, never the break.
+        let laid = crate::scan::scan_position(&completed, self.table)
+            .and_then(|tokens| crate::indent::indent_position(tokens, self.table, 0)).ok()?;
+        use crate::scan::Shape;
+        let finish = laid.iter().find(|piece| piece.shape == Shape::Finish)?.clone();
+        let mut tokens = laid;
+        let mut held: Vec<crate::scan::Token> = Vec::new();
+        loop {
+            let Some(last) = tokens.last() else { break };
+            let sentinel = last.shape == Shape::Finish
+                || (matches!(last.shape, Shape::Close | Shape::LineEnd) && last.row == finish.row && last.column == finish.column);
+            if !sentinel { break; }
+            held.push(tokens.pop().expect("a last token"));
+        }
+        for bracket in opened.iter() {
+            let closing = match bracket { '(' => ")", '[' => "]", _ => "}" };
+            match tokens.last() {
+                Some(last) if last.shape == Shape::Sign && last.lexeme == closing => { tokens.pop(); }
+                _ => return None,
+            }
+        }
+        while let Some(piece) = held.pop() { tokens.push(piece); }
+        // The stream's end stands where the text itself ends, not past
+        // the closers that were only lent to the reading.
+        let (mut last_row, mut last_col) = (1u32, 1usize);
+        for c in source.chars() {
+            if c == '\n' { last_row += 1; last_col = 1; } else { last_col += 1; }
+        }
+        for piece in tokens.iter_mut() {
+            if matches!(piece.shape, Shape::Finish | Shape::Close | Shape::LineEnd) && piece.row == finish.row && piece.column == finish.column {
+                piece.row = last_row; piece.column = last_col; piece.end_row = last_row; piece.end_column = last_col;
+            }
+        }
+        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2);
+        let (said, row, cols) = match built {
+            Ok(_) => return Some(Self::spent_place(source)),
+            Err(fault) => fault,
+        };
+        if row == 0 { return None; }
+        // A comprehension cut at its `for` word is read no further than
+        // the word, though more of the construct was still to come.
+        if said.ends_with("expected after for-loop variables") {
+            let last = tokens.iter().rev().find(|piece| !matches!(piece.shape, Shape::Lead | Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish));
+            if let Some(last) = last {
+                if last.row == row && last.column == cols.0 {
+                    return Some(Self::spent_place(source));
+                }
+            }
+        }
+        Self::incomplete_stuck(&tokens, row, cols.0, mode, source, true)
+    }
+
+    /// Whether the text ended with block boundaries still open: the
+    /// closes the indenting pass laid at the very end stand for
+    /// indented blocks the text never left.
+    fn left_open_at_end(tokens: &[crate::scan::Token]) -> bool {
+        use crate::scan::Shape;
+        let Some(finish) = tokens.iter().find(|piece| piece.shape == Shape::Finish) else { return false };
+        let mut open = false;
+        for piece in tokens.iter().rev().skip_while(|piece| piece.shape == Shape::Finish) {
+            let at_end = piece.row == finish.row && piece.column == finish.column;
+            if !(matches!(piece.shape, Shape::Close | Shape::LineEnd) && at_end) { break; }
+            open = open || piece.shape == Shape::Close;
+        }
+        open
+    }
+
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
@@ -24723,18 +25046,81 @@ impl<'a> Machine<'a> {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
         let top_await = flags & 8192 != 0;
+        // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
+        // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
+        // where the language names a fault for input cut short, a
+        // reading that reached the end of the text still asking for
+        // more raises it in place of the plain refusal.
+        let incomplete_named = self.table.strings("ext.builtin.compile.incomplete").len() == 2;
+        let incomplete_ok = incomplete_named && flags & 0x4000 != 0;
+        let imply_dedent = !incomplete_named || flags & 0x200 == 0;
+        // Reading statements to completion implies a final line break:
+        // where the text lacks one, the reference reads it as if it
+        // were there, and a fault for text that ran out stands past it.
+        let counted_txt;
+        let counted: &str = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
+            counted_txt = format!("{}\n", source);
+            &counted_txt
+        } else { &source };
         self.report_escape_notices(&source, &file, None)?;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
+            Err((said, row, col)) => {
+                if incomplete_ok {
+                    if let Some(place) = self.incomplete_refused(&said, row, col, mode, counted, top_await) {
+                        if let Some(told) = self.text_incomplete(&file, place, counted) { return Err(told); }
+                    }
+                }
+                return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
+            }
         };
-        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await, None, None, None)?;
+        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2) {
+            Ok(built) => built,
+            Err((said, row, cols)) => {
+                if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
+                    if let Some(place) = Self::incomplete_stuck(&tokens, row, cols.0, mode, counted, false) {
+                        if let Some(told) = self.text_incomplete(&file, place, counted) { return Err(told); }
+                    }
+                }
+                return Err(self.text_unreadable_at(mode, said, &file, row, cols.0, Some((cols.2, cols.1)), &source));
+            }
+        };
+        if incomplete_ok && mode != 0 && tokens.iter().all(|piece| matches!(piece.shape, crate::scan::Shape::Lead | crate::scan::Shape::LineEnd | crate::scan::Shape::Open | crate::scan::Shape::Close | crate::scan::Shape::Finish)) {
+            // A text without so much as a word is neither one statement
+            // nor one expression; with the flag the reference calls it
+            // cut short rather than plainly wrong.
+            if let Some(told) = self.text_incomplete(&file, Self::spent_place(counted), counted) { return Err(told); }
+        }
+        if !imply_dedent && mode == 2 && !source.ends_with('\n') && Self::left_open_at_end(&tokens) {
+            // The text ended inside an indented block without a final
+            // line break, and the flag kept the dedent unimplied.
+            if incomplete_ok {
+                if let Some(told) = self.text_incomplete(&file, Self::spent_place(counted), counted) { return Err(told); }
+            }
+            return Err(self.text_left_inside_block(&file, &source));
+        }
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source, None)?;
         }
+        if flags & 0x400 != 0 {
+            // PyCF_ONLY_AST: the value handed back is the library's
+            // syntax tree of the text rather than a code value.
+            let space = self.load_namespace("ast")?;
+            let parse = match self.read_class_member(space, "parse", true) {
+                Ok(parse) => parse.settled(),
+                Err(Escape::Error(told)) => return Err(told),
+                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+            };
+            let manner = self.table.strings("ext.builtin.compile.modes")[mode].clone();
+            return match self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner)]) {
+                Ok(tree) => Ok(tree),
+                Err(Escape::Error(told)) => Err(told),
+                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+            };
+        }
         let kind = self.code_blueprint();
-        let flags = if built.program.generator { 128 } else { 0 };
-        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(flags)), ("co_firstlineno".to_owned(), Value::Small(1))];
+        let bits = (if built.program.generator { 128 } else { 0 }) | (if built.future_annotations { 0x1000000 } else { 0 });
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }

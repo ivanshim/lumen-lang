@@ -1340,6 +1340,15 @@ impl Value {
                         _ => false,
                     };
                 }
+                // Two code values read from the same text in the same
+                // manner are the same value, the way the reference
+                // compares its code objects' bytecode; the file each
+                // names is no part of it.
+                if native(a).as_deref() == Some("code") && native(b).as_deref() == Some("code") {
+                    let held = |object: &Rc<Instance>| object.fields.borrow().iter().filter(|(key, _)| key != "filename" && key != "co_filename").map(|(_, value)| value.contents()).collect::<Vec<_>>();
+                    let (one, two) = (held(a), held(b));
+                    return one.len() == two.len() && one.iter().zip(two.iter()).all(|(x, y)| x.equals(&y));
+                }
                 Rc::ptr_eq(a, b)
             },
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },

@@ -322,6 +322,9 @@ pub struct Built {
     /// The reference's warnings about how the text is written, with the
     /// row and column of each.
     pub warnings: Vec<(String, u32, usize)>,
+    /// Whether the text said `from __future__ import annotations` at
+    /// its top level: `compile` marks the code value's flags with it.
+    pub future_annotations: bool,
     pub globals: Vec<String>,
     /// The names the outermost statements declared global, which text
     /// read into two dictionaries writes to the outer one.
@@ -758,7 +761,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let mut body = body;
     if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
     let program = Routine { definition: None, class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
-    Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
+    Ok(Built { program: Rc::new(program), warnings: r.warnings, future_annotations: r.annotations_as_strings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
 /// Which parameters of each program are written with the reference sign.
@@ -2568,7 +2571,7 @@ impl<'a> Builder<'a> {
                 let signed = right + 1 < limit && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && self.tokens[right + 1].shape == Shape::Numeral;
                 if signed { right += 1; }
                 let after = self.literal_at(right, limit).filter(|(_, past)| *past >= limit || !Self::joins_operands(&self.tokens[*past])).map(|(kind, _)| kind);
-                if let Some(kind) = after.or_else(|| self.literal_ending(here, opened)) {
+                if let Some(kind) = self.literal_ending(here, opened).or(after) {
                     let (spoken, meant) = if negated { ("is not", "!=") } else { ("is", "==") };
                     noted.push((format!("\"{spoken}\" with '{kind}' literal. Did you mean \"{meant}\"?"), token.row, token.column));
                 }

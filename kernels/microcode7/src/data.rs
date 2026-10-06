@@ -1166,6 +1166,16 @@ impl Value {
                     }
                     return false;
                 }
+                // Two code values read from the same text in the same
+                // manner weigh the same, the way the reference compares
+                // its code objects' bytecode; the file each names is no
+                // part of it.
+                let is_code = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "code"));
+                if is_code(a) && is_code(b) {
+                    let held = |thing: &Thing| thing.holds.borrow().iter().filter(|(name, _)| name != "filename" && name != "co_filename").map(|(_, item)| item.settled()).collect::<Vec<_>>();
+                    let (left, right) = (held(a), held(b));
+                    return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| x.equals(&y));
+                }
                 Rc::ptr_eq(a, b)
             },
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },

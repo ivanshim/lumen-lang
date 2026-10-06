@@ -53,6 +53,9 @@ pub struct Registry {
     pub interactive: bool,
     pub allow_top_level_await: bool,
     pub top_level_coroutine: bool,
+    /// Whether the text said `from __future__ import annotations` at
+    /// its top level: `compile` marks the code value's flags with it.
+    pub future_annotations: bool,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
@@ -790,6 +793,7 @@ fn compile_pass(
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
+    a.registry.future_annotations = a.future_annotations;
     Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
@@ -2550,7 +2554,7 @@ impl<'a> Compiler<'a> {
                 // A sign before a number is folded into it by the reference.
                 if right < end && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && right + 1 < end && self.tokens[right + 1].shape == Shape::Numeral { right += 1; }
                 let on_right = self.literal_kind(right, end).filter(|(_, past)| *past >= end || !self.arithmetic_sign(&self.tokens[*past])).map(|(kind, _)| kind);
-                let kind = on_right.or_else(|| self.literal_kind_before(at, began));
+                let kind = self.literal_kind_before(at, began).or(on_right);
                 if let Some(kind) = kind {
                     let (word, meant) = if negated { ("is not", "!=") } else { ("is", "==") };
                     found.push((format!("\"{word}\" with '{kind}' literal. Did you mean \"{meant}\"?"), token.row, token.column));
