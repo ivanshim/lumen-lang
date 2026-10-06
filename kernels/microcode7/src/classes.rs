@@ -4480,14 +4480,14 @@ impl<'a> Machine<'a> {
     /// yes.
     fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let (Value::Thing(thing), Value::Blueprint(kind)) = (subject, choice) {
-            if self.beneath_yes.iter().any(|(own,wanted,same)| *same==class_only && Rc::ptr_eq(own,&thing.blueprint()) && Rc::ptr_eq(wanted,kind)) {
-                return Ok(true);
-            }
+            let own=thing.blueprint();
+            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(kind) as usize, class_only)) { return Ok(true); }
         }
         let verdict=self.is_beneath_at(subject,choice,class_only)?;
         if verdict {
             if let (Value::Thing(thing), Value::Blueprint(kind)) = (subject, choice) {
-                if self.beneath_yes.len()<8192 { self.beneath_yes.push((thing.blueprint().clone(),kind.clone(),class_only)); }
+                let own=thing.blueprint();
+                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(kind) as usize, class_only)).or_insert((own,kind.clone()));
             }
         }
         Ok(verdict)

@@ -193,7 +193,7 @@ pub struct Engine<'a> {
     /// was asked. Only a yes is kept. A claim registered later can turn
     /// a no into a yes but never a yes into a no, so a no is always
     /// worked out afresh and this list cannot answer stale.
-    beneath_yes: Vec<(Rc<Class>, Rc<Class>, bool)>,
+    beneath_yes: HashMap<(usize, usize, bool), (Rc<Class>, Rc<Class>)>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -1421,7 +1421,7 @@ impl<'a> Engine<'a> {
             memo: HashMap::new(),
             core_ids: HashMap::new(),
             loose_members: RefCell::new(HashMap::new()),
-            beneath_yes: Vec::new(),
+            beneath_yes: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -21928,12 +21928,13 @@ impl Engine<'_> {
     fn core_isinstance(&mut self, value: &Value, kind: &Value) -> Res<bool> {
         if let (Value::Object(object), Value::Class(class)) = (value, kind) {
             let own=object.class_now();
-            if self.beneath_yes.iter().any(|(seen,asked,same)| !*same && Rc::ptr_eq(seen,&own) && Rc::ptr_eq(asked,class)) { return Ok(true); }
+            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)) { return Ok(true); }
         }
         let verdict=self.core_isinstance_at(value,kind)?;
         if verdict {
             if let (Value::Object(object), Value::Class(class)) = (value, kind) {
-                if self.beneath_yes.len()<8192 { self.beneath_yes.push((object.class_now(),class.clone(),false)); }
+                let own=object.class_now();
+                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)).or_insert((own,class.clone()));
             }
         }
         Ok(verdict)

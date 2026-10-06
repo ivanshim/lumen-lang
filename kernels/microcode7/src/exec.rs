@@ -535,7 +535,7 @@ pub struct Machine<'a> {
     /// asked. Only a yes is kept here. A claim later registered can turn
     /// a no into a yes but never a yes into a no, so a no is worked out
     /// afresh and this list can never answer stale.
-    beneath_yes: Vec<(Rc<Blueprint>, Rc<Blueprint>, bool)>,
+    beneath_yes: HashMap<(usize, usize, bool), (Rc<Blueprint>, Rc<Blueprint>)>,
     stack_origin: usize,
     fixed_native_directories: RefCell<std::collections::BTreeMap<char, Vec<String>>>,
     descriptor_files: std::collections::BTreeMap<i32, std::fs::File>,
@@ -1791,7 +1791,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), beneath_yes: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), beneath_yes: HashMap::new(), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()),
             descriptor_files: std::collections::BTreeMap::new(),
@@ -25989,14 +25989,14 @@ impl Machine<'_> {
     /// it into a yes.
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
         if let (Value::Thing(thing), Value::Blueprint(class)) = (item, expected) {
-            if self.beneath_yes.iter().any(|(own,wanted,same)| !*same && Rc::ptr_eq(own,&thing.blueprint()) && Rc::ptr_eq(wanted,class)) {
-                return Ok(true);
-            }
+            let own=thing.blueprint();
+            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)) { return Ok(true); }
         }
         let verdict = self.core_belongs_at(item, expected)?;
         if verdict {
             if let (Value::Thing(thing), Value::Blueprint(class)) = (item, expected) {
-                if self.beneath_yes.len()<8192 { self.beneath_yes.push((thing.blueprint().clone(),class.clone(),false)); }
+                let own=thing.blueprint();
+                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(class) as usize, false)).or_insert((own,class.clone()));
             }
         }
         Ok(verdict)

@@ -4169,12 +4169,13 @@ impl<'a> Engine<'a> {
     fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if let (Value::Object(object), Value::Class(kind)) = (value, wanted) {
             let own=object.class_now();
-            if self.beneath_yes.iter().any(|(seen,asked,same)| *same==subclass && Rc::ptr_eq(seen,&own) && Rc::ptr_eq(asked,kind)) { return Ok(true); }
+            if self.beneath_yes.contains_key(&(Rc::as_ptr(&own) as usize, Rc::as_ptr(kind) as usize, subclass)) { return Ok(true); }
         }
         let verdict=self.beneath_at(value,wanted,subclass)?;
         if verdict {
             if let (Value::Object(object), Value::Class(kind)) = (value, wanted) {
-                if self.beneath_yes.len()<8192 { self.beneath_yes.push((object.class_now(),kind.clone(),subclass)); }
+                let own=object.class_now();
+                self.beneath_yes.entry((Rc::as_ptr(&own) as usize, Rc::as_ptr(kind) as usize, subclass)).or_insert((own,kind.clone()));
             }
         }
         Ok(verdict)
