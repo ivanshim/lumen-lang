@@ -46,10 +46,31 @@ def call_annotate_function(annotate, format, owner=None):
     if format == Format.STRING:
         # Without the written form, the values stand for their own text,
         # names not yet defined among them as the text they were read by.
-        return annotations_to_string(_evaluate_symbolic(annotate, owner, Format.FORWARDREF))
+        return {key: _string_of(value) for key, value in _evaluate_symbolic(annotate, owner, Format.FORWARDREF).items()}
     if format == Format.FORWARDREF:
         return _evaluate_symbolic(annotate, owner, format)
     raise ValueError(f"Invalid format: {format!r}")
+
+def _string_of(value):
+    # A value as the text format writes it, a reference to be resolved
+    # later as the text it stands for, wherever in the value it is.
+    if isinstance(value, str):
+        return value
+    if isinstance(value, ForwardRef):
+        text = value.__forward_arg__
+        names = value.__extra_names__ or {}
+        for unique in sorted(names, key=len, reverse=True):
+            text = text.replace(unique, _string_of(names[unique]))
+        return text
+    if hasattr(value, '__origin__') and hasattr(value, '__args__') and _holds_reference(value):
+        return _string_of(value.__origin__) + '[' + ', '.join(_string_of(each) for each in value.__args__) + ']'
+    return type_repr(value)
+
+def _holds_reference(value):
+    if isinstance(value, ForwardRef):
+        return True
+    args = getattr(value, '__args__', None)
+    return isinstance(args, tuple) and any(_holds_reference(each) for each in args)
 
 def _home_of(annotate, owner):
     # The module whose names the annotations are read among.

@@ -2867,6 +2867,10 @@ impl<'a> Machine<'a> {
                 for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
                     if passed {
                         if key == self.detail("allocate") {
+                            // A class on an alias is made by the maker the alias kind carries.
+                            if Self::native_word(base).as_deref() == Some("GenericAlias") {
+                                if let Some(entry) = Self::own_entry(base, key) { return self.member_binding(entry, None, actual.clone()); }
+                            }
                             if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                                 return Ok(Self::wrap(14, vec![Value::text(&native)]));
                             }
@@ -4825,6 +4829,11 @@ impl<'a> Machine<'a> {
             // its constructing in silence, and answers the kind's methods
             // through the worth the thing keeps.
             if let Some(word)=Self::native_word(b) {
+                // An alias kind makes itself by the maker it carries, which is
+                // how a class standing on it is made.
+                if key==self.detail("allocate") && word=="GenericAlias" {
+                    if let Some(maker)=Self::own_entry(b,key) { return self.apply_class_member(maker,args); }
+                }
                 if key==self.detail("allocate"){return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);}
                 if word == "module" && self.table.strings("ext.stmt.class.special").get(1).is_some_and(|name| name == key) { return self.describe_module(receiver); }
                 if self.table.single("ext.stmt.class.constructor")==Some(key){
@@ -5046,7 +5055,11 @@ impl<'a> Machine<'a> {
                         else { match parameter.kind_it_names() { Some(name) => name, None => self.prim(Prim::Quoted, "repr", &[parameter])?.bare() } };
                     names.push(name);
                 }
-                let prefix = parent.kind_it_names().unwrap_or_else(|| parent.bare());
+                let prefix = if matches!(parent.settled(), Value::Blueprint(_)) {
+                    let namespace = self.read_class_member(parent.clone(), "__module__", false)?.bare();
+                    let qualified = self.read_class_member(parent.clone(), "__qualname__", false)?.bare();
+                    if namespace == "builtins" { qualified } else { namespace + "." + &qualified }
+                } else { parent.kind_it_names().unwrap_or_else(|| parent.bare()) };
                 let unpacked = self.read_class_member(subject, "__unpacked__", true)?;
                 let prefix = if matches!(unpacked, Value::Flag(true)) { String::from("*") + &prefix } else { prefix };
                 Ok(Value::text(&(prefix + "[" + &names.join(", ") + "]")))

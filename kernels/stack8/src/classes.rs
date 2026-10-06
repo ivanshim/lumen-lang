@@ -4609,6 +4609,11 @@ impl<'a> Engine<'a> {
             // constructing in silence, and answers its kind's methods
             // through the worth the thing keeps.
             if let Some(word)=Self::own_kind(c) {
+                // An alias makes itself by the maker its kind carries, which
+                // is how a class standing on it is made, whatever it adds.
+                if name==self.class_word("allocate") && word=="GenericAlias" {
+                    if let Some(maker)=Self::own_class_value(c,name) { return self.class_apply(maker,args); }
+                }
                 if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
                 if word == "module" && self.lang.class_special.get(1).is_some_and(|key| key == name) { return self.module_repr_value(subject); }
                 if self.lang.constructor.as_deref()==Some(name){
@@ -4800,7 +4805,12 @@ impl<'a> Engine<'a> {
                         else { self.builtin(Builtin::Repr, "repr", &mut vec![arg])?.plain() });
                 }
                 let star = self.class_get(receiver.clone(), "__unpacked__", true)?;
-                Ok(Value::text(&format!("{}{}[{}]", if matches!(star, Value::Flag(true)) { "*" } else { "" }, origin.kind_it_names().unwrap_or_else(|| origin.plain()), parts.join(", "))))
+                let shown_origin = if matches!(origin.contents(), Value::Class(_)) {
+                    let module = self.class_get(origin.clone(), "__module__", false)?.plain();
+                    let name = self.class_get(origin.clone(), "__qualname__", false)?.plain();
+                    if module == "builtins" { name } else { format!("{module}.{name}") }
+                } else { origin.kind_it_names().unwrap_or_else(|| origin.plain()) };
+                Ok(Value::text(&format!("{}{}[{}]", if matches!(star, Value::Flag(true)) { "*" } else { "" }, shown_origin, parts.join(", "))))
             }
             5 if given.is_empty() => {
                 let class = self.kind_class("GenericAlias");
