@@ -433,6 +433,10 @@ pub struct MapStore {
     /// How many times the map has been cleared, so a walk may see that
     /// its places were made anew.
     pub clear_epoch: u64,
+    /// Each pair's own place in the entry array, in the order the pairs
+    /// stand; a place a key was taken out of is a gap here, so a walk
+    /// backwards may skip it.
+    pub slots: Vec<usize>,
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
 }
 
@@ -478,6 +482,32 @@ impl MapStore {
         self.pairs[at].1 = value;
     }
 
+    /// Write a key at the next open place, growing the entry array.
+    pub fn push_row(&mut self, key: Value, value: Value) {
+        self.serial = dictionary_turn();
+        self.pairs.push((key, value));
+        self.slots.push(self.span);
+        self.span = self.span.saturating_add(1);
+        *self.place.borrow_mut() = None;
+    }
+
+    /// Take a row out by its place among the rows, leaving its slot as a
+    /// gap the walk skips.
+    pub fn remove_row(&mut self, at: usize) {
+        self.serial = dictionary_turn();
+        self.pairs.remove(at);
+        self.slots.remove(at);
+        *self.place.borrow_mut() = None;
+    }
+
+    /// The rows' places, brought back into step with the rows themselves
+    /// where something wrote them through the plain Vec road: the places
+    /// run plain and unbroken then.
+    pub fn slots_synced(&self) -> Vec<usize> {
+        if self.slots.len() == self.pairs.len() { return self.slots.clone(); }
+        (0..self.pairs.len()).collect()
+    }
+
     /// The pairs themselves, read only: a blueprint that spells its
     /// slots as a mapping reads each name off a key.
     pub fn pairs(&self) -> &[(Value, Value)] {
@@ -486,9 +516,8 @@ impl MapStore {
 
     /// Pairs re-laid after a filtering or a merge, keeping the width and
     /// the clear-history the map already had.
-    pub fn kept(pairs: Vec<(Value, Value)>, span: usize, clear_epoch: u64) -> Self {
-        let width = span.max(pairs.len());
-        MapStore { pairs, serial: dictionary_turn(), span: width, clear_epoch, place: RefCell::new(None) }
+    pub fn kept(pairs: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64) -> Self {
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch, slots, place: RefCell::new(None) }
     }
 
     /// Empty the pairs and mark the map's places as begun again: the
@@ -499,6 +528,7 @@ impl MapStore {
         self.span = 0;
         *self.place.borrow_mut() = None;
         self.pairs.clear();
+        self.slots.clear();
     }
 
     /// Add a key already proven absent and already known by its own
@@ -510,7 +540,8 @@ impl MapStore {
         let at = self.pairs.len();
         self.serial = dictionary_turn();
         self.pairs.push((key, value));
-        self.span = self.span.max(self.pairs.len());
+        self.slots.push(self.span);
+        self.span = self.span.saturating_add(1);
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
 }
@@ -518,7 +549,8 @@ impl MapStore {
 impl From<Vec<(Value, Value)>> for MapStore {
     fn from(pairs: Vec<(Value, Value)>) -> MapStore {
         let span = pairs.len();
-        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, place: RefCell::new(None) }
+        let slots = (0..span).collect();
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, slots, place: RefCell::new(None) }
     }
 }
 
@@ -534,7 +566,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, place: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), place: RefCell::new(None) }
     }
 }
 

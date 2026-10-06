@@ -491,7 +491,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.sent.clone());
                 out.extend(g.current.iter().cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
-                out.extend(g.reversed_walk.iter().map(|(cell, _, _, _)| Value::Bond(cell.clone())));
+                out.extend(g.reversed_walk.iter().map(|(cell, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
                     match &step.phase {
                         Phase::Arm(_, v) => out.push(v.clone()),
