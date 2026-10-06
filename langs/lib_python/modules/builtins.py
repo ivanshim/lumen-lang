@@ -914,7 +914,7 @@ class memoryview:
 # There is no object behind any of these here: aiter, anext, ascii,
 # copyright, credits, exit, help, license,
 # quit, GeneratorExit, StopAsyncIteration, BufferError,
-# MemoryError, ReferenceError, SystemError, FloatingPointError,
+# MemoryError, ReferenceError, SystemError,
 # IndentationError, TabError, and the OSError kinds
 # the operating system raises besides FileNotFoundError,
 # IsADirectoryError, NotADirectoryError and PermissionError --
@@ -951,3 +951,4 @@ NotADirectoryError = NotADirectoryError
 PermissionError = PermissionError
 ProcessLookupError = ProcessLookupError
 TimeoutError = TimeoutError
+FloatingPointError = FloatingPointError
