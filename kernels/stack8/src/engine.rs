@@ -72,7 +72,7 @@ struct Beside {
 /// program asking for a signal to be raised sets the same bit. The
 /// engine gathers the bits where one statement gives way to the next,
 /// never in the middle of one.
-static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Whether the host has been asked to note interrupts for this
 /// process: it is asked once, the first time a language that takes

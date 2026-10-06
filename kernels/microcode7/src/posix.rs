@@ -317,14 +317,46 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                     }
                 }
                 let micros = int(3)?;
-                let mut limit: libc::timeval = std::mem::zeroed();
-                if micros >= 0 { limit.tv_sec = micros / 1_000_000; limit.tv_usec = micros % 1_000_000; }
-                let when: *mut libc::timeval = if micros < 0 { std::ptr::null_mut() } else { &mut limit };
-                let found = libc::select(highest + 1, &mut read_set, &mut write_set, &mut error_set, when);
-                if found == -1 { Err(errno()) } else {
-                    let kept = |set: &libc::fd_set, row: &[i32]| Value::Vector(crate::tuples::Sequence::plain(
-                        row.iter().copied().filter(|fd| libc::FD_ISSET(*fd, set)).map(|fd| Value::Small(fd as i64)).collect()));
-                    Ok(Value::tuple(vec![kept(&read_set, &want_read), kept(&write_set, &want_write), kept(&error_set, &want_error)]))
+                let kept = |set: &libc::fd_set, row: &[i32]| Value::Vector(crate::tuples::Sequence::plain(
+                    row.iter().copied().filter(|fd| libc::FD_ISSET(*fd, set)).map(|fd| Value::Small(fd as i64)).collect()));
+                // The reference ends an interrupted call only for a signal
+                // its own check takes; anything else starts the call over
+                // against the original deadline with the time remaining,
+                // sets built fresh. A signal due here ends the wait empty
+                // so the statement edge can run what is due.
+                let moment = std::time::Instant::now();
+                let expires = if micros < 0 { None } else {
+                    moment.checked_add(std::time::Duration::from_micros(micros as u64))
+                };
+                let mut time_left = if micros < 0 { None } else { Some(micros) };
+                let nothing = || Value::tuple(vec![
+                    Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                    Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                    Value::Vector(crate::tuples::Sequence::plain(Vec::new()))]);
+                loop {
+                    let mut limit: libc::timeval = std::mem::zeroed();
+                    let when: *mut libc::timeval = match time_left {
+                        None => std::ptr::null_mut(),
+                        Some(whole) => { limit.tv_sec = whole / 1_000_000; limit.tv_usec = whole % 1_000_000; &mut limit },
+                    };
+                    let found = libc::select(highest + 1, &mut read_set, &mut write_set, &mut error_set, when);
+                    if found != -1 {
+                        break Ok(Value::tuple(vec![kept(&read_set, &want_read), kept(&write_set, &want_write), kept(&error_set, &want_error)]));
+                    }
+                    let cause = errno();
+                    if cause != libc::EINTR { break Err(cause); }
+                    if crate::exec::SIGNALS_DUE.load(std::sync::atomic::Ordering::Relaxed) != 0 { break Ok(nothing()); }
+                    if let Some(end) = expires {
+                        let left = end.saturating_duration_since(std::time::Instant::now());
+                        if left.is_zero() { break Ok(nothing()); }
+                        let mut whole = left.as_micros() as i64;
+                        if left.subsec_nanos() % 1000 != 0 { whole += 1; }
+                        time_left = Some(whole);
+                    }
+                    read_set = std::mem::zeroed(); write_set = std::mem::zeroed(); error_set = std::mem::zeroed();
+                    for (set, row) in [(&mut read_set, &want_read), (&mut write_set, &want_write), (&mut error_set, &want_error)] {
+                        for &fd in row { libc::FD_SET(fd, set); }
+                    }
                 }
             }
             "urandom" => {

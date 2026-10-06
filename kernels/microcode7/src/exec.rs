@@ -78,7 +78,7 @@ pub const KIND_LABELS: [(&str, Kind); 7] = [
 /// when such a signal comes in, and by a program asking to have one
 /// raised. The machine gathers the bits where one statement gives way
 /// to the next, never part-way through one.
-static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Whether the host has been asked to set the interrupt's own bit when
 /// it comes in: it is asked once, by the first run that watches its

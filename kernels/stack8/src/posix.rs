@@ -145,14 +145,43 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 for &fd in row { libc::FD_SET(fd, set); if fd > top { top = fd; } }
             }
             let usec = number(3)?;
-            let mut span: libc::timeval = std::mem::zeroed();
-            if usec >= 0 { span.tv_sec = usec / 1_000_000; span.tv_usec = usec % 1_000_000; }
-            let waiting = if usec < 0 { std::ptr::null_mut() } else { &mut span as *mut libc::timeval };
-            let ready = libc::select(top + 1, &mut rfds, &mut wfds, &mut efds, waiting);
-            if ready < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) } else {
-                let awake = |set: &libc::fd_set, row: &[i32]| Value::Array(crate::tuples::Items::plain(
-                    row.iter().filter(|fd| libc::FD_ISSET(**fd, set)).map(|fd| Value::Small(*fd as i64)).collect()));
-                Ok(Value::tuple(vec![awake(&rfds, &reads), awake(&wfds, &writes), awake(&efds, &extras)]))
+            let awake = |set: &libc::fd_set, row: &[i32]| Value::Array(crate::tuples::Items::plain(
+                row.iter().filter(|fd| libc::FD_ISSET(**fd, set)).map(|fd| Value::Small(*fd as i64)).collect()));
+            // An interrupted wait begins again against the same deadline
+            // with the time still left, the sets built anew each time, as
+            // the reference's does when no signal asks otherwise. A signal
+            // left pending ends the wait empty instead, so the next
+            // statement's edge can take the signal up.
+            let deadline = if usec < 0 { None } else {
+                std::time::Instant::now().checked_add(std::time::Duration::from_micros(usec as u64))
+            };
+            let mut remaining = if usec < 0 { None } else { Some(usec) };
+            let empty = || Value::tuple(vec![Value::Array(crate::tuples::Items::plain(Vec::new())),
+                Value::Array(crate::tuples::Items::plain(Vec::new())), Value::Array(crate::tuples::Items::plain(Vec::new()))]);
+            loop {
+                let mut span: libc::timeval = std::mem::zeroed();
+                let waiting = match remaining {
+                    None => std::ptr::null_mut(),
+                    Some(whole) => { span.tv_sec = whole / 1_000_000; span.tv_usec = whole % 1_000_000; &mut span as *mut libc::timeval },
+                };
+                let ready = libc::select(top + 1, &mut rfds, &mut wfds, &mut efds, waiting);
+                if ready >= 0 {
+                    break Ok(Value::tuple(vec![awake(&rfds, &reads), awake(&wfds, &writes), awake(&efds, &extras)]));
+                }
+                let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if fault != libc::EINTR { break Err(fault); }
+                if crate::engine::SIGNALS_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0 { break Ok(empty()); }
+                if let Some(limit) = deadline {
+                    let left = limit.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() { break Ok(empty()); }
+                    let mut whole = left.as_micros() as i64;
+                    if left.subsec_nanos() % 1000 != 0 { whole += 1; }
+                    remaining = Some(whole);
+                }
+                rfds = std::mem::zeroed(); wfds = std::mem::zeroed(); efds = std::mem::zeroed();
+                for (set, row) in [(&mut rfds, &reads), (&mut wfds, &writes), (&mut efds, &extras)] {
+                    for &fd in row { libc::FD_SET(fd, set); }
+                }
             }
         },
         "read" => {

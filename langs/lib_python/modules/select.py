@@ -1,5 +1,6 @@
 # Native select adapter; CPython v3.14.8 Modules/selectmodule.c.
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
+import math as _math
 from posix import _call as _posix_call
 
 error = OSError
@@ -8,20 +9,27 @@ FD_SETSIZE = 1024
 
 
 def _as_fd(item):
+    # PyObject_AsFileDescriptor: an int (a bool first warns), or whatever
+    # the object's own fileno attribute says when called with no argument.
     if isinstance(item, int):
+        if isinstance(item, bool):
+            import warnings
+            warnings.warn('bool is used as a file descriptor', RuntimeWarning, stacklevel=2)
         fd = item
     else:
-        fileno = getattr(type(item), 'fileno', None)
-        if fileno is None:
+        meth = getattr(item, 'fileno', None)
+        if meth is None:
             raise TypeError('argument must be an int, or have a fileno() method.')
-        fd = fileno(item)
+        fd = meth()
         if not isinstance(fd, int):
             raise TypeError('fileno() returned a non-integer')
+    if fd > 2147483647 or fd < -2147483648:
+        raise OverflowError('Python int too large to convert to C int')
     if fd < 0:
         raise ValueError('file descriptor cannot be a negative integer (%d)' % (fd,))
     if fd >= FD_SETSIZE:
         raise ValueError('filedescriptor out of range in select()')
-    return fd
+    return int(fd)
 
 
 class _Select:
@@ -35,7 +43,9 @@ class _Select:
         elif isinstance(timeout, (int, float)):
             if timeout < 0:
                 raise ValueError('timeout must be non-negative')
-            usec = int(timeout * 1000000)
+            # _PyTime_FromSecondsObject with _PyTime_ROUND_TIMEOUT, which is
+            # ROUND_UP: a positive sub-microsecond timeout still waits.
+            usec = (_math.ceil(timeout * 1_000_000_000) + 999) // 1000
         else:
             raise TypeError('timeout must be a float or None')
         waiting = []
