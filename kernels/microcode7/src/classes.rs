@@ -53,7 +53,21 @@ impl<'a> Machine<'a> {
             let names = self.table.strings("ext.stmt.class.special");
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
-        if word == "Union" { protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new()))); }
+        if self.table.flag("ext.stmt.type_parameters") && word == "TypeVarTuple" {
+            protocols.push((String::from("__iter__"), Self::wrap(155, vec![])));
+            protocols.push((String::from("__typing_subst__"), Self::wrap(156, Vec::new())));
+        }
+        if self.table.flag("ext.stmt.type_parameters") && ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word) {
+            protocols.push((String::from("__or__"), Self::wrap(157, vec![Value::Small(0)])));
+            protocols.push((String::from("__ror__"), Self::wrap(157, vec![Value::Small(1)])));
+        }
+        if word == "Union" {
+            protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
+            if self.table.flag("ext.stmt.type_parameters") {
+                let subscription = Self::wrap(77, vec![Value::text("#union")]);
+                protocols.push(("__class_getitem__".to_owned(), Self::wrap(5, vec![subscription])));
+            }
+        }
         if word == "GenericAlias" {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
@@ -705,7 +719,9 @@ impl<'a> Machine<'a> {
         Value::Blueprint(class)
     }
     fn storage_ancestor(&self,blueprint:&Rc<Blueprint>)->Rc<Blueprint> {
-        if Self::native_word(blueprint).is_some()||self.builds_classes(blueprint){return blueprint.clone();}
+        let native = Self::native_word(blueprint);
+        let empty_generic = self.table.flag("ext.stmt.type_parameters") && native.as_deref() == Some("Generic");
+        if native.is_some() && !empty_generic || self.builds_classes(blueprint) { return blueprint.clone(); }
         if blueprint.has_slot_storage {
             return blueprint.clone();
         }
@@ -774,7 +790,7 @@ impl<'a> Machine<'a> {
             ranks.push(next);
         }
         // One thing cannot keep worths of two native kinds.
-        let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
+        let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).filter(|word| !self.table.flag("ext.stmt.type_parameters") || word != "Generic").collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
         let primary=self.primary_parent(&parents)?;
@@ -1293,10 +1309,43 @@ impl<'a> Machine<'a> {
                         }
                         self.apply_class_member(values[2].clone(), Vec::new())
                     }
+                    77 if kept.first().is_some_and(|item| item.bare() == "#union") && values.len() == 2 => {
+                        let arguments = match values[1].settled() { Value::Tuple(items) => items.to_vec(), item => vec![item] };
+                        if arguments.len() == 0 { return Err(String::from("TypeError: Cannot take a Union of no types.").into()); }
+                        let module = self.load_namespace("typing")?;
+                        let checker = self.read_class_member(module, "_type_check", false)?;
+                        let mut checked = Vec::new();
+                        for argument in arguments {
+                            let item = self.apply_class_member(checker.clone(), vec![argument, Value::text("Union[arg, ...]: each arg must be a type.")])?;
+                            checked.push(item);
+                        }
+                        let mut answer = checked.remove(0);
+                        for item in checked { answer = self.combined_types(&[answer, item]); }
+                        Ok(answer)
+                    }
                     77 => match values.as_slice() {
                         [owner @ Value::Blueprint(_), _] if self.table.has_any("ext.stmt.type_params.open") => Ok(owner.clone()),
                         _ => Err(self.class_unready()),
                     },
+                    157 if values.len() == 2 => {
+                        let is_variable = matches!(values[0].settled(), Value::Thing(ref item) if Self::native_word(&item.blueprint()).as_deref() == Some("TypeVar"));
+                        if matches!(kept.first(), Some(Value::Small(1))) { values.reverse(); }
+                        if is_variable {
+                            let namespace = self.load_namespace("typing")?;
+                            let factory = self.read_class_member(namespace, "Union", false)?;
+                            return Ok(self.prim(Prim::At, "", &[factory, Value::tuple(values)])?);
+                        }
+                        let valid = values.iter().all(|value| self.union_member(value));
+                        if !valid { Ok(Value::Refusal(Rc::from("NotImplemented"))) }
+                        else { Ok(self.combined_types(&values)) }
+                    }
+                    156 => Err(String::from("TypeError: Substitution of bare TypeVarTuple is not supported").into()),
+                    155 if values.len() == 1 => {
+                        let typing = self.load_namespace("typing")?;
+                        let form = self.read_class_member(typing, "Unpack", false)?;
+                        let alias = self.prim(Prim::At, "", &[form, values[0].clone()])?;
+                        self.make_iterator(Value::tuple(vec![alias]))
+                    }
                     154 => {
                         let module = self.load_namespace("typing")?;
                         let function = self.read_class_member(module, &kept[0].bare(), false)?;
@@ -2209,7 +2258,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(133 | 60 | 120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133 | 60 | 120 | 123 | 125 | 127 | 155 | 156 | 157, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -3026,6 +3075,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
             }
             if Self::names_a_kind(op) {
+                if self.table.flag("ext.stmt.type_parameters") && key == "__type_params__" { return Ok(Value::tuple(Vec::new())); }
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if !key.is_empty() && key == self.detail("bases") {
                     let ancestor = if word.as_ref() == "bool" { self.kind_by_word("int") }
@@ -3121,6 +3171,10 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Blueprint(b)=&value {
+            if key == "__type_params__" && self.table.flag("ext.stmt.type_parameters") {
+                let own = Self::own_entry(b, key);
+                return Ok(own.unwrap_or_else(|| Value::tuple(Vec::new())));
+            }
             if key == "__weakref__" && self.admits_weak(b) {
                 return Ok(Self::wrap(32, vec![Value::text(key), Value::Blueprint(b.clone())]));
             }
@@ -4377,12 +4431,12 @@ impl<'a> Machine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool{
         matches!(value,Value::Nil)
             ||self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).is_some_and(|word| ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word.as_str())))
     }
     /// A kind or union supplies the operator; Nil by itself does not.
     pub(super) fn union_anchor(&self,value:&Value)->bool{
         self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).is_some_and(|word| ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word.as_str())))
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
@@ -4620,7 +4674,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134|155|156|157))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

@@ -142,78 +142,9 @@ def _kind_name(kind):
         return repr(kind)
 
 
-# A kind named with the kinds it was given, as list[int] is.
-class GenericAlias:
-    def __init__(self, origin, args):
-        self.__origin__ = origin
-        if isinstance(args, tuple):
-            self.__args__ = args
-        else:
-            self.__args__ = (args,)
-        parameters = []
-        for arg in self.__args__:
-            found = (arg,) if type(arg).__name__ in ('TypeVar', 'ParamSpec', 'TypeVarTuple') else getattr(arg, '__parameters__', ())
-            for parameter in found:
-                if parameter not in parameters:
-                    parameters.append(parameter)
-        self.__parameters__ = tuple(parameters)
-        self.__unpacked__ = False
-
-    def __call__(self, *args, **keywords):
-        return self.__origin__(*args, **keywords)
-
-    def __eq__(self, other):
-        if isinstance(other, GenericAlias):
-            return self.__origin__ is other.__origin__ and self.__args__ == other.__args__
-        return NotImplemented
-
-    def __repr__(self):
-        shown = []
-        for given in self.__args__:
-            shown.append(_kind_name(given))
-        return _kind_name(self.__origin__) + '[' + ', '.join(shown) + ']'
-
-    def __iter__(self):
-        return _GenericAliasIterator(self)
-
-
-class _UnpackedGenericAlias:
-    def __init__(self, alias):
-        self.__origin__ = alias.__origin__
-        self.__args__ = alias.__args__
-        self.__unpacked__ = True
-        self._alias = alias
-
-    def __repr__(self):
-        return '*' + repr(self._alias)
-
-    def __eq__(self, other):
-        if isinstance(other, _UnpackedGenericAlias):
-            return self._alias == other._alias
-        return NotImplemented
-
-
-class _GenericAliasIterator:
-    def __init__(self, alias):
-        self.alias = alias
-        self.done = False
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self.done:
-            raise StopIteration
-        self.done = True
-        return _UnpackedGenericAlias(self.alias)
-
-    def __reduce__(self):
-        import builtins
-        factory = builtins.__dict__['iter']
-        if self.done:
-            return (factory, ((),))
-        return (factory, (self.alias,))
-
+# Generic aliases use the runtime's type, including iterable unpacking,
+# substitution, and identity shared with builtin subscriptions.
+GenericAlias = type(list[int])
 
 
 NoneType = type(None)
@@ -246,8 +177,6 @@ try:
 except TypeError as _exc:
     TracebackType = type(_exc.__traceback__)
     FrameType = type(_exc.__traceback__.tb_frame)
-class UnionType:
-    def __new__(cls, *args, **kwargs):
-        raise TypeError("cannot create 'types.UnionType' instances")
+UnionType = type(int | str)
 
 __all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']

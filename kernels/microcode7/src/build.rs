@@ -312,6 +312,7 @@ pub struct Builder<'a> {
     generic_class_parameters: Vec<String>,
     annotations_as_strings: bool,
     annotation_sites: Vec<(String, usize)>,
+    unpack_annotation_starts: std::collections::HashSet<usize>,
     module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
     declarations: Vec<(usize, String, bool)>,
@@ -589,7 +590,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1901,6 +1902,7 @@ impl<'a> Builder<'a> {
 
     fn annotation_spelling(&self, first: usize, last: usize) -> String {
         let mut pieces: Vec<String> = Vec::new();
+        let mut unpack_operand = false;
         for word in &self.tokens[first..last] {
             if matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close) { continue; }
             let spelling = match word.shape {
@@ -1910,7 +1912,9 @@ impl<'a> Builder<'a> {
             let left = pieces.last().map(String::as_str).unwrap_or("");
             let gap = !pieces.is_empty() && !matches!(spelling.as_str(), "." | "," | ":" | ")" | "]" | "}" | "(" | "[")
                 && !matches!(left, "." | "(" | "[" | "{");
-            if gap { pieces.push(String::from(" ")); }
+            let next_is_operand = spelling == "*" && ["", "[", "(", ","].contains(&left);
+            if gap && !unpack_operand { pieces.push(String::from(" ")); }
+            unpack_operand = next_is_operand;
             pieces.push(spelling);
         }
         pieces.concat()
@@ -1932,6 +1936,8 @@ impl<'a> Builder<'a> {
             self.annotation_owner = Some((class, entries));
         }
         let module = sites.iter().any(|site| self.module_site_flags.contains_key(&site.1));
+        let deferred_coroutine = self.coroutine_next;
+        self.coroutine_next = false;
         let made = self.routine(&title, Holds::Every, Traps::Yields, vec!["format".to_owned()], 1, |b| {
             let map = b.gensym("module_annotations");
             let mut pairs = Vec::new();
@@ -1946,7 +1952,23 @@ impl<'a> Builder<'a> {
                 b.pos = at;
                 let outer = b.annotation_lookup;
                 b.annotation_lookup = true;
-                let expression = b.expr_at(0, false)?;
+                let star = b.table.flag("ext.stmt.type_parameters") && b.on_any("ext.syntax.array.spread");
+                if star {
+                    if !b.unpack_annotation_starts.contains(&at) { return Err(String::from("SyntaxError: invalid syntax")); }
+                    b.advance();
+                }
+                let precedence = if star { b.table.dyadic.get("|").map_or(0, |operator| operator.level) } else { 0 };
+                if star && (b.on_any("ext.op.lambda") || b.on_any("op.not")) {
+                    return Err(String::from("SyntaxError: invalid syntax"));
+                }
+                let mut expression = b.expr_at(precedence, false)?;
+                if star {
+                    if !b.on_any("syntax.call.close") && !b.on_any("syntax.call.separator") {
+                        return Err(String::from("SyntaxError: invalid syntax"));
+                    }
+                    let row = prim_call(Prim::Partition(1, None), vec![expression]);
+                    expression = prim_call(Prim::Apart, vec![row, constant(Value::Small(0))]);
+                }
                 b.annotation_lookup = outer;
                 let expression = if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(at, b.pos))) } else { expression };
                 if module {
@@ -1963,6 +1985,7 @@ impl<'a> Builder<'a> {
             Ok(if module { pairs.push(b.read(&map.ident)); sequence(pairs) } else { prim_call(Prim::MakeMap, pairs) })
         });
         self.annotation_owner = outer_owner;
+        self.coroutine_next = deferred_coroutine;
         self.pos = resume;
         self.taking = taking;
         self.formal_kinds = kinds;
@@ -6967,6 +6990,10 @@ impl<'a> Builder<'a> {
                         && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
                         return Err("SyntaxError: invalid syntax".to_owned());
                     }
+                    if table.flag("ext.stmt.type_parameters") && self.on_any("ext.syntax.array.spread") && manner != 'v' {
+                        return Err(String::from("SyntaxError: invalid syntax"));
+                    }
+                    if manner == 'v' { self.unpack_annotation_starts.insert(self.pos); }
                     self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().spelling()) {
@@ -10590,7 +10617,7 @@ impl<'a> Builder<'a> {
     }
 
     fn bracket_part(&mut self, close: &str, comma: Option<&str>) -> Res<Form> {
-        if self.on_any("ext.syntax.array.spread") {
+        if !self.table.flag("ext.stmt.type_parameters") && self.on_any("ext.syntax.array.spread") {
             self.advance();
             self.expr(0)?;
             return Ok(self.scope_unrun("ext.op.index.spread.unsupported"));
@@ -10656,25 +10683,33 @@ impl<'a> Builder<'a> {
             if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
                 let next = self.glance(1).lexeme.as_str();
                 let incomplete = next == close || next == ":";
-                let slice_in_group = next == "(" && self.tokens[self.pos + 2..].iter()
-                    .take_while(|token| token.lexeme != ")")
-                    .any(|token| token.lexeme == ":");
-                if incomplete || slice_in_group { return Err(String::from("SyntaxError: Invalid star expression")); }
+                if incomplete { return Err(String::from("SyntaxError: Invalid star expression")); }
             }
             let separator = self.table.single("syntax.call.separator");
-            let mut keys = vec![self.bracket_part(close, separator)?];
-            let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));
-            if several {
-                while separator.map_or(false, |word| self.sign(word)) {
-                    self.advance();
-                    if self.sign(close) { break; }
-                    keys.push(self.bracket_part(close, separator)?);
-                }
+            let mut entries = Vec::new();
+            let mut tuple_key = false;
+            loop {
+                let unpack = self.table.flag("ext.stmt.type_parameters") && self.on_any("ext.syntax.array.spread");
+                if unpack { self.advance(); }
+                let term = if unpack { self.expr(0)? } else { self.bracket_part(close, separator)? };
+                if unpack && self.on_any("ext.op.index.slice") { return Err(String::from("SyntaxError: invalid syntax")); }
+                entries.push((term, unpack));
+                if !self.table.has_any("ext.op.index.slice") || !separator.is_some_and(|word| self.sign(word)) { break; }
+                tuple_key = true;
+                self.advance();
+                if self.sign(close) { break; }
             }
-            let key = match (several, self.table.has_any("ext.builtin.slice")) {
-                (true, true) => prim_call(Prim::MakeTuple, keys),
-                (true, false) => prim_call(Prim::SliceRefused, keys),
-                _ => keys.pop().expect("one key"),
+            let key = if entries.iter().any(|entry| entry.1) {
+                let mut row = prim_call(Prim::MakeArray, Vec::new());
+                for (term, unpack) in entries {
+                    row = prim_call(Prim::ExtendLiteral(false, unpack), vec![row, term]);
+                }
+                prim_call(Prim::Tupling, vec![row])
+            } else {
+                let mut keys: Vec<Form> = entries.into_iter().map(|entry| entry.0).collect();
+                if tuple_key {
+                    prim_call(if self.table.has_any("ext.builtin.slice") { Prim::MakeTuple } else { Prim::SliceRefused }, keys)
+                } else { keys.pop().expect("one key") }
             };
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);

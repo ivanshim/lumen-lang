@@ -267,7 +267,19 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 result.push(token.clone());
             }
             _ => {
-                if token.lexeme == "not" && last.is_some_and(|earlier| earlier.shape == Shape::Sign && matches!(earlier.lexeme.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^")) {
+                // A star opening a subscript item takes a full expression,
+                // so the following not is unary rather than an infix error.
+                let subscript_unpack = token.lexeme == "not" && last.is_some_and(|part| part.lexeme == "*")
+                    && brackets.last().is_some_and(|open| {
+                        if open.lexeme != "[" { return false; }
+                        let before_star = tokens[..index].iter().rev().filter(|part| !matches!(part.shape, Shape::Lead | Shape::LineEnd)).nth(1);
+                        if !before_star.is_some_and(|part| matches!(part.lexeme.as_str(), "[" | ",")) { return false; }
+                        let at = tokens.iter().position(|part| std::ptr::eq(part, *open)).unwrap();
+                        tokens[..at].iter().rev().find(|part| !matches!(part.shape, Shape::Lead | Shape::LineEnd)).is_some_and(|part|
+                            part.shape == Shape::Quote || matches!(part.lexeme.as_str(), ")" | "]" | "}")
+                            || part.shape == Shape::Instr && !matches!(part.lexeme.as_str(), "return" | "yield" | "in" | "if" | "else" | "for" | "lambda" | "not" | "and" | "or" | "await"))
+                    });
+                if token.lexeme == "not" && !subscript_unpack && last.is_some_and(|earlier| earlier.shape == Shape::Sign && matches!(earlier.lexeme.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^")) {
                     return Err(("SyntaxError: 'not' after an operator must be parenthesized".into(), token.row, token.column));
                 }
                 if token.shape == Shape::Sign {

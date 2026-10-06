@@ -39,7 +39,19 @@ impl<'a> Engine<'a> {
                 if let Some(name) = self.lang.class_special.get(place) { hooks.push((name.clone(), Self::adapter(119, vec![Value::Small(mode)]))); }
             }
         }
+        if word == "TypeVarTuple" && self.lang.type_parameters {
+            hooks.push(("__iter__".into(), Self::adapter(155, Vec::new())));
+            hooks.push(("__typing_subst__".into(), Self::adapter(156, Vec::new())));
+        }
+        if self.lang.type_parameters && matches!(word, "Union" | "GenericAlias" | "TypeVar" | "TypeAliasType") {
+            for (method, reverse) in [("__or__", false), ("__ror__", true)] {
+                hooks.push((method.into(), Self::adapter(157, vec![Value::Flag(reverse)])));
+            }
+        }
         if word == "Union" {
+            if self.lang.type_parameters {
+                hooks.push(("__class_getitem__".into(), Self::adapter(5, vec![Self::adapter(77, vec![Value::text("#union")])])));
+            }
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
         }
         if word == "GenericAlias" {
@@ -587,7 +599,8 @@ impl<'a> Engine<'a> {
         Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
-        if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
+        let has_native_storage = Self::own_kind(class).is_some_and(|kind| kind != "Generic" || !self.lang.type_parameters);
+        if has_native_storage || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
         class.base.as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -641,7 +654,7 @@ impl<'a> Engine<'a> {
             lineage.push(head);
         }
         // Two builtin kinds cannot both be kept in one thing.
-        let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
+        let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).filter(|kind| kind != "Generic" || !self.lang.type_parameters).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
         let primary = self.layout_parent(&bases)?;
@@ -1277,6 +1290,29 @@ impl<'a> Engine<'a> {
                 }
                 77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
                     Ok(args.remove(0))
+                }
+                157 if args.len() == 2 => {
+                    let variable = matches!(args[0].contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVar"));
+                    if w.1[0].is_true() { args.swap(0, 1); }
+                    if variable {
+                        let typing = self.import_module("typing")?;
+                        let union = self.class_get(typing, "Union", false)?;
+                        self.data.extend([union, Value::tuple(args)]);
+                        self.perform(&Action::At, 2)?;
+                        return self.drop_top().map_err(Fault::Note);
+                    }
+                    if self.union_member(&args[0]) && self.union_member(&args[1]) {
+                        Ok(self.join_types(&args[0], &args[1]))
+                    } else { Ok(Value::Declined(Rc::from("NotImplemented"))) }
+                }
+                156 => Err("TypeError: Substitution of bare TypeVarTuple is not supported".into()),
+                155 if args.len() == 1 => {
+                    let module = self.import_module("typing")?;
+                    let unpack = self.class_get(module, "Unpack", false)?;
+                    self.data.extend([unpack, args.remove(0)]);
+                    self.perform(&Action::At, 2)?;
+                    let element = self.drop_top()?;
+                    Ok(self.core_iterator(&Value::tuple(vec![element]))?)
                 }
                 154 => {
                     let module = self.import_module("typing")?;
@@ -2094,7 +2130,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 155 | 156 | 157 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -2466,6 +2502,7 @@ impl<'a> Engine<'a> {
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
             Value::Native(op, word) if Self::kind_builtin(op) => {
+                if self.lang.type_parameters && name == "__type_params__" { return Ok(Value::tuple(Vec::new())); }
                 if *op == Builtin::AsReal && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
                 }
@@ -2514,6 +2551,9 @@ impl<'a> Engine<'a> {
                 if let Some(inherited) = self.root_member(name, None) { return Ok(inherited); }
             }
             Value::Class(c) => {
+                if name == "__type_params__" && self.lang.type_parameters {
+                    return Ok(Self::own_class_value(c, name).unwrap_or_else(|| Value::tuple(Vec::new())));
+                }
                 if name == "__weakref__" && self.weak_layout(c) {
                     return Ok(Self::adapter(16, vec![Value::text(name), Value::Class(c.clone())]));
                 }
@@ -4082,13 +4122,13 @@ impl<'a> Engine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool {
         matches!(value,Value::Null)
             ||self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"))
+            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "TypeAliasType")))
     }
     /// At least one operand must provide the union operator. None alone
     /// supplies no such operator.
     pub(super) fn union_anchor(&self,value:&Value)->bool {
         self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"))
+            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "TypeAliasType")))
     }
     /// The kind builtin read as a value: what the kind of a kind is.
     pub(super) fn kind_maker_word(&self)->Value {
@@ -4338,7 +4378,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64|155..=157))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
