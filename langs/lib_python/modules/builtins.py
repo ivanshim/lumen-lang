@@ -172,6 +172,23 @@ setattr(__load_module('builtins'), 'bytearray', bytearray)
 
 FileNotFoundError = FileNotFoundError
 IsADirectoryError = IsADirectoryError
+BlockingIOError = BlockingIOError
+ChildProcessError = ChildProcessError
+ConnectionError = ConnectionError
+BrokenPipeError = BrokenPipeError
+ConnectionAbortedError = ConnectionAbortedError
+ConnectionRefusedError = ConnectionRefusedError
+ConnectionResetError = ConnectionResetError
+FileExistsError = FileExistsError
+InterruptedError = InterruptedError
+NotADirectoryError = NotADirectoryError
+PermissionError = PermissionError
+ProcessLookupError = ProcessLookupError
+TimeoutError = TimeoutError
+
+# The older spellings of OSError are the same class under other names.
+EnvironmentError = OSError
+IOError = OSError
 
 # A file read from or written to the host's own disk. What backs it is
 # whichever whole-file primitive the kernel carries -- a read brings
@@ -179,110 +196,64 @@ IsADirectoryError = IsADirectoryError
 # out whole, at close (or at an explicit flush) -- so nothing here
 # streams, but everything the two reference tests that need open() ask
 # of a file, this file answers.
-
-def _slurp_descriptor(descriptor):
-    import posix
-    pieces = []
-    while True:
-        piece = posix.read(descriptor, 65536)
-        if not piece:
-            break
-        pieces.append(piece)
-    return b''.join(pieces)
-
-
-def _spill_descriptor(descriptor, data):
-    import posix
-    total = 0
-    while total < len(data):
-        written = posix.write(descriptor, data[total:total + 65536])
-        if not written:
-            break
-        total += written
-    return total
-
-
 class _HostFile:
-    def __init__(self, name, mode, encoding=None, errors=None, newline=None, closefd=True):
+    def __init__(self, name, mode, encoding=None, errors=None):
         self.name = name
         self.mode = mode
         self._binary = 'b' in mode
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
         self.errors = errors if errors is not None else 'strict'
-        self.newline = newline
-        # Text opened with a named encoding keeps the canonical text
-        # wrapper over the bytes just read, so its errors and newline
-        # rules are the reference's own and its decoding stays
-        # incremental. Text opened without one keeps the native read
-        # the other callers already answer, and the binary side stays a
-        # plain buffer.
-        self._canonical = (not self._binary) and (encoding is not None)
         self.closed = False
         self._descriptor = None
         self._pos = 0
         self._dirty = False
+        # Line-at-a-time reading is what both the reference tests and
+        # the probe lean on hardest, so the whole of what is left to
+        # read is split into lines once, the first time a line is
+        # asked for, rather than this file being rescanned from the
+        # front for every `\n` -- letting a many-line file be walked
+        # in time proportional to its own length rather than its
+        # square. `read` and `seek` empty this cache, since either may
+        # move `_pos` somewhere the cache does not account for; the
+        # next line asked for after either then rebuilds it.
         self._lines = None
         self._lines_at = 0
         self._lines_pos = 0
-        self._text = None
-        self._from_fd = isinstance(name, int)
-        self._closefd = closefd
         reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
         writing = 'w' in mode or 'x' in mode
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
-        empty = b'' if (self._binary or self._canonical) else ''
-        if self._from_fd:
-            if writing:
-                self._keep(empty)
-            else:
-                self._keep(self._collect())
-        elif writing:
+        if writing:
             import posix
             flags = posix.O_WRONLY | posix.O_CREAT
             flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
             fd = posix.open(name, flags, 0o666)
             posix.close(fd)
+        if writing:
+            self._dirty = True
             if _host_file_exists(name) and _host_file_kind(name) == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            self._keep(empty)
+            self._buffer = b'' if self._binary else ''
+        elif appending:
+            if _host_file_exists(name):
+                if _host_file_kind(name) == 2:
+                    raise IsADirectoryError(21, 'Is a directory', name)
+                brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
+                self._buffer = brought if brought is not False else b'' if self._binary else ''
+            else:
+                self._buffer = b'' if self._binary else ''
+            self._pos = len(self._buffer)
         else:
             kind = _host_file_kind(name)
             if kind == 0:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            self._keep(self._collect())
-        if appending:
-            if self._text is not None:
-                self._text.seek(0, 2)
-            else:
-                self._pos = len(self._buffer)
-
-    def _collect(self):
-        if self._binary or self._canonical:
-            if self._from_fd:
-                return _slurp_descriptor(self.name)
-            data = _host_file_read_bytes(self.name)
-            if data is False:
-                raise OSError(5, 'Input/output error', self.name)
-            return data
-        if self._from_fd:
-            return _slurp_descriptor(self.name).decode('utf-8', 'replace')
-        text = _host_file_read(self.name)
-        if text is False:
-            raise OSError(5, 'Input/output error', self.name)
-        return text
-
-    def _keep(self, value):
-        if not self._canonical:
-            self._buffer = value
-            return
-        import _pyio
-        self._buffer = None
-        self._text = _pyio.TextIOWrapper(
-            _pyio.BytesIO(value), self.encoding, self.errors, self.newline)
+            brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
+            if brought is False:
+                raise OSError(5, 'Input/output error', name)
+            self._buffer = brought
 
     def _open(self):
         if self.closed:
@@ -294,6 +265,21 @@ class _HostFile:
     def writable(self):
         return 'w' in self.mode or 'x' in self.mode or 'a' in self.mode or '+' in self.mode
 
+    def _read_host(self, name):
+        if not self._binary:
+            return _host_file_read(name)
+        import posix
+        fd = posix.open(name, posix.O_RDONLY)
+        try:
+            data = b''
+            while True:
+                piece = posix.read(fd, 65536)
+                if not piece:
+                    return data
+                data += piece
+        finally:
+            posix.close(fd)
+
     def _carried(self, text):
         return (text if isinstance(text, bytes) else text.encode('utf-8')) if self._binary else text
 
@@ -301,14 +287,12 @@ class _HostFile:
         self._open()
         if not self.readable():
             raise OSError('File not open for reading')
-        if self._text is not None:
-            return self._text.read(size)
         if size is None or size < 0:
             size = len(self._buffer) - self._pos
         value = self._buffer[self._pos:self._pos + size]
         self._pos += len(value)
         self._lines = None
-        return value
+        return self._carried(value)
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
@@ -324,8 +308,6 @@ class _HostFile:
 
     def readline(self, size=-1):
         self._open()
-        if self._text is not None:
-            return self._text.readline(size)
         if size is not None and size >= 0:
             start = self._pos
             limit = min(len(self._buffer), start + size)
@@ -345,8 +327,6 @@ class _HostFile:
 
     def readlines(self, hint=-1):
         self._open()
-        if self._text is not None:
-            return self._text.readlines(hint)
         if hint is None or hint < 0:
             self._ensure_lines()
             remaining = self._lines[self._lines_at:]
@@ -381,18 +361,10 @@ class _HostFile:
         self._open()
         if not self.writable():
             raise ValueError('File not open for writing')
-        if self._text is not None:
-            if not isinstance(data, str):
-                raise TypeError('write() argument must be str, not ' + type(data).__name__)
-            self._dirty = True
-            return self._text.write(data)
-        if not self._binary:
-            if not isinstance(data, str):
-                raise TypeError('write() argument must be str, not ' + type(data).__name__)
-        else:
-            if not isinstance(data, (bytes, bytearray)):
-                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
-            data = bytes(data)
+        if self._binary:
+            data = memoryview(data).tobytes()
+        elif not isinstance(data, str):
+            raise TypeError('write() argument must be str, not ' + type(data).__name__)
         self._buffer = self._buffer[:self._pos] + data + self._buffer[self._pos + len(data):]
         self._pos += len(data)
         self._dirty = True
@@ -403,71 +375,47 @@ class _HostFile:
         for line in lines:
             self.write(line)
 
-    def _spill_bytes(self, data):
-        if self._from_fd:
-            import posix
-            posix.lseek(self.name, 0, 0)
-            _spill_descriptor(self.name, data)
-            posix.ftruncate(self.name, len(data))
-        else:
-            import posix
-            descriptor = posix.open(self.name, posix.O_WRONLY | posix.O_CREAT | posix.O_TRUNC, 0o666)
-            try:
-                _spill_descriptor(descriptor, data)
-            finally:
-                posix.close(descriptor)
-
     def flush(self):
         self._open()
-        if not self._dirty:
-            return
-        if self._text is not None:
-            self._text.flush()
-            self._spill_bytes(bytes(self._text.buffer.getvalue()))
-        elif self._binary:
-            self._spill_bytes(bytes(self._buffer))
-        elif self._from_fd:
-            self._spill_bytes(self._buffer.encode(self.encoding, self.errors))
-        elif _host_file_write(self.name, self._buffer) is False:
-            raise FileNotFoundError(2, 'No such file or directory', self.name)
-        self._dirty = False
+        if self._dirty:
+            if self._binary:
+                import posix
+                descriptor = posix.open(self.name, posix.O_WRONLY | posix.O_CREAT | posix.O_TRUNC, 0o666)
+                try:
+                    pending = self._buffer
+                    while pending:
+                        written = posix.write(descriptor, pending)
+                        pending = pending[written:]
+                    wrote = len(self._buffer)
+                finally:
+                    posix.close(descriptor)
+            else:
+                wrote = _host_file_write(self.name, self._buffer)
+            if wrote is False:
+                raise FileNotFoundError(2, 'No such file or directory', self.name)
+            self._dirty = False
 
     def fileno(self):
         self._open()
         self.flush()
-        if self._from_fd:
-            return self.name
         import posix
         if self._descriptor is None:
             flags = posix.O_RDWR if '+' in self.mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
             self._descriptor = posix.open(self.name, flags)
-        if self._text is not None:
-            position = self._text.buffer.tell()
-        elif self._binary:
-            position = self._pos
-        else:
-            position = len(self._buffer[:self._pos].encode(self.encoding, self.errors))
+        position = self._pos if self._binary else len(self._buffer[:self._pos].encode(self.encoding, self.errors))
         posix.lseek(self._descriptor, position, 0)
         return self._descriptor
 
     def close(self):
         if self.closed:
             return
-        try:
-            if self.writable():
-                self.flush()
-        finally:
-            if self._from_fd and self._closefd:
-                import posix
-                try:
-                    posix.close(self.name)
-                except OSError:
-                    pass
-            if self._descriptor is not None:
-                import posix
-                posix.close(self._descriptor)
-                self._descriptor = None
-            self.closed = True
+        if self.writable():
+            self.flush()
+        if self._descriptor is not None:
+            import posix
+            posix.close(self._descriptor)
+            self._descriptor = None
+        self.closed = True
 
     def __enter__(self):
         self._open()
@@ -479,8 +427,6 @@ class _HostFile:
 
     def tell(self):
         self._open()
-        if self._text is not None:
-            return self._text.tell()
         return self._pos
 
     def seekable(self):
@@ -488,8 +434,6 @@ class _HostFile:
 
     def seek(self, offset, whence=0):
         self._open()
-        if self._text is not None:
-            return self._text.seek(offset, whence)
         if whence == 1:
             offset += self._pos
         elif whence == 2:
@@ -499,6 +443,7 @@ class _HostFile:
 
     def __repr__(self):
         return "<_io.TextIOWrapper name='" + self.name + "' mode='" + self.mode + "'>"
+
 
 def breakpoint(*args, **kws):
     import sys
@@ -510,29 +455,32 @@ def breakpoint(*args, **kws):
 
 
 def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    if isinstance(file, int) or opener is not None:
+        import _pyio
+        return _pyio.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
+    import os
+    file = os.fspath(file)
+    if isinstance(file, bytes):
+        file = os.fsdecode(file)
+    if not closefd:
+        raise ValueError('Cannot use closefd=False with file name')
     # A null byte inside the name is refused before the name is looked
     # at any further, the way the reference refuses it, whatever the
     # mode.
-    if not isinstance(file, int):
-        if not isinstance(file, (str, bytes, bytearray)) and hasattr(type(file), '__fspath__'):
-            file = type(file).__fspath__(file)
-        if isinstance(file, (bytes, bytearray)) and b'\x00' in bytes(file):
-            raise ValueError('embedded null byte')
-        if not isinstance(file, str):
-            raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
-        if '\x00' in file:
-            raise ValueError('embedded null byte')
+    if isinstance(file, (bytes, bytearray)) and b'\x00' in bytes(file):
+        raise ValueError('embedded null byte')
+    if not isinstance(file, str):
+        raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
+    if '\x00' in file:
+        raise ValueError('embedded null byte')
     for letter in mode:
         if letter not in 'rwaxb+t':
             raise ValueError("invalid mode: '" + mode + "'")
-    if 'b' in mode:
-        if encoding is not None:
-            raise ValueError("binary mode doesn't take an encoding argument")
-        if errors is not None:
-            raise ValueError("binary mode doesn't take an errors argument")
-        if newline is not None:
-            raise ValueError("binary mode doesn't take a newline argument")
-    return _HostFile(file, mode, encoding, errors, newline, closefd)
+    # A binary stream takes no newline, refused the way the reference
+    # refuses it before the file is ever made.
+    if newline is not None and 'b' in mode:
+        raise ValueError("binary mode doesn't take a newline argument")
+    return _HostFile(file, mode, encoding, errors)
 
 
 def open(*args, **kwargs):
@@ -574,14 +522,14 @@ class memoryview:
             self._shape = object._shape
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
-            self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
+            self._offsets = range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
             self._shape = (len(self._offsets),)
         elif isinstance(object, array):
             self._source = object
-            self._offsets = list(range(0, len(object._buffer), object.itemsize))
+            self._offsets = range(0, len(object._buffer), object.itemsize)
             self._format = "w" if object.typecode in "uw" else object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
@@ -627,6 +575,16 @@ class memoryview:
         return self._itemsize
 
     @property
+    def strides(self):
+        self._check()
+        stride = self._offsets.step if isinstance(self._offsets, range) else self._offsets[1] - self._offsets[0] if len(self._offsets) > 1 else self._itemsize
+        result = []
+        for length in reversed(self._shape):
+            result.insert(0, stride)
+            stride *= length
+        return tuple(result)
+
+    @property
     def readonly(self):
         self._check()
         return self._readonly
@@ -634,6 +592,8 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
+        if isinstance(self._offsets, range):
+            return len(self._offsets) == 1 or self._offsets.step == self._itemsize
         if not self._offsets:
             return True
         return all(at == self._offsets[0] + i * self._itemsize for i, at in enumerate(self._offsets))
@@ -644,7 +604,7 @@ class memoryview:
 
     @property
     def f_contiguous(self):
-        return self.c_contiguous
+        return self.c_contiguous and (self.nbytes == 0 or sum(length > 1 for length in self._shape) <= 1)
 
     @property
     def nbytes(self):
@@ -660,11 +620,6 @@ class memoryview:
     def shape(self):
         self._check()
         return self._shape
-
-    @property
-    def c_contiguous(self):
-        self._check()
-        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
 
     def __len__(self):
         self._check()
@@ -703,6 +658,15 @@ class memoryview:
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
             if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
+            if format == 'B' and isinstance(places, range) and (len(places) <= 1 or places.step == 1) and isinstance(value, (bytes, bytearray)):
+                raw = bytes.__getitem__(value, slice(None)) if isinstance(value, bytes) else bytes(bytearray.__getitem__(value, slice(None)))
+                if len(places) != len(raw):
+                    raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
+                from array import array
+                storage = self._source._buffer if isinstance(self._source, array) else self._source
+                start = places[0] if places else 0
+                bytearray.__setitem__(storage, slice(start, start + len(raw)), raw)
+                return
             values = list(value)
             if len(places) != len(values):
                 raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
@@ -749,6 +713,14 @@ class memoryview:
 
     def tobytes(self):
         self._check()
+        if self.c_contiguous:
+            from array import array
+            storage = self._source._buffer if isinstance(self._source, array) else self._source
+            start = self._offsets[0] if self._offsets else 0
+            stop = start + len(self._offsets) * self._itemsize
+            if isinstance(storage, bytes):
+                return bytes.__getitem__(storage, slice(start, stop))
+            return bytes(bytearray.__getitem__(storage, slice(start, stop)))
         return bytes([self._byte(at + i) for at in self._offsets for i in range(self._itemsize)])
 
     def __bytes__(self):
@@ -772,13 +744,9 @@ class memoryview:
         if not isinstance(format, str):
             raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
-        if self._offsets:
-            start = self._offsets[0]
-            for index, offset in enumerate(self._offsets):
-                if offset != start + index * self._itemsize:
-                    raise TypeError('memoryview: casts are restricted to C-contiguous views')
-        else:
-            start = 0
+        if not self.c_contiguous:
+            raise TypeError('memoryview: casts are restricted to C-contiguous views')
+        start = self._offsets[0] if self._offsets else 0
         if shape is not None and not isinstance(shape, (list, tuple)):
             raise TypeError('shape must be a list or a tuple')
         format.encode('ascii')
@@ -809,7 +777,7 @@ class memoryview:
         result = memoryview(self)
         result._format = format
         result._itemsize = width
-        result._offsets = list(range(start, start + self.nbytes, width))
+        result._offsets = range(start, start + self.nbytes, width)
         result._shape = dimensions
         return result
 
@@ -864,11 +832,11 @@ class memoryview:
 # quit, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds
-# the operating system raises besides FileNotFoundError and
-# IsADirectoryError -- BlockingIOError, BrokenPipeError,
-# ChildProcessError, ConnectionError and its four kinds,
-# FileExistsError, InterruptedError, NotADirectoryError,
-# PermissionError, ProcessLookupError and TimeoutError -- along with
+# the operating system raises besides FileNotFoundError,
+# IsADirectoryError, NotADirectoryError and PermissionError --
+# BlockingIOError, BrokenPipeError, ChildProcessError,
+# ConnectionError and its four kinds, FileExistsError,
+# InterruptedError, ProcessLookupError and TimeoutError -- along with
 # the old spellings EnvironmentError and IOError.
 
 

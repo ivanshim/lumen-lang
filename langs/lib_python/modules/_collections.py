@@ -551,36 +551,91 @@ class deque:
         return GenericAlias(cls, item)
 
 
+
+_repr_factories = set()
+
+
 class defaultdict(dict):
+    # The factory is kept in a slot the class alone names, apart from any
+    # attribute a subclass may define, the way the reference keeps it in
+    # a member of its own.
+    __slots__ = ('_defaultdict__factory',)
+
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
 
     def __init__(self, default_factory=None, *args, **kwargs):
         if default_factory is not None and not callable(default_factory):
             raise TypeError('first argument must be callable or None')
-        self.default_factory = default_factory
+        self._defaultdict__factory = default_factory
         super().__init__(*args, **kwargs)
+
+    @property
+    def default_factory(self):
+        return self._defaultdict__factory
+
+    @default_factory.setter
+    def default_factory(self, factory):
+        self._defaultdict__factory = factory
+
+    @default_factory.deleter
+    def default_factory(self):
+        self._defaultdict__factory = None
 
     def __getitem__(self, key):
         return dict.__getitem__(self, key)
 
     def __missing__(self, key):
-        if self.default_factory is None:
+        factory = self._defaultdict__factory
+        if factory is None:
             raise KeyError(key)
-        self[key] = value = self.default_factory()
-        return value
+        value = factory()
+        # CPython 3.14 uses PyDict_SetDefaultRef: a recursive factory's
+        # insertion wins, and a subclass's assignment hook is bypassed.
+        return dict.setdefault(self, key, value)
 
     def __repr__(self):
-        return 'defaultdict(' + repr(self.default_factory) + ', ' + dict.__repr__(self) + ')'
+        inside = dict.__repr__(self)
+        factory = self._defaultdict__factory
+        if factory is None:
+            shown = 'None'
+        else:
+            marker = id(factory)
+            if marker in _repr_factories:
+                shown = '...'
+            else:
+                _repr_factories.add(marker)
+                try:
+                    shown = repr(factory)
+                finally:
+                    _repr_factories.discard(marker)
+        return '%s(%s, %s)' % (type(self).__name__, shown, inside)
 
     def copy(self):
-        return type(self)(self.default_factory, self)
+        return type(self)(self._defaultdict__factory, self)
 
     def __copy__(self):
         return self.copy()
 
+    def __or__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        new = type(self)(self._defaultdict__factory, self)
+        dict.update(new, other)
+        return new
+
+    def __ror__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        new = type(self)(self._defaultdict__factory, other)
+        dict.update(new, self)
+        return new
+
     def __reduce__(self):
-        args = (self.default_factory,)
+        if self._defaultdict__factory is None:
+            args = ()
+        else:
+            args = (self._defaultdict__factory,)
         return type(self), args, None, None, iter(self.items())
 
 
@@ -605,6 +660,194 @@ class _tuplegetter:
 
     def __delete__(self, instance):
         raise AttributeError('readonly attribute')
+
+
+# An OrderedDict iterator a run may store and read back: the C view
+# iterators are picklable where a generator is not.
+class _OrderedDictIterator:
+    __slots__ = ('_mapping', '_kind', '_back', '_keys', '_at', '_version')
+
+    def __init__(self, mapping, kind, back=False):
+        self._mapping = mapping
+        self._kind = kind
+        self._back = back
+        self._keys = list(mapping)
+        if back:
+            self._keys.reverse()
+        self._at = 0
+        self._version = mapping._version
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._mapping._version != self._version:
+            raise RuntimeError('OrderedDict mutated during iteration')
+        if self._at >= len(self._keys):
+            raise StopIteration
+        key = self._keys[self._at]
+        self._at += 1
+        if self._kind == 'k':
+            return key
+        value = dict.__getitem__(self._mapping, key)
+        if self._kind == 'v':
+            return value
+        return (key, value)
+
+    def __length_hint__(self):
+        return len(self._keys) - self._at
+
+    def __reduce__(self):
+        return (type(self), (self._mapping, self._kind, self._back), (self._at, self._version))
+
+    def __setstate__(self, state):
+        self._at, self._version = state
+
+
+def _native_ordered_dict(base):
+    "The C OrderedDict: the pure class plus the mutation checks the C one makes."
+    from _collections_abc import KeysView, ValuesView, ItemsView
+    from operator import eq as _eq
+
+    class _KeysView(KeysView):
+        def __iter__(self):
+            return _OrderedDictIterator(self._mapping, 'k')
+
+        def __reversed__(self):
+            return _OrderedDictIterator(self._mapping, 'k', True)
+
+    class _ItemsView(ItemsView):
+        def __iter__(self):
+            return _OrderedDictIterator(self._mapping, 'i')
+
+        def __reversed__(self):
+            return _OrderedDictIterator(self._mapping, 'i', True)
+
+    class _ValuesView(ValuesView):
+        def __iter__(self):
+            return _OrderedDictIterator(self._mapping, 'v')
+
+        def __reversed__(self):
+            return _OrderedDictIterator(self._mapping, 'v', True)
+
+    marker = object()
+
+    class OrderedDict(base):
+        __slots__ = ('_version',)
+
+        def __new__(cls, /, *args, **kwds):
+            self = base.__new__(cls, *args, **kwds)
+            self._version = 0
+            return self
+
+        def _changed(self):
+            self._version += 1
+
+        def __setitem__(self, key, value):
+            fresh = key not in self
+            base.__setitem__(self, key, value)
+            if fresh:
+                self._changed()
+
+        def __delitem__(self, key):
+            base.__delitem__(self, key)
+            self._changed()
+
+        def clear(self):
+            base.clear(self)
+            self._changed()
+
+        def popitem(self, last=True):
+            pair = base.popitem(self, last)
+            self._changed()
+            return pair
+
+        def pop(self, key, default=marker):
+            if key in self:
+                value = base.pop(self, key)
+                self._changed()
+                return value
+            if default is marker:
+                raise KeyError(key)
+            return default
+
+        def move_to_end(self, key, last=True):
+            base.move_to_end(self, key, last)
+            self._changed()
+
+        def setdefault(self, key, default=None):
+            fresh = key not in self
+            value = base.setdefault(self, key, default)
+            if fresh:
+                self._changed()
+            return value
+
+        def keys(self):
+            return _KeysView(self)
+
+        def items(self):
+            return _ItemsView(self)
+
+        def values(self):
+            return _ValuesView(self)
+
+        def __getstate__(self):
+            state = object.__getstate__(self)
+            if isinstance(state, tuple) and len(state) == 2:
+                visible, slots = state
+                slots = dict(slots)
+                slots.pop('_version', None)
+                return (visible, slots) if slots else visible
+            return state
+
+        def __eq__(self, other):
+            if not isinstance(other, base):
+                return dict.__eq__(self, other)
+            version = self._version
+            plain = dict.__eq__(self, other)
+            changed = self._version != version
+            if not plain and not changed:
+                return False
+            # The ordered pass still runs when a key changed the map during
+            # the plain comparison, so every key the reference would compare
+            # is compared; the answer is inequality either way.
+            ordered = all(map(_eq, self, other))
+            if changed:
+                return False
+            return ordered
+
+        def __iter__(self):
+            version = self._version
+            root = object.__getattribute__(self, '_OrderedDict__root')
+            current = root.next
+            while current is not root:
+                yield current.key
+                if self._version != version:
+                    raise RuntimeError('OrderedDict mutated during iteration')
+                current = current.next
+
+        def __reversed__(self):
+            version = self._version
+            root = object.__getattribute__(self, '_OrderedDict__root')
+            current = root.prev
+            while current is not root:
+                yield current.key
+                if self._version != version:
+                    raise RuntimeError('OrderedDict mutated during iteration')
+                current = current.prev
+
+    OrderedDict.__qualname__ = 'OrderedDict'
+    OrderedDict.__name__ = 'OrderedDict'
+    return OrderedDict
+
+
+def __getattr__(name):
+    if name == 'OrderedDict':
+        from collections import OrderedDict as pure
+        built = _native_ordered_dict(pure)
+        globals()['OrderedDict'] = built
+        return built
+    raise AttributeError('module %r has no attribute %r' % (__name__, name))
 
 __seal_class(_deque_iterator)
 __seal_class(_deque_reverse_iterator)

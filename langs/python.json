@@ -47,6 +47,7 @@
   "ext.builtin.posix": [
     "__posix"
   ],
+  "ext.builtin.loader.source": ["__loader_source"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -77,6 +78,9 @@
   ],
   "ext.builtin.file.remove": [
     "__remove_file"
+  ],
+  "ext.builtin.file.create": [
+    "__file_create"
   ],
   "ext.builtin.dir.list": [
     "__list_dir"
@@ -1062,6 +1066,26 @@
     "] ",
     ": '",
     "'"
+  ],
+  "ext.builtin.exceptions.os.errno": [
+    "1 PermissionError",
+    "2 FileNotFoundError",
+    "3 ProcessLookupError",
+    "4 InterruptedError",
+    "10 ChildProcessError",
+    "11 BlockingIOError",
+    "13 PermissionError",
+    "17 FileExistsError",
+    "20 NotADirectoryError",
+    "21 IsADirectoryError",
+    "32 BrokenPipeError",
+    "103 ConnectionAbortedError",
+    "104 ConnectionResetError",
+    "108 BrokenPipeError",
+    "110 TimeoutError",
+    "111 ConnectionRefusedError",
+    "114 BlockingIOError",
+    "115 BlockingIOError"
   ],
   "ext.builtin.exceptions.suppress": [
     "__suppress_context__"
@@ -2755,7 +2779,9 @@
     "asend",
     "athrow",
     "aclose",
-    "__await__"
+    "__await__",
+    "__anext__",
+    "__aiter__"
   ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
@@ -3038,6 +3064,18 @@
   ],
   "ext.stmt.class.detail.set": [
     "__setattr__"
+  ],
+  "ext.stmt.class.detail.abstract": [
+    "__abstractmethods__",
+    "TypeError: Can't instantiate abstract class ",
+    " without an implementation for abstract method ",
+    " without an implementation for abstract methods "
+  ],
+  "ext.stmt.class.detail.abstractmethod": [
+    "__isabstractmethod__"
+  ],
+  "ext.stmt.class.detail.subclasses": [
+    "__subclasses__"
   ],
   "ext.stmt.class.detail.slots": [
     "__slots__"

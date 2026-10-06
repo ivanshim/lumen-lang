@@ -5,6 +5,9 @@
 # list of all active calls, so stack() and currentframe() remain unavailable.
 # The helpers below use the available code and frame details.
 
+import functools
+import types
+
 # The flags CPython sets on a compiled body. Code objects expose co_flags
 # so a program can compare these values with a function's compiled flags.
 CO_OPTIMIZED = 1
@@ -111,39 +114,174 @@ def getcoroutinestate(coroutine):
     return CORO_CREATED
 
 
-# Coroutine recognition follows the flags and marker rules in CPython 3.14.8.
+# --------------------------------------------------------------------
+# Class and function questions, after CPython's Lib/inspect.py at the
+# v3.14.8 release under the PSF licence, simplified where the
+# reference reads innards this runtime does not keep: a class's flags
+# word, and the static mro read through type.__dict__.
+
+_sentinel = object()
+
+
+def _probe_function():
+    pass
+
+
+class _ProbeClass:
+    def _probe_method(self):
+        pass
+
+
+_FunctionType = type(_probe_function)
+_MethodType = type(_ProbeClass()._probe_method)
+
+
+
+
+
+
+class _void:
+    """A private marker - used in Parameter & Signature."""
+
+
+
+
+
+
+
+
+
+
+def isgeneratorfunction(obj):
+    """Return true if the object is a user-defined generator function."""
+    return _has_code_flag(obj, CO_GENERATOR)
+
+
+# A marker for markcoroutinefunction and iscoroutinefunction.
 _is_coroutine_mark = object()
 
 
-def iscoroutinefunction(obj):
-    import functools
-    function = obj
-    while True:
-        descriptor = getattr(function, '__partialmethod__', None)
-        if isinstance(descriptor, functools.partialmethod):
-            function = descriptor.func
-        elif isinstance(function, (functools.partial, functools.partialmethod)):
-            function = function.func
-        else:
-            break
-    while hasattr(function, '__func__'):
-        function = function.__func__
-    function = functools._unwrap_partial(function)
-    code = getattr(function, '__code__', None)
-    if code is not None and code.co_flags & CO_COROUTINE:
-        return True
-    marked = obj
-    while hasattr(marked, '__func__'):
-        marked = marked.__func__
-    marked = functools._unwrap_partial(marked)
-    return getattr(marked, '_is_coroutine_marker', None) is _is_coroutine_mark
 
 
-def markcoroutinefunction(func):
-    if hasattr(func, '__func__'):
-        func = func.__func__
-    func._is_coroutine_marker = _is_coroutine_mark
-    return func
+
+
+
+
+def isasyncgenfunction(obj):
+    """Return true if the object is an asynchronous generator function.
+
+    Asynchronous generator functions are defined with "async def"
+    syntax and have "yield" expressions in their body.
+    """
+    return _has_code_flag(obj, CO_ASYNC_GENERATOR)
+
+
+def isabstract(object):
+    """Return true if the object is an abstract base class (ABC). The
+    reference reads a flags word a class here does not keep; the set of
+    abstract method names answers the same question."""
+    if not isinstance(object, type):
+        return False
+    return bool(getattr(object, '__abstractmethods__', False))
+
+
+_static_getmro = type.__dict__['__mro__'].__get__
+_get_dunder_dict_of_class = type.__dict__['__dict__'].__get__
+
+
+def _check_instance(obj, attr):
+    instance_dict = {}
+    try:
+        instance_dict = object.__getattribute__(obj, "__dict__")
+    except AttributeError:
+        pass
+    return dict.get(instance_dict, attr, _sentinel)
+
+
+def _check_class(klass, attr):
+    for entry in _static_getmro(klass):
+        if _shadowed_dict(type(entry)) is _sentinel:
+            namespace = _get_dunder_dict_of_class(entry)
+            if attr in namespace:
+                return namespace[attr]
+    return _sentinel
+
+
+def _shadowed_dict(klass):
+    # The __dict__ a class's own namespace names: CPython caches the
+    # answer through a line of weak references; each namespace is asked
+    # through the kind's own descriptor here instead, so a metaclass
+    # answering for those names is never consulted.
+    for entry in _static_getmro(klass):
+        dunder_dict = _get_dunder_dict_of_class(entry)
+        if '__dict__' in dunder_dict:
+            class_dict = dunder_dict['__dict__']
+            if not (type(class_dict) is types.GetSetDescriptorType and
+                    class_dict.__name__ == "__dict__" and
+                    class_dict.__objclass__ is entry):
+                return class_dict
+    return _sentinel
+
+
+def getattr_static(obj, attr, default=_sentinel):
+    """Retrieve attributes without triggering dynamic lookup via the
+       descriptor protocol,  __getattr__ or __getattribute__.
+
+       Note: this function may not be able to retrieve all attributes
+       that getattr can fetch (like dynamically created attributes)
+       and may find attributes that getattr can't (like descriptors
+       that raise AttributeError). It can also return descriptor objects
+       instead of instance members in some cases. See the
+       documentation for details.
+    """
+    instance_result = _sentinel
+
+    objtype = type(obj)
+    if type not in _static_getmro(objtype):
+        klass = objtype
+        dict_attr = _shadowed_dict(klass)
+        if (dict_attr is _sentinel or
+            type(dict_attr) is types.MemberDescriptorType):
+            instance_result = _check_instance(obj, attr)
+    else:
+        klass = obj
+
+    klass_result = _check_class(klass, attr)
+
+    if instance_result is not _sentinel and klass_result is not _sentinel:
+        if _check_class(type(klass_result), "__get__") is not _sentinel and (
+            _check_class(type(klass_result), "__set__") is not _sentinel
+            or _check_class(type(klass_result), "__delete__") is not _sentinel
+        ):
+            return klass_result
+
+    if instance_result is not _sentinel:
+        return instance_result
+    if klass_result is not _sentinel:
+        return klass_result
+
+    if obj is klass:
+        # for types we check the metaclass too
+        for entry in _static_getmro(type(klass)):
+            if _shadowed_dict(type(entry)) is _sentinel:
+                namespace = _get_dunder_dict_of_class(entry)
+                if attr in namespace:
+                    return namespace[attr]
+    if default is not _sentinel:
+        return default
+    raise AttributeError(attr)
+
+
+def _descriptor_get(descriptor, obj):
+    if isclass(descriptor):
+        return descriptor
+    get = getattr(descriptor, '__get__', _sentinel)
+    if get is _sentinel:
+        return descriptor
+    return get(obj, type(obj))
+# Coroutine recognition follows the flags and marker rules in CPython 3.14.8.
+_is_coroutine_mark = object()
+
 
 
 def __getattr__(name):

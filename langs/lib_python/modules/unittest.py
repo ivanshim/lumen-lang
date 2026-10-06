@@ -51,6 +51,25 @@ class TestResult:
 class TextTestResult(TestResult):
     def __repr__(self):
         return '<unittest.runner.TextTestResult run=%d errors=%d failures=%d>' % (self.testsRun, len(self.errors), len(self.failures))
+class _NotWarns:
+    def __init__(self, expected):
+        self.expected = expected
+
+    def __enter__(self):
+        import warnings
+        self.manager = warnings.catch_warnings(record=True, _internal=True)
+        self.manager.__enter__()
+        warnings.simplefilter('always', self.expected)
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.manager.__exit__(kind, value, traceback)
+        if kind is not None:
+            return False
+        for record in self.manager.records:
+            if isinstance(record.message, self.expected):
+                raise AssertionError(repr(record.message) + ' triggered')
+        return False
 
 class TestCase:
     _test_case = True
@@ -313,6 +332,13 @@ class TestCase:
         with context:
             args[0](*args[1:], **kwargs)
 
+    def _assertNotWarns(self, expected, *args, **kwargs):
+        context = _NotWarns(expected)
+        if len(args) == 0:
+            return context
+        with context:
+            args[0](*args[1:], **kwargs)
+
     def assertWarnsRegex(self, expected, pattern, *args, **kwargs):
         context = _Warns(expected, pattern)
         if len(args) == 0:
@@ -380,6 +406,13 @@ class TestCase:
         finally:
             self.tearDown()
 
+    def _callTestMethod(self, method):
+        returned = method()
+        if returned is not None:
+            import warnings
+            warnings.warn('It is deprecated to return a value that is not None from a test case',
+                          DeprecationWarning, stacklevel=2)
+
     def run(self, result=None):
         if result is None:
             result = TestResult()
@@ -402,6 +435,48 @@ class TestCase:
         else:
             result.errors = [*result.errors, entry]
         return result
+
+class IsolatedAsyncioTestCase(TestCase):
+    # The host can drive a coroutine which completes without suspension.
+    # Suspended I/O requires an event loop and is refused explicitly.
+    def asyncSetUp(self):
+        pass
+
+    def asyncTearDown(self):
+        pass
+
+    def _callMaybeAsync(self, function, *args, **kwargs):
+        import inspect
+        if not inspect.iscoroutinefunction(function):
+            return function(*args, **kwargs)
+        pending = function(*args, **kwargs)
+        try:
+            try:
+                pending.send(None)
+            except StopIteration as stopped:
+                return stopped.value
+            raise NotImplementedError('asynchronous suspension requires an event loop')
+        finally:
+            pending.close()
+
+    def _callTestMethod(self, method):
+        returned = self._callMaybeAsync(method)
+        if returned is not None:
+            import warnings
+            warnings.warn('It is deprecated to return a value that is not None from a test case',
+                          DeprecationWarning, stacklevel=2)
+
+    def _run_test(self):
+        if getattr(self, '__unittest_skip__', False):
+            self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
+        self.setUp()
+        self._callMaybeAsync(self.asyncSetUp)
+        try:
+            self._callTestMethod(getattr(self, self._method))
+        finally:
+            self._callMaybeAsync(self.asyncTearDown)
+            self.tearDown()
+
 
 class _Skip:
     def __init__(self, reason):
@@ -482,6 +557,9 @@ class TestSuite:
         return iter(self.tests)
 
     def addTests(self, tests):
+        if isinstance(tests, TestSuite):
+            self.tests = [*self.tests, tests]
+            return
         for test in tests:
             self.addTest(test)
 

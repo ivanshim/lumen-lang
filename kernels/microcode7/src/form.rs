@@ -200,6 +200,9 @@ pub enum Prim {
     There,
     Gone,
     Linked,
+    /// A fresh empty file made where the path names
+    /// (ext.builtin.file.create).
+    FileCreate,
     /// A directory's own entries, by name; a fresh directory made
     /// uniquely under one already there; and a directory taken away
     /// with everything under it (ext.builtin.dir.*).
@@ -210,6 +213,8 @@ pub enum Prim {
     /// A single directory raised at the place named, no others
     /// raised on the way there (ext.builtin.dir.make_one).
     DirOne,
+    /// One directory taken away where it stands, and nothing else
+    /// (ext.builtin.dir.remove).
     /// The folder a run takes itself over to, short paths opening
     /// from there ever after (ext.builtin.dir.change).
     DirStep,
@@ -230,6 +235,12 @@ pub enum Prim {
     Collect,
     /// What a path names: a file, a directory, or neither.
     PathSort,
+    // The text of the file the run began from.
+    LoaderSource,
+    /// The measurements of the file a path names, as a row of ten, or
+    /// the host's reason number where it names none.
+    /// An empty file brought into being where the path named none.
+    /// The source text of the file the run was begun with.
     /// The host's facts as a row: directory, system, machine, surroundings.
     HostRow,
     CryptoWork,
@@ -805,12 +816,17 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    /// The compiled definition shared by independently created functions.
+    pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
     pub annotation_protocol: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
+    pub lexical_origin: Rc<str>,
+    pub body_boundary: usize,
+    pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
     pub flags: i64,
@@ -948,5 +964,109 @@ impl Form {
             }
             _ => {}
         }
+    }
+}
+
+impl Form {
+    pub fn change_literals(&mut self, old: &[Value], new: &[Value], inline: &[bool]) -> Result<(), String> {
+        fn alter(value: &mut Value, old: &[Value], new: &[Value], inline: &[bool]) -> Result<(), String> {
+            let chosen = old.iter().zip(new).enumerate().find(|(_, (prior, _))|
+                std::mem::discriminant(*prior) == std::mem::discriminant(value) && prior.equals(value));
+            if let Some((index, (_, wanted))) = chosen {
+                if inline[index] { return Ok(()); }
+                *value = match (&*value, wanted) {
+                    (Value::Routine(current), Value::Routine(template)) => {
+                        if current.lexical_origin != template.lexical_origin || current.body_boundary != template.body_boundary || current.declared_on != template.declared_on || current.formals != template.formals {
+                            return Err(String::from("NotImplementedError: replacing a nested instruction body is unavailable"));
+                        }
+                        let mut adjusted = template.as_ref().clone();
+                        (adjusted.globe, adjusted.born, adjusted.framed_in) =
+                            (current.globe.clone(), current.born.clone(), current.framed_in.clone());
+                        adjusted.carried = current.carried.clone();
+                        adjusted.ident = template.ident.clone();
+                        adjusted.qualification = template.qualification.clone();
+                        adjusted.written_in = template.written_in.clone();
+                        adjusted.declared_on = template.declared_on;
+                        adjusted.flags = template.flags;
+                        Value::Routine(Rc::new(adjusted))
+                    }
+                    _ => wanted.clone(),
+                };
+            } else if let Value::Routine(body) = value {
+                if body.frameless { Rc::make_mut(body).body.change_literals(old, new, inline)?; }
+            }
+            Ok(())
+        }
+        let mut descend: Vec<&mut Form> = Vec::new();
+        match self {
+            Self::Const(value) => alter(value, old, new, inline)?,
+            Self::Write(_, inner) | Self::Tie(_, inner) | Self::ShareItem(_, inner)
+            | Self::ShareField(inner, _) | Self::ShareOwn(inner, _) | Self::ShareCalled(inner)
+            | Self::ForgetCalled(inner) | Self::ReadyCalled(inner) | Self::Muted(inner)
+            | Self::Silenced(inner) | Self::Called(inner) | Self::OnLine(_, _, inner)
+            | Self::Located(_, _, inner) | Self::CellOrSaid(_, _, _, inner)
+            | Self::HeldEither(_, _, _, inner) => descend.push(inner),
+            Self::Apply(callee, arguments) => {
+                if let Callee::Code(target) = callee { descend.push(target); }
+                descend.extend(arguments);
+            }
+            Self::Dyad { a, b, .. } => for input in [a, b] {
+                match input { Input::Form(inner) => descend.push(inner), Input::Const(value) => alter(value, old, new, inline)?, _ => {} }
+            },
+            Self::Bump { by, .. } => {
+                let mut value = Value::Small(*by); alter(&mut value, old, new, inline)?;
+                match value { Value::Small(amount) => *by = amount,
+                    _ => return Err("NotImplementedError: changing the type of a fused increment is unavailable".into()) }
+            }
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                descend.extend([test.as_mut(), body.as_mut()]);
+                descend.extend(step.as_deref_mut()); descend.extend(otherwise.as_deref_mut());
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                descend.push(body);
+                for clause in clauses { descend.push(&mut clause.body); if let Some(choices) = &mut clause.choices { descend.extend(choices); } }
+                descend.extend(last.as_deref_mut()); descend.extend(otherwise.as_deref_mut());
+            }
+            Self::Class { values, .. } => descend.extend(values),
+            Self::Assert { condition, message } => descend.extend([condition.as_mut(), message.as_mut()]),
+            Self::Fits { value, kinds, .. } => { descend.push(value); descend.extend(kinds); }
+            Self::SharePlace(_, keys) => descend.extend(keys),
+            Self::ShareWithin(value, keys) => { descend.push(value); descend.extend(keys); }
+            Self::ForgetWithin(a, b) | Self::TieCalled(a, b) | Self::CallWrite(a, b) => descend.extend([a.as_mut(), b.as_mut()]),
+            _ => {}
+        }
+        for child in descend { child.change_literals(old, new, inline)?; }
+        Ok(())
+    }
+}
+
+impl Routine {
+    pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
+        if values.len() != self.literals.len() {
+            return Err("NotImplementedError: changing the constant table length is unavailable".into());
+        }
+        let mut literals = Vec::new();
+        for value in values {
+            literals.push(match value.settled() {
+                Value::Wrapped(7, parts) => parts[0].clone(),
+                plain => plain,
+            });
+        }
+        let inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter().map(|value|
+            if let Value::Small(n) = value { *n >= 0 && *n < 256 } else { false }).collect());
+        for (index, entry) in self.literals.iter().enumerate() {
+            if self.literals.iter().skip(index + 1).any(|other|
+                std::mem::discriminant(entry) == std::mem::discriminant(other) && entry.equals(other)) {
+                return Err(String::from("NotImplementedError: replacing ambiguous duplicate constants is unavailable"));
+            }
+        }
+        let mut adjusted = self.clone();
+        adjusted.body.change_literals(&self.literals, &literals, &inline)?;
+        adjusted.immediate_slots = Some(inline);
+        adjusted.doc = literals.first().and_then(|value| match value {
+            Value::Text(word) => Some(word.to_string()), _ => None,
+        });
+        adjusted.literals = literals;
+        Ok(adjusted)
     }
 }

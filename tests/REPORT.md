@@ -3,7 +3,10 @@
 For the v3.14.8 repin, Python results below replay the completed debug-build
 Lambda measurements for CPython v3.14.8; no release build or whole-file
 box run was used. PHP statuses and reasons are retained from the unchanged base
-report. This legacy report calls successful Python files *differs*; the actual
+report. The datetime addition was measured in complete debug-build remote runs
+(498 of 553 passed on each kernel, 9 errors and 46 skips); the other existing
+rows are retained from the base report. This legacy report calls successful
+Python files *differs*; the actual
 per-method pass/ran counts and lost-pass classifications were measured
 separately, including package fixtures. Source provenance is in `tests/README.md`.
 
@@ -97,11 +100,11 @@ Not spelled: `clone`, `declare`, `enddeclare`, `goto`, `insteadof`, `match`, `na
 | `array_merge` | 8 | no |
 | `is_uploaded_file` | 8 | no |
 
-## Python · CPython 3.14.8 suite: 60 tests
+## Python · CPython 3.14.8 suite: 61 tests
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `python-3.14.8` | 60 | pass 0, differs 50, error 10, skipped 0 | pass 0, differs 50, error 10, skipped 0 |
+| `python-3.14.8` | 61 | pass 0, differs 50, error 11, skipped 0 | pass 0, differs 50, error 11, skipped 0 |
 
 | Reason | Tests |
 |---|---|
@@ -114,6 +117,7 @@ Not spelled: `clone`, `declare`, `enddeclare`, `goto`, `insteadof`, `match`, `na
 | unittest: 2 failure(s), 2 error(s) | 1 |
 | unittest: 12 failure(s), 3 error(s) | 1 |
 | unittest: 1 failure(s), 1 error(s) | 1 |
+| unittest: 0 failure(s), 9 error(s) | 1 |
 
 ### Reserved words: 35 of 35 spelled
 
@@ -604,6 +608,7 @@ Not spelled:
 | `python-3.14.8/test_complex.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_contains.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_copy.py` | differs | differs | ran to the end without asserting anything |
+| `python-3.14.8/test_datetime.py` | error | error | unittest: 0 failure(s), 9 error(s) |
 | `python-3.14.8/test_decorators.py` | differs | differs | ran to the end without asserting anything |
 | `python-3.14.8/test_dict.py` | error | error | unittest: 1 failure(s), 0 error(s) |
 | `python-3.14.8/test_dictcomps.py` | differs | differs | ran to the end without asserting anything |

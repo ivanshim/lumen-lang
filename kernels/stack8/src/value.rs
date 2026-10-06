@@ -293,9 +293,9 @@ pub struct Traceback {
     /// Position in the executing routine's native instruction array.
     pub instruction: i64,
     pub location: Option<(u32, u32, u32, u32)>,
-    pub line: u32,
+    pub line: i64,
     pub frame: Rc<Instance>,
-    pub next: Value,
+    pub next: RefCell<Value>,
 }
 
 #[derive(Debug)]
@@ -788,14 +788,18 @@ impl Value {
                 // itself: the hash is the map's own reckoning of where
                 // the thing lies and no part of the key a viewer of the
                 // keys, or of the pairs, should ever see.
-                Value::array(pairs.iter().map(|(k,v)| {
+                Value::array(pairs.iter().filter_map(|(k,v)| {
+                    // A pair whose cell stands empty names nothing yet:
+                    // a namespace read through a view answers only for
+                    // the names written in it so far.
+                    if matches!(v.contents(), Value::Blank | Value::Gap) { return None; }
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    match view.1.as_str() {
+                    Some(match view.1.as_str() {
                         // A reading of the map itself walks, and is
                         // measured, the very way its keys are: the map
                         // read only is asked after by key alone.
                         "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::tuple(vec![bare,v.clone()]),
-                    }
+                    })
                 }).collect())
             }
             _ => self.clone(),
@@ -853,6 +857,24 @@ impl Value {
                 out
             }
             Value::Object(o) => {
+                {
+                    let fields = o.fields.borrow();
+                    if let Some((_, Value::Small(style))) = fields.iter().find(|(n, _)| n == "\0source-kind") {
+                        let named = o.class_now().name.clone();
+                        let message = fields.iter().find(|(n, _)| n == "\0heading").map(|(_, v)| v.repr(sp)).unwrap_or_default();
+                        let parts: Vec<Value> = match fields.iter().find(|(n, _)| n == "\0parts") {
+                            Some((_, Value::Tuple(items))) => items.to_vec(),
+                            _ => Vec::new(),
+                        };
+                        let list_like = *style == 1 && matches!(fields.iter().find(|(n, _)| n == "\0arguments"), Some((_, Value::Tuple(args))) if args.len() == 2 && matches!(args[1].contents(), Value::Array(_)));
+                        let body = if *style == 2 {
+                            fields.iter().find(|(n, _)| n == "\0source-repr").map(|(_, v)| v.plain()).unwrap_or_default()
+                        } else if list_like {
+                            format!("[{}]", parts.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "))
+                        } else { Self::tuple_text(&parts, sp) };
+                        return format!("{named}({message}, {body})");
+                    }
+                }
                 if let Some(args) = self.raised_arguments() {
                     let mut parts = args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>();
                     if o.class_now().all_fields().iter().any(|(k, _)| k == "\0import-error") {
@@ -1293,6 +1315,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            // The one declined answer is itself to itself.
             (Value::Declined(a), Value::Declined(b)) => a == b,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
@@ -1362,6 +1385,7 @@ impl Value {
             (Value::Array(x), Value::Array(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
             (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Fields(x), Value::Fields(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Null, Value::Null) => true,
             _ => false,
@@ -1651,7 +1675,13 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
+            || kind == "bytearray" && name == "__release_buffer__" {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
+            "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
+            "type" if name == "__mro__" => Some(("member", "member_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),
@@ -1901,6 +1931,18 @@ impl Class {
     /// the class keeps to itself is filed under its own name and the
     /// class's together, so that a class standing on it may declare one
     /// of the same name without the two becoming one.
+    /// Ask whether an inherited public field exists without constructing
+    /// the complete instance layout or cloning its names and values.
+    pub fn has_public_field(&self, name: &str) -> bool {
+        let mut current = Some(self);
+        while let Some(class) = current {
+            if class.fields.iter().enumerate().any(|(at, (key, _))|
+                key == name && class.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
+            current = class.base.as_deref();
+        }
+        false
+    }
+
     pub fn all_fields(&self) -> Vec<(String, Value)> {
         let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
         for (at, (name, value)) in self.fields.iter().enumerate() {

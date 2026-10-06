@@ -2535,3 +2535,55 @@ test_hmac 42/100, test_hashlib 32/82, test_decimal 84/286 (two class parts excee
 Some large files exceed Lambda's time limit on one or both kernels and count as run nothing. The full check of the
 final merge agrees on 1194 scratch programs with no mismatch, passes every gate and shows no regression or kernel
 disagreement; kernel independence reports no problem.
+
+### 1be. Batch 21a merged as #536; batch 21b: exception groups, walrus, timeit, optparse, datetime, and the kernels agreeing on enum and json
+
+Seven branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, MiMo-V2.6-Pro and Kimi K3 workers, most finished by GPT-6.1 Sol after reviews.
+
+- fix/agree-enum-json: the two kernels now pass the same tests in test_enum and test_json (53 disagreements resolved).
+- fix/dsflash-exctests (OSError subclass mapping for 2 to 5 arguments; exception_hierarchy, exception_variations),
+  fix/dsflash-walrus (named expressions), fix/mimo-timeit (per-creation function identity; timeit),
+  fix/dsflash-excgroup (exception groups, typechecks), fix/dsflash-optparse (getopt, optparse, read-only module
+  __dict__), fix/stdlib-datetime (CPython datetime, _pydatetime, _strptime, calendar).
+
+The first full check showed three slowdowns introduced by the merges (stack8 dataclasses 294 → 579 s, generators
+148 → 220 s, microcode7 fstring 164 → 199 s). Timing each merge found two causes — repeated reverse scans of stack8's
+identifier roster during eval/exec aliasing, and microcode7 rebuilding its builtin continuation index on every nested
+source scan — and both were fixed: dataclasses 303 s, generators 135 s, fstring 79 s. test_array is now counted in
+class parts, since microcode7 needs longer than Lambda allows for the whole file (on main as well).
+
+Measured: 8641 (stack8) and 8631 (microcode7) of 9607, over 118 files, from 6509 / 6487 of 7407 / 7348 over 108. New
+files: test_exception_group 53/53, test_named_expressions 74/74, test_timeit 41/41, test_typechecks 6/6, test_optparse
+151/154, test_getopt 9/10, test_exception_variations 30/30, test_exception_hierarchy 15/16, test_datetime 498/553,
+test_statistics 365/371; test_enum 1059/1081 and test_json on both kernels; test_array 833/892 on both. The full check
+of the final commit agrees on 1194 scratch programs with no mismatch, passes every gate, and shows no regression or
+kernel disagreement; kernel independence reports no problem.
+
+### 1bf. Batch 21b merged as #537; batch 21c: csv, configparser, gzip, tokenize, contextlib, OrderedDict, glob, sort, isinstance, raise
+
+Eight branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, DeepSeek V4 Pro, MiMo-V2.6-Pro and Kimi K3 workers, most finished by GPT-6.1
+Sol after reviews.
+
+- fix/stdlib-csv (CPython csv, configparser and tempfile; native _csv and a descriptor-backed _io FileIO),
+  fix/stdlib-tokenize (tokenize and linecache; a port of the C tokenizer; CPython source decoding),
+  fix/stdlib-contextlib (CPython contextlib and abc), fix/dsflash-odict (OrderedDict and defaultdict),
+  fix/dsflash-glob (glob), fix/dsflash-sort (sort, rich comparison), fix/dsflash-isinstance (isinstance),
+  fix/dsflash-raise (raise, property).
+
+The first full check of the merged tree showed two problems. test_collections lost one pass (bytes and bytearray no
+longer carried `__buffer__` in their class dictionaries), and microcode7 test_datetime ran past the 870-second limit
+(808.9 s on main). Timing each merge found contextlib's merge as the first slowdown; general fixes to native
+descriptor dispatch, immutable roster lookups and global-name lookup brought microcode7 test_datetime back to 810.8 s,
+and the buffer descriptors were restored. test_calendar, test_tokenize and test_configparser are now counted in class
+parts, as they exceed the Lambda limit whole.
+
+Measured: 10093 on both kernels of 11042, over 132 files, from 8641 (stack8) and 8631 (microcode7) of 9607 over 118.
+New files: test_abc 74/74, test_calendar 61/64, test_configparser 378/383, test_contextlib 83/91, test_csv 128/134,
+test_defaultdict 13/13, test_glob 22/24, test_gzip 75/75, test_isinstance 23/23, test_linecache 28/29,
+test_ordered_dict 291/299, test_property 28/31, test_raise 37/37, test_richcmp 11/11, test_sort 21/21, test_tokenize
+126/126; test_hashlib 32 → 64, test_dataclasses 229 → 235, test_functools 168 → 174, test_enum 1059 → 1063, test_shlex
+on microcode7 30 → 42. The full check of the final commit agrees on 1194 scratch programs with no mismatch, passes every
+gate, and shows no regression or kernel disagreement; kernel independence reports no problem. Still timing out in
+parts: calendar's CommandLineTestCase, tokenize's TestRoundtrip and two decimal classes.
