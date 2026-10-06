@@ -1286,7 +1286,6 @@ impl Value {
             Value::Flag(body.generator), Value::Flag(body.lineless),
             Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
-            Value::Small(body.least as i64),
             body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
             Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),

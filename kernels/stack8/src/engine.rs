@@ -5263,15 +5263,15 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
+        let key = Rc::as_ptr(&program.instrs) as usize;
+        if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
+            return Value::Adapter(handle);
+        }
         if !program.enclosed.is_empty() {
             let mut body = (**program).clone();
             body.held.clear();
             body.enclosed.clear();
             return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
-        }
-        let key = Rc::as_ptr(&program.instrs) as usize;
-        if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
-            return Value::Adapter(handle);
         }
         let mut body = (**program).clone();
         body.held.clear();

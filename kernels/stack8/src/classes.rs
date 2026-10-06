@@ -4355,8 +4355,18 @@ impl<'a> Engine<'a> {
                         let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
                         self.warn_like(26,&told)?;
                     }
+                    let assigned = if name == self.class_word("code") { value.clone() } else { None };
                     let now=self.routine_rewritten(f,name,value)?;
+                    let body_address = Rc::as_ptr(&now.instrs) as usize;
                     *f.revised.borrow_mut()=Some(Rc::new(now));
+                    // Keep the assigned immutable code apart from the function's name and defaults.
+                    if let Some(code) = assigned {
+                        if let Value::Adapter(handle) = code.contents() {
+                            self.frame_codes.insert(body_address, Rc::downgrade(&handle));
+                        }
+                        let at = self.function_storage(&subject);
+                        Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), Some(code), false).map_err(|_| self.class_refusal())?;
+                    }
                     return Ok(Value::Null);
                 }
                 let annotate = self.lang.class_details.get("code.fields").and_then(|fields| fields.get(10)).cloned().unwrap_or_default();

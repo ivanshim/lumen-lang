@@ -1087,7 +1087,7 @@ impl Value {
             Value::text(&program.ident), Value::Small(program.declared_on.into()),
             Value::Small(program.flags), Value::Small(program.future_bits),
             Value::Flag(program.lineless), Value::Flag(program.generator),
-            names(&program.formals), Value::tuple(kinds), Value::Small(program.least as i64),
+            names(&program.formals), Value::tuple(kinds),
             program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
             names(&program.referenced), names(&program.locals), names(&program.idents),
             Value::tuple(program.literals.clone()),
