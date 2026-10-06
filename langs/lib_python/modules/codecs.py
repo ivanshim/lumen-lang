@@ -207,9 +207,11 @@ def _normalize_text(encoding):
 
 class CodecInfo(tuple):
     _is_text_encoding = True
-    def __new__(cls, encode=None, decode=None, streamreader=None, streamwriter=None, incrementalencoder=None, incrementaldecoder=None, name=None):
+    def __new__(cls, encode=None, decode=None, streamreader=None, streamwriter=None, incrementalencoder=None, incrementaldecoder=None, name=None, *, _is_text_encoding=None):
         return tuple.__new__(cls, (encode, decode, streamreader, streamwriter))
-    def __init__(self, encode=None, decode=None, streamreader=None, streamwriter=None, incrementalencoder=None, incrementaldecoder=None, name=None):
+    def __init__(self, encode=None, decode=None, streamreader=None, streamwriter=None, incrementalencoder=None, incrementaldecoder=None, name=None, *, _is_text_encoding=None):
+        if _is_text_encoding is not None:
+            self._is_text_encoding = _is_text_encoding
         self.encode = encode
         self.decode = decode
         self.name = name
