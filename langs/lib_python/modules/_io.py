@@ -956,6 +956,10 @@ class BufferedReader(_BufferedIOBase):
         return self._impl.read(size)
     def read1(self, size=-1):
         return self._impl.read1(size)
+    def readline(self, size=-1):
+        size = _size(size)
+        self._checkClosed()
+        return self._impl.readline(size)
     @property
     def closed(self):
         return self._impl.closed

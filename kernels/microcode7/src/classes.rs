@@ -3639,7 +3639,7 @@ impl<'a> Machine<'a> {
             }
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
             if key==self.detail("mro")||key==self.detail("order"){
-                let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.borrow().iter().map(|p|self.visible_blueprint(p.clone())));
+                let mut all=Vec::new();all.push(self.visible_blueprint(b.clone()));all.extend(b.ancestry.borrow().iter().map(|p|self.visible_blueprint(p.clone())));
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word| word == key) {
@@ -5369,7 +5369,7 @@ impl<'a> Machine<'a> {
             }
             if let Value::Thing(module) = &values[0] {
                 let blueprint=module.blueprint();
-                let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module") || blueprint.name == "ModuleType" || blueprint.ancestry.borrow().iter().any(|parent| parent.name == "ModuleType");
+                let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module");
                 let class_directory=self.table.strings("ext.stmt.class.special").get(75)
                     .and_then(|word| self.inherited_entry(&blueprint,word)).is_some();
                 if (module_kind || self.namespace_holding(&values[0]).is_some()) && !class_directory {

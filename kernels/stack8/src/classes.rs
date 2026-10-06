@@ -3142,7 +3142,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
-                    let mut order=vec![subject.clone()]; order.extend(c.lineage.borrow().iter().cloned().map(|base| self.public_class(base)));
+                    let mut order=vec![self.public_class(c.clone())]; order.extend(c.lineage.borrow().iter().cloned().map(|base| self.public_class(base)));
                     let tuple=Value::tuple(order);
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }

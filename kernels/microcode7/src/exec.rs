@@ -7169,6 +7169,7 @@ impl<'a> Machine<'a> {
                                             Some(link) => { *link.borrow_mut() = value; }
                                             None => rows.overwrite_at(at, value),
                                         }
+                                        self.space_callable_changed(&cell);
                                         return Ok(Value::Nil);
                                     }
                                     Found::Absent => {
@@ -9214,10 +9215,13 @@ impl<'a> Machine<'a> {
         });
         if let Some(path) = names.get(&(Rc::as_ptr(thing) as usize)) { return Some(path.clone()); }
         drop(places);
-        let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
-        if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
+        // Loaded modules have a root blueprint; native module subclasses
+        // keep their module ancestor. Ordinary instances cannot own the
+        // loader's hidden marker, so avoid scanning their attributes.
         let class = thing.blueprint();
         if !class.parents.is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
+        let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
+        if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
         for (path, held) in &self.imported {
             if matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing)) { return Some(path.clone()); }
         }
@@ -11803,9 +11807,9 @@ impl<'a> Machine<'a> {
         let answer = self.drive(program, frame.clone());
         if clear_frame && answer.is_ok() && Rc::strong_count(&frame) > 1 {
             let keep = frame.capture_slots.borrow();
-            let count = frame.cells.borrow().len();
-            for index in 0..count {
-                if !keep.contains(&index) { frame.cells.borrow_mut()[index] = Value::Unset; }
+            let mut cells = frame.cells.borrow_mut();
+            for (index, cell) in cells.iter_mut().enumerate() {
+                if !keep.contains(&index) { *cell = Value::Unset; }
             }
         }
         let answer = answer?;
@@ -14253,8 +14257,16 @@ impl<'a> Machine<'a> {
     /// Write entries back into a thing's dictionary: names written as
     /// text go in among the thing's own holds, keys of any other kind
     /// are kept beside them under `\0keys`.
-    fn attribute_restore(&self, t: &Rc<Thing>, entries: Vec<(Value, Value)>) {
-        if self.namespace_holding(&Value::Thing(t.clone())).is_some() {
+    fn attribute_restore(&mut self, t: &Rc<Thing>, entries: Vec<(Value, Value)>) {
+        if let Some(owner) = self.namespace_holding(&Value::Thing(t.clone())) {
+            if self.rules.names_shadow_builtins {
+                if self.table.strings("ext.system.names.module").first().is_some_and(|word| word == &owner) {
+                    self.displaced_primitives.extend(self.table.prims.keys().cloned());
+                }
+                self.revised_namespaces.extend(self.loaded_spaces.iter()
+                    .filter(|(_, module)| *module == &owner).map(|(site, _)| site.clone()));
+                self.wildcard_source.borrow_mut().take();
+            }
             let mut saved = Vec::with_capacity(entries.len());
             for (key, item) in &entries {
                 let retained = match key { Value::Text(_) => Value::Nil, _ => item.clone() };
@@ -23794,6 +23806,9 @@ impl Machine<'_> {
 
     fn spread_override(&self, word: &str, operation: Prim) -> Option<Value> {
         let value = self.spread_value(word).or_else(|| {
+            // Namespace replacements are read above; an unchanged native
+            // word needs no scan of the builtin module's whole inventory.
+            if !self.displaced_primitives.contains(word) { return None; }
             if self.table.prims.get(word).copied() != Some(operation) { return None; }
             match self.imported.get("builtins") {
                 Some(Value::Thing(module)) => module.holds.borrow().iter()
@@ -24893,10 +24908,22 @@ impl<'a> Machine<'a> {
     fn book_space_of(&self, cell: &Rc<RefCell<Value>>) -> Option<String> {
         self.space_books.iter().find(|(_, book)| Rc::ptr_eq(book, cell)).map(|(path, _)| path.clone())
     }
+    // Shared namespace cells are writable through their dictionary too.
+    fn space_callable_changed(&mut self, cell: &Rc<RefCell<Value>>) {
+        let Some(owner) = self.book_space_of(cell) else { return };
+        if !self.rules.names_shadow_builtins { return; }
+        if self.table.strings("ext.system.names.module").first().is_some_and(|word| word == &owner) {
+            self.displaced_primitives.extend(self.table.prims.keys().cloned());
+        }
+        self.revised_namespaces.extend(self.loaded_spaces.iter()
+            .filter(|(_, module)| *module == &owner).map(|(site, _)| site.clone()));
+        self.wildcard_source.borrow_mut().take();
+    }
     /// A name taken out of a loaded space's dictionary comes out of the
     /// space as well: the binding holds nothing from then on, and the
     /// member is gone.
     fn space_mirror_remove(&mut self, cell: &Rc<RefCell<Value>>, name: &str) {
+        self.space_callable_changed(cell);
         let Some(path) = self.book_space_of(cell) else { return };
         let Some(Value::Thing(module)) = self.imported.get(&path) else { return };
         let mut holds = module.holds.borrow_mut();
@@ -25030,6 +25057,7 @@ impl<'a> Machine<'a> {
     /// every name it gained is bound in the space as well, under one
     /// cell for the dictionary's place and the binding alike.
     fn space_sync_written(&mut self, cell: &Rc<RefCell<Value>>) {
+        self.space_callable_changed(cell);
         let Some(path) = self.book_space_of(cell) else { return };
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return };
         let keys: Vec<String> = match cell.borrow().clone() {

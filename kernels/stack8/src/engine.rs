@@ -5830,6 +5830,7 @@ impl<'a> Engine<'a> {
                     let makes = self.lang.makes_places;
                     let held = self.peek_cell_mut(slot, frame)?;
                     let mut fresh_cell = None;
+                    let mut written_cell = None;
                     let shared = match held {
                         Value::Bond(cell) => {
                             let cell = cell.clone();
@@ -5838,11 +5839,13 @@ impl<'a> Engine<'a> {
                                 let mut inside = cell.borrow_mut();
                                 shared_deep(&mut inside, &keys, makes)?
                             };
+                            written_cell = Some(cell.clone());
                             if fresh { fresh_cell = Some((cell, shared.clone())); }
                             shared
                         }
                         _ => shared_deep(held, &keys, makes)?,
                     };
+                    if let Some(cell) = written_cell { self.globals_callable_changed(&cell); }
                     if let Some((cell, shared)) = fresh_cell { if let Value::Text(name) = &keys[0] { self.globals_mirror_new(&cell, name, &shared); } }
                     self.data.push(Value::Bond(shared));
                 }
@@ -9878,8 +9881,20 @@ impl<'a> Engine<'a> {
     /// Write entries back into a thing's dictionary: names written as
     /// text go in among the thing's own fields, keys of any other kind
     /// are kept beside them under `\0keys`.
-    fn fields_restore(&self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
-        let module = self.module_holding(&Value::Object(o.clone())).is_some();
+    fn fields_restore(&mut self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
+        let owner = self.module_holding(&Value::Object(o.clone()));
+        let module = owner.is_some();
+        if let Some(owner) = owner {
+            if self.lang.shadow_builtins {
+                if self.lang.names_module.first().is_some_and(|word| word == &owner) {
+                    self.changed_builtins.extend(self.lang.builtins.keys().cloned());
+                }
+                for (source, (_, module)) in &self.module_slots {
+                    if module == &owner { self.changed_builtin_scopes.insert(source.clone()); }
+                }
+                self.wildcard_file = None;
+            }
+        }
         let mut fields = o.fields.borrow_mut();
         if module {
             let order: Vec<_> = entries.iter().map(|(key, value)| {
@@ -10168,6 +10183,7 @@ impl<'a> Engine<'a> {
                             let mut inside = cell.borrow_mut();
                             shared_deep(&mut inside, &keys, makes)?
                         };
+                        self.globals_callable_changed(&cell);
                         if fresh { if let Value::Text(name) = &keys[0] { self.globals_mirror_new(&cell, name, &shared); } }
                         Value::Bond(shared)
                     }
@@ -18050,6 +18066,7 @@ impl<'a> Engine<'a> {
                                     None => rows.overwrite_row(at, value),
                                 }
                                 drop(held);
+                                self.globals_callable_changed(&cell);
                                 return Ok(Value::Bond(cell));
                             }
                             Placement::NotThere => {
@@ -23385,6 +23402,9 @@ impl Engine<'_> {
 
     fn wildcard_callable(&self, name: &str, native: Builtin) -> Option<Value> {
         let held = self.wildcard_value(name).or_else(|| {
+            // Initial primitive bindings are the native words themselves.
+            // Only a recorded replacement needs the module-field scan.
+            if !self.changed_builtins.contains(name) { return None; }
             let Value::Object(module) = self.modules.get("builtins")? else { return None };
             module.fields.borrow().iter().find(|(word, _)| word == name)
                 .map(|(_, item)| item.contents()).filter(|item| !matches!(item, Value::Blank))
@@ -24585,10 +24605,24 @@ impl Engine<'_> {
     fn globals_module_of(&self, cell: &Rc<RefCell<Value>>) -> Option<String> {
         self.module_globals.iter().find(|(_, book)| Rc::ptr_eq(book, cell)).map(|(path, _)| path.clone())
     }
+    // A dictionary write can replace any native binding, including through
+    // an existing shared cell. Conservatively invalidate this namespace.
+    fn globals_callable_changed(&mut self, cell: &Rc<RefCell<Value>>) {
+        let Some(owner) = self.globals_module_of(cell) else { return };
+        if !self.lang.shadow_builtins { return; }
+        if self.lang.names_module.first().is_some_and(|word| word == &owner) {
+            self.changed_builtins.extend(self.lang.builtins.keys().cloned());
+        }
+        for (source, (_, module)) in &self.module_slots {
+            if module == &owner { self.changed_builtin_scopes.insert(source.clone()); }
+        }
+        self.wildcard_file = None;
+    }
     /// A name taken out of a module's own dictionary comes out of the
     /// module too: its binding holds nothing from then on, and the
     /// member is gone.
     fn globals_mirror_remove(&mut self, cell: &Rc<RefCell<Value>>, name: &str) {
+        self.globals_callable_changed(cell);
         let Some(path) = self.globals_module_of(cell) else { return };
         let Some(Value::Object(module)) = self.modules.get(&path) else { return };
         let mut fields = module.fields.borrow_mut();
@@ -24670,6 +24704,7 @@ impl Engine<'_> {
     /// every name it gained is bound in the module as well, under one
     /// cell for the dictionary's place and the binding alike.
     fn globals_sync_written(&mut self, cell: &Rc<RefCell<Value>>) {
+        self.globals_callable_changed(cell);
         let Some(path) = self.globals_module_of(cell) else { return };
         let Some(Value::Object(module)) = self.modules.get(&path).cloned() else { return };
         let present = match &*cell.borrow() {
