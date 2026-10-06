@@ -913,6 +913,9 @@ impl Builtin {
 pub struct Routine {
     pub postponed_annotation: bool,
     pub checks_annotation_format: bool,
+    /// The routine that answers the annotation evaluator when it is asked
+    /// for the written form of each annotation.
+    pub annotation_texts: Option<Rc<Routine>>,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,

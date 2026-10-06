@@ -15,8 +15,8 @@ _FORMAT_NAMES = {1: 'VALUE', 2: 'VALUE_WITH_FAKE_GLOBALS', 3: 'FORWARDREF', 4: '
 def _check_format(format):
     if format not in _FORMAT_NAMES:
         raise 'ValueError: ' + str(format) + ' is not a valid Format'
-    if format not in (Format.VALUE, Format.FORWARDREF):
-        raise NotImplementedError("annotationlib cannot produce unevaluated annotation strings here")
+    if format == Format.VALUE_WITH_FAKE_GLOBALS:
+        raise NotImplementedError("annotationlib cannot give annotations with fake globals here")
 
 def get_annotate_from_class_namespace(obj):
     # A class body here never leaves an __annotate__ behind.
@@ -37,14 +37,32 @@ def get_annotate_from_class_namespace(obj):
 
 def call_annotate_function(annotate, format, owner=None):
     _check_format(format)
+    if format == Format.STRING:
+        # A function that was written down here keeps the text of each of
+        # its annotations; any other annotate function cannot give them.
+        try:
+            return annotate(Format.STRING)
+        except NotImplementedError:
+            raise NotImplementedError("annotationlib cannot produce unevaluated annotation strings here")
     try:
-        return annotate(format)
-    except NotImplementedError:
+        return annotate(Format.VALUE)
+    except NameError:
         if format != Format.FORWARDREF:
             raise
-        # Native annotation functions support VALUE; resolved expressions
-        # have the same result in FORWARDREF format.
+    # Some name is not there yet: each annotation is read again from its
+    # written form, and the ones that cannot be worked out stand as
+    # references to be resolved later.
+    try:
+        written = annotate(Format.STRING)
+    except NotImplementedError:
+        written = None
+    if written is None:
         return annotate(Format.VALUE)
+    scope = getattr(annotate, '__globals__', None)
+    result = {}
+    for key, text in written.items():
+        result[key] = ForwardRef(text, owner=owner).evaluate(globals=scope, format=Format.FORWARDREF)
+    return result
 
 def call_evaluate_function(evaluate, format, owner=None):
     _check_format(format)
@@ -63,6 +81,8 @@ def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1)
         return {}
     if eval_str:
         raise 'NotImplementedError: annotationlib cannot evaluate string annotations here'
+    if format == Format.STRING:
+        return {key: value if isinstance(value, str) else type_repr(value) for key, value in stored.items()}
     return dict(stored)
 
 # Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/annotationlib.py; PSF License.
@@ -247,9 +267,10 @@ class ForwardRef:
                 if not is_forwardref_format:
                     raise
 
-            # All variables, in scoping order, should be checked before
-            # triggering __missing__ to create a _Stringifier.
-            raise NotImplementedError('symbolic forward-reference expressions are not supported')
+            # An expression with a name still missing stands as one
+            # reference to the whole of it: the names inside it are not
+            # replaced one by one by symbolic stand-ins here.
+            return self
 
     @property
     def __forward_arg__(self):

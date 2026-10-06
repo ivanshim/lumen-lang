@@ -94,6 +94,13 @@ fn watch_host_signals() {
     unsafe { signal(2, signal_arrived) };
 }
 
+thread_local! {
+    /// The hashes tuples holding instances were given, by the tuple's own
+    /// place, kept beside a weak hold that tells whether it still stands.
+    static TUPLE_HASHES: RefCell<HashMap<usize, (std::rc::Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
+}
+
+
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
@@ -3924,7 +3931,16 @@ impl<'a> Engine<'a> {
             self.data.push(self.data.last().expect("annotation format").clone());
             self.data.push(Value::Small(2));
             self.perform(&Action::Gt, 2)?;
-            if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
+            if self.drop_top()?.is_true() {
+                // The text format is the one beyond the evaluator's own
+                // two that it can answer, from the forms written in the
+                // source; any other is left to the caller.
+                let wanted = self.data.last().map(Value::contents);
+                if let (Some(Value::Small(4)), Some(texts)) = (wanted, program.annotation_texts.clone()) {
+                    return self.invoke_top_body(&texts, 1);
+                }
+                return Err("NotImplementedError: ".into());
+            }
         }
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
@@ -5893,10 +5909,36 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(key, Value::Object(_) | Value::Tuple(_)) && !self.lang.class_special.is_empty() {
-            let hash = self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())?;
+            // A tuple remembers its hash once it has been worked out, so
+            // the instances inside it are asked for theirs only once.
+            let remembered = if let Value::Tuple(items) = key { Self::tuple_hash_remembered(items) } else { None };
+            let hash = match remembered {
+                Some(hash) => hash,
+                None => {
+                    let hash = self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())?;
+                    if let Value::Tuple(items) = key { Self::tuple_hash_remember(items, &hash); }
+                    hash
+                }
+            };
             return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
         }
         Ok(key.clone())
+    }
+
+    /// The hash a tuple holding instances was given the last time it was
+    /// asked for one, found by the very tuple and not by what it holds.
+    fn tuple_hash_remembered(items: &crate::tuples::Items) -> Option<Value> {
+        let place = Rc::as_ptr(&**items) as usize;
+        TUPLE_HASHES.with(|seen| seen.borrow().get(&place).filter(|(row, _)| row.strong_count() > 0 && row.upgrade().is_some_and(|live| live.len() == items.len())).map(|(_, hash)| hash.clone()))
+    }
+    fn tuple_hash_remember(items: &crate::tuples::Items, hash: &Value) {
+        if !items.iter().any(|part| matches!(part.contents(), Value::Object(_) | Value::Tuple(_))) { return; }
+        let place = Rc::as_ptr(&**items) as usize;
+        TUPLE_HASHES.with(|seen| {
+            let mut seen = seen.borrow_mut();
+            if seen.len() >= 4096 { seen.retain(|_, (row, _)| row.strong_count() > 0); }
+            seen.insert(place, (Rc::downgrade(&**items), hash.clone()));
+        });
     }
 
     fn special_keys_equal(&mut self, a: &Value, b: &Value) -> Res<bool> {

@@ -814,6 +814,9 @@ pub struct Routine {
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
     pub annotation_protocol: bool,
+    /// What answers the annotator when it is asked for the written form
+    /// of each annotation.
+    pub spelled_annotations: Option<Rc<Routine>>,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,

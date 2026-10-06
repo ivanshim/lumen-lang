@@ -790,7 +790,7 @@ fn compile_pass(
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
-    Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation_texts: None, annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1828,7 +1828,7 @@ impl<'a> Compiler<'a> {
         }
         code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
-        Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation_texts: None, annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_text(&self, start: usize, end: usize) -> String {
@@ -1865,6 +1865,7 @@ impl<'a> Compiler<'a> {
             self.annotation_namespace = Some((owner, names));
         }
         let module_entries = entries.iter().any(|(_, at)| self.module_annotation_marks.contains_key(at));
+        let mut written: Vec<(String, String)> = Vec::new();
         let result = self.routine(&name, vec!["format".into()], 1, true, |c| {
             let dictionary = c.gensym("annotations");
             if module_entries { c.act(Action::MakeMap, 0); c.write(&dictionary); }
@@ -1884,8 +1885,9 @@ impl<'a> Compiler<'a> {
                 let previous = std::mem::replace(&mut c.reading_annotation, true);
                 c.expr_at(0, false)?;
                 c.reading_annotation = previous;
+                let text = c.annotation_text(*start, c.pos);
+                written.push((key.clone(), text.clone()));
                 if c.future_annotations {
-                    let text = c.annotation_text(*start, c.pos);
                     c.piece().instrs.truncate(expression);
                     c.constant(Value::text(&text));
                 }
@@ -1901,6 +1903,23 @@ impl<'a> Compiler<'a> {
             c.piece().result_touched = true;
             Ok(())
         });
+        // The written form of each annotation, kept for a caller that asks
+        // for the text format: the entries a module may or may not have
+        // reached cannot be told apart from those it did, so go without.
+        let texts = if module_entries || written.is_empty() { None } else {
+            let count = written.len();
+            Some(self.routine(&name, vec!["format".into()], 1, true, |c| {
+                for (key, text) in &written {
+                    c.constant(Value::text(key));
+                    c.constant(Value::text(text));
+                    c.act(Action::Tie, 2);
+                }
+                c.act(Action::MakeMap, count);
+                c.write(RESULT_CELL);
+                c.piece().result_touched = true;
+                Ok(())
+            })?)
+        };
         self.annotation_namespace = previous_namespace;
         self.pos = saved;
         self.parameter_rules = rules;
@@ -1908,6 +1927,7 @@ impl<'a> Compiler<'a> {
         result.map(|routine| {
             let mut evaluator = (*routine).clone();
             evaluator.checks_annotation_format = true;
+            evaluator.annotation_texts = texts;
             evaluator.parameter_rules = Some(vec![1]);
             Some(Rc::new(evaluator))
         })

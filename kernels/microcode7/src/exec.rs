@@ -47,6 +47,12 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
+thread_local! {
+    // What tuples holding instances were given for a hash, found by the
+    // tuple's own spot and checked against a weak hold on it.
+    static ROW_HASHES: RefCell<HashMap<usize, (Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
+}
+
 use num_traits::{One, ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
@@ -11396,8 +11402,15 @@ impl<'a> Machine<'a> {
         if program.annotation_protocol {
             let format = frame.cells.borrow()[program.formal_slots[0]].clone();
             let format = format.settled();
-            let exceeds = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
-            if exceeds.is_true() { return Err(String::from("NotImplementedError: ").into()); }
+            let exceeds = self.prim(Prim::Gt, "", &[format.clone(), Value::Small(2)])?;
+            if exceeds.is_true() {
+                // The one format beyond the annotator's own two that it can
+                // give is the written one, which its spelled routine holds.
+                if let (Value::Small(4), Some(spelled)) = (&format, program.spelled_annotations.clone()) {
+                    return self.drive_body(spelled, frame);
+                }
+                return Err(String::from("NotImplementedError: ").into());
+            }
         }
 
         if program.generator && self.rules.suspends {
@@ -12930,9 +12943,30 @@ impl<'a> Machine<'a> {
             }
         }
         if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Thing(_) | Value::Tuple(_)) {
+            // A tuple keeps the hash it was first given, so what it holds
+            // is asked once and not at every use of the tuple as a key.
+            if let Value::Tuple(row) = value {
+                if let Some(known) = Self::row_hash_kept(row) { return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(known))); }
+            }
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
+            if let Value::Tuple(row) = value { Self::row_hash_keep(row, &hash); }
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
         } else { Ok(value.clone()) }
+    }
+
+    fn row_hash_kept(row: &crate::tuples::Sequence) -> Option<Value> {
+        let spot = Rc::as_ptr(&**row) as usize;
+        ROW_HASHES.with(|kept| kept.borrow().get(&spot).and_then(|(weak, hash)| weak.upgrade().filter(|live| live.len() == row.len()).map(|_| hash.clone())))
+    }
+
+    fn row_hash_keep(row: &crate::tuples::Sequence, hash: &Value) {
+        if !row.iter().any(|part| matches!(part.settled(), Value::Thing(_) | Value::Tuple(_))) { return; }
+        let spot = Rc::as_ptr(&**row) as usize;
+        ROW_HASHES.with(|kept| {
+            let mut kept = kept.borrow_mut();
+            if kept.len() >= 4096 { kept.retain(|_, (weak, _)| weak.strong_count() > 0); }
+            kept.insert(spot, (Rc::downgrade(&**row), hash.clone()));
+        });
     }
 
     fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
@@ -13786,7 +13820,7 @@ impl<'a> Machine<'a> {
             let mut pending = entries;
             let mut slots = t.holds.borrow_mut();
             for (key, slot) in slots.iter_mut() {
-                if key.starts_with('\0') { continue; }
+                if key.starts_with('\0') || key.ends_with('\0') { continue; }
                 let position = pending.iter().position(|(label, _)| matches!(label, Value::Text(label) if label.as_ref() == key.as_str()));
                 let next = match position { Some(at) => pending.remove(at).1, None => Value::Unset };
                 if let Value::Shared(cell) = slot {
@@ -13812,7 +13846,7 @@ impl<'a> Machine<'a> {
             return;
         }
         let mut holds = t.holds.borrow_mut();
-        let former_names = holds.iter().filter_map(|entry| (!entry.0.starts_with('\0')).then_some(entry.0.clone())).collect::<Vec<_>>();
+        let former_names = holds.iter().filter_map(|entry| (!entry.0.starts_with('\0') && !entry.0.ends_with('\0')).then_some(entry.0.clone())).collect::<Vec<_>>();
         let binding_table = holds.iter().find(|entry| entry.0 == "\0bindings").map(|entry| entry.1.clone());
         let binding = |text: &str| -> Option<Value> {
             if let Some(Value::Dict(slots)) = &binding_table {
@@ -13826,7 +13860,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
+        holds.retain(|(name, _)| (name.starts_with('\0') || name.ends_with('\0')) && name != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
             match key {
