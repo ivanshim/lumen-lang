@@ -178,6 +178,19 @@ def _reduce(value, protocol):
     forwarded = __reduce_native__(value)
     if forwarded is not None and forwarded[0] == 'handed':
         return _reduce(forwarded[1], protocol)
+    # A bound builtin method (dict.__getitem__ bound to a dict, say)
+    # reduces as (getattr, (self, name)), exactly as CPython's own
+    # __reduce__ does: getattr reads the method name off the receiver to
+    # rebuild the bound method. The runtime's getattr cannot read these
+    # names off a builtin method object, so they are read here through
+    # the attribute path, which does answer them.
+    if type(value).__name__ == 'builtin_function_or_method':
+        try:
+            receiver = value.__self__
+        except AttributeError:
+            receiver = None
+        if receiver is not None:
+            return (getattr, (receiver, value.__name__))
     method = _reduction_hook(value, '__reduce_ex__')
     if method is not None:
         return method(protocol)
@@ -214,8 +227,13 @@ def _apply_state(value, state):
     if isinstance(state, tuple) and len(state) == 2:
         state, slots = state
     if state is not None:
+        # A dict state is written straight into the instance's own
+        # __dict__, the way CPython's load_build writes it, so a frozen
+        # class's __setattr__ is never asked and a frozen dataclass
+        # reads back whole.
+        namespace = value.__dict__
         for name, item in state.items():
-            setattr(value, name, item)
+            namespace[name] = item
     if slots is not None:
         for name, item in slots.items():
             setattr(value, name, item)
