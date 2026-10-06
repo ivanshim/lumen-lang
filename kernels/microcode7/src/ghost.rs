@@ -283,6 +283,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Shared(cell) | Value::Mutable(cell, _) => return ghost_of(&cell.borrow()),
         Value::Thing(t) => Ghost::Thing(Rc::downgrade(t)),
         Value::Intrinsic(code, _) if code.names_a_kind() => Ghost::StaticKind(value.clone()),
+        Value::OctetKind { .. } => Ghost::StaticKind(value.clone()),
         Value::Blueprint(b) => Ghost::Blueprint(Rc::downgrade(b)),
         Value::Generator(g) => Ghost::Walk(Rc::downgrade(g)),
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),
@@ -323,6 +324,22 @@ pub fn note(ghost: Ghost) {
         }
         n.0.push(ghost);
     });
+}
+
+/// Every class made so far that is still alive and lists this one among
+/// its parents, oldest first.
+pub fn offspring_of(parent: &Rc<Blueprint>) -> Vec<Rc<Blueprint>> {
+    NOTABLE.try_with(|n| {
+        let mut found = Vec::new();
+        for ghost in n.borrow().0.iter() {
+            if let Ghost::Blueprint(weak) = ghost {
+                if let Some(child) = weak.upgrade() {
+                    if child.parents.iter().any(|p| Rc::ptr_eq(p, parent)) { found.push(child); }
+                }
+            }
+        }
+        found
+    }).unwrap_or_default()
 }
 
 /// The values embedded in compiled forms are owned by their routine.

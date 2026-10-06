@@ -11109,6 +11109,7 @@ impl<'a> Engine<'a> {
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
                     && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref())
                         || name.as_ref() == self.class_word("mro") || name.as_ref() == self.class_word("order") || name.as_ref() == self.class_word("bases")
+                        || self.names_subclass_listing(name.as_ref())
                         || self.lang.class_details.get("root.members").map_or(false, |words| words.iter().any(|word| word == name.as_ref())));
                 // A builtin kind the reference keeps a docstring for
                 // answers to the member that reads it, whether or not
@@ -12435,6 +12436,17 @@ impl<'a> Engine<'a> {
             }
             let spec = self.mapping_format(spec, mapping, depth + 1)?;
             let words = self.wording();
+            let thing = value.contents();
+            if !self.lang.class_special.is_empty() && Self::holds_object(&thing) {
+                // The program's own class says its own words, as in `.format`.
+                let text = if conversion.is_empty() { self.special_format(&thing, &spec)? } else {
+                    let said = self.special_text(&thing, conversion != "s")?;
+                    let said = if conversion == "a" { crate::strings::ascii_escaped(&said) } else { said };
+                    Value::text(&said).string_field(&words, &spec, "").ok_or_else(|| crate::strings::fault(self.lang, "format"))?
+                };
+                out.push_str(&text);
+                continue;
+            }
             let shown = if conversion == "r" || conversion == "a" {
                 let mut shown = crate::strings::repr(&value, &words);
                 if conversion == "a" {
@@ -21919,6 +21931,13 @@ impl Engine<'_> {
             return self.core_isinstance(value, &property);
         }
 
+        // A union is asked about as the row of kinds it was joined from.
+        if let Value::Object(joined) = kind.contents() {
+            if Self::own_kind(&joined.class_now()).as_deref() == Some("Union") {
+                let members = joined.fields.borrow().iter().find(|(key, _)| key == "__args__").map(|(_, row)| row.clone());
+                if let Some(members) = members { return self.core_isinstance(value, &members); }
+            }
+        }
         if matches!(kind.contents(), Value::Object(o) if o.class_now().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
         }

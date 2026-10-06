@@ -41,11 +41,13 @@ impl<'a> Engine<'a> {
         }
         if word == "Union" {
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
+            hooks.push((self.class_word("getitem").to_string(), Self::adapter(5, vec![Self::adapter(77, vec![Value::text("#union")])])));
         }
         if word == "GenericAlias" {
             hooks.push(("__iter__".into(), Self::adapter(124, vec![Value::Small(5)])));
             for (name, mode) in [(self.class_word("allocate").to_string(), 0), ("__repr__".to_string(), 1),
-                ("__call__".to_string(), 2), ("__mro_entries__".to_string(), 3), ("__eq__".to_string(), 4)] {
+                ("__call__".to_string(), 2), ("__mro_entries__".to_string(), 3), ("__eq__".to_string(), 4),
+                ("__or__".to_string(), 6), ("__ror__".to_string(), 7)] {
                 hooks.push((name, Self::adapter(124, vec![Value::Small(mode)])));
             }
         }
@@ -581,6 +583,17 @@ impl<'a> Engine<'a> {
         }
         if Rc::ptr_eq(class, target) || class.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
         visit(class, target, &mut Vec::new())
+    }
+    /// The second word of the type-method row is the one that lists the
+    /// classes standing directly on a class.
+    pub(super) fn names_subclass_listing(&self, name: &str) -> bool {
+        self.lang.class_details.get("order").and_then(|row| row.get(1)).is_some_and(|word| word == name)
+    }
+    /// The listing handed over by that member: a callable that answers the
+    /// classes made so far on the given one.
+    fn subclass_listing(&self, class: &Rc<Class>) -> Value {
+        let made = crate::faint::subclasses(class).into_iter().map(|each| self.public_class(each)).collect();
+        Self::adapter(0, vec![Value::array(made)])
     }
     fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
@@ -2499,6 +2512,7 @@ impl<'a> Engine<'a> {
                 // The kind read as a class stands on the root and on
                 // nothing else, so that is the whole of its line.
                 if name == self.class_word("bases") { return Ok(Value::tuple(vec![Value::Class(self.root_class())])); }
+                if self.names_subclass_listing(name) { let kind = self.kind_class(word); return Ok(self.subclass_listing(&kind)); }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let listed=name==self.class_word("order");
                     let word=word.to_string();
@@ -2580,6 +2594,7 @@ impl<'a> Engine<'a> {
                     // value of the kind answers to.
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
                 }
+                if self.names_subclass_listing(name) { return Ok(self.subclass_listing(c)); }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));
                     let tuple=Value::tuple(order);
@@ -2993,7 +3008,8 @@ impl<'a> Engine<'a> {
                 let inner=w.1[0].clone();
                 let carried=[self.class_word("module"),self.class_word("qualified"),self.class_word("name"),self.class_word("doc")];
                 let copied=carried.iter().any(|word|!word.is_empty()&&*word==name)
-                    || self.lang.class_annotations.first().map_or(false,|word|word==name);
+                    || self.lang.class_annotations.first().map_or(false,|word|word==name)
+                    || self.lang.class_details.get("code.fields").and_then(|row|row.get(10)).is_some_and(|word|word==name);
                 if copied { return self.class_get(inner,name,true); }
             }
             Value::Adapter(w) if w.0 == 143 => {
@@ -3032,6 +3048,11 @@ impl<'a> Engine<'a> {
                     }
                     return self.class_get(w.1[0].clone(), name, true);
                 }
+                // A bound classmethod answers for the annotations of the
+                // function it binds, as a method of a thing does.
+                let annotated = self.lang.class_annotations.first().is_some_and(|word| word == name)
+                    || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name);
+                if annotated { return self.class_get(w.1[0].clone(), name, true); }
             }
             _ => {}
         }
@@ -4082,13 +4103,13 @@ impl<'a> Engine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool {
         matches!(value,Value::Null)
             ||self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"))
+            ||matches!(value, Value::Object(o) if matches!(Self::own_kind(&o.class_now()).as_deref(), Some("Union" | "GenericAlias")))
     }
     /// At least one operand must provide the union operator. None alone
     /// supplies no such operator.
     pub(super) fn union_anchor(&self,value:&Value)->bool {
         self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"))
+            ||matches!(value, Value::Object(o) if matches!(Self::own_kind(&o.class_now()).as_deref(), Some("Union" | "GenericAlias")))
     }
     /// The kind builtin read as a value: what the kind of a kind is.
     pub(super) fn kind_maker_word(&self)->Value {
@@ -4757,6 +4778,13 @@ impl<'a> Engine<'a> {
                 let same_origin = self.special_dyad(&Action::Eq, &origin, &other_origin)?;
                 let same_args = self.special_dyad(&Action::Eq, &args, &other_args)?;
                 Ok(Value::Flag(self.truth(&same_origin) && self.truth(&same_args)))
+            }
+            // `|` on an alias joins it with a kind, `None`, a union or
+            // another alias, whichever side it stands on.
+            6 | 7 if given.len() == 1 => {
+                let other = given[0].contents();
+                if !self.union_member(&other) { return Ok(Value::Declined(Rc::from("NotImplemented"))); }
+                Ok(if operation == 6 { self.join_types(&receiver, &other) } else { self.join_types(&other, &receiver) })
             }
             _ => Err(self.class_refusal()),
         }

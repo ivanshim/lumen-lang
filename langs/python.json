@@ -3045,7 +3045,8 @@
     "__dict__"
   ],
   "ext.stmt.class.detail.order": [
-    "mro"
+    "mro",
+    "__subclasses__"
   ],
   "ext.stmt.class.detail.qualified": [
     "__qualname__"

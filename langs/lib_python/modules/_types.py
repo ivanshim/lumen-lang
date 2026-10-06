@@ -246,8 +246,6 @@ try:
 except TypeError as _exc:
     TracebackType = type(_exc.__traceback__)
     FrameType = type(_exc.__traceback__.tb_frame)
-class UnionType:
-    def __new__(cls, *args, **kwargs):
-        raise TypeError("cannot create 'types.UnionType' instances")
+UnionType = type(int | str)
 
 __all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']

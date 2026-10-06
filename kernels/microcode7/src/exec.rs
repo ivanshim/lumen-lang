@@ -9653,6 +9653,12 @@ impl<'a> Machine<'a> {
             }
             let spec = self.mapping_format(spec, mapping, depth + 1)?;
             let names = self.wording();
+            // A thing of the program's own is written by its own methods,
+            // the way a field of `.format` is.
+            if let Some(laid) = crate::formatting::Elsewhere::field_laid(self, &value, &spec, conversion)? {
+                out.push_str(&laid);
+                continue;
+            }
             let shown = if conversion == "r" || conversion == "a" {
                 let mut shown = crate::text::expression(&value, names);
                 if conversion == "a" {
@@ -17750,7 +17756,7 @@ impl<'a> Machine<'a> {
                 if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
                 if let Value::Intrinsic(_, kind) = &v[0] {
-                    let lined = word == self.rules.detail_mro || word == self.rules.detail_order || word == self.detail("bases");
+                    let lined = word == self.rules.detail_mro || word == self.rules.detail_order || word == self.detail("bases") || self.is_offspring_word(&word);
                     let inherited = self.table.strings("ext.stmt.class.detail.root.members").iter().any(|member| member == &word);
                     if kind.as_ref() == "type" || self.table.spells("ext.stmt.class.builtin", kind) && (lined || inherited || word == self.rules.detail_allocate || word == self.rules.detail_name || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
                 }
@@ -25982,6 +25988,12 @@ impl Machine<'_> {
             return self.core_belongs(item, &Value::Blueprint(canonical));
         }
 
+        if let Value::Thing(joined) = expected.settled() {
+            if Self::native_word(&joined.blueprint()).as_deref() == Some("Union") {
+                let row = joined.holds.borrow().iter().find(|entry| entry.0 == "__args__").map(|entry| entry.1.clone());
+                if let Some(row) = row { return self.core_belongs(item, &row); }
+            }
+        }
         if matches!(expected.settled(), Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned());
         }

@@ -3,6 +3,15 @@
 use super::*;
 
 impl<'a> Machine<'a> {
+    /// The type-method row of the table keeps the word that lists the
+    /// classes made directly on a class in its second place.
+    pub(super) fn is_offspring_word(&self, key: &str) -> bool {
+        self.table.strings("ext.stmt.class.detail.order").get(1).is_some_and(|word| word == key)
+    }
+    fn offspring_listing(&self, parent: &Rc<Blueprint>) -> Value {
+        let seen = crate::ghost::offspring_of(parent).into_iter().map(|child| self.visible_blueprint(child)).collect::<Vec<_>>();
+        Self::wrap(0, vec![Value::Vector(crate::tuples::Sequence::plain(seen))])
+    }
     pub(super) fn detail(&self, key: &str) -> &str {
         match key {
             "allocate" => self.rules.detail_allocate,
@@ -53,11 +62,16 @@ impl<'a> Machine<'a> {
             let names = self.table.strings("ext.stmt.class.special");
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
-        if word == "Union" { protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new()))); }
+        if word == "Union" {
+            protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
+            protocols.push((self.detail("getitem").to_owned(), Self::wrap(5, vec![Self::wrap(77, vec![Value::text("#union")])])));
+        }
         if word == "GenericAlias" {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
             protocols.extend(names.iter().enumerate().map(|(i, n)| (n.to_string(), Self::wrap(125, vec![Value::Small(i as i64)]))));
+            protocols.push(("__or__".to_owned(), Self::wrap(125, vec![Value::Small(6)])));
+            protocols.push(("__ror__".to_owned(), Self::wrap(125, vec![Value::Small(7)])));
         }
         if word == "SimpleNamespace" {
             let init = self.table.single("ext.stmt.class.constructor").unwrap_or_default();
@@ -1292,6 +1306,18 @@ impl<'a> Machine<'a> {
                             if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
                         }
                         self.apply_class_member(values[2].clone(), Vec::new())
+                    }
+                    77 if kept.first().is_some_and(|mark| mark.bare() == "#union") && values.len() == 2 => {
+                        let operands = match values[1].settled() { Value::Tuple(row) => row.to_vec(), single => vec![single] };
+                        if operands.is_empty() { return Err(String::from("TypeError: Cannot take a Union of no types.").into()); }
+                        let namespace = self.load_namespace("typing")?;
+                        let check = self.read_class_member(namespace, "_type_check", false)?;
+                        let mut joined: Option<Value> = None;
+                        for operand in operands {
+                            let vetted = self.apply_class_member(check.clone(), vec![operand, Value::text("Union[arg, ...]: each arg must be a type.")])?;
+                            joined = Some(match joined { None => vetted, Some(so_far) => self.combined_types(&[so_far, vetted]) });
+                        }
+                        Ok(joined.expect("one operand at least"))
                     }
                     77 => match values.as_slice() {
                         [owner @ Value::Blueprint(_), _] if self.table.has_any("ext.stmt.type_params.open") => Ok(owner.clone()),
@@ -3070,6 +3096,7 @@ impl<'a> Machine<'a> {
                     let root = self.common_ancestor();
                     return Ok(Value::tuple(vec![Value::Blueprint(root)]));
                 }
+                if self.is_offspring_word(key){let kind=self.native_kind(word);return Ok(self.offspring_listing(&kind));}
                 if key==self.detail("mro")||key==self.detail("order"){
                     let listed=key==self.detail("order");
                     let word=word.to_string();
@@ -3206,6 +3233,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Window(Rc::new(Value::Blueprint(b.clone())), 'm'));
             }
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
+            if self.is_offspring_word(key){return Ok(self.offspring_listing(b));}
             if key==self.detail("mro")||key==self.detail("order"){
                 let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.iter().map(|p|self.visible_blueprint(p.clone())));
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
@@ -3600,7 +3628,8 @@ impl<'a> Machine<'a> {
                 // name, module, account and annotations as it would.
                 if key=="__wrapped__" { return Ok(items[0].clone()); }
                 let carried=key==self.detail("module")||key==self.detail("qualified")||key==self.detail("name")||key==self.detail("doc")
-                    || self.table.strings("ext.stmt.class.annotations").first().map_or(false,|word|word==key);
+                    || self.table.strings("ext.stmt.class.annotations").first().map_or(false,|word|word==key)
+                    || self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word|word==key);
                 if carried { return self.read_class_member(items[0].clone(),key,true); }
             }
             // A method bound to its thing answers for the thing and the
@@ -4377,12 +4406,12 @@ impl<'a> Machine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool{
         matches!(value,Value::Nil)
             ||self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(), Some("Union"|"GenericAlias")))
     }
     /// A kind or union supplies the operator; Nil by itself does not.
     pub(super) fn union_anchor(&self,value:&Value)->bool{
         self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(), Some("Union"|"GenericAlias")))
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
@@ -4997,6 +5026,11 @@ impl<'a> Machine<'a> {
                 let same = self.prim_values(Prim::Eq, "", &[parent, other_parent])?;
                 if !self.object_truth(&same)? { return Ok(Value::Flag(false)); }
                 self.prim_values(Prim::Eq, "", &[a, b]).map_err(Escape::from)
+            }
+            6 | 7 if rest.len() == 1 => {
+                let other = rest.remove(0).settled();
+                if !self.union_member(&other) { return Ok(Value::Refusal(Rc::from("NotImplemented"))); }
+                Ok(if action == 6 { self.combined_types(&[subject, other]) } else { self.combined_types(&[other, subject]) })
             }
             _ => Err(self.class_unready()),
         }
