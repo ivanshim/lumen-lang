@@ -38,9 +38,19 @@ def lookup(name):
             return chr(i)
     return __sre_native(5, name)
 
+def decomposition(c):
+    if type(c) != type('') or len(c) != 1:
+        raise TypeError('decomposition(): argument must be a unicode character, not a string of length %d' % len(c))
+    return __sre_native(8, ord(c))
+
 def normalize(form, text):
     if form not in _forms:
         raise 'ValueError: invalid normalization form'
+    # NFKC reaches the whole Unicode database the kernels carry for
+    # identifiers; the smaller Latin-1 tables below still answer the
+    # other forms for the characters they hold.
+    if form == 'NFKC':
+        return __sre_native(7, text)
     result = ''
     for c in list(text):
         result += _forms[form][_index(c)]

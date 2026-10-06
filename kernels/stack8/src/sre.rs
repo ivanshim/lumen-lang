@@ -289,6 +289,14 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let Some(Value::Text(name)) = args.get(1) else { return Err("TypeError: argument must be str".into()); };
         return crate::unicode::named_text(name).map(|text| Value::text(&text)).ok_or_else(|| "KeyError: undefined character name".into());
     }
+    if op == 7 {
+        let Some(Value::Text(text)) = args.get(1) else { return Err("TypeError: normalize() argument 2 must be str".into()); };
+        return Ok(Value::text(&crate::unicode::normalized(text)));
+    }
+    if op == 8 {
+        let point = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
+        return Ok(Value::text(&crate::unicode::decomposition(point)));
+    }
     if op != 0 {
         let n = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
         return Ok(if op == 1 || op == 2 { Value::Small(lower(n, op == 1) as i64) }

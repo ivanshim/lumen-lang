@@ -375,6 +375,11 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         SPLIT|RSPLIT=>{
             let maximum=g.whole(1,-1)?;
             let quota=if maximum<0 {usize::MAX} else {maximum as usize};
+            // A separator that stows a surrogate half cannot occur in
+            // a text that stows none, so no cut is made.
+            if matches!(g.tail.first(), Some(Value::Unpaired(_))) {
+                return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(source)])).keep(true));
+            }
             let on=match g.tail.first() {None|Some(Value::Nil)=>None,Some(v)=>Some(letters(v,table)?)};
             let mut divided=Vec::new();let mut remaining=source;
             if on==Some("") {return Err(g.bad("separator"));}

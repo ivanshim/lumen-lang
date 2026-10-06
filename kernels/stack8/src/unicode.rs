@@ -6501,3 +6501,31 @@ pub fn normalized(text: &str) -> String {
     }
     out.into_iter().map(|point| char::from_u32(point).unwrap_or('\u{FFFD}')).collect()
 }
+
+/// The decomposition mapping UnicodeData.txt writes for a code point,
+/// the compatibility tag included exactly as it is spelled there. A
+/// Hangul syllable has no row and comes apart by the arithmetic UAX #15
+/// gives, and a character the file does not list decomposes to nothing.
+pub fn decomposition(point: u32) -> String {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static MAPPINGS: OnceLock<HashMap<u32, String>> = OnceLock::new();
+    let mappings = MAPPINGS.get_or_init(|| {
+        let mut table = HashMap::new();
+        for line in include_str!("../../../unicode-data/UnicodeData.txt").lines() {
+            let cells: Vec<&str> = line.split(';').collect();
+            if cells.len() < 6 || cells[5].is_empty() { continue; }
+            if let Ok(code) = u32::from_str_radix(cells[0], 16) { table.insert(code, cells[5].to_owned()); }
+        }
+        table
+    });
+    let syllable = point.wrapping_sub(0xAC00);
+    if syllable < 19 * 21 * 28 {
+        let lead = 0x1100 + syllable / (21 * 28);
+        let vowel = 0x1161 + syllable % (21 * 28) / 28;
+        let tail = syllable % 28;
+        return if tail == 0 { format!("{lead:04X} {vowel:04X}") }
+            else { format!("{lead:04X} {vowel:04X} {:04X}", 0x11A7 + tail) };
+    }
+    mappings.get(&point).cloned().unwrap_or_default()
+}

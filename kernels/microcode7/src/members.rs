@@ -124,6 +124,9 @@ impl Request<'_> {
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
+            // Code units standing in for a stowed surrogate half still
+            // split, and each piece keeps the units it was cut from.
+            Value::Unpaired(numbers) if self.operation=="split" || self.operation=="rsplit" => self.split_units(&numbers),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
@@ -214,7 +217,12 @@ impl Request<'_> {
             let trimmed=if op=="lstrip"{s.trim_start_matches(removes)}else if op=="rstrip"{s.trim_end_matches(removes)}else{s.trim_matches(removes)};
             return Ok(Value::text(trimmed));
         }
-        if op=="split"||op=="rsplit"{return self.split_text(s);}
+        if op=="split"||op=="rsplit"{
+            // A separator that stows a surrogate half cannot occur in a
+            // text that stows none, so no cut is made.
+            if matches!(self.given.first().map(|v| v.settled()), Some(Value::Unpaired(_))) { self.takes(0,2)?; return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(s)])).keep(true)); }
+            return self.split_text(s);
+        }
         if op=="join"{
             // Written into the one answer as the members come, rather
             // than into a row of pieces that is then thrown away.
@@ -297,6 +305,69 @@ impl Request<'_> {
         }
         if reverse{chunks.reverse();}
         Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.iter().map(|part|Value::text(part)).collect::<Vec<_>>())).keep(true))
+    }
+    fn split_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 2)?;
+        let bound = self.number(1, -1)?;
+        let maximum = if bound < 0 { usize::MAX } else { bound as usize };
+        let separator = match self.given.first().map(Value::settled) {
+            Some(Value::Nil) | None => None,
+            Some(v) => Some(v.character_numbers().ok_or_else(|| self.fail("arguments"))?),
+        };
+        let mut pieces: Vec<Value> = Vec::new();
+        match separator {
+            Some(sep) => {
+                if sep.is_empty() { return Err(self.fail("separator")); }
+                if self.operation == "rsplit" {
+                    let mut stop = units.len();
+                    while pieces.len() < maximum {
+                        let found = (0..=stop.saturating_sub(sep.len())).rev().find(|&i| units[i..i + sep.len()] == sep[..]);
+                        let Some(i) = found else { break };
+                        pieces.push(Value::characters(units[i + sep.len()..stop].to_vec()));
+                        stop = i;
+                    }
+                    pieces.push(Value::characters(units[..stop].to_vec()));
+                    pieces.reverse();
+                } else {
+                    let mut begin = 0;
+                    while pieces.len() < maximum {
+                        let found = (begin..=units.len().saturating_sub(sep.len())).find(|&i| units[i..i + sep.len()] == sep[..]);
+                        let Some(i) = found else { break };
+                        pieces.push(Value::characters(units[begin..i].to_vec()));
+                        begin = i + sep.len();
+                    }
+                    pieces.push(Value::characters(units[begin..].to_vec()));
+                }
+            }
+            None => {
+                let blank = |n: u32| matches!(n, 0x1c..=0x1f) || char::from_u32(n).is_some_and(char::is_whitespace);
+                if self.operation == "rsplit" {
+                    let mut stop = units.len();
+                    loop {
+                        while stop > 0 && blank(units[stop - 1]) { stop -= 1; }
+                        if stop == 0 { break; }
+                        if pieces.len() == maximum { pieces.push(Value::characters(units[..stop].to_vec())); break; }
+                        let mut begin = stop;
+                        while begin > 0 && !blank(units[begin - 1]) { begin -= 1; }
+                        pieces.push(Value::characters(units[begin..stop].to_vec()));
+                        stop = begin;
+                    }
+                    pieces.reverse();
+                } else {
+                    let mut begin = 0;
+                    loop {
+                        while begin < units.len() && blank(units[begin]) { begin += 1; }
+                        if begin >= units.len() { break; }
+                        if pieces.len() == maximum { pieces.push(Value::characters(units[begin..].to_vec())); break; }
+                        let mut stop = begin;
+                        while stop < units.len() && !blank(units[stop]) { stop += 1; }
+                        pieces.push(Value::characters(units[begin..stop].to_vec()));
+                        begin = stop;
+                    }
+                }
+            }
+        }
+        Ok(Value::Vector(crate::tuples::Sequence::plain(pieces)).keep(true))
     }
     fn trim_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 1)?;

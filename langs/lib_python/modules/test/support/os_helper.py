@@ -1,5 +1,6 @@
 import os
 import warnings
+from collections.abc import MutableMapping
 from contextlib import contextmanager
 from shutil import rmtree as _rmtree
 
@@ -114,8 +115,11 @@ def unlink(filename):
 # A guard over os.environ: it remembers each name's value the first
 # time a test changes or removes it, and puts every one of them back
 # when the guard closes. The mapping it edits lives inside this run
-# alone; nothing written here reaches the host process.
-class EnvironmentVarGuard:
+# alone; nothing written here reaches the host process. It is a
+# MutableMapping, so the whole mapping operations CPython's own
+# guard inherits (clear, update, pop and the rest) work through the
+# methods below without a second implementation.
+class EnvironmentVarGuard(MutableMapping):
     def __init__(self):
         self._environ = os.environ
         self._changed = {}

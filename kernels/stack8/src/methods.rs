@@ -197,6 +197,73 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             };
             return Ok(Value::Flag(valid));
         }
+        // A string kept as code units because a surrogate half cannot
+        // live in a Rust str still splits, and each piece keeps the
+        // units it was cut from.
+        Value::Codepoints(row) if op == "split" || op == "rsplit" => {
+            arity(0, 2)?;
+            let raw = a.get(1).filter(|x| !matches!(x.contents(), Value::Null)).map(|x| integer(x, fault)).transpose()?.unwrap_or(-1);
+            let limit = if raw < 0 { usize::MAX } else { raw as usize };
+            let separator = match a.first().map(Value::contents) {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.text_codes().ok_or_else(|| fault("arguments"))?),
+            };
+            let units: &[u32] = row.as_ref();
+            let mut pieces: Vec<Value> = Vec::new();
+            match separator {
+                Some(sep) => {
+                    if sep.is_empty() { return Err(fault("separator")); }
+                    if op == "rsplit" {
+                        let mut stop = units.len();
+                        while pieces.len() < limit {
+                            let found = (0..=stop.saturating_sub(sep.len())).rev().find(|&i| units[i..i + sep.len()] == sep[..]);
+                            let Some(i) = found else { break };
+                            pieces.push(Value::from_codes(units[i + sep.len()..stop].to_vec()));
+                            stop = i;
+                        }
+                        pieces.push(Value::from_codes(units[..stop].to_vec()));
+                        pieces.reverse();
+                    } else {
+                        let mut begin = 0;
+                        while pieces.len() < limit {
+                            let found = (begin..=units.len().saturating_sub(sep.len())).find(|&i| units[i..i + sep.len()] == sep[..]);
+                            let Some(i) = found else { break };
+                            pieces.push(Value::from_codes(units[begin..i].to_vec()));
+                            begin = i + sep.len();
+                        }
+                        pieces.push(Value::from_codes(units[begin..].to_vec()));
+                    }
+                }
+                None => {
+                    let blank = |n: u32| (28..=31).contains(&n) || char::from_u32(n).is_some_and(char::is_whitespace);
+                    if op == "rsplit" {
+                        let mut stop = units.len();
+                        loop {
+                            while stop > 0 && blank(units[stop - 1]) { stop -= 1; }
+                            if stop == 0 { break; }
+                            if pieces.len() == limit { pieces.push(Value::from_codes(units[..stop].to_vec())); break; }
+                            let mut begin = stop;
+                            while begin > 0 && !blank(units[begin - 1]) { begin -= 1; }
+                            pieces.push(Value::from_codes(units[begin..stop].to_vec()));
+                            stop = begin;
+                        }
+                        pieces.reverse();
+                    } else {
+                        let mut begin = 0;
+                        loop {
+                            while begin < units.len() && blank(units[begin]) { begin += 1; }
+                            if begin >= units.len() { break; }
+                            if pieces.len() == limit { pieces.push(Value::from_codes(units[begin..].to_vec())); break; }
+                            let mut stop = begin;
+                            while stop < units.len() && !blank(units[stop]) { stop += 1; }
+                            pieces.push(Value::from_codes(units[begin..stop].to_vec()));
+                            begin = stop;
+                        }
+                    }
+                }
+            }
+            return Ok(Value::array(pieces).held(true));
+        }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;
             let number=hex_real(&s).ok_or_else(||fault("hex"))?;
@@ -233,6 +300,11 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(0,2)?;
                     let limit = a.get(1).filter(|x| !matches!(x,Value::Null)).map(|x| integer(x,fault)).transpose()?.unwrap_or(-1);
                     let limit = if limit < 0 { usize::MAX } else { limit as usize };
+                    // A separator that stows a surrogate half cannot
+                    // occur in a text that stows none, so no cut is made.
+                    if matches!(a.first().map(Value::contents), Some(Value::Codepoints(_))) {
+                        return Ok(Value::array(vec![Value::text(s)]).held(true));
+                    }
                     let sep = a.first().filter(|x| !matches!(x,Value::Null)).map(|x| text(x,fault)).transpose()?;
                     let mut parts: Vec<String> = Vec::new();
                     if let Some(sep) = sep {

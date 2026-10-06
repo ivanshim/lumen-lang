@@ -290,6 +290,16 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Err(String::from("TypeError: argument must be str")),
         };
     }
+    if action == 7 {
+        return match input.get(1) {
+            Some(Value::Text(word)) => Ok(Value::text(&crate::unicode::collated(word))),
+            _ => Err(String::from("TypeError: normalize() argument 2 must be str")),
+        };
+    }
+    if action == 8 {
+        let point = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
+        return Ok(Value::text(&crate::unicode::decomposition(point)));
+    }
     if action != 0 {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {

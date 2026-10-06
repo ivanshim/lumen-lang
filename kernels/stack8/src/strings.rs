@@ -381,6 +381,11 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         Split | Rsplit => {
             let limit=number(1,-1)?; let cap=if limit<0 {usize::MAX} else {limit as usize};
+            // A separator that stows a surrogate half cannot occur in
+            // a text that stows none, so no cut is made.
+            if matches!(params.first(), Some(Value::Codepoints(_))) {
+                return Ok(Value::array(vec![Value::text(s)]).held(true));
+            }
             let sep=match params.first() {None|Some(Value::Null)=>None,Some(v)=>Some(text(v,lang)?)};
             let backward=op==Rsplit; let mut parts=Vec::new();
             if let Some(sep)=sep {
