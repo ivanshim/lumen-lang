@@ -565,7 +565,7 @@ pub struct KeyedPairs {
     pub revision: u64,
     /// The next place a key written into the map will take: the size of
     /// the entry array a walk's places are read against, kept up while
-    /// keys are added and not brought down when they are taken out.
+    /// keys are added, shortened by popitem, and packed by a table rebuild.
     pub span: usize,
     /// How many times the map has been cleared, so a walk may see that
     /// its places were made anew.
@@ -574,6 +574,8 @@ pub struct KeyedPairs {
     /// stand; a place a key was taken out of is a gap here, so a walk
     /// backwards may skip it.
     pub slots: Vec<usize>,
+    /// Hash-table width, unused entry budget, and whether keys are all exact strings.
+    pub entry_budget: (usize, usize, bool),
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     names: RefCell<Option<Box<NameLookup>>>,
 }
@@ -669,8 +671,60 @@ impl KeyedPairs {
 
     /// Rows re-laid after a filtering or a merge, keeping the width and
     /// the clear-history the map already had, with each row's own place.
-    pub fn kept(rows: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64) -> Self {
-        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, lookup: RefCell::new(None), names: RefCell::new(None) }
+    pub fn kept(rows: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64, entry_budget: (usize, usize, bool)) -> Self {
+        assert_eq!(rows.len(), slots.len());
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+    }
+
+    fn exact_string(key: &Value) -> bool {
+        match key { Value::Text(_) => true, Value::Hashed(pair) => matches!(pair.0, Value::Text(_)), _ => false }
+    }
+
+    /// Rebuilding packs live entries, while existing iterators keep their numeric position.
+    pub fn resize_entries(slots: &mut Vec<usize>, span: &mut usize, budget: &mut (usize, usize, bool), minimum: usize) {
+        let width = minimum.max(8).next_power_of_two();
+        *span = slots.len();
+        for (at, slot) in slots.iter_mut().enumerate() { *slot = at; }
+        budget.0 = width;
+        budget.1 = width * 2 / 3 - slots.len();
+    }
+
+    pub fn append_entry(slots: &mut Vec<usize>, span: &mut usize, budget: &mut (usize, usize, bool), key: &Value) {
+        let converts = budget.2 && !Self::exact_string(key);
+        if converts || budget.1 == 0 {
+            Self::resize_entries(slots, span, budget, slots.len().saturating_mul(3));
+        }
+        if converts { budget.2 = false; }
+        slots.push(*span);
+        *span += 1;
+        budget.1 -= 1;
+    }
+
+    /// A direct mapping merge reserves for all source keys before reading them.
+    pub fn reserve_merge(slots: &mut Vec<usize>, span: &mut usize, budget: &mut (usize, usize, bool), source: &Self) {
+        if source.is_empty() { return; }
+        if slots.is_empty() && source.span == source.len()
+            && (source.entry_budget.0 == 8 || (source.entry_budget.0 / 2) * 2 / 3 < source.len()) {
+            *span = 0;
+            *budget = (source.entry_budget.0, source.entry_budget.1 + source.len(), source.entry_budget.2);
+        } else if budget.0 * 2 / 3 < source.len() {
+            Self::resize_entries(slots, span, budget, (slots.len() + source.len()).saturating_mul(3).div_ceil(2));
+        }
+    }
+
+    pub fn copied(&self) -> Self {
+        if self.rows.is_empty() { return Vec::new().into(); }
+        if self.rows.len() >= self.span * 2 / 3 { self.clone() }
+        else { self.rows.clone().into() }
+    }
+
+    pub fn pop_last(&mut self) -> Option<(Value, Value)> {
+        let pair = self.rows.pop()?;
+        self.span = self.slots.pop().expect("entry position");
+        self.revision = next_map_revision();
+        *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
+        Some(pair)
     }
 
     /// Write a key at the next open place, growing the entry array.
@@ -679,8 +733,25 @@ impl KeyedPairs {
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
         self.rows.push((key, value));
-        self.slots.push(self.span);
-        self.span = self.span.saturating_add(1);
+        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
+    }
+
+    pub fn push(&mut self, pair: (Value, Value)) { self.push_row(pair.0, pair.1); }
+
+    pub fn remove(&mut self, at: usize) -> (Value, Value) {
+        let removed = self.rows[at].clone();
+        self.remove_row(at);
+        removed
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(&(Value, Value)) -> bool) {
+        for at in (0..self.rows.len()).rev() {
+            if !keep(&self.rows[at]) { self.remove_row(at); }
+        }
+    }
+
+    pub fn extend(&mut self, rows: impl IntoIterator<Item = (Value, Value)>) {
+        for (key, value) in rows { self.push_row(key, value); }
     }
 
     /// Take a row out by its place among the rows, leaving its slot as a
@@ -693,12 +764,10 @@ impl KeyedPairs {
         self.slots.remove(at);
     }
 
-    /// The rows' places, brought back into step with the rows themselves
-    /// where something wrote them through the plain Vec road: the places
-    /// run plain and unbroken then.
+    /// Read entry positions; every structural mutation must update them atomically.
     pub fn slots_synced(&self) -> Vec<usize> {
-        if self.slots.len() == self.rows.len() { return self.slots.clone(); }
-        (0..self.rows.len()).collect()
+        assert_eq!(self.slots.len(), self.rows.len(), "map positions must follow every row mutation");
+        self.slots.clone()
     }
 
     /// Empty the rows and mark the map's places as begun again: the
@@ -707,6 +776,7 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         self.clear_epoch = self.clear_epoch.wrapping_add(1);
         self.span = 0;
+        self.entry_budget = (1, 0, true);
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
         self.rows.clear();
@@ -729,8 +799,7 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.names.borrow_mut() = None;
         self.rows.push((key, value));
-        self.slots.push(self.span);
-        self.span = self.span.saturating_add(1);
+        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
 }
@@ -739,7 +808,9 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
         let span = rows.len();
         let slots = (0..span).collect();
-        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, lookup: RefCell::new(None), names: RefCell::new(None) }
+        let width = if span == 0 { 1 } else { (span * 3).div_ceil(2).max(8).next_power_of_two() };
+        let entry_budget = (width, width * 2 / 3 - span, rows.iter().all(|(key, _)| Self::exact_string(key)));
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -748,7 +819,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -766,7 +837,6 @@ impl std::ops::Deref for KeyedPairs {
 impl std::ops::DerefMut for KeyedPairs {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
         self.revision = next_map_revision();
-        self.span = self.span.max(self.rows.len());
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
         &mut self.rows

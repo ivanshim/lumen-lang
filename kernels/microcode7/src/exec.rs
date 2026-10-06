@@ -6365,7 +6365,7 @@ impl<'a> Machine<'a> {
                             for (i, (k, v)) in pairs.iter().enumerate() {
                                 if !self.keys_match(k, &at) { rows.push((k.clone(), v.clone())); kept_slots.push(slots[i]); }
                             }
-                            Value::Dict(Rc::new(crate::data::MapStore::kept(rows, kept_slots, pairs.span, pairs.clear_epoch)))
+                            Value::Dict(Rc::new(crate::data::MapStore::kept(rows, kept_slots, pairs.span, pairs.clear_epoch, pairs.entry_budget)))
                         }
                     },
                     held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
@@ -8310,8 +8310,10 @@ impl<'a> Machine<'a> {
                     let mut merged=previous.to_vec();
                     let mut slots = previous.slots_synced();
                     let mut span = previous.span;
-                    for (key,value) in additions.iter().cloned() { if self.map_enter(&mut merged,key,value).map_err(Escape::from)? { slots.push(span); span += 1; } }
-                    if let Some(cell)=Self::dict_cell(receiver) { let epoch = match &*cell.borrow() { Value::Dict(old) => old.clear_epoch, _ => 0 }; cell.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(merged, slots, span, epoch)))); }
+                    let mut budget = previous.entry_budget;
+                    crate::data::MapStore::plan_merge(&mut slots, &mut span, &mut budget, &additions);
+                    for (key,value) in additions.iter().cloned() { if self.map_enter(&mut merged,key,value).map_err(Escape::from)? { crate::data::MapStore::extend_positions(&mut slots, &mut span, &mut budget, &merged.last().expect("inserted pair").0); } }
+                    if let Some(cell)=Self::dict_cell(receiver) { let epoch = match &*cell.borrow() { Value::Dict(old) => old.clear_epoch, _ => 0 }; cell.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(merged, slots, span, epoch, budget)))); }
                     return Ok(Value::Nil);
                 }
                 Value::Set(store) => {
@@ -13574,10 +13576,10 @@ impl<'a> Machine<'a> {
 
     /// The cell a map method's receiver stands in written over with a
     /// new set of pairs, exactly as `Request::replace` writes it.
-    fn replace_dict(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>, slots: Vec<usize>, span: usize) -> Result<(), String> {
+    fn replace_dict(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, budget: (usize, usize, bool)) -> Result<(), String> {
         let (Value::Mutable(cell, _) | Value::Shared(cell)) = receiver else { return Err(self.method_fault("unready")); };
         let epoch = match &*cell.borrow() { Value::Dict(old) => old.clear_epoch, _ => 0 };
-        let new_value = Value::Dict(Rc::new(crate::data::MapStore::kept(pairs, slots, span, epoch)));
+        let new_value = Value::Dict(Rc::new(crate::data::MapStore::kept(pairs, slots, span, epoch, budget)));
         if crate::members::circular(&new_value, cell, 0) { return Err(self.method_fault("unready")); }
         cell.replace(new_value);
         Ok(())
@@ -13586,11 +13588,12 @@ impl<'a> Machine<'a> {
     /// The slots a rebuild of a map whose rows were written over and
     /// grown at the end should carry: the old places, then a fresh place
     /// for each row grown beyond them.
-    fn grown_slots(&self, pairs: &[(Value, Value)], old_slots: &[usize], old_span: usize) -> (Vec<usize>, usize) {
+    fn grown_slots(&self, pairs: &[(Value, Value)], old_slots: &[usize], old_span: usize, budget: &mut (usize, usize, bool)) -> (Vec<usize>, usize) {
         let pushed = pairs.len().saturating_sub(old_slots.len());
         let mut slots = old_slots.to_vec();
-        for i in 0..pushed { slots.push(old_span + i); }
-        (slots, old_span + pushed)
+        let mut span = old_span;
+        for pair in &pairs[pairs.len() - pushed..] { crate::data::MapStore::extend_positions(&mut slots, &mut span, budget, &pair.0); }
+        (slots, span)
     }
 
     /// `get`, `setdefault` and `pop`: the one key each is asked about
@@ -13605,12 +13608,12 @@ impl<'a> Machine<'a> {
         if let Some(words) = self.cannot_key(&arguments[0]) { return Err(words); }
         let hashed = self.hash_key(&arguments[0])?;
         let mut current = receiver.settled();
-        let (pairs, found, keyed, slots, span) = loop {
+        let (pairs, found, keyed, slots, span, mut budget) = loop {
             let Value::Dict(store) = current else { return Err(self.method_fault("unready")); };
             let located = self.map_locate(&store, Some(&store), &hashed)?;
             current = receiver.settled();
             if matches!(&current, Value::Dict(now) if now.serial != store.serial) { continue; }
-            break (store.to_vec(), located.0, located.1, store.slots_synced(), store.span);
+            break (store.to_vec(), located.0, located.1, store.slots_synced(), store.span, store.entry_budget);
         };
         if let Some(index) = found {
             let answer = pairs[index].1.clone();
@@ -13619,7 +13622,7 @@ impl<'a> Machine<'a> {
                 remaining.remove(index);
                 let mut slots = slots.clone();
                 slots.remove(index);
-                self.replace_dict(receiver, remaining, slots, span)?;
+                self.replace_dict(receiver, remaining, slots, span, budget)?;
             }
             return Ok(answer);
         }
@@ -13630,8 +13633,8 @@ impl<'a> Machine<'a> {
         if name == "setdefault" {
             let mut grown = pairs;
             grown.push((keyed, answer.clone()));
-            let (slots, span) = self.grown_slots(&grown, &slots, span);
-            self.replace_dict(receiver, grown, slots, span)?;
+            let (slots, span) = self.grown_slots(&grown, &slots, span, &mut budget);
+            self.replace_dict(receiver, grown, slots, span, budget)?;
         }
         Ok(answer)
     }
@@ -13646,6 +13649,7 @@ impl<'a> Machine<'a> {
         let mut entries = store.to_vec();
         let mut slots = store.slots_synced();
         let mut span = store.span;
+        let mut budget = store.entry_budget;
         let mut stopped = None;
         if let Some(source) = arguments.first() {
             let offered = if source.kind_word() == "mappingproxy" { source.proxy_pairs() } else { source.settled() };
@@ -13654,12 +13658,13 @@ impl<'a> Machine<'a> {
             } else { offered };
             match direct {
                 Value::Dict(d) => {
+                    crate::data::MapStore::plan_merge(&mut slots, &mut span, &mut budget, &d);
                     let cell = Self::dict_cell(source);
                     let initial = cell.as_ref().map(Self::dict_extent);
                     for (key, value) in d.iter() {
-                        if self.map_enter(&mut entries, key.clone(), value.clone())? { slots.push(span); span += 1; }
+                        if self.map_enter(&mut entries, key.clone(), value.clone())? { crate::data::MapStore::extend_positions(&mut slots, &mut span, &mut budget, &entries.last().expect("inserted pair").0); }
                         if cell.as_ref().map(Self::dict_extent) != initial {
-                            self.replace_dict(receiver, entries, slots.clone(), span)?;
+                            self.replace_dict(receiver, entries, slots.clone(), span, budget)?;
                             return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[2]));
                         }
                     }
@@ -13667,7 +13672,7 @@ impl<'a> Machine<'a> {
                 Value::Attributes(object) => {
                     for (word, value) in object.holds.borrow().clone() {
                         if word.starts_with('\0') || matches!(value, Value::Unset) { continue; }
-                        if self.map_enter(&mut entries, Value::text(&word), value)? { slots.push(span); span += 1; }
+                        if self.map_enter(&mut entries, Value::text(&word), value)? { crate::data::MapStore::extend_positions(&mut slots, &mut span, &mut budget, &entries.last().expect("inserted pair").0); }
                     }
                 }
                 other => {
@@ -13712,8 +13717,8 @@ impl<'a> Machine<'a> {
                                 }
                                 (fields[0].clone(), fields[1].clone())
                             };
-                            if self.map_enter(&mut entries, key, value)? { slots.push(span); span += 1; }
-                            self.replace_dict(receiver, entries.clone(), slots.clone(), span)?;
+                            if self.map_enter(&mut entries, key, value)? { crate::data::MapStore::extend_positions(&mut slots, &mut span, &mut budget, &entries.last().expect("inserted pair").0); }
+                            self.replace_dict(receiver, entries.clone(), slots.clone(), span, budget)?;
                             position += 1;
                         }
                         Ok(())
@@ -13722,9 +13727,9 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if stopped.is_none() { for (key, value) in keywords { if self.map_enter(&mut entries, Value::text(key), value.clone())? { slots.push(span); span += 1; } } }
+        if stopped.is_none() { for (key, value) in keywords { if self.map_enter(&mut entries, Value::text(key), value.clone())? { crate::data::MapStore::extend_positions(&mut slots, &mut span, &mut budget, &entries.last().expect("inserted pair").0); } } }
         let previous_turn = (entries.len() == store.len()).then_some(store.serial);
-        self.replace_dict(receiver, entries, slots, span)?;
+        self.replace_dict(receiver, entries, slots, span, budget)?;
         if let (Some(serial), Some(owner)) = (previous_turn, Self::dict_cell(receiver)) {
             let mut held = owner.borrow_mut();
             match &mut *held {
@@ -17178,7 +17183,7 @@ impl<'a> Machine<'a> {
             if let Some(cell) = Self::dict_cell(target).filter(|_| self.names_in_calls) {
                 let at = self.as_key(key);
                 if let Some(words) = self.cannot_key(&at) { return Err(words); }
-                let (entries, span, clear_epoch, slots) = match &*cell.borrow() { Value::Dict(held) => (held.to_vec(), held.span, held.clear_epoch, held.slots_synced()), _ => (Vec::new(), 0, 0, Vec::new()) };
+                let (entries, span, clear_epoch, slots, budget) = match &*cell.borrow() { Value::Dict(held) => (held.to_vec(), held.span, held.clear_epoch, held.slots_synced(), held.entry_budget), _ => (Vec::new(), 0, 0, Vec::new(), (1, 0, true)) };
                 let wanted = self.hash_key(&at)?;
                 if self.rules.has_any_ext_stmt_del && !self.key_held(&entries, &wanted)? {
                     return Err(if self.rules.has_any_ext_builtin_exceptions { self.absent_key(&at) } else { self.table.strings("ext.stmt.del.unrun").first().map(String::as_str).unwrap_or_default().to_string() });
@@ -17186,7 +17191,7 @@ impl<'a> Machine<'a> {
                 let (kept, removed) = self.without_key(&entries, &wanted)?;
                 let mut slots = slots;
                 if let Some(at) = removed { slots.remove(at); }
-                cell.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(kept, slots, span, clear_epoch))));
+                cell.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(kept, slots, span, clear_epoch, budget))));
                 return Ok(target.clone());
             }
         }
@@ -23249,7 +23254,7 @@ fn assembled(values: Vec<Value>, map_wanted: bool, plain_keys: bool) -> Value {
             }
             other => {
                 let key = Value::Small(after_keys(entries.as_ref()));
-                Rc::make_mut(&mut entries).push((key, other));
+                Rc::make_mut(&mut entries).push_row(key, other);
             }
         }
     }
@@ -23298,7 +23303,7 @@ fn set_key_indexed(entries: &mut Rc<MapStore>, key: Value, value: Value) {
     }
     match entries.as_ref().iter().position(|(k, _): &(Value, Value)| k.equals(&key)) {
         Some(at) => overwrite_or_shared(entries, at, value),
-        None => { Rc::make_mut(entries).push((key, value)); }
+        None => { Rc::make_mut(entries).push_row(key, value); }
     }
 }
 
