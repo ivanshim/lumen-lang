@@ -26260,7 +26260,7 @@ impl Machine<'_> {
                 let answer = if input.is_empty() { false } else { self.object_truth(&input[0])? };
                 Ok(Value::Flag(answer))
             }
-            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
+            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)) || matches!(&input[0], Value::Wrapped(tag,_) if matches!(tag, 0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134)))) }
             Hashed => {
                 require(1, 1)?;
                 input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &Self::unhashable_kind(&input[0])))

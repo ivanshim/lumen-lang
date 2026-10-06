@@ -526,6 +526,19 @@ impl<'a> Machine<'a> {
     }
     fn build_named_class(&mut self, title_object:Value,mut parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>)->Res {
         let title=self.checked_type_name(&title_object)?;
+        // A plain routine written as the class's own maker is kept as a
+        // method taking no receiver, as the reference keeps one when it
+        // makes a class; anything already wrapped, or not a routine, is
+        // left as it stands.
+        let maker_word = self.detail("allocate").to_string();
+        if !maker_word.is_empty() {
+            if let Some(entry) = entries.iter_mut().find(|(key, _)| *key == maker_word) {
+                if matches!(entry.1, Value::Routine(_) | Value::Bound(..)) {
+                    let inner = entry.1.clone();
+                    entry.1 = Value::Wrapped(4, Rc::new(vec![inner]).into());
+                }
+            }
+        }
         let prepared = entries.iter().position(|(key, _)| key == "\0prepared").map(|at| entries.remove(at).1);
         if let Some(index) = entries.iter().position(|entry| entry.0 == "\0header") {
             let header = entries.remove(index).1;
@@ -2936,6 +2949,7 @@ impl<'a> Machine<'a> {
                 if key=="__objclass__" {
                     if let Some(owner)=self.kind_by_word(kind) { return Ok(owner); }
                 }
+                if key==self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value.clone()])); }
             }
         }
         if let Some(member) = self.activation_member(&value, key) { return Ok(member); }
@@ -4620,7 +4634,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

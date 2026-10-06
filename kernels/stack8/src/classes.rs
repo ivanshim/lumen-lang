@@ -624,6 +624,18 @@ impl<'a> Engine<'a> {
         // been written. Nothing stands there, and the class keeps no
         // member for it: a name a conditional never bound is no member.
         members.retain(|(_, held)| !matches!(held, Value::Blank));
+        // A plain routine written as the class's own maker is kept as a
+        // method that takes no receiver, the way the reference keeps one
+        // when it makes a class; a maker already wrapped, or one that is
+        // no routine, is left as it stands.
+        let maker_word = self.class_word("allocate").to_string();
+        if !maker_word.is_empty() {
+            if let Some((_, held)) = members.iter_mut().find(|(key, _)| *key == maker_word) {
+                if let Value::Routine(routine) = held {
+                    *held = Self::adapter(4, vec![Value::Routine(routine.clone())]);
+                }
+            }
+        }
         if !self.lang.module_cache.is_empty() && members.iter().any(|(key, value)| key == "__abc_tpflags__" && matches!(value.contents(), Value::Small(flags) if flags & 96 == 96)) {
             return Err(format!("TypeError: type {name} has both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING set").into());
         }
@@ -3021,6 +3033,7 @@ impl<'a> Engine<'a> {
                 if name=="__objclass__" {
                     if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
                 }
+                if name==self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject.clone()])); }
             }
             Value::Adapter(w) if matches!(w.0, 3 | 131) => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
@@ -4338,7 +4351,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|14|15|17..=27|29|30|40..=48|77..=80|131|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
