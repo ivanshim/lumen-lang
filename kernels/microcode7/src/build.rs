@@ -1675,7 +1675,7 @@ impl<'a> Builder<'a> {
                 let read = prim_call(Prim::ClassWork(18), vec![Form::Read(book), constant(Value::text(name))]);
                 let present = prim_call(Prim::At, vec![Form::Read(found.clone()), constant(Value::Small(0))]);
                 let value = prim_call(Prim::At, vec![Form::Read(found.clone()), constant(Value::Small(1))]);
-                let fallback = self.class_alias_read(name).unwrap_or_else(|| self.read_fallback(name));
+                let fallback = self.read_fallback(name);
                 let selected = self.choose(present, value, fallback);
                 return sequence(vec![Form::Write(found, Box::new(read)), selected]);
             }
@@ -4606,7 +4606,7 @@ impl<'a> Builder<'a> {
             let value = if self.key("ext.stmt.class") {
                 let member = self.glance(1).lexeme.clone();
                 setup.push(self.class_with_receiver()?.0);
-                let mut nested = self.read(&member);
+                let mut nested = self.class_alias_read(&member).unwrap_or_else(|| self.read(&member));
                 while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
                 Some((member, nested))
             } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling()) {
@@ -4950,7 +4950,10 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.class") {
             word = self.glance(1).lexeme.clone();
             setup.push(self.class_with_receiver()?.0);
-            decorated = self.read(&word);
+            // The member just made stands in the body's own place, not
+            // yet in its live namespace; read it from the place, then
+            // put the finished member there once.
+            decorated = self.class_alias_read(&word).unwrap_or_else(|| self.read(&word));
         } else {
             if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
             if !self.key("stmt.function") {
@@ -4985,6 +4988,7 @@ impl<'a> Builder<'a> {
         let address = self.gensym("adorned_method");
         setup.push(Form::Write(address.clone(), Box::new(decorated)));
         self.class_bindings.last_mut().expect("the class namespace").1.insert(word.clone(), address.clone());
+        if let Some(mirror) = self.mirror_member(&word, &address) { setup.push(mirror); }
         Ok((word, address))
     }
 

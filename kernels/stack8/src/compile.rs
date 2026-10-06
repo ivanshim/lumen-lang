@@ -1223,12 +1223,7 @@ impl<'a> Compiler<'a> {
                 self.read(&found); self.constant(Value::Small(0)); self.act(Action::At, 2);
                 let missing = self.skip();
                 self.read(&found); self.constant(Value::Small(1)); self.act(Action::At, 2);
-                let done = self.leap(); self.land(missing);
-                // The live body namespace that did not answer falls
-                // through to the place the body keeps a member it has
-                // already bound, a nested class it just made among them.
-                if !self.read_class_alias(name) { self.read_fallback(name); }
-                self.land(done);
+                let done = self.leap(); self.land(missing); self.read_fallback(name); self.land(done);
                 return;
             }
         }
@@ -5625,7 +5620,10 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.class_words) {
             named = self.look_ahead(1).lexeme.clone();
             self.explicit_class()?;
-            self.read(&named);
+            // The member just made stands in the body's own place, not
+            // yet in its live namespace; read it from the place, then
+            // put the finished member there once.
+            if !self.read_class_alias(&named) { self.read(&named); }
         } else {
             if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
@@ -5662,6 +5660,7 @@ impl<'a> Compiler<'a> {
         let slot = self.gensym("decorated_member");
         self.write(&slot);
         self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
+        self.mirror_member(&named, &slot)?;
         Ok((named, slot))
     }
 
@@ -5976,7 +5975,7 @@ impl<'a> Compiler<'a> {
         } else if self.on_keyword(&lang.class_words) {
             let named = self.look_ahead(1).lexeme.clone();
             self.explicit_class()?;
-            self.read(&named);
+            if !self.read_class_alias(&named) { self.read(&named); }
             for place in decorators.into_iter().rev() { self.read(&place); self.act(Action::Invoke(Rc::from("")), 2); }
             let slot = self.member_place(&named, "nested");
             self.write(&slot);

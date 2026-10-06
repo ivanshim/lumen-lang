@@ -545,19 +545,6 @@ impl<'a> Machine<'a> {
     }
     fn build_named_class(&mut self, title_object:Value,mut parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>)->Res {
         let title=self.checked_type_name(&title_object)?;
-        // A plain routine written as the class's own maker is kept as a
-        // method taking no receiver, as the reference keeps one when it
-        // makes a class; anything already wrapped, or not a routine, is
-        // left as it stands.
-        let maker_word = self.detail("allocate").to_string();
-        if !maker_word.is_empty() {
-            if let Some(entry) = entries.iter_mut().find(|(key, _)| *key == maker_word) {
-                if matches!(entry.1, Value::Routine(_) | Value::Bound(..)) {
-                    let inner = entry.1.clone();
-                    entry.1 = Value::Wrapped(4, Rc::new(vec![inner]).into());
-                }
-            }
-        }
         let prepared = entries.iter().position(|(key, _)| key == "\0prepared").map(|at| entries.remove(at).1);
         if let Some(index) = entries.iter().position(|entry| entry.0 == "\0header") {
             let header = entries.remove(index).1;
@@ -788,6 +775,21 @@ impl<'a> Machine<'a> {
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
         entries.retain(|(_,v)|!matches!(v,Value::Unset));
+        // A plain routine written as the class's own maker is kept as a
+        // method taking no receiver, as the reference keeps one when it
+        // makes a class; anything already wrapped, or not a routine, is
+        // left as it stands. Every road that makes a class -- a class
+        // statement, a custom metaclass, or a direct type.__new__ --
+        // comes through here.
+        let maker_word = self.detail("allocate").to_string();
+        if !maker_word.is_empty() {
+            if let Some(entry) = entries.iter_mut().find(|(key, _)| *key == maker_word) {
+                if matches!(entry.1, Value::Routine(_) | Value::Bound(..)) {
+                    let inner = entry.1.clone();
+                    entry.1 = Value::Wrapped(4, Rc::new(vec![inner]).into());
+                }
+            }
+        }
         if !self.table.strings("ext.system.module.cache").is_empty() {
             for (key, value) in &entries {
                 if key == "__abc_tpflags__" && matches!(value.settled(), Value::Small(bits) if bits & 96 == 96) {
