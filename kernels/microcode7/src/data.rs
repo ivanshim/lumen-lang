@@ -1843,7 +1843,7 @@ impl Thing {
     pub fn entries_shown(&self) -> Value {
         let holds = self.holds.borrow();
         let mut pairs: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0'))
+            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0') && !name.ends_with('\0'))
             .map(|(name, v)| (Value::text(name), v.clone())).collect();
         // Keys of any other kind are kept beside the names under the
         // hidden name `\0keys` and shown with them.

@@ -8960,6 +8960,13 @@ impl<'a> Machine<'a> {
                 _ => {}
             }
         }
+        // A word several kinds of value share is the method of only some
+        // of them: a plain kind that does not keep it has no such member.
+        let plain_kind = matches!(receiver.settled(), Value::Nil) || crate::members::lists_members(&receiver.settled());
+        if plain_kind && !crate::members::answers_to(&receiver.settled(), operation) {
+            let spelled = self.member_spelling(operation);
+            if self.attribute(&receiver, &spelled).is_none() { return Err(self.member_missing(&receiver, &spelled).into()); }
+        }
         Ok(Value::Member(Rc::new(receiver), operation.to_string()))
     }
 
@@ -13757,7 +13764,7 @@ impl<'a> Machine<'a> {
         // its cell keeps, the very value reading the attribute itself
         // would find.
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
+            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !name.ends_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| {
                 let mut value = held.clone();
                 if namespace {

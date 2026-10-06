@@ -122,6 +122,27 @@ def __getattr__(name):
     raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
 
 
+def formatannotation(annotation, base_module=None, *, quote_annotation_strings=True):
+    # Source: CPython Lib/inspect.py formatannotation at v3.14.8; PSF License.
+    import types
+    if getattr(annotation, '__module__', None) == 'typing':
+        import re
+        def repl(match):
+            text = match.group()
+            return text.removeprefix('typing.')
+        return re.sub(r'[\w\.]+', repl, repr(annotation))
+    if isinstance(annotation, types.GenericAlias):
+        return str(annotation)
+    if isinstance(annotation, type):
+        if annotation.__module__ in ('builtins', base_module):
+            return annotation.__qualname__
+        return annotation.__module__ + '.' + annotation.__qualname__
+    from annotationlib import ForwardRef
+    if isinstance(annotation, ForwardRef):
+        return annotation.__forward_arg__
+    return repr(annotation)
+
+
 # A signature reconstructed from the code fields the runtime exposes.
 # Frame walking and builtin text signatures remain unavailable.
 class Signature:
@@ -160,29 +181,44 @@ class Signature:
         kwonly = code.co_kwonlyargcount
         defaults = getattr(obj, '__defaults__', None) or ()
         kwdefaults = getattr(obj, '__kwdefaults__', None) or {}
+        import annotationlib
+        notes = annotationlib.get_annotations(obj, format=annotation_format)
+
+        def written(name, prefix=''):
+            # name, then its annotation, as Parameter.__str__ writes them
+            part = prefix + name
+            if name in notes:
+                part += ': ' + formatannotation(notes[name])
+            return part
+
+        def with_default(part, name, value):
+            return part + (' = ' if name in notes else '=') + repr(value)
+
         parts = []
         for i in range(1 if bound else 0, count):
-            part = names[i]
+            part = written(names[i])
             if i >= count - len(defaults):
-                part += '=' + repr(defaults[i - count + len(defaults)])
+                part = with_default(part, names[i], defaults[i - count + len(defaults)])
             parts.append(part)
             if i + 1 == posonly:
                 parts.append('/')
         cursor = count + kwonly
         if code.co_flags & CO_VARARGS:
-            parts.append('*' + names[cursor])
+            parts.append(written(names[cursor], '*'))
             cursor += 1
         elif kwonly:
             parts.append('*')
         for i in range(count, count + kwonly):
-            part = names[i]
-            if part in kwdefaults:
-                part += '=' + repr(kwdefaults[part])
+            part = written(names[i])
+            if names[i] in kwdefaults:
+                part = with_default(part, names[i], kwdefaults[names[i]])
             parts.append(part)
         if code.co_flags & CO_VARKEYWORDS:
-            parts.append('**' + names[cursor])
+            parts.append(written(names[cursor], '**'))
         result = cls()
         result._text = '(' + ', '.join(parts) + ')'
+        if 'return' in notes:
+            result._text += ' -> ' + formatannotation(notes['return'])
         return result
 
     def __str__(self):

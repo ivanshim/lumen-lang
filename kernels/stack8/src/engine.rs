@@ -9817,6 +9817,15 @@ impl<'a> Engine<'a> {
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::BindValueMethod(operation) => {
                 let target = self.drop_top()?.held(false);
+                // A method every kind of value shares a word for is still
+                // the method of only some of them: a value whose kind
+                // keeps no such member has no such member to hand over.
+                let judged = matches!(Self::native_family(&target), Some(Kindred::Nothing | Kindred::Whole | Kindred::Real | Kindred::Ratio
+                    | Kindred::Complex | Kindred::Text | Kindred::Row | Kindred::Tuple | Kindred::Map | Kindred::Counted));
+                if judged && !crate::methods::answered(&target, operation) {
+                    let word = self.spelled_member(operation);
+                    if self.builtin_member(&target, &word)?.is_none() { return Err(self.member_amiss(&target, &word).into()); }
+                }
                 self.bound_value_method(target, operation)?
             }
             Action::Not => {

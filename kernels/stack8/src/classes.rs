@@ -3048,9 +3048,12 @@ impl<'a> Engine<'a> {
                     }
                     return self.class_get(w.1[0].clone(), name, true);
                 }
-                // A bound classmethod answers for the annotations of the
-                // function it binds, as a method of a thing does.
-                let annotated = self.lang.class_annotations.first().is_some_and(|word| word == name)
+                // A bound classmethod answers for the name, the account and
+                // the annotations of the function it binds, as a method of
+                // a thing does.
+                let carried = [self.class_word("module"), self.class_word("qualified"), self.class_word("name"), self.class_word("doc")];
+                let annotated = carried.iter().any(|word| !word.is_empty() && *word == name)
+                    || self.lang.class_annotations.first().is_some_and(|word| word == name)
                     || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name);
                 if annotated { return self.class_get(w.1[0].clone(), name, true); }
             }
