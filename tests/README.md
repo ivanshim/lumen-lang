@@ -44,8 +44,9 @@ The release repin covered 120 source/provenance entries: 73 test/support
 files, 34 library source/adapter files, and 13 full scratch copies. SHA-256
 verification matched 105 release bodies (72 tests/support files, 20 complete
 library sources, and 13 scratch copies); thirteen documented partial runtime
-adapters remain separate. Complete library sources are unchanged beneath
-release provenance headers, with native bridges in `runtime_adapters/`.
+adapters remain separate. Complete library sources now match the release byte for byte, with native
+bridges in `runtime_adapters/`. Provenance is recorded here rather than
+prepended to source copies.
 The only removed files were the two copies of
 `Lib/test/test_import/data/syntax_warnings.py`, which has no v3.14.8 counterpart.
 Detailed working inventories and measurements stay in the ignored worker
@@ -75,11 +76,10 @@ the table pin; it does not keep an older micro release. Add a provenance table
 here for each newly registered series.
 
 The embedded `langs/lib_python/modules/tempfile.py` is also a complete copy of
-CPython v3.14.8 `Lib/tempfile.py`, unchanged beneath its single PSF provenance
-header. Descriptor I/O is supplied by the runtime `_io` adapter and both kernels.
+CPython v3.14.8 `Lib/tempfile.py`, unchanged byte for byte. Descriptor I/O is supplied by the runtime `_io` adapter and both kernels.
 The pickle library sources `pickle.py`, `pickletools.py`, `_compat_pickle.py` and
-`copyreg.py` in `langs/lib_python/modules/` preserve the v3.14.8 release bodies
-under PSF provenance headers. The same is true for the pickle support modules
+`copyreg.py` in `langs/lib_python/modules/` preserve the v3.14.8 release files
+byte for byte. The same is true for the pickle support modules
 and their imports `dbm/{__init__,dumb}.py` and `http/{__init__,cookies}.py`.
 The `_pickle` accelerator is absent; the upstream module selects its Python
 implementation and the upstream tests select their accelerator cases accordingly.
@@ -221,7 +221,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `types.py` | runtime adapter / implementation | `36f90be33b6a1bf0e45b038426343a37c90a60bdcf016b4239c130af1d0459e3` | `8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2` |
 | `typing.py` | runtime adapter / implementation | `8cab6db1cd142fccfb5ad262197adeb9f5862795c2f3afa5ac1625e7fa569f2b` | `de569368c2c4958b7aaddbe755056860a89b1d313f69d437177864f37cb2503b` |
 | `unicodedata.py` | runtime module; no Lib counterpart | `776531547872ac6a0dc7de238c65b785c8be4fe9a1cf0ae66b2ca662a282c273` | `—` |
-| `uuid.py` | unchanged release copy (beneath provenance header) | `83529261c33ec06057420d8142fa9f8d35a50232bc011ff33d9f442d056cbd9e` | `83529261c33ec06057420d8142fa9f8d35a50232bc011ff33d9f442d056cbd9e` |
+| `uuid.py` | unchanged release copy (byte for byte) | `83529261c33ec06057420d8142fa9f8d35a50232bc011ff33d9f442d056cbd9e` | `83529261c33ec06057420d8142fa9f8d35a50232bc011ff33d9f442d056cbd9e` |
 | `unittest.py` | runtime adapter / implementation | `59844316763609ebd8d74409e324c207e9305f76a973b5e32efbebffffad554c` | `2698f2daf7a02609a6825b89cd459ebaa283dec2403c7b846315a0701bc74a0d` |
 | `unittest/mock.py` | runtime adapter / implementation | `1cd52e4f3568e9bf3e081f24129fa5fba53c517fae4ab6de4ce6b0d98444a929` | `856148cdc93943b4ff948276e94561db3d6c44ddecacf53c3d25eb7dc46a108d` |
 | `warnings.py` | runtime adapter / implementation | `ee0bf5d9c33be43a8deec328c8970c4570ef75c9496979a7abeed64aafbfad6b` | `142225786de63c593f1c9abdacf5b4fc0b05dd847f6bed0ebb4b4aa2d4d93b02` |
@@ -302,3 +302,16 @@ cannot be met by an integrity-only restoration while those runtime features
 are absent. Scratch `reader-tail/3` and `reader-tail/7` therefore keep their
 previous records; replacing them with import errors would hide the missing
 test executions. No scratch record was moved.
+
+## Batch21d source and async audit
+
+The integration compared all tracked reference files and same-path library
+copies against CPython `v3.14.8`: 530 files match byte for byte. Thirty existing
+explicit runtime adapters differ by design; reference inputs have no mismatches.
+Sixteen complete library/support copies lost their added provenance line so
+the entire files, including line numbers, now match the release.
+
+The runtime has one `test.support.subTests` implementation. Its async wrapper
+awaits coroutine methods, including partials. The inspect adapter recognises
+partial/partialmethod wrappers and coroutine markers. Deliberately failing
+async subtests and async partial subtests are checked on both full kernels.

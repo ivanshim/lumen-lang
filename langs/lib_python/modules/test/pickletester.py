@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/test/pickletester.py; PSF License.
 import builtins
 import collections
 import copyreg

@@ -1,4 +1,3 @@
-# Source: CPython Lib/struct.py at v3.14.8 / 8e6e75d9102e; PSF License.
 __all__ = [
     # Functions
     'calcsize', 'pack', 'pack_into', 'unpack', 'unpack_from',

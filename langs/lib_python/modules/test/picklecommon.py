@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/test/picklecommon.py; PSF License.
 # Classes used for pickle testing.
 # They are moved to separate file, so they can be loaded
 # in other Python version for test_xpickle.

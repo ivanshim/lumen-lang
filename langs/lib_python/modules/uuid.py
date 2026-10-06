@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8, Lib/uuid.py; PSF License.
 r"""UUID objects (universally unique identifiers) according to RFC 4122/9562.
 
 This module provides immutable UUID objects (class UUID) and functions for

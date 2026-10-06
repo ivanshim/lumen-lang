@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/dbm/dumb.py; PSF License.
 """A dumb and slow but simple dbm clone.
 
 For database spam, spam.dir contains the index (a text file),
