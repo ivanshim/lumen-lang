@@ -604,6 +604,17 @@ impl Knot {
     /// A knot with no place of its own stands for the places it holds:
     /// a bound routine for its frame (the routine itself holds nothing),
     /// a bound method for its thing, a keyed pair for its two values.
+    /// The same split as `parts`, for the common case of one or two
+    /// places, without making a list of them.
+    fn pair(self) -> (Knot, Option<Knot>) {
+        match self {
+            Knot::Held(Value::Bound(body, env)) => (Knot::Held(Value::Routine(body)), Some(Knot::Frame(env))),
+            Knot::Held(Value::Method(body, thing, _)) => (Knot::Held(Value::Routine(body)), Some(Knot::Held(Value::Thing(thing)))),
+            Knot::Held(Value::Keyed(k, v)) => (Knot::Held((*k).clone()), Some(Knot::Held((*v).clone()))),
+            other => (other, None),
+        }
+    }
+
     fn parts(self) -> Vec<Knot> {
         match self {
             Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
@@ -709,7 +720,7 @@ impl Web {
             next.clear();
             strands[&place].knot.onward(&mut next);
             let mut onward = Vec::with_capacity(next.len());
-            for knot in next.drain(..).flat_map(Knot::parts) {
+            for knot in next.drain(..).flat_map(|knot| { let (first, second) = knot.pair(); std::iter::once(first).chain(second) }) {
                 let Some(at) = knot.place() else { continue };
                 if let Some(strand) = strands.get_mut(&at) {
                     strand.inward += 1;

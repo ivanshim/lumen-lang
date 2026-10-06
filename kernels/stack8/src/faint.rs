@@ -694,11 +694,11 @@ impl Graph {
             let mut reached = Vec::with_capacity(children.len());
             for child in children.drain(..) {
                 // A bound method is not a place of its own but two.
-                let parts: Vec<Value> = match child {
-                    Value::Method(o, r, _) => vec![Value::Object(o), Value::Routine(r)],
-                    other => vec![other],
+                let (first, second) = match child {
+                    Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
+                    other => (other, None),
                 };
-                for part in parts {
+                for part in std::iter::once(first).chain(second) {
                     let Some(at) = place_of(&part) else { continue };
                     match nodes.get_mut(&at) {
                         Some(node) => node.inward += 1,

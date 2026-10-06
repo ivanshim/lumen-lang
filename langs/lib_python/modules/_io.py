@@ -7,6 +7,8 @@ from builtins import _buffer_view
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 BlockingIOError = BlockingIOError
+_MAXSIZE = sys.maxsize
+_MINSIZE = -sys.maxsize - 1
 
 class UnsupportedOperation(OSError, ValueError):
     pass
@@ -275,7 +277,8 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        size = _size(size)
+        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+            size = _size(size)
         self._checkClosed()
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
         if end <= self._pos:
@@ -285,6 +288,10 @@ class BytesIO(_BufferedIOBase):
         return result
     read1 = read
     def readinto(self, buffer):
+        if type(buffer) is bytearray:
+            data = BytesIO.read(self, len(buffer))
+            buffer[:len(data)] = data
+            return len(data)
         with memoryview(buffer) as view:
             target = view.cast('B')
             if target.readonly:
@@ -556,6 +563,21 @@ def _text_option(value, name):
     return value
 
 _TEXT = {}
+_TEXT_HELPERS = []
+
+def _install_text_helpers():
+    # The reference's text methods call a dozen helpers on the stream
+    # itself (the decoded-chars pair, the chunk reader, the cookie
+    # packers). Left to __getattr__ each call cost three; standing in the
+    # class they are found as any method is.
+    import _pyio
+    _TEXT_HELPERS.append(True)
+    own = vars(TextIOWrapper)
+    for name, value in list(vars(_pyio.TextIOWrapper).items()):
+        if name in own or (name.startswith('__') and name.endswith('__')) or name.startswith('_abc'):
+            continue
+        if type(value) is type(_install_text_helpers) or type(value) is property:
+            setattr(TextIOWrapper, name, value)
 
 def _text_function(name):
     import _pyio
@@ -566,9 +588,10 @@ class TextIOWrapper(_TextIOBase):
     # Read without a trip through __getattr__ before the stream is made.
     _initialized = False
     _buffer = None
+    _chunk_size = 8192
     @property
     def _CHUNK_SIZE(self):
-        return getattr(self, '_chunk_size', 8192)
+        return self._chunk_size
     @_CHUNK_SIZE.setter
     def _CHUNK_SIZE(self, value):
         value = _index(value)
@@ -580,6 +603,8 @@ class TextIOWrapper(_TextIOBase):
         raise AttributeError('cannot be deleted')
     def __init__(self, buffer, encoding=None, errors=None, newline=None, line_buffering=False, write_through=False):
         import _pyio
+        if not _TEXT_HELPERS:
+            _install_text_helpers()
         self._initialized = False
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
@@ -743,6 +768,11 @@ class IncrementalNewlineDecoder:
 _PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
 
 class FileIO(_RawIOBase):
+    # What a stream whose __init__ never finished stands as, the way the C
+    # stream stands with no descriptor: closed, and owing nothing.
+    _fd = -1
+    _closed = True
+    _closefd = True
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:
@@ -989,7 +1019,7 @@ class _CheckedRaw:
         return self.raw.fileno()
     def readinto(self, buffer):
         raw = self.raw
-        count = raw.readinto(buffer if type(raw) is FileIO and type(buffer) is bytearray else memoryview(buffer))
+        count = raw.readinto(buffer if self._plain and type(buffer) is bytearray else memoryview(buffer))
         if count is None:
             return None
         try:
@@ -1002,6 +1032,9 @@ class _CheckedRaw:
             raise OSError('raw readinto() returned invalid length %d (should have been between 0 and %d)' % (count, len(buffer)))
         return count
     def read(self, size=-1):
+        if self._plain:
+            # Our own streams answer a read with bytes or None already.
+            return self.raw.read(-1 if size is None else size)
         if size is None or size < 0:
             chunk = self.raw.read()
             if chunk is not None and not isinstance(chunk, bytes):
@@ -1032,13 +1065,38 @@ class _CheckedRaw:
             raise OSError('raw write() returned invalid length %d (should have been between 0 and %d)' % (count, len(data)))
         return count
 
+_IMPLS = {}
+
+def _buffered_impl(kind):
+    # The reference's buffered classes with `raw` and `closed` as plain
+    # attribute and one property call: the implementation asks for both
+    # at every step.
+    impl = _IMPLS.get(kind)
+    if impl is None:
+        import _pyio
+        base = getattr(_pyio, kind)
+        class Impl(base):
+            raw = None
+            def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
+                base.__init__(self, raw, buffer_size)
+                self.raw = raw
+            @property
+            def closed(self):
+                return self.raw.closed
+            def detach(self):
+                result = base.detach(self)
+                self.raw = None
+                return result
+        Impl.__name__ = Impl.__qualname__ = kind
+        impl = _IMPLS[kind] = Impl
+    return impl
+
 class BufferedReader(_BufferedIOBase):
     # The implementation while it is usable, read without a property call;
     # None whenever _impl has to say why not.
     _live = None
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
-        import _pyio
-        self._initialize(_pyio.BufferedReader, raw, buffer_size)
+        self._initialize(_buffered_impl('BufferedReader'), raw, buffer_size)
     def _initialize(self, factory, raw, size):
         previous = getattr(self, '_implementation', None)
         if previous is not None and previous.raw is not None:
@@ -1194,13 +1252,11 @@ class BufferedReader(_BufferedIOBase):
 
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
-        import _pyio
-        self._initialize(_pyio.BufferedWriter, raw, buffer_size)
+        self._initialize(_buffered_impl('BufferedWriter'), raw, buffer_size)
 
 class BufferedRandom(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
-        import _pyio
-        self._initialize(_pyio.BufferedRandom, raw, buffer_size)
+        self._initialize(_buffered_impl('BufferedRandom'), raw, buffer_size)
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
