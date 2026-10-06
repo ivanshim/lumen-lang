@@ -1590,7 +1590,7 @@ impl Value {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
         match kind {
-            "type" if matches!(name, "__dict__" | "__mro__") => Some(if name == "__dict__" { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
+            "type" if matches!(name, "__dict__" | "__mro__" | "__name__") => Some(if name != "__mro__" { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

@@ -149,7 +149,7 @@ impl<'a> Engine<'a> {
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
         self.class_maker = Some(c.clone());
-        for detail in ["mro", "namespace"] {
+        for detail in ["mro", "namespace", "name"] {
             let key = self.class_word(detail);
             if !key.is_empty() { c.shared.borrow_mut().push((key.to_string(), self.held_kind_descriptor("type", key))); }
         }
@@ -2527,16 +2527,20 @@ impl<'a> Engine<'a> {
         if let Value::Adapter(w) = &value {
             if w.0 == 29 && w.1[0].plain() == "type" && subject.is_some() {
                 let name = w.1[1].plain();
-                if name == self.class_word("mro") || name == self.class_word("namespace") {
+                if ["mro", "namespace", "name"].iter().any(|part| name == self.class_word(part)) {
                     let target = subject.as_ref().unwrap().contents();
                     let c = match &target {
                         Value::Class(c) => c.clone(),
                         Value::Native(Builtin::SortOf, _) => self.metaclass_root(),
-                        other => match self.kind_spelled(other) {
+                        other => match other.kind_it_names().map(Rc::<str>::from).or_else(|| self.kind_spelled(other)) {
                             Some(word) if self.stands_for_kind(other) => self.kind_class(&word),
                             _ => return Err(self.class_refusal()),
                         },
                     };
+                    if name == self.class_word("name") {
+                        let title = c.python_names.borrow().as_ref().map_or_else(|| c.name.clone(), |names| names.0.plain());
+                        return Ok(Value::text(&title));
+                    }
                     if name == self.class_word("namespace") { return Ok(Value::View(Rc::new((Value::Class(c), "mapping".into())))); }
                     let mut line = vec![self.public_class(c.clone())];
                     line.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));

@@ -12,8 +12,8 @@ _missing = object()
 
 # Find a special-method descriptor without instance or metaclass overrides.
 def _type_slot(cls, name):
-    for base in type.__getattribute__(cls, '__mro__'):
-        namespace = type.__getattribute__(base, '__dict__')
+    for base in type.__dict__['__mro__'].__get__(cls):
+        namespace = type.__dict__['__dict__'].__get__(base)
         if name in namespace:
             return namespace[name]
     return _missing
@@ -38,8 +38,8 @@ def _length_hint(obj, default):
         return default
     if result is NotImplemented:
         return default
-    if not isinstance(result, int):
-        name = type.__getattribute__(type(result), '__name__')[:100]
+    if not any(base is int for base in type.__dict__['__mro__'].__get__(type(result))):
+        name = type.__dict__['__name__'].__get__(type(result))[:100]
         raise TypeError('__length_hint__ must be an integer, not ' + name)
     value = int.__index__(result)
     if value < -9223372036854775808 or value > 9223372036854775807:

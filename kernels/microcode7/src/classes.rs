@@ -253,7 +253,7 @@ impl<'a> Machine<'a> {
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
         self.builder_kind=Some(kind.clone());
-        for word in [self.detail("namespace"), self.detail("mro")] {
+        for word in [self.detail("namespace"), self.detail("mro"), self.detail("name")] {
             if !word.is_empty() { kind.shared.borrow_mut().push((word.to_owned(), self.kind_entry("type", word))); }
         }
         for at in [8, 17] { if let Some(key) = self.rules.specials.get(at) {
@@ -2514,17 +2514,21 @@ impl<'a> Machine<'a> {
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         if let Value::Wrapped(60, parts) = &entry {
             let key = parts[1].bare();
-            if parts[0].bare() == "type" && receiver.is_some() && (key == self.detail("namespace") || key == self.detail("mro")) {
+            if parts[0].bare() == "type" && receiver.is_some() && ["namespace", "mro", "name"].iter().any(|part| key == self.detail(part)) {
                 let target = receiver.as_ref().unwrap().settled();
                 let owner = match target {
                     Value::Blueprint(b) => b,
                     Value::Intrinsic(Prim::SortOf, _) => self.builder_blueprint(),
                     other => {
                         if !self.stands_for_a_kind(&other) { return Err(self.class_unready()); }
-                        let word = self.kind_spelling(&other).ok_or_else(|| self.class_unready())?;
+                        let word = other.kind_it_names().map(Rc::<str>::from).or_else(|| self.kind_spelling(&other)).ok_or_else(|| self.class_unready())?;
                         self.native_kind(&word)
                     },
                 };
+                if key == self.detail("name") {
+                    let spelling = owner.type_names.borrow().as_ref().map(|names| names.short.type_text().bare()).unwrap_or_else(|| owner.name.clone());
+                    return Ok(Value::text(&spelling));
+                }
                 if key == self.detail("mro") {
                     let mut ranks = vec![self.visible_blueprint(owner.clone())];
                     for parent in &owner.ancestry { ranks.push(self.visible_blueprint(parent.clone())); }

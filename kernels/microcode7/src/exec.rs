@@ -8476,7 +8476,7 @@ impl<'a> Machine<'a> {
         if word == "dict" && self.table.spells("ext.builtin.method.fromkeys", name) {
             return Some(self.kind_entry(&word, name));
         }
-        if word == "type" && (name == self.detail("namespace") || name == self.detail("mro")) {
+        if word == "type" && ["namespace", "mro", "name"].iter().any(|part| name == self.detail(part)) {
             return Some(self.kind_entry(&word, name));
         }
         if word == "type" {
