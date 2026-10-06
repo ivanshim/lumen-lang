@@ -532,7 +532,7 @@ impl<'a> Machine<'a> {
             let Prim::ClassWork(operation) = op else { unreachable!() };
             self.work_on_class(operation, values)?
         } else if !self.rules.words_ext_stmt_class_builder.is_empty() && op == Prim::Dictionary { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
-        let made = if word == "str" { Self::underlying(&made).unwrap_or(made) } else { made };
+        let made = if matches!(word, "str" | "bytes" | "bytearray") { Self::underlying(&made).unwrap_or(made) } else { made };
         let kept=match made.settled(){
             held @ (Value::Vector(_)|Value::Dict(_))=>Value::Mutable(Rc::new(RefCell::new(held)),true),
             other=>other,
@@ -3439,6 +3439,14 @@ impl<'a> Machine<'a> {
         if matches!(&value, Value::OctetKind { .. }) {
             if let Some(member) = self.carried_by_kind(&value, key) { return Ok(member); }
         }
+        // A row of bytes answers to the methods its kind keeps, whose
+        // words are the ones text goes by, bound to the row they were
+        // read from.
+        if let Value::Octets { changeable, .. } = &value {
+            if let Some(working) = self.octet_member(key, *changeable) {
+                return Ok(Value::Member(Rc::new(value.clone()), working.to_string()));
+            }
+        }
         if matches!(&value,Value::Intrinsic(op,_) if !Self::names_a_kind(op)) {
             if let Some(member)=self.attribute(&value,key) { return Ok(member); }
         }
@@ -3594,6 +3602,28 @@ impl<'a> Machine<'a> {
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
+            }
+            // Look for a stored override only before the byte primitive
+            // in the ancestry. Its position also shields the primitive
+            // from mixins placed after it, while the builder's writable
+            // descriptors have already had their turn.
+            if matches!(key, "fromhex" | "maketrans")
+                && matches!(Self::native_beneath(b).as_deref(), Some("bytes" | "bytearray")) {
+                let owner = std::iter::once(b.as_ref()).chain(b.ancestry.iter().map(Rc::as_ref))
+                    .find_map(|parent| {
+                        match Self::native_word(parent).filter(|word| word == "bytes" || word == "bytearray") {
+                            Some(word) => Some(Err(word)),
+                            None => Self::own_entry(parent, key).map(Ok),
+                        }
+                    });
+                match owner {
+                    Some(Ok(stored)) => return self.member_binding(stored, None, b.clone()),
+                    Some(Err(word)) if key == "fromhex" => {
+                        return Ok(Value::Member(Rc::new(value.clone()), word + "_fromhex"));
+                    }
+                    Some(Err(_)) => return Ok(Value::Intrinsic(Prim::Octets(40), Rc::from("bytes.maketrans"))),
+                    None => {},
+                }
             }
             if key == self.detail("module") && !self.table.strings("ext.stmt.class.detail.module").is_empty() {
                 match Self::own_entry(b, key) {

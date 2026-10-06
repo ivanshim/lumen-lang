@@ -2391,20 +2391,21 @@ fn expanded_real(number: f64, places: usize) -> String {
 }
 
 fn byte_repr(row: &[u8], mutable: bool, opening: &str) -> String {
-    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { '"' } else { '\'' };
-    let mut out = format!("{}{}", opening, quote);
+    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { b'"' } else { b'\'' };
+    let mut out = format!("{}{}", opening, quote as char);
     for &byte in row {
         match byte {
             b'\\' => out.push_str("\\\\"),
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
-            b if b == quote as u8 => { out.push('\\'); out.push(quote); }
+            b'\'' if mutable || quote == b'\'' => out.push_str("\\'"),
+            b'"' if quote == b'"' => out.push_str("\\\""),
             32..=126 => out.push(byte as char),
             _ => { let _ = write!(out, "\\x{:02x}", byte); }
         }
     }
-    out.push(quote);
+    out.push(quote as char);
     if mutable { out.push(')'); }
     out
 }

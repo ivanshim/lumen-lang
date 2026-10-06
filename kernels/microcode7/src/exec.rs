@@ -7498,11 +7498,23 @@ impl<'a> Machine<'a> {
                     let held = if let Value::Shared(cell) = held { cell.borrow().clone() } else { held };
                     if let Value::Octets { cell, changeable, .. } = held {
                         if !changeable { return Err(self.octet_error("immutable").into()); }
-                        let byte = self.octet_item(&value, false)?;
-                        if let Some(index) = key {
-                            let index = self.octet_at(&index, cell.borrow().len(), changeable)?;
-                            cell.borrow_mut()[index] = byte;
-                        } else { cell.borrow_mut().push(byte); }
+                        match key {
+                            Some(index) => {
+                                // The place is named before the value is
+                                // read, so a value whose __index__ shrinks
+                                // the row is refused by the place, and the
+                                // bounds are checked again after it ran.
+                                let place = self.octet_at(&index, cell.borrow().len(), changeable)?;
+                                let byte = self.octet_index(&value, false)?;
+                                let mut held = cell.borrow_mut();
+                                if place >= held.len() { drop(held); return Err(self.octet_error("index").into()); }
+                                held[place] = byte;
+                            }
+                            None => {
+                                let byte = self.octet_index(&value, false)?;
+                                cell.borrow_mut().push(byte);
+                            }
+                        }
                         return Ok(Value::Nil);
                     }
                     // The byte inspection must not keep a list snapshot
@@ -9828,6 +9840,20 @@ impl<'a> Machine<'a> {
                 _ => Err(self.method_fault("arguments").into()),
             };
         }
+        if name == "bytes_fromhex" || name == "bytearray_fromhex" {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            let spelling = match &arguments[0] {
+                Value::Text(text) => text.to_string(),
+                Value::Octets { cell, .. } => cell.borrow().iter().copied().map(char::from).collect(),
+                other => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word()).into()),
+            };
+            let row = self.octets_from_hex(&spelling).map_err(Escape::from)?;
+            let made = self.octets(row, name == "bytearray_fromhex");
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![made]),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
         if name == "integer_size" {
             let loose = matches!(receiver, Value::Blueprint(_) | Value::Intrinsic(..));
             if !keywords.is_empty() || arguments.len() != usize::from(loose) { return Err(self.method_fault("arguments").into()); }
@@ -9989,13 +10015,23 @@ impl<'a> Machine<'a> {
             let operation = if name == "encode" { Some(2) } else { self.octet_member(name, changeable).and_then(Self::octet_operation) };
             if let Some(operation) = operation {
                 let mut values = vec![actual]; values.extend(arguments);
-                for (key, value) in keywords {
+                let mut handed = keywords;
+                handed.sort_by_key(|(key, _)| match (operation, key.as_str()) {
+                    (3, "encoding") | (4, "sep") | (8 | 23, "sep") | (28, "keepends") | (33, "tabsize") => 0,
+                    (3, "errors") | (4, "bytes_per_sep") | (8 | 23, "maxsplit") | (39, "delete") => 1,
+                    _ => 2,
+                });
+                for (key, value) in handed {
                     // bytes.translate keeps the dropped row after the
                     // table, so its keyword sits one further along than
                     // the decode pair does.
-                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, (39, "delete") => 2, (28, "keepends") => 1, _ => return Err(self.octet_error("arguments").into()) };
+                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, (4, "sep") => 1, (4, "bytes_per_sep") => 2, (8 | 23, "sep") => 1, (8 | 23, "maxsplit") => 2, (33, "tabsize") => 1, (39, "delete") => 2, (28, "keepends") => 1, _ => return Err(self.octet_error("arguments").into()) };
                     if values.len() > slot { return Err(self.octet_error("arguments").into()); }
-                    while values.len() < slot { values.push(Value::text("utf-8")); }
+                    // The decode pair fills an omitted place with utf-8;
+                    // the other workings fill it with Unset, so an explicit
+                    // None is told from an omitted slot.
+                    let fill = if operation == 3 { Value::text("utf-8") } else { Value::Unset };
+                    while values.len() < slot { values.push(fill.clone()); }
                     values.push(value);
                 }
                 return self.octet_routine(operation, &values).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
@@ -12438,17 +12474,20 @@ impl<'a> Machine<'a> {
     /// The bytes that written hexadecimal stands for: two figures to a
     /// byte, with blanks allowed to stand between them.
     fn octets_from_hex(&self, spelling: &str) -> Result<Vec<u8>, String> {
-        let mut waiting: Option<(u8, usize)> = None;
-        let mut content = Vec::new();
-        for (position, ch) in spelling.chars().enumerate() {
-            if waiting.is_none() && (ch.is_ascii_whitespace() || ch == '\x0b') { continue; }
-            let figure = ch.to_digit(16).filter(|_| ch.is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), position))? as u8;
-            match waiting.take() {
-                Some((high, _)) => content.push(high * 16 + figure),
-                None => waiting = Some((figure, position)),
-            }
+        let characters: Vec<char> = spelling.chars().collect();
+        let (mut at, mut content) = (0, Vec::new());
+        while at < characters.len() {
+            if characters[at].is_ascii_whitespace() || characters[at] == '\x0b' { at += 1; continue; }
+            let high = characters[at].to_digit(16).filter(|_| characters[at].is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), at))? as u8;
+            at += 1;
+            let low = match characters.get(at).and_then(|c| c.to_digit(16)).filter(|_| characters.get(at).map_or(false, char::is_ascii)) {
+                Some(b) => b as u8,
+                None if at >= characters.len() => return Err(String::from("ValueError: fromhex() arg must contain an even number of hexadecimal digits")),
+                None => return Err(format!("{}{}", self.octet_error("hex"), at)),
+            };
+            at += 1;
+            content.push(high * 16 + low);
         }
-        if waiting.is_some() { return Err(format!("{}{}", self.octet_error("hex"), spelling.chars().count())); }
         Ok(content)
     }
 
@@ -12457,20 +12496,33 @@ impl<'a> Machine<'a> {
     /// the number stands above nought, forward from the start where it
     /// stands below, and nowhere at all where it is nought.
     fn octets_in_hex(&self, content: &[u8], arguments: &[Value]) -> Result<Value, String> {
-        let (mark, every) = match arguments.first() {
-            None => (String::new(), 0i64),
-            Some(Value::Text(between)) => {
-                if between.chars().count() != 1 { return Err(self.octet_error("arguments")); }
-                let every = match arguments.get(1) { None => 1, Some(n) => self.octet_whole(n)?.to_i64().unwrap_or(1) };
-                (between.to_string(), every)
-            }
-            _ => return Err(self.octet_error("arguments")),
+        // The count is read first, as CPython reads it, so an explicit
+        // None is refused even when the separator is omitted.
+        let every = match arguments.get(1) {
+            None | Some(Value::Unset) => 1i64,
+            Some(n) => self.octet_whole(n)?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))? as i64,
         };
-        let run = every.unsigned_abs() as usize;
+        let mark = match arguments.first() {
+            None | Some(Value::Unset) => String::new(),
+            Some(Value::Text(_)) | Some(Value::Octets { .. }) => {
+                let between: String = match &arguments[0] {
+                    Value::Text(text) => text.to_string(),
+                    Value::Octets { cell, .. } => cell.borrow().iter().copied().map(char::from).collect(),
+                    _ => unreachable!(),
+                };
+                if between.chars().count() != 1 { return Err(String::from("ValueError: sep must be length 1.")); }
+                if !between.is_ascii() { return Err(String::from("ValueError: sep must be ASCII.")); }
+                between
+            }
+            Some(other) => return Err(format!("TypeError: object of type '{}' has no len()", other.kind_word())),
+        };
+        // With no separator the count is never used to group the digits.
+        let group = if mark.is_empty() { 0i64 } else { every };
+        let run = group.unsigned_abs() as usize;
         let mut spelled = String::with_capacity(content.len() * 2);
         for (position, number) in content.iter().enumerate() {
             let parts = position > 0 && run > 0
-                && if every > 0 { (content.len() - position) % run == 0 } else { position % run == 0 };
+                && if group > 0 { (content.len() - position) % run == 0 } else { position % run == 0 };
             if parts { spelled.push_str(&mark); }
             spelled.push_str(&format!("{number:02x}"));
         }
@@ -12481,7 +12533,7 @@ impl<'a> Machine<'a> {
     /// itself save the ones the first row names, which stand for the
     /// bytes standing in the same places of the second.
     fn octet_mapping(&self, from: &[u8], onto: &[u8]) -> Result<Value, String> {
-        if from.len() != onto.len() { return Err(self.octet_error("arguments")); }
+        if from.len() != onto.len() { return Err(String::from("ValueError: maketrans arguments must have same length")); }
         let mut mapping: Vec<u8> = (0..=u8::MAX).collect();
         for (place, byte) in from.iter().zip(onto.iter()) { mapping[usize::from(*place)] = *byte; }
         Ok(self.octets(mapping, false))
@@ -12559,6 +12611,46 @@ impl<'a> Machine<'a> {
         value.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row)))
     }
 
+    /// One byte read off a value that may name a whole number rather
+    /// than stand for one already: a whole-number subclass hands over
+    /// its own worth, and anything else with an `__index__` member
+    /// hands over the number that member names. A number outside a
+    /// byte's bounds is refused in the words for a whole row where the
+    /// row is being built, and in those for one byte everywhere else.
+    fn octet_index(&mut self, value: &Value, whole_row: bool) -> Result<u8, String> {
+        if matches!(value.kind(), Some(Kind::Whole | Kind::Truth)) { return self.octet_item(value, whole_row); }
+        if let Value::Thing(_) = value {
+            if let Some(worth) = Self::underlying(value) {
+                if matches!(worth.kind(), Some(Kind::Whole | Kind::Truth)) {
+                    return worth.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row)));
+                }
+            }
+            return match self.stood_for_whole(value)? {
+                Some(number) => number.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row))),
+                None => Err(self.core_complaint("core.integer", &value.kind_word())),
+            };
+        }
+        Err(self.core_complaint("core.integer", &value.kind_word()))
+    }
+
+    /// A whole number a row of bytes is asked to hold as a count, read
+    /// off a value that stands for one or names one. Nothing where the
+    /// value names none, so the caller may build the row from the
+    /// value's members instead.
+    fn octet_count(&mut self, value: &Value) -> Result<Option<BigInt>, String> {
+        if matches!(value.kind(), Some(Kind::Whole | Kind::Truth)) { return Ok(Some(value.as_big()?)); }
+        if let Value::Thing(_) = value {
+            if let Some(worth) = Self::underlying(value) {
+                if matches!(worth.kind(), Some(Kind::Whole | Kind::Truth)) { return Ok(Some(worth.as_big()?)); }
+            }
+            return match self.stood_for_whole(value)? {
+                Some(number) => Ok(Some(number.as_big()?)),
+                None => Ok(None),
+            };
+        }
+        Ok(None)
+    }
+
     /// A whole number a row of bytes is handed as a place. CPython
     /// names the kind that cannot stand for one.
     fn octet_place(&self, value: &Value) -> Result<i64, String> {
@@ -12576,14 +12668,14 @@ impl<'a> Machine<'a> {
         match &source.settled() {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
-                items.iter().map(|item| self.octet_item(item, false)).collect(),
+                items.iter().map(|item| self.octet_index(item, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
             other => {
                 let source = self.iterated_value(other)?;
                 let mut collected = Vec::new();
                 loop {
                     let Some(next) = self.next_value(&source)? else { return Ok(collected); };
-                    collected.push(self.octet_item(&next, false)?);
+                    collected.push(self.octet_index(&next, false)?);
                 }
             },
         }
@@ -12601,6 +12693,20 @@ impl<'a> Machine<'a> {
                 for item in items.iter() { result.push(self.octet_item(item, whole_row)?); }
                 return Ok(result);
             }
+        }
+        Err(self.octet_error("arguments"))
+    }
+
+    /// A row of bytes gathered from a list, reading each member as the
+    /// whole number it names or stands for, so a member with an
+    /// `__index__` method hands over the number it answers. The
+    /// constructor's road for a list, where every member may be a number in its own right.
+    fn octet_build(&mut self, source: &Value, whole_row: bool) -> Result<Vec<u8>, String> {
+        if let Value::Octets { cell, .. } = source { return Ok(cell.borrow().to_vec()); }
+        if let Value::Vector(items) = source {
+            let mut result = Vec::with_capacity(items.len());
+            for item in items.iter() { result.push(self.octet_index(item, whole_row)?); }
+            return Ok(result);
         }
         Err(self.octet_error("arguments"))
     }
@@ -12782,13 +12888,15 @@ impl<'a> Machine<'a> {
         let wrong = || self.octet_error("arguments");
         let refusal = || self.octet_error("unready");
         let built = |made: Vec<u8>| self.octets(made, changeable);
-        let given = |at: usize| arguments.get(at).filter(|v| !matches!(v, Value::Nil));
+        let given = |at: usize| arguments.get(at).filter(|v| !matches!(v, Value::Unset | Value::Nil));
+        let placed = |at: usize| arguments.get(at).filter(|v| !matches!(v, Value::Unset));
         // What is looked for may be written as one byte's number as
         // readily as a row of bytes.
         let looked_for = |value: &Value| -> Result<Vec<u8>, String> {
-            match value.kind() {
-                Some(Kind::Whole | Kind::Truth) => Ok(vec![self.octet_item(value, false)?]),
-                _ => self.octet_contents(value, false),
+            match value {
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(vec![self.octet_item(value, false)?]),
+                Value::Octets { cell, .. } => Ok(cell.borrow().clone()),
+                other => Err(format!("TypeError: argument should be integer or bytes-like object, not '{}'", other.kind_word())),
             }
         };
         let counted = |value: &Value| -> Result<i64, String> { Ok(self.octet_whole(value)?.to_i64().unwrap_or(i64::MAX)) };
@@ -12817,9 +12925,13 @@ impl<'a> Machine<'a> {
             10 | 22 if (1..=3).contains(&arguments.len()) => {
                 let (opens, closes) = bounds(given(1), given(2))?;
                 let middle = &content[opens..closes];
-                let each = match &arguments[0] { Value::Tuple(row) => row.as_ref().clone(), only => vec![only.clone()] };
+                let each = match &arguments[0] {
+                    Value::Tuple(row) => row.as_ref().clone(),
+                    Value::Octets { .. } => vec![arguments[0].clone()],
+                    other => return Err(format!("TypeError: {} first arg must be bytes or a tuple of bytes, not {}", if operation == 10 { "startswith" } else { "endswith" }, other.kind_word())),
+                };
                 for one in each {
-                    let end = self.octet_contents(&one, false)?;
+                    let end = match &one { Value::Octets { cell, .. } => cell.borrow().clone(), other => return Err(self.core_complaint("core.bytes.like", &other.kind_word())) };
                     let held = if operation == 10 { middle.starts_with(&end) } else { middle.ends_with(&end) };
                     if held { return Ok(Value::Flag(true)); }
                 }
@@ -12830,10 +12942,25 @@ impl<'a> Machine<'a> {
             // that give no place below nought refuse instead.
             13 | 18 | 19 | 20 | 21 if (1..=3).contains(&arguments.len()) => {
                 let part = looked_for(&arguments[0])?;
-                let (opens, closes) = bounds(given(1), given(2))?;
+                // The place a search begins is clipped only below
+                // nought, and the place it ends is clipped to the row,
+                // so a start past the row finds nothing at all.
+                let start = match given(1) { Some(v) => counted(v)?, None => 0 };
+                let start = if start < 0 { start.saturating_add(content.len() as i64).max(0) } else { start };
+                let end = match given(2) { Some(v) => counted(v)?, None => content.len() as i64 };
+                let end = if end < 0 { end.saturating_add(content.len() as i64).max(0) } else { end.min(content.len() as i64) };
+                if end - start < part.len() as i64 {
+                    return if operation == 18 { Ok(Value::Small(0)) }
+                        else if matches!(operation, 19 | 21) { Err(self.octet_error("missing")) }
+                        else { Ok(Value::Small(-1)) };
+                }
+                if part.is_empty() {
+                    return Ok(Value::Small(if operation == 18 { end - start + 1 }
+                        else if matches!(operation, 20 | 21) { end } else { start }));
+                }
+                let (opens, closes) = (start.max(0) as usize, end as usize);
                 let middle = &content[opens..closes];
                 if operation == 18 {
-                    if part.is_empty() { return Ok(Value::Small(middle.len() as i64 + 1)); }
                     let mut tally = 0i64;
                     let mut cursor = 0usize;
                     while let Some(step) = scan(&middle[cursor..], &part, false) {
@@ -12851,7 +12978,7 @@ impl<'a> Machine<'a> {
             // Cut apart from the right, the pieces given back standing
             // in the order they stood in the row.
             23 if arguments.len() <= 2 => {
-                let ceiling = match given(1) {
+                let ceiling = match placed(1) {
                     Some(v) => { let asked = counted(v)?; if asked < 0 { usize::MAX } else { asked as usize } }
                     None => usize::MAX,
                 };
@@ -12947,7 +13074,7 @@ impl<'a> Machine<'a> {
             // Every tab opened to the next stop, counted from the last
             // line break in the row.
             33 if arguments.len() <= 1 => {
-                let stop = match given(0) { Some(v) => counted(v)?.max(0) as usize, None => 8 };
+                let stop = match placed(0) { Some(v) => counted(v)?.max(0) as usize, None => 8 };
                 let mut opened = Vec::new();
                 let mut column = 0usize;
                 for number in content {
@@ -13017,7 +13144,19 @@ impl<'a> Machine<'a> {
                 let Value::Text(spelling) = &arguments[0] else { return Err(wrong()) };
                 Ok(built(self.octets_from_hex(spelling)?))
             }
-            _ => Err(refusal()),
+            _ => {
+                let name = match operation {
+                    10 => "startswith", 13 => "find", 18 => "count", 19 => "index",
+                    20 => "rfind", 21 => "rindex", 22 => "endswith", 39 => "translate",
+                    _ => return Err(wrong()),
+                };
+                if arguments.is_empty() {
+                    let positional = if operation == 39 { " positional" } else { "" };
+                    return Err(format!("TypeError: {name}() takes at least 1{positional} argument (0 given)"));
+                }
+                let most = if operation == 39 { 2 } else { 3 };
+                Err(format!("TypeError: {name}() takes at most {most} arguments ({} given)", arguments.len()))
+            }
         }
     }
 
@@ -13181,15 +13320,19 @@ impl<'a> Machine<'a> {
             0 | 1 => {
                 let content = match values.len() {
                     0 => Vec::new(),
-                    1 if matches!(values[0].kind(), Some(Kind::Whole | Kind::Truth)) => {
-                        let quantity = self.octet_whole(&values[0])?;
-                        if quantity < BigInt::zero() { return Err(self.octet_error("negative")); }
-                        let length = quantity.to_usize().ok_or_else(refusal)?;
-                        let mut content = Vec::new();
-                        content.try_reserve(length).map_err(|_| refusal())?;
-                        content.resize(length, 0); content
+                    1 => {
+                        let quantity = self.octet_count(&values[0])?;
+                        if let Some(quantity) = quantity {
+                            if quantity < BigInt::zero() { return Err(self.octet_error("negative")); }
+                            if quantity.to_isize().is_none() { return Err(self.repeating_too_wide()); }
+                            let length = quantity.to_usize().ok_or_else(|| self.octet_error("unready"))?;
+                            let mut content = Vec::new();
+                            content.try_reserve(length).map_err(|_| self.octet_error("unready"))?;
+                            content.resize(length, 0); content
+                        } else {
+                            self.octet_build(&values[0], operation == 0)?
+                        }
                     }
-                    1 => self.octet_gathered(&values[0], true, operation == 0)?,
                     2 => {
                         let Value::Text(s) = &values[0] else { return Err(wrong()); };
                         self.octets_from_text(s, self.octet_encoding(values.get(1))?)?
@@ -13208,8 +13351,13 @@ impl<'a> Machine<'a> {
             // for, and the mapping table: both are asked of the kinds
             // themselves and take no row of bytes ahead of them.
             5 | 49 => {
-                let [Value::Text(source)] = values else { return Err(wrong()); };
-                return Ok(self.octets(self.octets_from_hex(source)?, operation == 49));
+                let source = match values {
+                    [Value::Text(text)] => text.to_string(),
+                    [Value::Octets { cell, .. }] => cell.borrow().iter().copied().map(char::from).collect(),
+                    [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word())),
+                    _ => return Err(wrong()),
+                };
+                return Ok(self.octets(self.octets_from_hex(&source)?, operation == 49));
             }
             62 => {
                 if values.len() != 2 { return Err(wrong()); }
@@ -13259,12 +13407,12 @@ impl<'a> Machine<'a> {
                 let rest = &values[1..];
                 let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(wrong()) };
                 match operation {
-                    52 => { counted(1)?; let byte = self.octet_item(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                    52 => { counted(1)?; let byte = self.octet_index(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
                     53 => { counted(1)?; let more = self.octet_lengthening(&rest[0])?; if !more.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                     54 => {
                         counted(2)?;
                         let asked = self.octet_place(&rest[0])?;
-                        let byte = self.octet_item(&rest[1], false)?;
+                        let byte = self.octet_index(&rest[1], false)?;
                         if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                         let mut held = cell.borrow_mut();
                         let index = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
@@ -13282,7 +13430,7 @@ impl<'a> Machine<'a> {
                     }
                     56 => {
                         counted(1)?;
-                        let byte = self.octet_item(&rest[0], false)?;
+                        let byte = self.octet_index(&rest[0], false)?;
                         let mut held = cell.borrow_mut();
                         let Some(index) = held.iter().position(|kept| *kept == byte) else { return Err(self.octet_worded("missing", 1)); };
                         if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
@@ -13376,7 +13524,7 @@ impl<'a> Machine<'a> {
             8 if args.len() <= 2 => {
                 let maximum = amount(args.get(1))?;
                 let mut chunks = Vec::new();
-                if args.first().map_or(true, |v| matches!(v, Value::Nil)) {
+                if args.first().map_or(true, |v| matches!(v, Value::Unset | Value::Nil)) {
                     let mut rest = content.as_slice();
                     while !rest.is_empty() && (rest[0].is_ascii_whitespace() || rest[0] == 11) { rest = &rest[1..]; }
                     while !rest.is_empty() {
@@ -17735,10 +17883,11 @@ impl<'a> Machine<'a> {
                 let (bytes, times) = if matches!(&v[0], Value::Octets { .. }) { (&v[0], &v[1]) } else { (&v[1], &v[0]) };
                 let Value::Octets { cell, changeable, .. } = bytes else { unreachable!() };
                 let quantity = self.repeat_count(times)?;
+                if quantity == 1 && !*changeable { return Ok((*bytes).clone()); }
                 let cell = cell.borrow();
                 let mut result = Vec::new();
-                let size = quantity.checked_mul(cell.len()).ok_or_else(|| self.octet_error("unready"))?;
-                result.try_reserve_exact(size).map_err(|_| self.octet_error("unready"))?;
+                let size = quantity.checked_mul(cell.len()).ok_or_else(|| "OverflowError: repeated bytes are too long".to_string())?;
+                result.try_reserve_exact(size).map_err(|_| String::from("MemoryError: "))?;
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
             }
@@ -19064,8 +19213,11 @@ impl<'a> Machine<'a> {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
                         let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
-                        let byte = self.octet_item(&v[2], false)?;
-                        cell.borrow_mut()[index] = byte;
+                        let byte = self.octet_index(&v[2], false)?;
+                        let mut held = cell.borrow_mut();
+                        if index >= held.len() { drop(held); return Err(self.octet_error("index")); }
+                        held[index] = byte;
+                        drop(held);
                         v[0].clone()
                     }
                     Value::Text(had) if self.letter_places => {

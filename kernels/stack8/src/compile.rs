@@ -1341,7 +1341,17 @@ impl<'a> Compiler<'a> {
                     Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false }
                 } else { self.cell_to_read(name, false) };
                 if slot.near.is_empty() && !self.registry.program_bound.contains(name) {
-                    self.constant(Value::Native(native, Rc::from(name)));
+                    if matches!(native, Builtin::Bytes(0 | 1)) {
+                        // The two byte kinds are read in a class body the
+                        // very way they are read at the top of the unit,
+                        // as their kind markers, so two readings of one
+                        // are one value.
+                        let mutable = native == Builtin::Bytes(1);
+                        let words = &self.lang.byte_words["ext.system.bytes.type"];
+                        self.constant(Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1]))));
+                    } else {
+                        self.constant(Value::Native(native, Rc::from(name)));
+                    }
                 } else { self.put(Instr::Read(slot)); }
                 return;
             }

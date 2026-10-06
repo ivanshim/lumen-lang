@@ -462,7 +462,7 @@ const TEXT_METHOD_LABELS: &[&str] = &[
 const BYTE_METHOD_LABELS: &[&str] = &[
     "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower",
     "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace",
-    "ext.builtin.bytes.strip", "ext.builtin.bytes.find",
+    "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.maketrans",
 ];
 const SET_METHOD_LABELS: &[&str] = &[
     "ext.builtin.set.add", "ext.builtin.set.remove", "ext.builtin.set.discard", "ext.builtin.set.pop",
@@ -5690,7 +5690,16 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Const(Value::ByteKind(changeable, shown)) if self.wildcard_in_scope() && (program.body_of_all || program.declared_on != 0) => {
                     let word = self.byte_kind_word(*changeable);
-                    self.data.push(self.wildcard_value(word).unwrap_or_else(|| Value::ByteKind(*changeable, shown.clone())));
+                    let held = self.wildcard_value(word);
+                    // A name still spelling the builtin it names is the
+                    // kind marker it was read as, so two readings of it
+                    // are one value; a name shadowed by a nearer binding
+                    // keeps whatever that binding holds.
+                    let value = match &held {
+                        Some(Value::Native(Builtin::Bytes(tag), _)) if *tag == u8::from(*changeable) => Value::ByteKind(*changeable, shown.clone()),
+                        _ => held.unwrap_or_else(|| Value::ByteKind(*changeable, shown.clone())),
+                    };
+                    self.data.push(value);
                 }
                 Instr::Const(v) => {
                     // A definition reached again makes a function of its
@@ -6723,7 +6732,11 @@ impl<'a> Engine<'a> {
             Kindred::Set(fixed) => (&self.lang.set_words, if fixed { SET_STILL_LABELS } else { SET_METHOD_LABELS }),
             _ => (&self.lang.text_words, [].as_slice()),
         };
-        for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
+        for label in labels {
+            for word in book.get(*label).into_iter().flatten() {
+                names.push(word.rsplit('.').next().unwrap_or(word).to_string());
+            }
+        }
         // A counted row keeps its bounds beside the places it answers
         // through the methods above.
         if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
@@ -13881,12 +13894,14 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(op, Action::Mul) {
-            let pair = match (a, b) { (Value::Bytes(row, mutable, _), n) | (n, Value::Bytes(row, mutable, _)) => Some((row, mutable, n)), _ => None };
-            if let Some((row, mutable, n)) = pair {
+            let pair = match (a, b) { (Value::Bytes(..), n) => Some((a, n)), (n, Value::Bytes(..)) => Some((b, n)), _ => None };
+            if let Some((bytes, n)) = pair {
                 let count = self.sequence_count(n)?;
+                let Value::Bytes(row, mutable, _) = bytes else { unreachable!() };
+                if count == 1 && !*mutable { return Ok((*bytes).clone()); }
                 let row = row.borrow();
-                let size = row.len().checked_mul(count).ok_or_else(|| self.byte_fault("unready"))?;
-                let mut out = Vec::new(); out.try_reserve(size).map_err(|_| self.byte_fault("unready"))?;
+                let size = row.len().checked_mul(count).ok_or_else(|| "OverflowError: repeated bytes are too long".to_string())?;
+                let mut out = Vec::new(); out.try_reserve(size).map_err(|_| "MemoryError: ".to_string())?;
                 if !row.is_empty() { for _ in 0..count { out.extend(row.iter()); } }
                 return Ok(self.byte_make(out, *mutable));
             }
@@ -16244,9 +16259,17 @@ impl<'a> Engine<'a> {
             args = fields.into_iter().flatten().collect();
         }
         if matches!(builtin, Builtin::Bytes(0..=3)) && !named.is_empty() {
-            for (key, value) in std::mem::take(&mut named) {
+            let constructing = matches!(builtin, Builtin::Bytes(0 | 1));
+            let source_is_text = args.first().map_or(false, |source| matches!(source, Value::Text(_)));
+            let mut handed = std::mem::take(&mut named);
+            handed.sort_by_key(|(key, _)| match key.as_str() { "encoding" => 0, "errors" => 1, _ => 2 });
+            for (key, value) in handed {
                 let at = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.byte_fault("arguments")) };
                 if args.len() > at { return Err(self.byte_fault("arguments")); }
+                if constructing {
+                    if !source_is_text { return Err(format!("TypeError: {} without a string argument", key)); }
+                    if at == 2 && args.len() < 2 { return Err("TypeError: string argument without an encoding".to_string()); }
+                }
                 while args.len() < at { args.push(Value::text("utf-8")); }
                 args.push(value);
             }
@@ -16362,6 +16385,26 @@ impl<'a> Engine<'a> {
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args, named); }
         if let Builtin::Text(op) = builtin {
             crate::strings::keywords(op, &mut args, named, self.lang)?;
+            return self.builtin(builtin, name, &mut args);
+        }
+        // The byte methods whose keywords land in fixed slots (split,
+        // rsplit, hex and expandtabs) bind each keyword to its own slot,
+        // so the order they are written in and any slot left unspoken do
+        // not matter; the unspoken slots stand as None.
+        if matches!(builtin, Builtin::Bytes(4 | 8 | 23 | 33)) && !named.is_empty() {
+            for (key, value) in std::mem::take(&mut named) {
+                let slot = match (builtin, key.as_str()) {
+                    (Builtin::Bytes(4), "sep") => 1,
+                    (Builtin::Bytes(4), "bytes_per_sep") => 2,
+                    (Builtin::Bytes(8 | 23), "sep") => 1,
+                    (Builtin::Bytes(8 | 23), "maxsplit") => 2,
+                    (Builtin::Bytes(33), "tabsize") => 1,
+                    _ => return Err(self.byte_fault("arguments")),
+                };
+                while args.len() <= slot { args.push(Value::Blank); }
+                if !matches!(args[slot], Value::Blank) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+                args[slot] = value;
+            }
             return self.builtin(builtin, name, &mut args);
         }
         for (key, value) in named {
@@ -16627,6 +16670,23 @@ impl<'a> Engine<'a> {
         if operation == "float_fromhex" {
             if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
             let parsed = self.value_method(&args[0], "fromhex", Vec::new(), Vec::new())?;
+            if let Value::Class(class) = receiver {
+                return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
+                    Fault::Note(message) => message,
+                    raised => { self.carried = Some(raised); String::new() },
+                });
+            }
+            return Err(self.lang.method_errors["arguments"].clone());
+        }
+        if operation == "bytes_fromhex" || operation == "bytearray_fromhex" {
+            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let spelling = match args.as_slice() {
+                [Value::Text(text)] => text.to_string(),
+                [Value::Bytes(row, ..)] => row.borrow().iter().copied().map(char::from).collect(),
+                [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.core_kind())),
+                _ => return Err(self.lang.method_errors["arguments"].clone()),
+            };
+            let parsed = self.byte_make(self.byte_unhex(&spelling)?, operation == "bytearray_fromhex");
             if let Value::Class(class) = receiver {
                 return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
@@ -17297,9 +17357,14 @@ impl<'a> Engine<'a> {
         while at < figures.len() {
             if figures[at].is_ascii_whitespace() || figures[at] == '\u{b}' { at += 1; continue; }
             let high = figures[at].to_digit(16).filter(|_| figures[at].is_ascii()).ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at))?;
-            let low = figures.get(at + 1).and_then(|c| c.to_digit(16)).filter(|_| figures.get(at + 1).map_or(false, char::is_ascii))
-                .ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at + 1))?;
-            row.push((high * 16 + low) as u8); at += 2;
+            at += 1;
+            let low = match figures.get(at).and_then(|c| c.to_digit(16)).filter(|_| figures.get(at).map_or(false, char::is_ascii)) {
+                Some(b) => b,
+                None if at >= figures.len() => return Err("ValueError: fromhex() arg must contain an even number of hexadecimal digits".to_string()),
+                None => return Err(format!("{}{}", self.byte_fault("hex"), at)),
+            };
+            at += 1;
+            row.push((high * 16 + low) as u8);
         }
         Ok(row)
     }
@@ -17309,24 +17374,35 @@ impl<'a> Engine<'a> {
     /// where the number is above nought and from the start where it is
     /// below, and nowhere at all where it is nought.
     fn byte_hex(&self, row: &[u8], given: &[Value]) -> Res<Value> {
-        let bad = || self.byte_fault("arguments");
-        let (mark, every) = match given.first() {
-            None => (String::new(), 0i64),
-            Some(Value::Text(sep)) => {
-                if sep.chars().count() != 1 { return Err(bad()); }
-                let every = match given.get(1) {
-                    None => 1,
-                    Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => n.as_big()?.to_i64().unwrap_or(1),
-                    _ => return Err(bad()),
-                };
-                (sep.to_string(), every)
+        // The count is read first, as CPython reads it, so an explicit
+        // None is refused even when the separator is omitted.
+        let every = match given.get(1) {
+            None | Some(Value::Blank) => 1i64,
+            Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                n.as_big()?.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())? as i64
             }
-            _ => return Err(bad()),
+            _ => return Err("TypeError: bytes_per_sep must be an integer".to_string()),
         };
-        let size = every.unsigned_abs() as usize;
+        let mark = match given.first() {
+            None | Some(Value::Blank) => String::new(),
+            Some(Value::Text(_)) | Some(Value::Bytes(..)) => {
+                let text: String = match &given[0] {
+                    Value::Text(s) => s.to_string(),
+                    Value::Bytes(content, ..) => content.borrow().iter().copied().map(char::from).collect(),
+                    _ => unreachable!(),
+                };
+                if text.chars().count() != 1 { return Err("ValueError: sep must be length 1.".to_string()); }
+                if !text.is_ascii() { return Err("ValueError: sep must be ASCII.".to_string()); }
+                text
+            }
+            Some(other) => return Err(format!("TypeError: object of type '{}' has no len()", other.core_kind())),
+        };
+        // With no separator the count is never used to group the digits.
+        let group = if mark.is_empty() { 0i64 } else { every };
+        let size = group.unsigned_abs() as usize;
         let mut written = String::with_capacity(row.len() * 2);
         for (at, byte) in row.iter().enumerate() {
-            let breaks = at > 0 && size > 0 && if every > 0 { (row.len() - at) % size == 0 } else { at % size == 0 };
+            let breaks = at > 0 && size > 0 && if group > 0 { (row.len() - at) % size == 0 } else { at % size == 0 };
             if breaks { written.push_str(&mark); }
             written.push_str(&format!("{byte:02x}"));
         }
@@ -17351,7 +17427,8 @@ impl<'a> Engine<'a> {
         let sought = |value: &Value| -> Res<Vec<u8>> {
             match value {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(vec![self.byte_number(value, false)?]),
-                other => part(other),
+                Value::Bytes(content, ..) => Ok(content.borrow().clone()),
+                other => Err(format!("TypeError: argument should be integer or bytes-like object, not '{}'", other.core_kind())),
             }
         };
         let whole = |value: &Value| -> Res<i64> {
@@ -17380,9 +17457,13 @@ impl<'a> Engine<'a> {
             10 | 22 if (1..=3).contains(&given.len()) => {
                 let (from, upto) = limits(given.get(1), given.get(2))?;
                 let piece = &row[from..upto];
-                let wanted = match &given[0] { Value::Tuple(parts) => parts.as_ref().clone(), one => vec![one.clone()] };
+                let wanted = match &given[0] {
+                    Value::Tuple(parts) => parts.as_ref().clone(),
+                    Value::Bytes(..) => vec![given[0].clone()],
+                    other => return Err(format!("TypeError: {} first arg must be bytes or a tuple of bytes, not {}", if task == 10 { "startswith" } else { "endswith" }, other.core_kind())),
+                };
                 for one in wanted {
-                    let edge = part(&one)?;
+                    let edge = match &one { Value::Bytes(content, ..) => content.borrow().clone(), other => return Err(self.core_fault("core.bytes.like", &other.core_kind())) };
                     if if task == 10 { piece.starts_with(&edge) } else { piece.ends_with(&edge) } { return Ok(Value::Flag(true)); }
                 }
                 Ok(Value::Flag(false))
@@ -17392,10 +17473,25 @@ impl<'a> Engine<'a> {
             // two that will not answer below nought refuse instead.
             13 | 18 | 19 | 20 | 21 if (1..=3).contains(&given.len()) => {
                 let needle = sought(&given[0])?;
-                let (from, upto) = limits(given.get(1), given.get(2))?;
+                // The place a search begins is clipped only below
+                // nought, and the place it ends is clipped to the row,
+                // so a start past the row finds nothing at all.
+                let start = match given.get(1).filter(|v| !matches!(v, Value::Null)) { Some(v) => whole(v)?, None => 0 };
+                let start = if start < 0 { start.saturating_add(row.len() as i64).max(0) } else { start };
+                let end = match given.get(2).filter(|v| !matches!(v, Value::Null)) { Some(v) => whole(v)?, None => row.len() as i64 };
+                let end = if end < 0 { end.saturating_add(row.len() as i64).max(0) } else { end.min(row.len() as i64) };
+                if end - start < needle.len() as i64 {
+                    return if task == 18 { Ok(Value::Small(0)) }
+                        else if matches!(task, 19 | 21) { Err(self.byte_fault("missing")) }
+                        else { Ok(Value::Small(-1)) };
+                }
+                if needle.is_empty() {
+                    return Ok(Value::Small(if task == 18 { end - start + 1 }
+                        else if matches!(task, 20 | 21) { end } else { start }));
+                }
+                let (from, upto) = (start.max(0) as usize, end as usize);
                 let piece = &row[from..upto];
                 if task == 18 {
-                    if needle.is_empty() { return Ok(Value::Small(piece.len() as i64 + 1)); }
                     let (mut seen, mut at) = (0i64, 0usize);
                     while let Some(found) = seek(&piece[at..], &needle, false) { seen += 1; at += found + needle.len(); }
                     return Ok(Value::Small(seen));
@@ -17409,13 +17505,13 @@ impl<'a> Engine<'a> {
             // Cut from the right, the pieces handed back in the order
             // they stand in the row.
             23 if given.len() <= 2 => {
-                let most = match given.get(1).filter(|v| !matches!(v, Value::Null)) {
+                let most = match given.get(1) {
+                    None | Some(Value::Blank) => usize::MAX,
                     Some(v) => { let n = whole(v)?; if n < 0 { usize::MAX } else { n as usize } }
-                    None => usize::MAX,
                 };
                 let blank = |b: &u8| b.is_ascii_whitespace() || *b == 11;
                 let mut pieces: Vec<Vec<u8>> = Vec::new();
-                match given.first().filter(|v| !matches!(v, Value::Null)) {
+                match given.first().filter(|v| !matches!(v, Value::Blank | Value::Null)) {
                     None => {
                         let mut rest = row;
                         loop {
@@ -17504,7 +17600,7 @@ impl<'a> Engine<'a> {
             // Each tab opened out to the next stop, which the count of
             // bytes since the last line break is measured against.
             33 if given.len() <= 1 => {
-                let stop = match given.first().filter(|v| !matches!(v, Value::Null)) { Some(v) => whole(v)?.max(0) as usize, None => 8 };
+                let stop = match given.first() { None | Some(Value::Blank) => 8, Some(v) => whole(v)?.max(0) as usize };
                 let (mut opened, mut column) = (Vec::new(), 0usize);
                 for &byte in row {
                     match byte {
@@ -17598,7 +17694,19 @@ impl<'a> Engine<'a> {
                 };
                 Ok(Value::Flag(answer))
             }
-            _ => Err(unready()),
+            _ => {
+                let name = match task {
+                    10 => "startswith", 13 => "find", 18 => "count", 19 => "index",
+                    20 => "rfind", 21 => "rindex", 22 => "endswith", 39 => "translate",
+                    _ => return Err(bad()),
+                };
+                if given.is_empty() {
+                    let positional = if task == 39 { " positional" } else { "" };
+                    return Err(format!("TypeError: {name}() takes at least 1{positional} argument (0 given)"));
+                }
+                let most = if task == 39 { 2 } else { 3 };
+                Err(format!("TypeError: {name}() takes at most {most} arguments ({} given)", given.len()))
+            }
         }
     }
 
@@ -17606,7 +17714,7 @@ impl<'a> Engine<'a> {
     /// itself but for the ones the first row names, which stand for the
     /// bytes the second row holds in the same places.
     fn byte_table(&self, from: &[u8], to: &[u8]) -> Res<Value> {
-        if from.len() != to.len() { return Err(self.byte_fault("arguments")); }
+        if from.len() != to.len() { return Err("ValueError: maketrans arguments must have same length".to_string()); }
         let mut table: Vec<u8> = (0..=u8::MAX).collect();
         for (one, other) in from.iter().zip(to.iter()) { table[usize::from(*one)] = *other; }
         Ok(self.byte_make(table, false))
@@ -17720,12 +17828,52 @@ impl<'a> Engine<'a> {
         value.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row)))
     }
 
-    fn byte_row(&self, value: &Value, whole_row: bool) -> Res<Vec<u8>> {
+    /// One byte read off a value that may name a whole number rather
+    /// than stand for one already: a whole-number subclass hands over
+    /// its own worth, and anything else with an `__index__` member
+    /// hands over the number that member names. A number outside a
+    /// byte's bounds is refused in the words for a whole row where the
+    /// row is being built, and in those for one byte everywhere else.
+    fn byte_index(&mut self, value: &Value, whole_row: bool) -> Res<u8> {
+        if matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return self.byte_number(value, whole_row); }
+        if let Value::Object(_) = value {
+            if let Some(worth) = Self::worth_of(value) {
+                if matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return worth.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row)));
+                }
+            }
+            return match self.special_index(value)? {
+                Some(number) => number.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row))),
+                None => Err(self.core_fault("core.integer", &value.core_kind())),
+            };
+        }
+        Err(self.core_fault("core.integer", &value.core_kind()))
+    }
+
+    fn byte_row(&mut self, value: &Value, whole_row: bool) -> Res<Vec<u8>> {
         match value {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
-            Value::Array(row) => row.iter().map(|v| self.byte_number(v, whole_row)).collect(),
+            Value::Array(row) => row.iter().map(|v| self.byte_index(v, whole_row)).collect(),
             _ => Err(self.byte_fault("arguments")),
         }
+    }
+
+    /// A whole number a row of bytes is asked to hold as a count, read
+    /// off a value that stands for one or names one. Nothing where the
+    /// value names none, so the caller may build the row from the
+    /// value's members instead.
+    fn byte_count(&mut self, value: &Value) -> Res<Option<BigInt>> {
+        if matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Ok(Some(value.as_big()?)); }
+        if let Value::Object(_) = value {
+            if let Some(worth) = Self::worth_of(value) {
+                if matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Ok(Some(worth.as_big()?)); }
+            }
+            return match self.special_index(value)? {
+                Some(number) => Ok(Some(number.as_big()?)),
+                None => Ok(None),
+            };
+        }
+        Ok(None)
     }
 
     /// The bytes a value gives up to a row being lengthened: another
@@ -17734,12 +17882,12 @@ impl<'a> Engine<'a> {
     fn byte_taken(&mut self, value: &Value) -> Res<Vec<u8>> {
         match &value.contents() {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
-            Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
+            Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_index(member, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
             other => {
                 let walk = self.core_iterator(other)?;
                 let mut bytes = Vec::new();
-                while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_number(&item, false)?); }
+                while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_index(&item, false)?); }
                 Ok(bytes)
             },
         }
@@ -18047,15 +18195,19 @@ impl<'a> Engine<'a> {
             let row = match args {
                 [] => Vec::new(),
                 [Value::Text(text), encoding] => self.byte_encode(text, self.byte_codec(Some(encoding))?)?,
-                [Value::Small(_) | Value::Huge(_) | Value::Flag(_)] => {
-                    let count = args[0].as_big()?;
-                    if count.is_negative() { return Err(self.byte_fault("negative")); }
-                    let count = count.to_usize().ok_or_else(unready)?;
-                    let mut row = Vec::new();
-                    row.try_reserve_exact(count).map_err(|_| unready())?;
-                    row.resize(count, 0); row
-                }
-                [value] => self.byte_row(value, task == 0)?,
+                [value] => {
+                    let count = self.byte_count(value)?;
+                    if let Some(count) = count {
+                        if count.is_negative() { return Err(self.byte_fault("negative")); }
+                        if count.to_isize().is_none() { return Err(self.sequence_oversize()); }
+                        let count = count.to_usize().ok_or_else(|| self.byte_fault("unready"))?;
+                        let mut row = Vec::new();
+                        row.try_reserve_exact(count).map_err(|_| self.byte_fault("unready"))?;
+                        row.resize(count, 0); row
+                    } else {
+                        self.byte_row(value, task == 0)?
+                    }
+                },
                 _ => return Err(unready()),
             };
             return Ok(self.byte_make(row, task == 1));
@@ -18085,8 +18237,13 @@ impl<'a> Engine<'a> {
         // the mapping table, which are asked of the kinds themselves
         // and take no row of bytes before them.
         if task == 5 || task == 49 {
-            let [Value::Text(text)] = args else { return Err(bad()); };
-            return Ok(self.byte_make(self.byte_unhex(text)?, task == 49));
+            let spelling = match args {
+                [Value::Text(text)] => text.to_string(),
+                [Value::Bytes(row, ..)] => row.borrow().iter().copied().map(char::from).collect(),
+                [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.core_kind())),
+                _ => return Err(bad()),
+            };
+            return Ok(self.byte_make(self.byte_unhex(&spelling)?, task == 49));
         }
         // The workings that change a changeable row where it lies. The
         // row itself comes first, so the cell the row lives in takes
@@ -18098,12 +18255,12 @@ impl<'a> Engine<'a> {
             let rest = &args[1..];
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
             match task {
-                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                52 => { counted(1)?; let byte = self.byte_index(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
                 53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                 54 => {
                     counted(2)?;
                     let asked = self.byte_whole(&rest[0])?;
-                    let byte = self.byte_number(&rest[1], false)?;
+                    let byte = self.byte_index(&rest[1], false)?;
                     if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     let mut held = cell.borrow_mut();
                     let at = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
@@ -18121,7 +18278,7 @@ impl<'a> Engine<'a> {
                 }
                 56 => {
                     counted(1)?;
-                    let byte = self.byte_number(&rest[0], false)?;
+                    let byte = self.byte_index(&rest[0], false)?;
                     let mut held = cell.borrow_mut();
                     let Some(at) = held.iter().position(|kept| *kept == byte) else { return Err(self.byte_said("missing", 1)); };
                     if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
@@ -18228,7 +18385,7 @@ impl<'a> Engine<'a> {
         let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
         let count = |v: Option<&Value>| -> Res<usize> {
             match v {
-                None => Ok(usize::MAX),
+                None | Some(Value::Blank) => Ok(usize::MAX),
                 Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
                     let n = v.as_big()?;
                     Ok(n.to_usize().unwrap_or(usize::MAX))
@@ -18244,7 +18401,7 @@ impl<'a> Engine<'a> {
             8 if given.len() <= 2 => {
                 let limit = count(given.get(1))?;
                 let mut parts = Vec::new();
-                if given.first().map_or(true, |v| matches!(v, Value::Null)) {
+                if given.first().map_or(true, |v| matches!(v, Value::Blank | Value::Null)) {
                     let mut pos = 0;
                     while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
                     while pos < row.len() {
@@ -21154,7 +21311,7 @@ impl<'a> Engine<'a> {
                 let v = args.pop().expect("the value");
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
-                    let byte = self.byte_number(&v, false)?;
+                    let byte = self.byte_index(&v, false)?;
                     row.borrow_mut().push(byte);
                     return Ok(target);
                 }
@@ -21200,8 +21357,11 @@ impl<'a> Engine<'a> {
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
                     let index = self.byte_position(&at, row.borrow().len(), *mutable)?;
-                    let byte = self.byte_number(&v, false)?;
-                    row.borrow_mut()[index] = byte;
+                    let byte = self.byte_index(&v, false)?;
+                    let mut held = row.borrow_mut();
+                    if index >= held.len() { drop(held); return Err(self.byte_fault("index")); }
+                    held[index] = byte;
+                    drop(held);
                     return Ok(target);
                 }
                 // A language that makes a place on writing into it finds
