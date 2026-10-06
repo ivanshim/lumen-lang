@@ -369,7 +369,7 @@ impl Drop for Suspension {
             self.ended = true;
             crate::ghost::walk_departing(Rc::new(RefCell::new(again)));
         }
-        crate::ghost::anything_departing();
+        crate::ghost::departing_generic();
     }
 }
 
