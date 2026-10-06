@@ -322,6 +322,14 @@ prefix = base_prefix
 base_exec_prefix = base_prefix
 exec_prefix = base_prefix
 
+# The interpreter stands alone, so the installation it names is itself:
+# the same prefix Python would compute for its own home, here the place
+# the binary stands.
+prefix = executable.rsplit('/', 1)[0] if '/' in executable else ''
+base_prefix = prefix
+exec_prefix = prefix
+base_exec_prefix = prefix
+
 float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111
@@ -331,7 +339,29 @@ def intern(string):
         raise 'TypeError: intern() argument must be str'
     return string
 
+# The builtin kinds whose rough count below stands for them and their
+# subclasses that say nothing of their own measurement.
+_sizeof_bases = (str, list, int, float, bytes, bytearray, tuple, set,
+                 frozenset, dict, bool, complex)
+
+
 def getsizeof(value, default=None):
+    # A type of the program's own may say how it is measured, and its
+    # answer is honoured before any rough count. The reference asks the
+    # type's own method, never an attribute set on the instance, and
+    # requires a non-negative integer.
+    for base in type(value).__mro__:
+        if base is object or base in _sizeof_bases:
+            break
+        if '__sizeof__' in base.__dict__:
+            measured = type(value).__sizeof__(value)
+            if not isinstance(measured, int):
+                raise TypeError('__sizeof__() should return int, got ' + type(measured).__name__)
+            if measured < 0:
+                if default is not None:
+                    return default
+                raise ValueError('__sizeof__() should return >= 0')
+            return measured
     # A rough count of the value's payload and its enclosing record.
     if isinstance(value, str):
         largest = max((ord(char) for char in value), default=0)

@@ -77,6 +77,25 @@ struct Cycle { entry: usize, exit: usize, low: usize, high: usize, taken: usize,
 struct Cursor { instruction: usize, offset: usize, captures: Vec<i64>, recent: i64, cycles: Vec<Cycle> }
 struct Regex<'a> { program: &'a [u32], subject: &'a [u32], limit: usize }
 impl Regex<'_> {
+    fn viable(&self, offset: usize) -> bool {
+        let words = self.program;
+        let header = words.get(..5);
+        let Some(header) = header.filter(|entry| entry[0] == 14) else { return true };
+        let after = header[1] as usize + 1;
+        if after < 5 || after >= words.len() { return true; }
+        let required = header[3] as usize;
+        if required > self.limit.saturating_sub(offset) { return false; }
+        if required == 0 { return true; }
+        match header[2] {
+            bits if bits & 1 != 0 && after >= 7 => {
+                let count = words[5] as usize;
+                let Some(prefix) = words.get(7..7usize.saturating_add(count)).filter(|_| count <= after - 7) else { return true };
+                prefix.iter().enumerate().all(|(index, number)| self.subject.get(offset.saturating_add(index)) == Some(number))
+            }
+            bits if bits & 4 != 0 => self.subject.get(offset).is_some_and(|&number| self.contains(5, number, number)),
+            _ => true,
+        }
+    }
     fn instruction(&self, at: usize) -> u32 { self.program.get(at).copied().unwrap_or(0) }
     fn boundary(&self, tag: u32, at: usize) -> bool {
         if tag < 3 { return at == 0 || tag == 1 && self.subject.get(at.wrapping_sub(1)) == Some(&10); }
@@ -280,9 +299,70 @@ impl Regex<'_> {
 }
 pub fn invoke(input: &[Value]) -> Result<Value, String> {
     fn integer(v: &Value) -> Result<i64, String> {
-        v.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: regular expression code size limit exceeded"))
+        match v {
+            Value::Small(whole) => Ok(*whole),
+            Value::Flag(truth) => Ok(if *truth { 1 } else { 0 }),
+            other => other.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: regular expression code size limit exceeded")),
+        }
     }
     let action = input.first().map(integer).transpose()?.unwrap_or(-1);
+    if action == 10 {
+        let [_, text, snapshot, count, directory, selection] = input else {
+            return Err(String::from("TypeError: invalid SRE capture argument count"));
+        };
+        let Value::Tuple(choices) = selection.settled() else { return Err(String::from("TypeError: SRE groups must be a tuple")); };
+        for choice in choices.iter() {
+            match choice {
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Text(_) => (),
+                _ => return Ok(Value::Nil),
+            }
+        }
+        let Value::Vector(saved) = snapshot.settled() else { return Err(String::from("TypeError: invalid SRE match state")); };
+        if saved.get(2).is_none() { return Err(String::from("TypeError: invalid SRE match state")); }
+        let Value::Vector(offsets) = saved[2].settled() else { return Err(String::from("TypeError: invalid SRE capture marks")); };
+        let Value::Dict(labels) = directory.settled() else { return Err(String::from("TypeError: invalid SRE group names")); };
+        let characters = characters_for_regex(text)?;
+        let maximum = integer(count)?;
+        if usize::try_from(maximum).map_or(true, |size| size > offsets.len() / 2) {
+            return Err(String::from("TypeError: invalid SRE capture marks"));
+        }
+        let mut values = Vec::new();
+        let mut cursor = 0;
+        while cursor < choices.len() {
+            let chosen = &choices[cursor];
+            let number = match chosen {
+                Value::Text(word) => {
+                    let position = labels.pairs().iter().position(|pair| matches!(&pair.0, Value::Text(key) if key == word))
+                        .ok_or_else(|| String::from("IndexError: no such group"))?;
+                    integer(&labels.pairs()[position].1)
+                }
+                other => integer(other),
+            }.map_err(|_| String::from("IndexError: no such group"))?;
+            if !(0..=maximum).contains(&number) { return Err(String::from("IndexError: no such group")); }
+            let range = if number == 0 { (integer(&saved[0])?, integer(&saved[1])?) }
+                else { let at = number as usize * 2; (integer(&offsets[at-2])?, integer(&offsets[at-1])?) };
+            values.push(if range.0 == -1 || range.1 < range.0 { Value::Nil }
+                else {
+                    let letters = characters.get(range.0 as usize..range.1 as usize)
+                        .ok_or_else(|| String::from("TypeError: invalid SRE capture position"))?;
+                    Value::characters(letters.to_vec())
+                });
+            cursor += 1;
+        }
+        let answer = match values.len() { 1 => values.remove(0), _ => Value::tuple(values) };
+        return Ok(Value::tuple(vec![answer]));
+    }
+    if action == 9 {
+        let [_, source, first, last] = input else {
+            return Err(String::from("TypeError: invalid SRE bounds argument count"));
+        };
+        let maximum = characters_for_regex(source)?.len() as i64;
+        let position = |number: &Value| -> Result<Value, String> {
+            let whole = integer(number).map_err(|_| String::from("OverflowError: Python int too large to convert to C ssize_t"))?;
+            Ok(Value::Small(whole.max(0).min(maximum)))
+        };
+        return Ok(Value::tuple(vec![position(first)?, position(last)?]));
+    }
     if action == 6 { return Ok(Value::text(character_category(integer(&input[1])? as u32))); }
     if action == 5 {
         return match input.get(1) {
@@ -290,7 +370,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Err(String::from("TypeError: argument must be str")),
         };
     }
-    if action != 0 {
+    if !matches!(action, 0 | 7 | 8) {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {
             1 | 2 => Ok(Value::Small(folded(value, action == 1) as i64)),
@@ -298,19 +378,74 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Ok(Value::Flag(has_property(value, 16))),
         };
     }
-    if input.len() != 8 { return Err(String::from("TypeError: SRE matcher needs eight arguments")); }
+    let required = if action == 7 { 6 } else { 8 };
+    if input.len() != required { return Err(String::from("TypeError: invalid SRE matcher argument count")); }
     let Value::Vector(raw) = &input[1] else { return Err(String::from("TypeError: SRE code must be a list")); };
     let program: Vec<u32> = raw.iter().map(|v| integer(v).and_then(|n| u32::try_from(n).map_err(|_| String::from("OverflowError: regular expression code size limit exceeded")))).collect::<Result<_, _>>()?;
     let subject = characters_for_regex(&input[2])?;
     let begin = integer(&input[3])?.max(0) as usize;
     let limit = (integer(&input[4])?.max(0) as usize).min(subject.len());
     let groups = integer(&input[5])?.max(0) as usize;
-    let mode = integer(&input[6])?;
-    let skip_empty = integer(&input[7])? != 0;
-    if begin > limit { return Ok(Value::Nil); }
+    let mode = if action == 0 { integer(&input[6])? } else { 2 };
+    let skip_empty = action == 0 && integer(&input[7])? != 0;
+    if begin > limit { return Ok(if action == 7 { vector(Vec::new()) } else { Value::Nil }); }
     let regex = Regex { program: &program, subject: &subject, limit };
+    if matches!(action, 7 | 8) {
+        let permitted = if action == 8 { integer(&input[6])? } else { 0 };
+        let inserted = if action == 8 { input[7].character_numbers().ok_or_else(|| String::from("TypeError: replacement must be text"))? } else { vec![] };
+        let mut output = Vec::new();
+        let mut until = begin;
+        let mut replacements = 0;
+        let mut rows = Vec::new();
+        let mut scan = begin;
+        let mut omit = false;
+        loop {
+            if permitted != 0 && replacements >= permitted { break; }
+            let origin = scan;
+            let mut matched = None;
+            while scan <= limit {
+                if !regex.viable(scan) { scan += 1; continue; }
+                let state = Cursor { instruction: 0, offset: scan, captures: vec![-1; groups * 2], recent: -1, cycles: vec![] };
+                let avoid = (omit && scan == origin).then_some(origin);
+                if let Some(result) = regex.follow(state, None, false, avoid, 0)? {
+                    matched = Some(result);
+                    break;
+                }
+                scan += 1;
+            }
+            let Some(result) = matched else { break };
+            let slice = |bounds: &[i64]| {
+                if bounds[0] == -1 || bounds[1] < bounds[0] { Value::text("") }
+                else { Value::characters(subject[bounds[0] as usize..bounds[1] as usize].to_vec()) }
+            };
+            if action == 8 {
+                output.extend_from_slice(&subject[until..scan]);
+                output.extend_from_slice(&inserted);
+                until = result.offset;
+                replacements += 1;
+            } else {
+            let item = if groups == 0 {
+                Value::characters(subject[scan..result.offset].to_vec())
+            } else if groups == 1 { slice(&result.captures[..2]) }
+            else { Value::Tuple(crate::tuples::Sequence::plain(result.captures.chunks_exact(2).map(slice).collect())) };
+            rows.push(item);
+            }
+            omit = result.offset == scan;
+            scan = result.offset;
+        }
+        if action == 8 {
+            output.extend_from_slice(&subject[until..limit]);
+            return Ok(Value::tuple(vec![Value::characters(output), Value::Small(replacements)]));
+        }
+        return Ok(vector(rows));
+    }
     let mut position = begin;
     while position <= limit {
+        // Anchored operations enter the matcher without search's INFO filter.
+        if mode == 2 && !regex.viable(position) {
+            position += 1;
+            continue;
+        }
         let cursor = Cursor { instruction: 0, offset: position, captures: vec![-1; groups*2], recent: -1, cycles: vec![] };
         let forbid = if skip_empty && position == begin { Some(begin) } else { None };
         if let Some(m) = regex.follow(cursor, None, mode == 1, forbid, 0)? {

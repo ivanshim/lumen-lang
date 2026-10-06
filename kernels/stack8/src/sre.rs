@@ -72,6 +72,26 @@ fn category(kind: u32, n: u32) -> bool {
     yes != (kind & 1 != 0)
 }
 impl Machine<'_> {
+    // INFO describes necessary conditions only; a surviving position still
+    // runs the complete matcher, including captures and backtracking.
+    fn possible_start(&self, position: usize) -> bool {
+        if self.code.len() < 5 || self.code[0] != 14 { return true; }
+        let info_end = self.code[1] as usize + 1;
+        if info_end >= self.code.len() || info_end < 5 { return true; }
+        let minimum = self.code[3] as usize;
+        if self.end.saturating_sub(position) < minimum { return false; }
+        if minimum == 0 { return true; }
+        let flags = self.code[2];
+        if flags & 1 != 0 && info_end >= 7 {
+            let width = self.code[5] as usize;
+            if width > info_end - 7 { return true; }
+            return self.text.get(position..position.saturating_add(width)) == Some(&self.code[7..7 + width]);
+        }
+        if flags & 4 != 0 {
+            return self.text.get(position).is_some_and(|&character| self.charset(5, character, character));
+        }
+        true
+    }
     fn at(&self, kind: u32, p: usize) -> bool {
         let preceding = p.checked_sub(1).and_then(|i| self.text.get(i)).copied();
         let following = if p < self.end { self.text.get(p).copied() } else { None };
@@ -280,8 +300,62 @@ impl Machine<'_> {
 }
 
 pub fn call(args: &[Value]) -> Result<Value, String> {
-    let number = |i: usize| -> Result<i64, String> { args.get(i).and_then(|v| v.as_big().ok().and_then(|n| n.to_i64())).ok_or_else(|| "TypeError: SRE argument must be an integer".into()) };
+    let number = |i: usize| -> Result<i64, String> {
+        args.get(i).and_then(|v| match v {
+            Value::Small(n) => Some(*n), Value::Flag(flag) => Some(i64::from(*flag)),
+            _ => v.as_big().ok().and_then(|n| n.to_i64()),
+        }).ok_or_else(|| "TypeError: SRE argument must be an integer".into())
+    };
     let op = number(0)?;
+    if op == 10 {
+        if args.len() != 6 { return Err("TypeError: invalid SRE capture argument count".into()); }
+        let Value::Tuple(selectors) = args[5].contents() else { return Err("TypeError: SRE groups must be a tuple".into()); };
+        if selectors.iter().any(|group| !matches!(group, Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
+            return Ok(Value::Null);
+        }
+        let Value::Array(state) = args[2].contents() else { return Err("TypeError: invalid SRE match state".into()); };
+        if state.len() < 3 { return Err("TypeError: invalid SRE match state".into()); }
+        let Value::Array(marks) = state[2].contents() else { return Err("TypeError: invalid SRE capture marks".into()); };
+        let Value::Map(names) = args[4].contents() else { return Err("TypeError: invalid SRE group names".into()); };
+        let subject = subject_codes(&args[1])?;
+        let limit = number(3)?;
+        if limit < 0 || limit as u64 > (marks.len() / 2) as u64 {
+            return Err("TypeError: invalid SRE capture marks".into());
+        }
+        let mut found = Vec::with_capacity(selectors.len());
+        for requested in selectors.iter() {
+            let resolved = if let Value::Text(name) = requested {
+                names.iter().find_map(|(key, value)| match key {
+                    Value::Text(label) if label == name => Some(value),
+                    _ => None,
+                }).ok_or("IndexError: no such group")?
+            } else { requested };
+            let group = resolved.as_big()?.to_i64().ok_or("IndexError: no such group")?;
+            if group < 0 || group > limit { return Err("IndexError: no such group".into()); }
+            let (first, last) = if group == 0 { (&state[0], &state[1]) }
+                else { (&marks[group as usize * 2 - 2], &marks[group as usize * 2 - 1]) };
+            let start = first.as_big()?.to_i64().ok_or("TypeError: invalid SRE capture position")?;
+            let end = last.as_big()?.to_i64().ok_or("TypeError: invalid SRE capture position")?;
+            found.push(if start < 0 || end < start { Value::Null }
+                else { Value::from_codes(subject.get(start as usize..end as usize)
+                    .ok_or("TypeError: invalid SRE capture position")?.to_vec()) });
+        }
+        let value = if found.len() == 1 { found.pop().unwrap() } else { Value::tuple(found) };
+        return Ok(Value::tuple(vec![value]));
+    }
+    if op == 9 {
+        if args.len() != 4 { return Err("TypeError: invalid SRE bounds argument count".into()); }
+        let length = subject_codes(&args[1])?.len() as i64;
+        let mut bounds = Vec::with_capacity(2);
+        for value in &args[2..] {
+            let signed = match value {
+                Value::Small(integer) => Some(*integer),
+                _ => value.as_big()?.to_i64(),
+            }.ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+            bounds.push(Value::Small(signed.clamp(0, length)));
+        }
+        return Ok(Value::tuple(bounds));
+    }
     if op == 6 {
         return Ok(Value::text(general_category(number(1)? as u32)));
     }
@@ -289,24 +363,75 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let Some(Value::Text(name)) = args.get(1) else { return Err("TypeError: argument must be str".into()); };
         return crate::unicode::named_text(name).map(|text| Value::text(&text)).ok_or_else(|| "KeyError: undefined character name".into());
     }
-    if op != 0 {
+    if !matches!(op, 0 | 7 | 8) {
         let n = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
         return Ok(if op == 1 || op == 2 { Value::Small(lower(n, op == 1) as i64) }
         else { Value::Flag(char::from_u32(n).is_some_and(|c| if op == 3 { c.is_ascii_alphabetic() } else { crate::unicode::bits(c) & 16 != 0 })) });
     }
-    if args.len() != 8 { return Err("TypeError: SRE matcher needs eight arguments".into()); }
+    if args.len() != if op == 7 { 6 } else { 8 } { return Err("TypeError: invalid SRE matcher argument count".into()); }
     let Value::Array(items) = args[1].contents() else { return Err("TypeError: SRE code must be a list".into()) };
     let mut code = Vec::with_capacity(items.len());
-    for item in items.iter() { code.push(u32::try_from(item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?); }
+    for item in items.iter() {
+        let word = match item {
+            Value::Small(n) => *n, Value::Flag(flag) => i64::from(*flag),
+            _ => item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?,
+        };
+        code.push(u32::try_from(word).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?);
+    }
     let text = subject_codes(&args[2])?;
     let start = number(3)?.max(0) as usize;
     let end = (number(4)?.max(0) as usize).min(text.len());
     let groups = number(5)?.max(0) as usize;
-    let mode = number(6)?;
-    let advance = number(7)? != 0;
-    if start > end { return Ok(Value::Null); }
+    let mode = if op != 0 { 2 } else { number(6)? };
+    let advance = op == 0 && number(7)? != 0;
+    if start > end { return Ok(if op == 7 { Value::array(Vec::new()) } else { Value::Null }); }
     let machine = Machine { code: &code, text: &text, end };
+    if op == 7 || op == 8 {
+        let limit = if op == 8 { number(6)? } else { 0 };
+        let replacement = if op == 8 { args[7].contents().text_codes().ok_or_else(|| "TypeError: replacement must be text".to_string())? } else { Vec::new() };
+        let mut substituted = Vec::new();
+        let mut copied = start;
+        let mut substitutions = 0;
+        let mut matches = Vec::new();
+        let mut next = start;
+        let mut must_advance = false;
+        while next <= end && (limit == 0 || substitutions < limit) {
+            let mut found = None;
+            for at in next..=end {
+                if !machine.possible_start(at) { continue; }
+                let state = State { pc: 0, pos: at, marks: vec![-1; groups * 2], last: -1, loops: Vec::new() };
+                if let Some(done) = machine.run(state, None, false, if must_advance && at == next { Some(next) } else { None }, 0)? {
+                    found = Some((at, done));
+                    break;
+                }
+            }
+            let Some((at, done)) = found else { break };
+            let capture = |begin: i64, finish: i64| {
+                if begin < 0 || finish < begin { Value::text("") }
+                else { Value::from_codes(text[begin as usize..finish as usize].to_vec()) }
+            };
+            if op == 8 {
+                substituted.extend_from_slice(&text[copied..at]);
+                substituted.extend_from_slice(&replacement);
+                copied = done.pos;
+                substitutions += 1;
+            } else { matches.push(match groups {
+                0 => capture(at as i64, done.pos as i64),
+                1 => capture(done.marks[0], done.marks[1]),
+                _ => Value::Tuple(Rc::new(done.marks.chunks_exact(2).map(|pair| capture(pair[0], pair[1])).collect::<Vec<_>>()).into()),
+            }); }
+            next = done.pos;
+            must_advance = next == at;
+        }
+        if op == 8 {
+            substituted.extend_from_slice(&text[copied..end]);
+            return Ok(Value::Tuple(Rc::new(vec![Value::from_codes(substituted), Value::Small(substitutions)]).into()));
+        }
+        return Ok(Value::array(matches));
+    }
     for p in start..=if mode == 2 { end } else { start } {
+        // INFO prefix/charset acceleration belongs to SRE search, not match.
+        if mode == 2 && !machine.possible_start(p) { continue; }
         let initial = State { pc: 0, pos: p, marks: vec![-1; groups*2], last: -1, loops: Vec::new() };
         if let Some(result) = machine.run(initial, None, mode == 1, if advance && p == start { Some(start) } else { None }, 0)? {
             let marks = Value::array(result.marks.into_iter().map(Value::Small).collect());
