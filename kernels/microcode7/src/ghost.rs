@@ -86,8 +86,9 @@ thread_local! {
     static LISTENERS: RefCell<Vec<Rc<Dim>>> = const { RefCell::new(Vec::new()) };
     // Wrapped methods have no drop notification; only their listeners
     // need polling. Class and instance listeners are notified on departure.
-    static POLL_WRAPPED: Cell<bool> = const { Cell::new(false) };
-    static STIRRED: Cell<bool> = const { Cell::new(false) };
+    // One byte stands for three things the machine would otherwise ask
+    // after separately at every step: see ALERT_* below.
+    static ALERT: Cell<u8> = const { Cell::new(0) };
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
@@ -95,6 +96,17 @@ thread_local! {
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
+}
+
+/// Something has been stirred and waits for the machine.
+const ALERT_STIR: u8 = 1;
+/// A listener on a wrapped method must be polled, for it has no drop notice.
+const ALERT_POLL: u8 = 2;
+/// Some object with a farewell to say is being kept alive by the machine.
+const ALERT_ANCHOR: u8 = 4;
+
+fn alert_set(bit: u8, on: bool) {
+    let _ = ALERT.try_with(|alert| alert.set(if on { alert.get() | bit } else { alert.get() & !bit }));
 }
 
 /// Mark every reference to a lost knot before handing any callback to
@@ -138,7 +150,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             false
         });
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
-        let _ = POLL_WRAPPED.try_with(|poll| poll.set(listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_)))));
+        alert_set(ALERT_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
         notices.into_iter().rev().collect()
     }).unwrap_or_default()
 }
@@ -147,6 +159,7 @@ pub fn anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         if !all.iter().any(|item| Rc::ptr_eq(item, thing)) { all.push(thing.clone()); }
+        alert_set(ALERT_ANCHOR, true);
     });
 }
 
@@ -155,11 +168,16 @@ pub fn anchored_values() -> Vec<Knot> {
 }
 
 pub fn release_anchor(thing: &Rc<Thing>) {
-    let _ = ANCHORED.try_with(|all| all.borrow_mut().retain(|item| !Rc::ptr_eq(item, thing)));
+    let _ = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        all.retain(|item| !Rc::ptr_eq(item, thing));
+        alert_set(ALERT_ANCHOR, !all.is_empty());
+    });
 }
 
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+    alert_set(ALERT_ANCHOR, false);
 }
 
 fn anchor_ready() -> bool {
@@ -179,14 +197,16 @@ pub fn bidding() -> bool {
 
 /// Whether the machine has anything to attend to before its next step.
 pub fn stirred() -> bool {
-    let gone_method = POLL_WRAPPED.try_with(|poll| poll.get()).unwrap_or(false)
+    let alert = ALERT.try_with(|alert| alert.get()).unwrap_or(0);
+    if alert == 0 { return false; }
+    let gone_method = alert & ALERT_POLL != 0
         && LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
     if gone_method { anything_departing(); }
-    STIRRED.try_with(|s| s.get()).unwrap_or(false) || anchor_ready()
+    ALERT.try_with(|alert| alert.get() & ALERT_STIR != 0).unwrap_or(false) || (alert & ALERT_ANCHOR != 0 && anchor_ready())
 }
 
 fn stir() {
-    let _ = STIRRED.try_with(|s| s.set(true));
+    alert_set(ALERT_STIR, true);
 }
 
 /// Something a listener might be listening for has gone.
@@ -247,11 +267,12 @@ pub fn walk_departing(again: Rc<RefCell<Suspension>>) {
 /// is cleared; more may gather while the machine works, so it asks
 /// again until nothing comes back.
 pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
-    let _ = STIRRED.try_with(|s| s.set(false));
+    alert_set(ALERT_STIR, false);
     let mut farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
+        alert_set(ALERT_ANCHOR, !kept.is_empty());
         *all = kept;
         ready
     }).unwrap_or_default();
@@ -276,7 +297,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
-            let _ = POLL_WRAPPED.try_with(|poll| poll.set(still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_)))));
+            alert_set(ALERT_POLL, still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
             still.reverse();
             *all = still;
         });
@@ -318,7 +339,7 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
-        if matches!(held.ghost, Ghost::WrappedMethod(_)) { let _ = POLL_WRAPPED.try_with(|poll| poll.set(true)); }
+        if matches!(held.ghost, Ghost::WrappedMethod(_)) { alert_set(ALERT_POLL, true); }
     }
     Value::Dim(held)
 }

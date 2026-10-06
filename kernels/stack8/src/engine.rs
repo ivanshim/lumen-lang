@@ -5286,8 +5286,9 @@ impl<'a> Engine<'a> {
     }
 
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
-        if self.lang.trace_fields.len() < 16 { return None; }
-        let keys = self.lang.trace_fields.clone();
+        let lang = self.lang;
+        if lang.trace_fields.len() < 16 { return None; }
+        let keys = &lang.trace_fields;
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
