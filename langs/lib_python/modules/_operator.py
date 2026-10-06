@@ -49,6 +49,7 @@ class _DigestComparison:
                     converted.append(bytes(operand))
                     continue
                 view = memoryview(operand)
+                view._check()
                 if not view.c_contiguous:
                     raise BufferError('memoryview: underlying buffer is not C-contiguous')
                 converted.append(view.tobytes())

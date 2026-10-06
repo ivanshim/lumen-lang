@@ -592,11 +592,12 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
-        if isinstance(self._offsets, range):
-            return len(self._offsets) == 1 or self._offsets.step == self._itemsize
-        if not self._offsets:
+        offsets = self._offsets
+        if isinstance(offsets, range):
+            return len(offsets) <= 1 or offsets.step == self._itemsize
+        if not offsets:
             return True
-        return all(at == self._offsets[0] + i * self._itemsize for i, at in enumerate(self._offsets))
+        return all(at == offsets[0] + i * self._itemsize for i, at in enumerate(offsets))
 
     @property
     def contiguous(self):
@@ -658,6 +659,8 @@ class memoryview:
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
             if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
+            if isinstance(value, memoryview):
+                value = value.tobytes()
             if format == 'B' and isinstance(places, range) and (len(places) <= 1 or places.step == 1) and isinstance(value, (bytes, bytearray)):
                 raw = bytes.__getitem__(value, slice(None)) if isinstance(value, bytes) else bytes(bytearray.__getitem__(value, slice(None)))
                 if len(places) != len(raw):

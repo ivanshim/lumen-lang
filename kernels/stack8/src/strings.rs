@@ -217,6 +217,35 @@ pub(crate) fn recase(s: &str, op: TextOp) -> String {
     answer
 }
 
+/// The same case changes `recase` makes, walked over a text that is a
+/// row of code units rather than a `&str`. A unit no `char` can hold
+/// is carried through as itself, while the scalars around it are cased
+/// with the very context `recase` gives them, final sigma included.
+pub(crate) fn recase_units(units: &[u32], op: TextOp) -> Vec<u32> {
+    let stand: Vec<char> = units.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect();
+    let mut prior = false;
+    let mut answer = Vec::with_capacity(units.len());
+    for (at, &unit) in units.iter().enumerate() {
+        let Some(c) = char::from_u32(unit) else { answer.push(unit); prior = false; continue };
+        let bits = unicode::bits(c);
+        let kind = match op {
+            TextOp::Casefold => 3, TextOp::Upper => 1, TextOp::Lower => 0,
+            TextOp::Capitalize => if at == 0 { 2 } else { 0 },
+            TextOp::Title => if prior { 0 } else { 2 },
+            _ if bits & 128 != 0 => 1,
+            _ if bits & 64 != 0 => 0,
+            _ => { answer.push(unit); prior = bits & 16 != 0; continue; }
+        };
+        if kind == 0 && c == '\u{3a3}' && final_sigma(&stand, at) {
+            answer.push('\u{3c2}' as u32);
+        } else {
+            answer.extend(unicode::change(c, kind).chars().map(|x| x as u32));
+        }
+        prior = bits & 16 != 0;
+    }
+    answer
+}
+
 fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     if args.len() == 1 {
         let Value::Map(pairs) = &args[0] else { return Err("TypeError: if you give only one argument to maketrans it must be a dict".into()); };

@@ -81,6 +81,18 @@ fn integer(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<i64, String> {
     }
 }
 
+// A count, a maximum split or a search bound given where a text method
+// expects one: anything that is no whole number is refused with the
+// wording the text kind itself uses, so a bare code-point text and a
+// plain one complain alike.
+fn whole_count(v: &Value, _fault: &dyn Fn(&str) -> String) -> Result<i64, String> {
+    match v.contents() {
+        Value::Small(n) => Ok(n), Value::Flag(b) => Ok(i64::from(b)),
+        Value::Huge(n) => Ok(n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX })),
+        other => Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+    }
+}
+
 fn text(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<String, String> {
     if let Value::Text(s) = v.contents() { Ok(s.to_string()) } else { Err(fault("arguments")) }
 }
@@ -256,6 +268,78 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
             };
             return Ok(Value::Flag(valid));
+        }
+        // A text kept apart as bare code points -- a lone half of a
+        // surrogate pair among them -- answers the workings that walk
+        // it one unit at a time. The re-casing is the text kind's own,
+        // so a sigma at the end of a word and every scalar around a
+        // unit no `char` holds are cased exactly as `str.lower` and
+        // `str.upper` case them.
+        Value::Codepoints(row) if op == "upper" || op == "lower" => {
+            arity(0, 0)?;
+            let work = if op == "upper" { crate::strings::TextOp::Upper } else { crate::strings::TextOp::Lower };
+            return Ok(Value::from_codes(crate::strings::recase_units(row, work)));
+        }
+        // Where a piece stands inside a row of units, counted in units,
+        // its bounds read the way every text search reads them. An
+        // empty piece stands at the near edge of the window.
+        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex") => {
+            arity(1, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
+                match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
+            };
+            let last = row.len() as i64;
+            let mut low = edge(a.get(1), 0)?;
+            let mut high = edge(a.get(2), last)?;
+            if low < 0 { low = (last + low).max(0); }
+            if high < 0 { high = (last + high).max(0); }
+            let past = low > last;
+            let low = low.clamp(0, last) as usize;
+            let high = high.clamp(0, last) as usize;
+            let window: &[u32] = if low <= high { &row[low..high] } else { &[] };
+            let mut place = None;
+            if sought.is_empty() {
+                if low <= high && !past { place = Some(if matches!(op, "rfind" | "rindex") { high } else { low }); }
+            } else if sought.len() <= window.len() {
+                let mut reach: Vec<usize> = (0..=window.len() - sought.len()).collect();
+                if matches!(op, "rfind" | "rindex") { reach.reverse(); }
+                place = reach.into_iter().find(|&at| window[at..at + sought.len()] == sought[..]).map(|at| low + at);
+            }
+            if place.is_none() && matches!(op, "index" | "rindex") { return Err(fault("substring")); }
+            return Ok(Value::Small(place.map_or(-1, |at| at as i64)));
+        }
+        // Every run the pattern matches is swapped for the replacement,
+        // no more often than the count allows; an empty pattern stands
+        // before every unit and once past the last one.
+        Value::Codepoints(row) if op == "replace" => {
+            arity(2, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let instead = a[1].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let limit = a.get(2).map_or(Ok(-1), |v| whole_count(v, fault))?;
+            let allowed = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut answer = Vec::with_capacity(row.len() + instead.len());
+            let mut swaps = 0usize;
+            if sought.is_empty() {
+                if swaps < allowed { answer.extend_from_slice(&instead); swaps += 1; }
+                for &unit in row.iter() {
+                    answer.push(unit);
+                    if swaps < allowed { answer.extend_from_slice(&instead); swaps += 1; }
+                }
+            } else {
+                let mut at = 0usize;
+                while at < row.len() {
+                    if swaps < allowed && at + sought.len() <= row.len() && row[at..at + sought.len()] == sought[..] {
+                        answer.extend_from_slice(&instead);
+                        at += sought.len();
+                        swaps += 1;
+                    } else {
+                        answer.push(row[at]);
+                        at += 1;
+                    }
+                }
+            }
+            return Ok(Value::from_codes(answer));
         }
         // A string kept as code units because a surrogate half cannot
         // live in a Rust str still splits, and each piece keeps the
