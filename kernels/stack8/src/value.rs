@@ -1675,6 +1675,10 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
+            || kind == "bytearray" && name == "__release_buffer__" {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
             "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
             "type" if name == "__mro__" => Some(("member", "member_descriptor")),

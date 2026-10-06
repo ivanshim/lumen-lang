@@ -575,6 +575,16 @@ class memoryview:
         return self._itemsize
 
     @property
+    def strides(self):
+        self._check()
+        stride = self._offsets.step if isinstance(self._offsets, range) else self._offsets[1] - self._offsets[0] if len(self._offsets) > 1 else self._itemsize
+        result = []
+        for length in reversed(self._shape):
+            result.insert(0, stride)
+            stride *= length
+        return tuple(result)
+
+    @property
     def readonly(self):
         self._check()
         return self._readonly
@@ -594,7 +604,7 @@ class memoryview:
 
     @property
     def f_contiguous(self):
-        return self.c_contiguous
+        return self.c_contiguous and (self.nbytes == 0 or sum(length > 1 for length in self._shape) <= 1)
 
     @property
     def nbytes(self):

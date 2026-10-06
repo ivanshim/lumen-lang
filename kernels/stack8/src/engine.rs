@@ -288,6 +288,7 @@ pub struct Engine<'a> {
     /// The classes made beneath each class, keyed by where the forebear
     /// stands and held loosely, so __subclasses__ names only those still
     /// standing.
+    concrete_kinds: RefCell<HashMap<usize, Weak<Class>>>,
     class_children: RefCell<HashMap<usize, Vec<Weak<Class>>>>,
     /// The files already read where the program asked for them to be
     /// read only once, by the whole name each stands under.
@@ -1575,6 +1576,7 @@ impl<'a> Engine<'a> {
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
+            concrete_kinds: RefCell::new(HashMap::new()),
             class_children: RefCell::new(HashMap::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
@@ -6574,6 +6576,10 @@ impl<'a> Engine<'a> {
             names.retain(|word| ![38, 39].iter().any(|at| self.lang.class_special.get(*at) == Some(word)));
         }
         if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
+        if Lang::spells(&self.lang.builtin_bases, "bytes") && matches!(family, Kindred::Bytes(_)) {
+            names.push("__buffer__".to_string());
+            if matches!(family, Kindred::Bytes(true)) { names.push("__release_buffer__".to_string()); }
+        }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -6782,6 +6788,11 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        // Carry the buffer slots through the same native descriptor lookup as other methods.
+        if Lang::spells(&self.lang.builtin_bases, "bytes") && (matches!(word.as_ref(), "bytes" | "bytearray") && name == "__buffer__"
+            || word.as_ref() == "bytearray" && name == "__release_buffer__") {
+            return Some(self.held_kind_descriptor(&word, name));
+        }
         if self.lang.class_special.get(8).is_some_and(|hash| hash == name)
             && matches!(word.as_ref(), "list" | "dict" | "set" | "bytearray") { return Some(Value::Null); }
         if self.lang.bind_names && name == self.class_word("descriptor.get") {

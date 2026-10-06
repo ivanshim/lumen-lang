@@ -67,7 +67,7 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
-            Value::ValueMethod(method) if method.1 == "__next__" => "method-wrapper",
+            Value::ValueMethod(method) if matches!(method.1.as_str(), "__next__" | "__buffer__" | "__release_buffer__") => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -77,6 +77,8 @@ impl Value {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
                 _ => "object".to_string(),
             },
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(slot)) if slot.0 == 29
+                && matches!(slot.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
             Value::Adapter(w) if w.0 == 129 => "function",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",

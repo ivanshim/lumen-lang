@@ -120,9 +120,9 @@ impl<'a> Engine<'a> {
             let allocation = self.class_word("allocate").to_string();
             c.shared.borrow_mut().push((allocation, Self::adapter(14, vec![Value::text(word)])));
         }
-        if matches!(word, "bytes" | "bytearray") {
-            c.shared.borrow_mut().push(("__buffer__".into(), Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.__buffer__")))));
-            if word == "bytearray" { c.shared.borrow_mut().push(("__release_buffer__".into(), Value::Native(Builtin::ValueMethod, Rc::from("bytearray.__release_buffer__")))); }
+        if Lang::spells(&self.lang.builtin_bases, "bytes") && matches!(word, "bytes" | "bytearray") {
+            c.shared.borrow_mut().push(("__buffer__".into(), self.held_kind_descriptor(word, "__buffer__")));
+            if word == "bytearray" { c.shared.borrow_mut().push(("__release_buffer__".into(), self.held_kind_descriptor(word, "__release_buffer__"))); }
         }
         if let Some(sample) = self.kind_sample(word) {
             let names = self.kind_member_names(&sample);
@@ -1239,6 +1239,16 @@ impl<'a> Engine<'a> {
     }
     fn call_descriptor(&mut self, member: &Value, hook: Value, args: Vec<Value>) -> Flow<Value> {
         let Value::Object(o) = member else { return Err(self.class_refusal()) };
+        // Native descriptor slots already receive their descriptor explicitly.
+        // Resolve overrides normally and omit only the temporary bound wrapper.
+        if matches!(&hook, Value::Adapter(slot) if matches!(slot.0, 50..=57 | 201 | 203)) {
+            let mut supplied = Vec::with_capacity(args.len() + 1);
+            supplied.push(member.clone()); supplied.extend(args);
+            if let Value::Adapter(slot) = &hook {
+                if matches!(slot.0, 50..=57) { return self.property_work(slot.0, supplied); }
+            }
+            return self.class_apply(hook, supplied);
+        }
         let bound = self.bind_class_value(hook, Some(member.clone()), o.class_now().clone())?;
         self.class_apply(bound, args)
     }
@@ -1854,6 +1864,13 @@ impl<'a> Engine<'a> {
                             return Ok(self.builtin_call(Builtin::Hash, &member, vec![(None, receiver)])?);
                         }
                     }
+                    // Buffer wrappers share native method validation and the canonical exporter.
+                    if of_own_kind && Lang::spells(&self.lang.builtin_bases, "bytes")
+                        && matches!(word.as_str(), "bytes" | "bytearray")
+                        && matches!(member.as_str(), "__buffer__" | "__release_buffer__") {
+                        let mut inputs = vec![subject]; inputs.extend(args);
+                        return self.class_apply(Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.{member}"))), inputs);
+                    }
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
                         Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
@@ -2300,7 +2317,14 @@ impl<'a> Engine<'a> {
     /// the two middles, one name or many.
     fn abstract_refusal(&self, c: &Rc<Class>) -> Flow<()> {
         let Some(words) = self.lang.class_details.get("abstract").filter(|words| words.len() == 4) else { return Ok(()); };
-        let Some(held) = Self::own_class_value(c, &words[0]) else { return Ok(()); };
+        let pointer = Rc::as_ptr(c) as usize;
+        if self.concrete_kinds.borrow().get(&pointer).is_some_and(|previous| previous.as_ptr() == Rc::as_ptr(c) && previous.strong_count() != 0) { return Ok(()); }
+        let Some(held) = Self::own_class_value(c, &words[0]) else {
+            let mut ordinary = self.concrete_kinds.borrow_mut();
+            if ordinary.len() > 128 { ordinary.retain(|_, class| class.strong_count() != 0); }
+            ordinary.insert(pointer, Rc::downgrade(c));
+            return Ok(());
+        };
         let mut names: Vec<String> = match held.contents() {
             Value::Set(members) => members.borrow().items().iter().filter_map(|v| match v { Value::Text(t) => Some(t.to_string()), _ => None }).collect(),
             _ => Vec::new(),
@@ -2852,7 +2876,6 @@ impl<'a> Engine<'a> {
         if ["__buffer__", "__release_buffer__"].contains(&name) && Lang::spells(&self.lang.builtin_bases, "bytes") {
             let bytes = match subject.contents() {
                 Value::ByteKind(mutable, _) | Value::Bytes(_, mutable, _) => name == "__buffer__" || mutable,
-                Value::Class(class) => matches!(Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref(), Some("bytearray")) || name == "__buffer__" && Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref() == Some("bytes"),
                 _ => false,
             };
             if bytes {
@@ -2862,7 +2885,7 @@ impl<'a> Engine<'a> {
                         Value::Class(class) => Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).unwrap_or_default(),
                         _ => unreachable!(),
                     };
-                    return Ok(Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.{name}"))));
+                    return Ok(self.held_kind_descriptor(&word, name));
                 }
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_owned()))));
             }
@@ -2905,6 +2928,13 @@ impl<'a> Engine<'a> {
                 let mut pairs: Vec<(Value, Value)> = listed.iter().filter_map(|key| self.loose_kind_member(&subject, key).map(|held| (Value::text(key), held))).collect();
                 if matches!(word.as_ref(), "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
                     pairs.push((Value::text(self.class_word("allocate")), Self::adapter(14, vec![Value::text(&word)])));
+                }
+                // Public native class dictionaries include their stored Python slots.
+                let kind = self.kind_class(&word);
+                for (key, member) in kind.shared.borrow().iter() {
+                    if !key.starts_with('\0') && !pairs.iter().any(|(name, _)| name.plain() == *key) {
+                        pairs.push((Value::text(key), member.clone()));
+                    }
                 }
                 return Ok(Value::View(Rc::new((Value::Map(Rc::new(pairs.into())),"mapping".to_string()))));
             }
@@ -3653,7 +3683,10 @@ impl<'a> Engine<'a> {
     /// A builtin kind read by the word that spells it, where that word
     /// names a kind: the value `int`, not the class standing for it.
     pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
-        self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| Value::Native(op, Rc::from(word)))
+        self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| match op {
+            Builtin::Bytes(tag @ 0..=1) if Lang::spells(&self.lang.builtin_bases, word) => self.byte_kind(tag == 1),
+            _ => Value::Native(op, Rc::from(word)),
+        })
     }
     fn routine_type_values(&mut self, f: &Routine) -> Flow<Value> {
         let mut items = Vec::new();
@@ -3914,6 +3947,10 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        // A changed abstract marker must be read again on the next construction.
+        if self.lang.class_details.get("abstract").and_then(|words| words.first()).is_some_and(|word| word == name) {
+            if let Value::Class(class) = subject.contents() { self.concrete_kinds.borrow_mut().remove(&(Rc::as_ptr(&class) as usize)); }
+        }
         if let Value::Trace(trace) = &subject {
             if self.lang.trace_fields.get(2).map(String::as_str) == Some(name) {
                 return match value {
@@ -4839,6 +4876,21 @@ impl<'a> Engine<'a> {
     pub(super) fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if let Value::Collection(cell, _) | Value::Bond(cell) = value { let held = cell.borrow().clone(); return self.beneath(&held, wanted, subclass); }
         if let Value::Collection(cell, _) | Value::Bond(cell) = wanted { let held = cell.borrow().clone(); return self.beneath(value, &held, subclass); }
+        // Plain numeric values cannot override __class__ or type hooks.
+        // Keep the native membership rule without a repeated class walk.
+        if !subclass && self.lang.bind_names {
+            if let (Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Frac(_),
+                Value::Native(operation @ (Builtin::ToInt | Builtin::AsReal | Builtin::Bool), word)) = (value, wanted) {
+                return Ok(self.kind_holds(operation, word, value));
+            }
+        }
+        // Legacy method wrappers share the canonical public wrapper kinds.
+        if !subclass && self.lang.bind_names {
+            if matches!(value, Value::Adapter(slot) if slot.0 == 4) && self.names_staticmethod_class(wanted)
+                || matches!(value, Value::Adapter(slot) if slot.0 == 5) && self.names_classmethod_class(wanted) {
+                return Ok(true);
+            }
+        }
         if let Value::Object(object) = wanted {
             if Self::own_kind(&object.class_now()).as_deref() == Some("Union") {
                 let members = object.fields.borrow().iter().find(|(key, _)| key == "__args__").map(|(_, row)| row.clone()).ok_or_else(|| self.class_refusal())?;
