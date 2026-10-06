@@ -24682,11 +24682,12 @@ impl Engine<'_> {
         None
     }
 
-    /// A bracket left open where the text ran out makes the input
-    /// incomplete only where what it holds so far reads clean: close
-    /// the brackets the text left open and read the result — an input
-    /// still refused within the text's own span was wrong all along,
-    /// and only one refused past it, or not refused, ran out.
+    /// Whether a bracket left open where the text ran out means the
+    /// input ran out: the text is read with its brackets closed, then
+    /// with the closers taken back out of the reading — where that
+    /// reading stops is where the text itself gave out, and a stop
+    /// there is a clean prefix cut short, anything earlier a fault the
+    /// text already had.
     fn incomplete_left_open(&mut self, mode: usize, source: &str, top_await: bool) -> Option<(usize, usize, usize, i64)> {
         let raw = crate::lex::lex_position(source, self.lang).ok()?;
         let mut opened: Vec<char> = Vec::new();
