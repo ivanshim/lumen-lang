@@ -5102,7 +5102,7 @@ impl<'a> Engine<'a> {
             16 => self.dispatch_class_builder(args),
             18 => self.class_namespace_read(args),
             20 => self.class_namespace_remove(args),
-            22 => {
+            26 => {
                 let entries = self.call_items(args)?;
                 if entries.iter().any(|(name, _)| name.is_some()) { return Err("TypeError: sys._clear_type_descriptors() takes no keyword arguments".into()); }
                 let args: Vec<Value> = entries.into_iter().map(|(_, value)| value).collect();
@@ -5114,6 +5114,9 @@ impl<'a> Engine<'a> {
                 };
                 if class.python_names.borrow().is_none() || class.sealed.get() { return Err("TypeError: argument is immutable".into()); }
                 class.shared.borrow_mut().retain(|(key, _)| key != "__dict__" && key != "__weakref__");
+                // The kind no longer carries a weak reference where it
+                // stands, so a class built over it may name one itself.
+                class.weak_storage.set(Some(false));
                 Ok(Value::Null)
             }
             24 | 25 if args.len() == 1 => {

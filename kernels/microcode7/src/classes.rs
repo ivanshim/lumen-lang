@@ -5277,7 +5277,7 @@ impl<'a> Machine<'a> {
         if op == 15 { return self.prepared_class_book(values.remove(0)); }
         if op == 16 { return self.dispatch_class_builder(values); }
         if op == 18 { return self.class_namespace_read(values); }
-        if op == 22 {
+        if op == 26 {
             let (values, named) = self.open_arguments(values)?;
             if !named.is_empty() { return Err(String::from("TypeError: sys._clear_type_descriptors() takes no keyword arguments").into()); }
             if values.len() != 1 { return Err(format!("TypeError: sys._clear_type_descriptors() takes exactly one argument ({} given)", values.len()).into()); }
@@ -5287,6 +5287,9 @@ impl<'a> Machine<'a> {
                 return Err(format!("TypeError: _clear_type_descriptors() argument must be type, not {}", target.kind_word()).into());
             };
             if class.type_names.borrow().is_none() || Self::sealed(&class) { return Err(String::from("TypeError: argument is immutable").into()); }
+            // The kind described no longer offers a weak reference, so a
+            // class made from its namespace may name one for itself.
+            class.weak_slot.set(Some(false));
             let mut namespace = class.shared.borrow_mut();
             namespace.retain(|entry| !matches!(entry.0.as_str(), "__dict__" | "__weakref__"));
             return Ok(Value::Nil);
