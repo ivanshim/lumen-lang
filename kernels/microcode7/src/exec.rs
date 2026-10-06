@@ -18501,7 +18501,16 @@ impl<'a> Machine<'a> {
                     let Some(Value::Tuple(items)) = extra else {return Err(String::from("TypeError: a struct sequence is required"));};
                     let index = as_index(&v[2])?;
                     match items.get(index) {Some(item) => item.clone(), None => return Err(String::from("IndexError: tuple index out of range"))}
-                } else { crate::posix::perform(v)? }
+                } else {
+                    crate::posix::perform(v, || match self.signals_due_now() {
+                        Ok(()) => Ok(()),
+                        Err(Escape::Error(message)) => Err(message),
+                        Err(escape) => {
+                            self.got_away = Some(escape);
+                            Err(self.argument_fault("ext.builtin.stream.failed", None))
+                        }
+                    })?
+                }
             },
             Prim::HostRow => {
                 if v.len() == 1 && matches!(&v[0], Value::Text(query) if query.as_ref() == "build") {

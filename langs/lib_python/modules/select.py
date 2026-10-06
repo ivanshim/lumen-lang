@@ -1,11 +1,13 @@
 # Native select adapter; CPython v3.14.8 Modules/selectmodule.c.
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
 import math as _math
+from _operator import index as _index
 from posix import _call as _posix_call
 
 error = OSError
 
 FD_SETSIZE = 1024
+_missing = object()
 
 
 def _as_fd(item):
@@ -17,8 +19,8 @@ def _as_fd(item):
             warnings.warn('bool is used as a file descriptor', RuntimeWarning, stacklevel=2)
         fd = item
     else:
-        meth = getattr(item, 'fileno', None)
-        if meth is None:
+        meth = getattr(item, 'fileno', _missing)
+        if meth is _missing:
             raise TypeError('argument must be an int, or have a fileno() method.')
         fd = meth()
         if not isinstance(fd, int):
@@ -40,18 +42,41 @@ class _Select:
     def __call__(self, rlist, wlist, xlist, timeout=None):
         if timeout is None:
             usec = -1
-        elif isinstance(timeout, (int, float)):
-            if timeout < 0:
-                raise ValueError('timeout must be non-negative')
-            # _PyTime_FromSecondsObject with _PyTime_ROUND_TIMEOUT, which is
-            # ROUND_UP: a positive sub-microsecond timeout still waits.
-            usec = (_math.ceil(timeout * 1_000_000_000) + 999) // 1000
         else:
-            raise TypeError('timeout must be a float or None')
+            # PyTime uses signed 64-bit nanoseconds, with rounding away
+            # from zero before range checks; non-floats use __index__.
+            if isinstance(timeout, float):
+                seconds = float.__float__(timeout)
+                if _math.isnan(seconds):
+                    raise ValueError('Invalid value NaN (not a number)')
+                scaled = seconds * 1_000_000_000
+                if not -9223372036854775808 <= scaled < 9223372036854775808:
+                    raise OverflowError('timestamp out of range for C PyTime_t')
+                ns = _math.ceil(scaled) if scaled >= 0 else _math.floor(scaled)
+            else:
+                try:
+                    ns = _index(timeout) * 1_000_000_000
+                except TypeError:
+                    raise TypeError('timeout must be a float or None')
+                except OverflowError:
+                    raise OverflowError('timestamp out of range for C PyTime_t')
+                if not -9223372036854775808 <= ns <= 9223372036854775807:
+                    raise OverflowError('timestamp out of range for C PyTime_t')
+            if ns < 0:
+                raise ValueError('timeout must be non-negative')
+            usec = (ns + 999) // 1000
         waiting = []
         for items in (rlist, wlist, xlist):
             items = list(items)
-            waiting.append((items, [_as_fd(item) for item in items]))
+            fds = []
+            for item in items:
+                fd = _as_fd(item)
+                # Conversion of the overflowing entry precedes the count
+                # check, just as seq2set does, including duplicate entries.
+                if len(fds) >= FD_SETSIZE:
+                    raise ValueError('too many file descriptors in select()')
+                fds.append(fd)
+            waiting.append((items, fds))
         ready = _posix_call('select', waiting[0][1], waiting[1][1], waiting[2][1], usec)
         return tuple([item for item, fd in zip(items, fds) if fd in ready[at]]
                      for at, (items, fds) in enumerate(waiting))

@@ -58,7 +58,7 @@ fn stat_fields(info: libc::stat) -> Value {
     row.push(Value::of_big(info.st_rdev.into()));
     Value::tuple(row)
 }
-pub fn call(args: &[Value]) -> Result<Value, String> {
+pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let Some(Value::Text(op)) = args.first().map(Value::contents) else {
         return Err("TypeError: POSIX operation must be str".into());
     };
@@ -149,9 +149,8 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 row.iter().filter(|fd| libc::FD_ISSET(**fd, set)).map(|fd| Value::Small(*fd as i64)).collect()));
             // An interrupted wait begins again against the same deadline
             // with the time still left, the sets built anew each time, as
-            // the reference's does when no signal asks otherwise. A signal
-            // left pending ends the wait empty instead, so the next
-            // statement's edge can take the signal up.
+            // the reference's does after a returning signal handler.
+            // A handler fault leaves through the runtime exception road.
             let deadline = if usec < 0 { None } else {
                 std::time::Instant::now().checked_add(std::time::Duration::from_micros(usec as u64))
             };
@@ -170,7 +169,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 }
                 let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
                 if fault != libc::EINTR { break Err(fault); }
-                if crate::engine::SIGNALS_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0 { break Ok(empty()); }
+                check_signals()?;
                 if let Some(limit) = deadline {
                     let left = limit.saturating_duration_since(std::time::Instant::now());
                     if left.is_zero() { break Ok(empty()); }

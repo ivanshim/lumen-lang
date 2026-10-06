@@ -54,7 +54,7 @@ fn record(s: &libc::stat) -> Value {
     fields.push(Value::from_big(BigInt::from(s.st_rdev)));
     Value::tuple(fields)
 }
-pub fn perform(given: &[Value]) -> Result<Value, String> {
+pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
         _ => return Err("TypeError: POSIX operation must be str".to_owned()),
@@ -322,8 +322,8 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                 // The reference ends an interrupted call only for a signal
                 // its own check takes; anything else starts the call over
                 // against the original deadline with the time remaining,
-                // sets built fresh. A signal due here ends the wait empty
-                // so the statement edge can run what is due.
+                // sets built fresh. Signal delivery can raise here; a
+                // returning handler leaves the deadline in force.
                 let moment = std::time::Instant::now();
                 let expires = if micros < 0 { None } else {
                     moment.checked_add(std::time::Duration::from_micros(micros as u64))
@@ -345,7 +345,7 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                     }
                     let cause = errno();
                     if cause != libc::EINTR { break Err(cause); }
-                    if crate::exec::SIGNALS_DUE.load(std::sync::atomic::Ordering::Relaxed) != 0 { break Ok(nothing()); }
+                    interrupted()?;
                     if let Some(end) = expires {
                         let left = end.saturating_duration_since(std::time::Instant::now());
                         if left.is_zero() { break Ok(nothing()); }

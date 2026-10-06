@@ -18427,7 +18427,12 @@ impl<'a> Engine<'a> {
                         let Some((_, Value::Tuple(extra))) = fields.iter().find(|(name, _)| name == "\0structseq") else { return Err("TypeError: a struct sequence is required".into()); };
                         extra.get(as_index(&args[2])?).cloned().ok_or_else(|| "IndexError: tuple index out of range".to_string())?
                     }
-                    _ => crate::posix::call(args)?,
+                    _ => crate::posix::call(args, || {
+                        self.deliver_signals().map_err(|fault| match fault {
+                            Fault::Note(words) => words,
+                            raised => { self.carried = Some(raised); self.special_fault() }
+                        })
+                    })?,
                 }
             },
             Builtin::HostFacts => {
