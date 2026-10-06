@@ -1518,6 +1518,10 @@ impl Value {
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
             // descriptor that carries it.
+            Value::Wrapped(32, fields) if matches!(fields.get(2), Some(Value::Small(-2))) => match &fields[1] {
+                Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
+                _ => "<member wrapper>".into(),
+            },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1719,6 +1723,9 @@ pub struct Blueprint {
     /// the order is then complete, and no allocation link may add a
     /// forebear it left out.
     pub order_supplied: Cell<bool>,
+    // A custom order is separate from layout parents. Other entries remain
+    // alive through ancestry, while this blueprint refers to itself weakly.
+    pub supplied_order: RefCell<Vec<std::rc::Weak<Blueprint>>>,
 }
 
 impl Blueprint {

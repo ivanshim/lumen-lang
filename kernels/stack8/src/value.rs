@@ -1669,6 +1669,10 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
+                let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
+                format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1877,6 +1881,9 @@ pub struct Class {
     /// keeps: the order is then complete, and no allocation link may
     /// add a forebear it left out.
     pub mro_adopted: std::cell::Cell<bool>,
+    // The complete supplied order uses weak links for the owner; lineage
+    // retains its other entries without introducing an owner cycle.
+    pub adopted_order: RefCell<Vec<std::rc::Weak<Class>>>,
 }
 
 impl Class {
