@@ -1917,7 +1917,7 @@ impl<'a> Engine<'a> {
                     // State and reduction answer for the thing itself, not
                     // for the native worth beneath it, so they are given
                     // the thing whole.
-                    let holds_state = self.lang.class_details.get("root.members").map_or(false, |names| names.get(10) == Some(&operation) || names.get(11) == Some(&operation));
+                    let holds_state = self.lang.class_details.get("root.members").map_or(false, |names| names.get(10) == Some(&operation) || names.get(11) == Some(&operation) || names.get(12) == Some(&operation));
                     if !holds_state && w.1.get(1).is_some_and(|owner| owner.plain() != self.class_word("root")) {
                         if let Some(first) = args.first_mut() {
                             if let Some(native) = Self::worth_of(first) { *first = native.contents(); }
@@ -5786,7 +5786,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_)|Value::TextMethod(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|132|133|236))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_)|Value::TextMethod(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|14|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|132|133|236))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
