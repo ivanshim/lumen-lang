@@ -905,6 +905,8 @@ impl<'a> Machine<'a> {
             // A mapping stands a name at each key; the worth a key
             // holds is documentation for the slot, nothing a layout reads.
             Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
+            // A set stands its members as the names, in its own order.
+            Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
             alone=>vec![alone]};
         let native = Self::native_beneath(class);
         if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {

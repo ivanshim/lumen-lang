@@ -778,7 +778,14 @@ impl<'a> Engine<'a> {
             }
             return Ok(());
         };
-        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(), single => vec![single] };
+        // The names may come from a row, a mapping's keys, a set's
+        // members or a single name, as the reference reads them.
+        let named: Vec<Value> = match slots.contents() {
+            Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
+            Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(),
+            Value::Set(v) => v.borrow().items(),
+            single => vec![single],
+        };
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
