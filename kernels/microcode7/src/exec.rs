@@ -530,6 +530,12 @@ pub struct Machine<'a> {
     constructor_records: RefCell<HashMap<usize, Option<usize>>>,
     reaping: bool,
     loose_entries: RefCell<HashMap<(String, String), Value>>,
+    /// Pairs already found to stand beneath one another: a thing's own
+    /// kind and the kind it was weighed against, with which question was
+    /// asked. Only a yes is kept here. A claim later registered can turn
+    /// a no into a yes but never a yes into a no, so a no is worked out
+    /// afresh and this list can never answer stale.
+    beneath_yes: Vec<(Rc<Blueprint>, Rc<Blueprint>, bool)>,
     stack_origin: usize,
     fixed_native_directories: RefCell<std::collections::BTreeMap<char, Vec<String>>>,
     descriptor_files: std::collections::BTreeMap<i32, std::fs::File>,
@@ -1785,7 +1791,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), constructor_records: RefCell::new(HashMap::new()), reaping: false, loose_entries: RefCell::new(HashMap::new()), beneath_yes: Vec::new(), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()),
             descriptor_files: std::collections::BTreeMap::new(),
@@ -25976,7 +25982,26 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether `item` is of the kind `expected`, with a yes already
+    /// found for this very pairing of a thing's kind and the kind it is
+    /// weighed against handed straight back, so the kinds are not walked
+    /// once more. A no is never kept: a claim registered later may turn
+    /// it into a yes.
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
+        if let (Value::Thing(thing), Value::Blueprint(class)) = (item, expected) {
+            if self.beneath_yes.iter().any(|(own,wanted,same)| !*same && Rc::ptr_eq(own,&thing.blueprint()) && Rc::ptr_eq(wanted,class)) {
+                return Ok(true);
+            }
+        }
+        let verdict = self.core_belongs_at(item, expected)?;
+        if verdict {
+            if let (Value::Thing(thing), Value::Blueprint(class)) = (item, expected) {
+                if self.beneath_yes.len()<8192 { self.beneath_yes.push((thing.blueprint().clone(),class.clone(),false)); }
+            }
+        }
+        Ok(verdict)
+    }
+    fn core_belongs_at(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
         if self.spells_property_kind(expected) {
             let canonical = self.property_blueprint();
             return self.core_belongs(item, &Value::Blueprint(canonical));

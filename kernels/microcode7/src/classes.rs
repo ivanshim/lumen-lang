@@ -4463,7 +4463,27 @@ impl<'a> Machine<'a> {
         }
         false
     }
+    /// Whether `subject` stands beneath `choice`, as the reference
+    /// weighs it. A pair of a thing's kind and the kind it is asked
+    /// against names one answer for the whole run, so a yes already
+    /// found is handed back without walking the kinds once more. A no
+    /// is never kept, since a claim registered later may turn it into a
+    /// yes.
     fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        if let (Value::Thing(thing), Value::Blueprint(kind)) = (subject, choice) {
+            if self.beneath_yes.iter().any(|(own,wanted,same)| *same==class_only && Rc::ptr_eq(own,&thing.blueprint()) && Rc::ptr_eq(wanted,kind)) {
+                return Ok(true);
+            }
+        }
+        let verdict=self.is_beneath_at(subject,choice,class_only)?;
+        if verdict {
+            if let (Value::Thing(thing), Value::Blueprint(kind)) = (subject, choice) {
+                if self.beneath_yes.len()<8192 { self.beneath_yes.push((thing.blueprint().clone(),kind.clone(),class_only)); }
+            }
+        }
+        Ok(verdict)
+    }
+    fn is_beneath_at(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let Value::Mutable(cell, _) | Value::Shared(cell) = subject { let held = cell.borrow().clone(); return self.is_beneath(&held, choice, class_only); }
         if let Value::Mutable(cell, _) | Value::Shared(cell) = choice { let held = cell.borrow().clone(); return self.is_beneath(subject, &held, class_only); }
         if matches!(choice, Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union")) {

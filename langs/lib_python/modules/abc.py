@@ -22,6 +22,13 @@ def get_cache_token():
 # does not send the same question round for ever.
 _asking = []
 
+# Answers already found for a (kind, class) pair, kept beside the
+# token that was current when they were found: registering a new claim
+# moves the token, so no stale answer is ever read back. Only a
+# question asked with nothing else under way is kept, since an answer
+# reached while a round was in flight may lean on the guard above.
+_verdicts = {}
+
 
 def _claims_for(kind):
     for entry in _claimed:
@@ -109,20 +116,34 @@ class ABCMeta(type):
                 return subclass
         claimed.append(subclass)
         _cache_token += 1
+        _verdicts.clear()
         return subclass
 
     def __instancecheck__(cls, instance):
-        return cls.__subclasscheck__(type(instance))
+        subclass = type(instance)
+        if not _asking:
+            entry = _verdicts.get((cls, subclass))
+            if entry is not None and entry[0] == _cache_token:
+                return entry[1]
+        return cls.__subclasscheck__(subclass)
 
     def __subclasscheck__(cls, subclass):
+        top = not _asking
+        if top:
+            entry = _verdicts.get((cls, subclass))
+            if entry is not None and entry[0] == _cache_token:
+                return entry[1]
         for pair in _asking:
             if pair[0] is cls and pair[1] is subclass:
                 return False
         _asking.append((cls, subclass))
         try:
-            return _counts_as(cls, subclass)
+            verdict = _counts_as(cls, subclass)
         finally:
             _asking.pop()
+        if top:
+            _verdicts[(cls, subclass)] = (_cache_token, verdict)
+        return verdict
 
 
 class ABC(metaclass=ABCMeta):

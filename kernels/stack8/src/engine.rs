@@ -188,6 +188,12 @@ pub struct Engine<'a> {
     /// name, so that asking twice for `dict.__repr__` answers the very
     /// descriptor asked the first time.
     loose_members: RefCell<HashMap<String, Value>>,
+    /// Pairs already found to stand beneath one another: a thing's own
+    /// class and the class it was weighed against, with which question
+    /// was asked. Only a yes is kept. A claim registered later can turn
+    /// a no into a yes but never a yes into a no, so a no is always
+    /// worked out afresh and this list cannot answer stale.
+    beneath_yes: Vec<(Rc<Class>, Rc<Class>, bool)>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -1415,6 +1421,7 @@ impl<'a> Engine<'a> {
             memo: HashMap::new(),
             core_ids: HashMap::new(),
             loose_members: RefCell::new(HashMap::new()),
+            beneath_yes: Vec::new(),
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -21913,7 +21920,25 @@ impl Engine<'_> {
         }
     }
 
+    /// Whether `value` is of the class `kind`, with a yes already found
+    /// for this very pairing of a thing's class and the class it is
+    /// asked against handed straight back, so the classes are not walked
+    /// once more. A no is never kept: a claim registered later may turn
+    /// it into a yes.
     fn core_isinstance(&mut self, value: &Value, kind: &Value) -> Res<bool> {
+        if let (Value::Object(object), Value::Class(class)) = (value, kind) {
+            let own=object.class_now();
+            if self.beneath_yes.iter().any(|(seen,asked,same)| !*same && Rc::ptr_eq(seen,&own) && Rc::ptr_eq(asked,class)) { return Ok(true); }
+        }
+        let verdict=self.core_isinstance_at(value,kind)?;
+        if verdict {
+            if let (Value::Object(object), Value::Class(class)) = (value, kind) {
+                if self.beneath_yes.len()<8192 { self.beneath_yes.push((object.class_now(),class.clone(),false)); }
+            }
+        }
+        Ok(verdict)
+    }
+    fn core_isinstance_at(&mut self, value: &Value, kind: &Value) -> Res<bool> {
         if self.names_property_class(kind) {
             let property = Value::Class(self.property_class());
             return self.core_isinstance(value, &property);
