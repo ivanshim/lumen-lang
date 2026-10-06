@@ -213,10 +213,11 @@ pub struct Generator {
     /// The cell of a map the walk hands the items of, with the size the
     /// map had when the walk began, so a step may see it has changed.
     pub watched: Option<(Rc<RefCell<Value>>, (usize, u64))>,
-    /// The keys a map walk backwards hands its members out in, so a step
-    /// may see the keys, and not only the size, have changed since the
-    /// walk began.
-    pub watched_keys: Option<Vec<Value>>,
+    /// A walk taken backwards over a map: the cell, how many pairs it
+    /// held when the walk began, how wide its entry array was then, and
+    /// the clear-epoch then, so a step may read its places afresh and
+    /// weigh the pairs now held against the count it has left.
+    pub reversed_walk: Option<(Rc<RefCell<Value>>, usize, usize, u64)>,
     /// The tries the suspension stands inside, innermost first, and
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
@@ -236,7 +237,7 @@ impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
-            delegate: None, sent: Value::Null, current: None, watched: None, watched_keys: None,
+            delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
@@ -562,6 +563,14 @@ enum NameLookup {
 pub struct KeyedPairs {
     rows: Vec<(Value, Value)>,
     pub revision: u64,
+    /// The widest the rows have ever been since the map was last
+    /// cleared: the size of the entry array a walk's places are read
+    /// against, kept up while keys are added and not brought down when
+    /// they are taken out.
+    pub span: usize,
+    /// How many times the map has been cleared, so a walk may see that
+    /// its places were made anew.
+    pub clear_epoch: u64,
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     names: RefCell<Option<Box<NameLookup>>>,
 }
@@ -655,6 +664,24 @@ impl KeyedPairs {
         self.rows[at].1 = value;
     }
 
+    /// Rows re-laid after a filtering or a merge, keeping the width and
+    /// the clear-history the map already had.
+    pub fn kept(rows: Vec<(Value, Value)>, span: usize, clear_epoch: u64) -> Self {
+        let width = span.max(rows.len());
+        KeyedPairs { rows, revision: next_map_revision(), span: width, clear_epoch, lookup: RefCell::new(None), names: RefCell::new(None) }
+    }
+
+    /// Empty the rows and mark the map's places as begun again: the
+    /// entry array a walk reads against is no more.
+    pub fn clear(&mut self) {
+        self.revision = next_map_revision();
+        self.clear_epoch = self.clear_epoch.wrapping_add(1);
+        self.span = 0;
+        *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
+        self.rows.clear();
+    }
+
     /// The rows themselves, for reading only: a class that names its
     /// slots with a mapping takes each name from a key.
     pub fn rows(&self) -> &[(Value, Value)] {
@@ -671,13 +698,15 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.names.borrow_mut() = None;
         self.rows.push((key, value));
+        self.span = self.span.max(self.rows.len());
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
 }
 
 impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
-        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None), names: RefCell::new(None) }
+        let span = rows.len();
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -686,7 +715,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -704,6 +733,7 @@ impl std::ops::Deref for KeyedPairs {
 impl std::ops::DerefMut for KeyedPairs {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
         self.revision = next_map_revision();
+        self.span = self.span.max(self.rows.len());
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
         &mut self.rows

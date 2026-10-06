@@ -425,6 +425,14 @@ fn dictionary_turn() -> u64 {
 pub struct MapStore {
     pairs: Vec<(Value, Value)>,
     pub serial: u64,
+    /// The widest the pairs have ever been since the map was last
+    /// cleared: the width of the entry array a walk's places are read
+    /// against, kept up while keys are added and not brought down when
+    /// they are taken out.
+    pub span: usize,
+    /// How many times the map has been cleared, so a walk may see that
+    /// its places were made anew.
+    pub clear_epoch: u64,
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
 }
 
@@ -476,6 +484,23 @@ impl MapStore {
         &self.pairs
     }
 
+    /// Pairs re-laid after a filtering or a merge, keeping the width and
+    /// the clear-history the map already had.
+    pub fn kept(pairs: Vec<(Value, Value)>, span: usize, clear_epoch: u64) -> Self {
+        let width = span.max(pairs.len());
+        MapStore { pairs, serial: dictionary_turn(), span: width, clear_epoch, place: RefCell::new(None) }
+    }
+
+    /// Empty the pairs and mark the map's places as begun again: the
+    /// entry array a walk reads against is no more.
+    pub fn clear(&mut self) {
+        self.serial = dictionary_turn();
+        self.clear_epoch = self.clear_epoch.wrapping_add(1);
+        self.span = 0;
+        *self.place.borrow_mut() = None;
+        self.pairs.clear();
+    }
+
     /// Add a key already proven absent and already known by its own
     /// address, growing the pairs and the place together so a map
     /// built up key by key never has its place emptied and walked
@@ -485,13 +510,15 @@ impl MapStore {
         let at = self.pairs.len();
         self.serial = dictionary_turn();
         self.pairs.push((key, value));
+        self.span = self.span.max(self.pairs.len());
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
 }
 
 impl From<Vec<(Value, Value)>> for MapStore {
     fn from(pairs: Vec<(Value, Value)>) -> MapStore {
-        MapStore { pairs, serial: dictionary_turn(), place: RefCell::new(None) }
+        let span = pairs.len();
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, place: RefCell::new(None) }
     }
 }
 
@@ -507,7 +534,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), serial: self.serial, place: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, place: RefCell::new(None) }
     }
 }
 
@@ -519,6 +546,7 @@ impl std::ops::Deref for MapStore {
 impl std::ops::DerefMut for MapStore {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
         self.serial = dictionary_turn();
+        self.span = self.span.max(self.pairs.len());
         *self.place.borrow_mut() = None;
         &mut self.pairs
     }

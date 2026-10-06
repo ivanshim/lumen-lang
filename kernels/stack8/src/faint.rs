@@ -267,7 +267,7 @@ pub fn walk_departing(dying: &mut Generator) {
                 items: std::mem::take(&mut dying.items),
                 current: dying.current.take(),
                 watched: dying.watched.take(),
-                watched_keys: dying.watched_keys.take(),
+                reversed_walk: dying.reversed_walk.take(),
                 resume: std::mem::take(&mut dying.resume),
                 resuming: dying.resuming,
                 held: std::mem::take(&mut dying.held),
@@ -491,7 +491,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.sent.clone());
                 out.extend(g.current.iter().cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
-                out.extend(g.watched_keys.iter().flatten().cloned());
+                out.extend(g.reversed_walk.iter().map(|(cell, _, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
                     match &step.phase {
                         Phase::Arm(_, v) => out.push(v.clone()),

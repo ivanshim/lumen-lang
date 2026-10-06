@@ -9513,7 +9513,7 @@ impl<'a> Compiler<'a> {
                     if named.is_some() {
                         self.piece().instrs.truncate(from);
                     }
-                    let string_sum = matches!(&op, Action::Add | Action::Sub) && matches!(self.piece().instrs[from..], [Instr::Const(Value::Text(_)) | Instr::Const(Value::Bytes(..))]);
+                    let string_sum = matches!(&op, Action::Add | Action::Sub) && self.pos - width == begins + 1 && matches!(self.tokens[begins].shape, Shape::Quote | Shape::Bytes);
                     let outer = std::mem::replace(&mut self.string_sum_right, string_sum);
                     let outcome = self.expr(right_floor);
                     self.string_sum_right = outer;

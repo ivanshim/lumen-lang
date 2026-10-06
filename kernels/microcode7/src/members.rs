@@ -403,12 +403,14 @@ impl Request<'_> {
             }
             entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth))
         };
+        let old_span=indexed.map_or(0,|s|s.span);
+        let old_epoch=indexed.map_or(0,|s|s.clear_epoch);
         match self.operation{
             // The pair written last comes out, key and value together.
             "popitem"=>{
                 self.takes(0,0)?;
                 let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
-                self.replace(Value::Dict(Rc::new(entries.into())))?;
+                self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, old_span, old_epoch))))?;
                 let raw = if let Value::Keyed(item, _) = key { item.as_ref().clone() } else { key };
                 return Ok(Value::tuple(vec![raw,value]));
             }
@@ -423,11 +425,11 @@ impl Request<'_> {
                 self.takes(1,2)?;let key=&self.given[0];
                 if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
                 if let Some(index)=found(&entries,key){
-                    let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries.into())))?;}return Ok(answer);
+                    let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, old_span, old_epoch))))?;}return Ok(answer);
                 }
                 if self.operation=="pop"&&self.given.len()==1{return Err(self.fail("key")+&key.repr(&self.names));}
                 let answer=self.given.get(1).cloned().unwrap_or(Value::Nil);
-                if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(entries.into())))?;}return Ok(answer);
+                if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, old_span, old_epoch))))?;}return Ok(answer);
             }
             // Each pair goes in as it is met, so that the pairs read before
             // an ill-shaped one are kept when the call stops on it.
@@ -446,12 +448,12 @@ impl Request<'_> {
                     }
                 }
                 if stopped.is_none(){for (key,value) in self.named{self.enter(&mut entries,Value::text(key),value.clone());}}
-                self.replace(Value::Dict(Rc::new(entries.into())))?;
+                self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, old_span, old_epoch))))?;
                 return match stopped{Some(words)=>Err(words),None=>Ok(Value::Nil)};
             }
             _=>return Err(self.unknown()),
         }
-        self.replace(Value::Dict(Rc::new(entries.into())))
+        self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, 0, old_epoch.wrapping_add(1)))))
     }
     fn fill_fields(&self,template:&str)->Result<String,String>{
         let input:Vec<char>=template.chars().collect();let mut pos=0;let mut ordinal=0;let mut mode=0u8;let mut output=String::new();

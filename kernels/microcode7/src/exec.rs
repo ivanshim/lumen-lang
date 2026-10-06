@@ -239,10 +239,11 @@ pub struct Suspension {
     /// pairs it held then, so a step may notice the map has grown or
     /// shrunk under the walk.
     overseen: Option<(Rc<RefCell<Value>>, (usize, u64))>,
-    /// The keys a map walk backwards hands its members out in, so a step
-    /// may see the keys, and not only the size, have changed since the
-    /// walk began.
-    overseen_keys: Option<Vec<Value>>,
+    /// A walk taken backwards over a map: the cell, how many pairs it
+    /// held when the walk began, how wide its entry array was then, and
+    /// the clear-epoch then, so a step may read its places afresh and
+    /// weigh the pairs now held against the count it has left.
+    reversed_walk: Option<(Rc<RefCell<Value>>, usize, usize, u64)>,
     /// The routine the body belongs to, where the walk is a routine's
     /// body and not a row of members already in hand. A step back into
     /// it stands inside that routine, so it is named while the step
@@ -283,7 +284,7 @@ impl Suspension {
         }
         if let Some(v) = &self.ready { out.push(Knot::Held(v.clone())); }
         if let Some((cell, _)) = &self.overseen { out.push(Knot::Held(Value::Shared(cell.clone()))); }
-        if let Some(keys) = &self.overseen_keys { for k in keys { out.push(Knot::Held(k.clone())); } }
+        if let Some((cell, _, _, _)) = &self.reversed_walk { out.push(Knot::Held(Value::Shared(cell.clone()))); }
         for v in &self.holding { out.push(Knot::Held(v.clone())); }
         if let Some(v) = &self.stepping_through { out.push(Knot::Held(v.clone())); }
         let mut plans = std::collections::HashSet::new();
@@ -347,7 +348,7 @@ impl Suspension {
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: None, ready: None, overseen: None, overseen_keys: None, of: Some(program.clone()),
+            inner: None, members: None, ready: None, overseen: None, reversed_walk: None, of: Some(program.clone()),
             holding: Vec::new(),
             walked: match program.flags & (128 | 512) { 512 => Some("async_generator"), 128 => Some("coroutine"), _ => None },
             stepping_through: None, source_reading: None }
@@ -363,7 +364,7 @@ impl Drop for Suspension {
                 begun: true, ended: false, receiving: self.receiving,
                 result: std::mem::replace(&mut self.result, Value::Nil),
                 inner: self.inner.take(), members: self.members.take(), ready: self.ready.take(),
-                overseen: self.overseen.take(), overseen_keys: self.overseen_keys.take(), of: self.of.clone(),
+                overseen: self.overseen.take(), reversed_walk: self.reversed_walk.take(), of: self.of.clone(),
                 holding: std::mem::take(&mut self.holding), walked: self.walked.take(),
                 stepping_through: self.stepping_through.take(), source_reading: self.source_reading,
             };
@@ -4037,7 +4038,7 @@ impl<'a> Machine<'a> {
             holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: Some(members.into_iter()), ready: None, overseen, overseen_keys: None, of: None,
+            inner: None, members: Some(members.into_iter()), ready: None, overseen, reversed_walk: None, of: None,
             walked: None,
             stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
             source_reading: None,
@@ -4050,8 +4051,14 @@ impl<'a> Machine<'a> {
         let walk = self.walk_over(source, members);
         let word = match source { Value::Window(_, portion) => crate::data::reversed_window_kind(*portion), _ => "dict_reversekeyiterator" };
         if let Value::Generator(state) = &walk {
-            if let Some(cell) = Self::dict_cell(source) { state.borrow_mut().overseen_keys = Some(Self::dict_keys_reversed(&cell)); }
-            state.borrow_mut().walked = Some(word);
+            let mut held = state.borrow_mut();
+            if let Some(cell) = Self::dict_cell(source) {
+                let (len, span, clear_epoch) = Self::dict_state(&cell);
+                held.reversed_walk = Some((cell, len, span, clear_epoch));
+                held.members = Some(vec![Value::Nil; len].into_iter());
+                held.overseen = None;
+            }
+            held.walked = Some(word);
         }
         walk
     }
@@ -4079,17 +4086,31 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// The keys a map holds now, last written first, as a walk backwards
-    /// hands them out.
-    fn dict_keys_reversed(cell: &Rc<RefCell<Value>>) -> Vec<Value> {
+    /// How many pairs a map in a cell holds now, how wide its entry
+    /// array is, and the count of times it has been cleared.
+    fn dict_state(cell: &Rc<RefCell<Value>>) -> (usize, usize, u64) {
+        match &*cell.borrow() {
+            Value::Dict(entries) => (entries.len(), entries.span, entries.clear_epoch),
+            Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_state(deeper),
+            _ => (0, 0, 0),
+        }
+    }
+
+    /// The key, value or pair a map in a cell holds at a place, by the
+    /// shape a backwards walk over it hands out.
+    fn dict_entry_at(cell: &Rc<RefCell<Value>>, index: usize, kind: Option<&str>) -> Option<Value> {
         match &*cell.borrow() {
             Value::Dict(entries) => {
-                let mut keys: Vec<Value> = entries.iter().map(|(key, _)| match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() }).collect();
-                keys.reverse();
-                keys
+                let (key, value) = entries.get(index)?;
+                let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
+                match kind {
+                    Some("dict_reversevalueiterator") => Some(value.clone()),
+                    Some("dict_reverseitemiterator") => Some(Value::tuple(vec![bare, value.clone()])),
+                    _ => Some(bare),
+                }
             }
-            Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_keys_reversed(deeper),
-            _ => Vec::new(),
+            Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_entry_at(deeper, index, kind),
+            _ => None,
         }
     }
 
@@ -4517,38 +4538,53 @@ impl<'a> Machine<'a> {
         if !state.begun && !matches!(sent, Value::Nil) { return Err(self.generator_words("unstarted").into()); }
         state.begun = true;
         if state.ready.is_some() { return Ok(state.ready.take()); }
-        // A map that changed size under the walk stops the step.
-        if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
+        // A walk taken backwards over a map reads its places afresh and
+        // weighs the pairs now held against the count it has left.
+        if let Some((cell, di_used, span0, clear_epoch0)) = &state.reversed_walk {
             let cell = cell.clone();
-            let size = *size;
-            let current = Self::dict_extent(&cell);
-            if current != size {
-                let backwards = matches!(state.walked.as_deref(), Some("dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator"));
-                if backwards && current.0 == size.0 {
-                    // The map holds the same count of keys but has been
-                    // written since the walk began. The keys the walk
-                    // keeps are weighed against the ones now in the map:
-                    // where they no longer stand, the keys changed; where
-                    // they still do, the walk is left done, as the
-                    // reference leaves a walk whose map was emptied and
-                    // built again.
-                    let still = state.overseen_keys.as_ref().map_or(true, |keys| {
-                        let live = Self::dict_keys_reversed(&cell);
-                        live.len() == keys.len() && live.iter().zip(keys.iter()).all(|(a, b)| a.equals(b))
-                    });
-                    if !still {
-                        state.ended = true;
-                        let complaint = self.table.strings("ext.builtin.core.dict.changed")[1].clone();
-                        return Err(format!("\0{complaint}").into());
-                    }
+            let (di_used, span0, clear_epoch0) = (*di_used, *span0, *clear_epoch0);
+            let di_len = state.members.as_ref().map_or(0, |m| m.as_slice().len());
+            let (len, span, clear_epoch) = Self::dict_state(&cell);
+            if di_used != len {
+                state.ended = true;
+                let words = self.table.strings("ext.syntax.map.resized")[0].clone();
+                return Err(format!("\0{words}").into());
+            }
+            if clear_epoch != clear_epoch0 {
+                // The map was cleared and built again, so the places the
+                // walk held are stale. Where they run off the end the walk
+                // is done; where they find more pairs than the count left,
+                // the keys changed.
+                let stale = span0.saturating_sub(di_used.saturating_sub(di_len)).saturating_sub(1);
+                if stale >= span || di_len == 0 {
                     state.ended = true;
                     return Ok(None);
-                } else {
-                    let which = usize::from(current.0 == size.0);
-                    let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
+                }
+                if stale.saturating_add(1).min(len) > di_len {
                     state.ended = true;
+                    let complaint = self.table.strings("ext.builtin.core.dict.changed")[1].clone();
                     return Err(format!("\0{complaint}").into());
                 }
+            } else if di_len == 0 {
+                state.ended = true;
+                return Ok(None);
+            }
+            let index = di_len - 1;
+            if let Some(item) = Self::dict_entry_at(&cell, index, state.walked) {
+                if let Some(members) = &mut state.members { members.next(); }
+                return Ok(Some(item));
+            }
+            state.ended = true;
+            return Ok(None);
+        }
+        // A map that changed size under the walk stops the step.
+        if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
+            let current = Self::dict_extent(cell);
+            if current != *size {
+                let which = usize::from(current.0 == size.0);
+                let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
+                state.ended = true;
+                return Err(format!("\0{complaint}").into());
             }
         }
         if let Some(members) = &mut state.members {
@@ -6093,7 +6129,7 @@ impl<'a> Machine<'a> {
                             let words = if self.rules.has_any_ext_builtin_exceptions { self.absent_key(&at) } else { self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string() };
                             return Err(words.into());
                         }
-                        Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !self.keys_match(k, &at)).cloned().collect()))
+                        Value::Dict(Rc::new(crate::data::MapStore::kept(pairs.iter().filter(|(k, _)| !self.keys_match(k, &at)).cloned().collect(), pairs.span, pairs.clear_epoch)))
                     },
                     held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
                 };
@@ -7989,7 +8025,7 @@ impl<'a> Machine<'a> {
                     let Value::Dict(additions)=self.dictionary(&positions,names).map_err(Escape::from)? else { return Err(self.bad_answer().into()); };
                     let mut merged=previous.to_vec();
                     for (key,value) in additions.iter().cloned() { self.map_enter(&mut merged,key,value).map_err(Escape::from)?; }
-                    if let Some(cell)=Self::dict_cell(receiver) { cell.replace(Value::Dict(Rc::new(merged.into()))); }
+                    if let Some(cell)=Self::dict_cell(receiver) { let (span, epoch) = match &*cell.borrow() { Value::Dict(old) => (old.span, old.clear_epoch), _ => (0, 0) }; cell.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(merged, span, epoch)))); }
                     return Ok(Value::Nil);
                 }
                 Value::Set(store) => {
@@ -13058,7 +13094,8 @@ impl<'a> Machine<'a> {
     /// new set of pairs, exactly as `Request::replace` writes it.
     fn replace_dict(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Result<(), String> {
         let (Value::Mutable(cell, _) | Value::Shared(cell)) = receiver else { return Err(self.method_fault("unready")); };
-        let new_value = Value::Dict(Rc::new(pairs.into()));
+        let (span, epoch) = match &*cell.borrow() { Value::Dict(old) => (old.span, old.clear_epoch), _ => (0, 0) };
+        let new_value = Value::Dict(Rc::new(crate::data::MapStore::kept(pairs, span, epoch)));
         if crate::members::circular(&new_value, cell, 0) { return Err(self.method_fault("unready")); }
         cell.replace(new_value);
         Ok(())
@@ -16517,13 +16554,13 @@ impl<'a> Machine<'a> {
             if let Some(cell) = Self::dict_cell(target).filter(|_| self.names_in_calls) {
                 let at = self.as_key(key);
                 if let Some(words) = self.cannot_key(&at) { return Err(words); }
-                let entries = match &*cell.borrow() { Value::Dict(held) => held.to_vec(), _ => Vec::new() };
+                let (entries, span, clear_epoch) = match &*cell.borrow() { Value::Dict(held) => (held.to_vec(), held.span, held.clear_epoch), _ => (Vec::new(), 0, 0) };
                 let wanted = self.hash_key(&at)?;
                 if self.rules.has_any_ext_stmt_del && !self.key_held(&entries, &wanted)? {
                     return Err(if self.rules.has_any_ext_builtin_exceptions { self.absent_key(&at) } else { self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string() });
                 }
                 let kept: Vec<(Value, Value)> = self.without_key(&entries, &wanted)?;
-                cell.replace(Value::Dict(Rc::new(kept.into())));
+                cell.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(kept, span, clear_epoch))));
                 return Ok(target.clone());
             }
         }
@@ -25337,7 +25374,14 @@ impl Machine<'_> {
         if let Value::Generator(handle) = subject {
             let frame = handle.borrow();
             self.reduction_permitted(subject)?;
-            let entries = frame.members.as_ref().map(|items| items.as_slice().to_vec()).unwrap_or_default();
+            let entries = if let Some((dict_cell, _, _, _)) = &frame.reversed_walk {
+                if frame.ended { Vec::new() } else {
+                    let di_len = frame.members.as_ref().map_or(0, |m| m.as_slice().len());
+                    (0..di_len).rev().filter_map(|i| Self::dict_entry_at(dict_cell, i, frame.walked)).collect()
+                }
+            } else {
+                frame.members.as_ref().map(|items| items.as_slice().to_vec()).unwrap_or_default()
+            };
             return Ok(tuple(vec![builtin(Prim::Iterator), tuple(vec![Value::Vector(crate::tuples::Sequence::plain(entries))])]));
         }
         let Value::Iterator(handle) = subject else { return Err("TypeError: cannot pickle this iterator".to_owned()); };

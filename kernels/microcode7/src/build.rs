@@ -9187,7 +9187,7 @@ impl<'a> Builder<'a> {
                     prim_call(op.prim, vec![left, lazy])
                 }
                 other => {
-                    let string_sum = matches!(op.prim, Prim::Plus | Prim::Minus) && matches!(&left, Form::Const(Value::Text(_) | Value::Octets { .. }));
+                    let string_sum = matches!(op.prim, Prim::Plus | Prim::Minus) && self.pos - consumed == origin + 1 && matches!(self.tokens[origin].shape, Shape::Quote | Shape::ByteQuote);
                     let outer = std::mem::replace(&mut self.string_sum_right, string_sum);
                     let right = self.expr(floor_right);
                     self.string_sum_right = outer;
