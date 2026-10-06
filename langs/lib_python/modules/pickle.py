@@ -102,6 +102,12 @@ def _global_name(value):
                 advertised = None
             if advertised is value:
                 return (module, name)
+            if isinstance(value, type):
+                # A kind that names the module it lives in is looked for
+                # only there; not being found there is a refusal, as it
+                # is in the reference.
+                raise PicklingError("Can't pickle " + repr(value)
+                                    + ": it's not found as " + module + "." + name)
         parts = name.split('.')
         # The module the value names as its own first, then the rest:
         # the reference finds the value under its own name where it
@@ -214,8 +220,11 @@ def _apply_state(value, state):
     if isinstance(state, tuple) and len(state) == 2:
         state, slots = state
     if state is not None:
+        # The dictionary a thing carries is filled directly, as the
+        # reference fills it: a class that refuses setattr still reads
+        # back its state.
         for name, item in state.items():
-            setattr(value, name, item)
+            object.__setattr__(value, name, item)
     if slots is not None:
         for name, item in slots.items():
             setattr(value, name, item)
