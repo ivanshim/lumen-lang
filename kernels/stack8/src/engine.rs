@@ -5700,7 +5700,8 @@ impl<'a> Engine<'a> {
                 }
             }
             if let Some(active) = &self.trace_frame {
-                if let Some((_, position)) = active.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") {
+                // make_frame keeps the private instruction position in slot 8.
+                if let Some((_, position)) = active.fields.borrow_mut().get_mut(8) {
                     *position = Value::Small(pc as i64);
                 }
             }
@@ -19256,6 +19257,15 @@ impl<'a> Engine<'a> {
             }
             Builtin::Text(op) => {
                 let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                if op == crate::strings::TextOp::Join && normalized.len() == 2 && matches!(normalized[0], Value::Text(_) | Value::Codepoints(_)) {
+                    let items = self.comprehension_items(&normalized[1])?;
+                    if items.len() == 1 && matches!(items[0], Value::Text(_) | Value::Codepoints(_)) {
+                        return Ok(items[0].clone());
+                    }
+                    normalized[1] = Value::array(items.into_iter().map(|item| {
+                        Self::worth_of(&item).filter(|value| matches!(value, Value::Text(_) | Value::Codepoints(_))).unwrap_or(item)
+                    }).collect());
+                }
                 if op == crate::strings::TextOp::Maketrans && normalized.len() == 1 {
                     if matches!(&normalized[0], Value::Object(o) if o.class_now().name == "frozendict") {
                         if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }

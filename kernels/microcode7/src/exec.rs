@@ -5706,7 +5706,8 @@ impl<'a> Machine<'a> {
 
     fn stand_at_instruction(&self, at: i64) {
         if let Some(activation) = &self.active_trace {
-            if let Some((_, value)) = activation.holds.borrow_mut().iter_mut().find(|(word, _)| word == "\0instruction") {
+            // activation stores its private instruction position at index 7.
+            if let Some((_, value)) = activation.holds.borrow_mut().get_mut(7) {
                 *value = Value::Small(at);
             }
         }
@@ -18631,6 +18632,15 @@ impl<'a> Machine<'a> {
             Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
+                if work == crate::text::Work::JOIN && values.len() == 2 && matches!(values[0], Value::Text(_) | Value::Unpaired(_)) {
+                    let items = self.gathered_members(&values[1])?;
+                    if items.len() == 1 && matches!(items[0], Value::Text(_) | Value::Unpaired(_)) {
+                        return Ok(items[0].clone());
+                    }
+                    values[1] = Value::Vector(crate::tuples::Sequence::plain(items.into_iter().map(|item| {
+                        Self::underlying(&item).filter(|value| matches!(value, Value::Text(_) | Value::Unpaired(_))).unwrap_or(item)
+                    }).collect()));
+                }
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {
                     if let Value::Thing(instance) = &values[0] {
                         if instance.blueprint().name == "frozendict" {
