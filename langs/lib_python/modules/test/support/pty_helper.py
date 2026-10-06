@@ -1,17 +1,8 @@
 """
 Helper to run a script in a pseudo-terminal.
-
-This is CPython v3.14.8's Lib/test/support/pty_helper.py with one
-change: `import selectors` is deferred into run_pty, because this
-runtime carries no selectors module. Nothing here hides that: a call
-to run_pty still asks for selectors (and for pty.openpty, which this
-runtime refuses honestly) and gets the ImportError the missing module
-raises. The import only ever happens behind readline, which this
-runtime does not have, so the readline completion tests that use
-run_pty step aside through CPython's own skip before reaching it.
 """
-
 import os
+import selectors
 import subprocess
 import sys
 from contextlib import ExitStack
@@ -20,7 +11,6 @@ from errno import EIO
 from test.support.import_helper import import_module
 
 def run_pty(script, input=b"dummy input\r", env=None):
-    import selectors
     pty = import_module('pty')
     output = bytearray()
     [master, slave] = pty.openpty()

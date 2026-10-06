@@ -122,6 +122,39 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         "open" => { let p = pathname(0)?; status(libc::openat(number(3)? as i32, p.as_ptr(), number(1)? as i32 | libc::O_CLOEXEC, number(2)? as libc::mode_t) as i64) },
         "close" => status(libc::close(number(0)? as i32) as i64),
         "dup" => status(libc::fcntl(number(0)? as i32, libc::F_DUPFD_CLOEXEC, 0) as i64),
+        // Wait for readability, writability or an exceptional condition on
+        // each set of descriptors, as CPython's select module does; the
+        // module checks ranges and converts objects before calling.
+        "select" => {
+            let fds = |i: usize| -> Result<Vec<i32>, String> {
+                match a[i].contents() {
+                    Value::Array(items) | Value::Tuple(items) => items.iter().map(|item| integer(item)
+                        .and_then(|n| i32::try_from(n).map_err(|_| "ValueError: filedescriptor out of range in select()".to_string()))).collect(),
+                    _ => Err("TypeError: a sequence of integers is required".to_string()),
+                }
+            };
+            let reads = fds(0)?; let writes = fds(1)?; let extras = fds(2)?;
+            if reads.iter().chain(&writes).chain(&extras).any(|fd| *fd < 0 || *fd >= libc::FD_SETSIZE as i32) {
+                return Err("ValueError: filedescriptor out of range in select()".to_string());
+            }
+            let mut rfds: libc::fd_set = std::mem::zeroed();
+            let mut wfds: libc::fd_set = std::mem::zeroed();
+            let mut efds: libc::fd_set = std::mem::zeroed();
+            let mut top = -1i32;
+            for (set, row) in [(&mut rfds, &reads), (&mut wfds, &writes), (&mut efds, &extras)] {
+                for &fd in row { libc::FD_SET(fd, set); if fd > top { top = fd; } }
+            }
+            let usec = number(3)?;
+            let mut span: libc::timeval = std::mem::zeroed();
+            if usec >= 0 { span.tv_sec = usec / 1_000_000; span.tv_usec = usec % 1_000_000; }
+            let waiting = if usec < 0 { std::ptr::null_mut() } else { &mut span as *mut libc::timeval };
+            let ready = libc::select(top + 1, &mut rfds, &mut wfds, &mut efds, waiting);
+            if ready < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) } else {
+                let awake = |set: &libc::fd_set, row: &[i32]| Value::Array(crate::tuples::Items::plain(
+                    row.iter().filter(|fd| libc::FD_ISSET(**fd, set)).map(|fd| Value::Small(*fd as i64)).collect()));
+                Ok(Value::tuple(vec![awake(&rfds, &reads), awake(&wfds, &writes), awake(&efds, &extras)]))
+            }
+        },
         "read" => {
             let count = number(1)?;
             if count < 0 { Err(libc::EINVAL) } else {

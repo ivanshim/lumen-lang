@@ -288,6 +288,45 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                 let length = (2 + filename.len() + 1) as libc::socklen_t;
                 checked(libc::bind(int(0)? as _, std::ptr::addr_of!(sockaddr).cast(), length) as i64)
             }
+            // Block until some descriptor in each row is ready, mirroring
+            // selectmodule.c: object conversion and range checks are the
+            // Python module's; here the sets are built and the call made.
+            "select" => {
+                let descriptor_row = |at: usize| -> Result<Vec<i32>, String> {
+                    match params[at].settled() {
+                        Value::Vector(row) => row.iter().map(|item| match item.settled() {
+                            Value::Small(n) => i32::try_from(n).map_err(|_| String::from("ValueError: filedescriptor out of range in select()")),
+                            Value::Huge(_) => Err(String::from("ValueError: filedescriptor out of range in select()")),
+                            _ => Err(String::from("TypeError: an integer is required")),
+                        }).collect(),
+                        _ => Err(String::from("TypeError: a sequence of integers is required")),
+                    }
+                };
+                let want_read = descriptor_row(0)?;
+                let want_write = descriptor_row(1)?;
+                let want_error = descriptor_row(2)?;
+                let mut highest = -1i32;
+                let mut read_set: libc::fd_set = std::mem::zeroed();
+                let mut write_set: libc::fd_set = std::mem::zeroed();
+                let mut error_set: libc::fd_set = std::mem::zeroed();
+                for (set, row) in [(&mut read_set, &want_read), (&mut write_set, &want_write), (&mut error_set, &want_error)] {
+                    for &fd in row {
+                        if fd < 0 || fd as usize >= libc::FD_SETSIZE { return Err(String::from("ValueError: filedescriptor out of range in select()")); }
+                        libc::FD_SET(fd, set);
+                        if fd > highest { highest = fd; }
+                    }
+                }
+                let micros = int(3)?;
+                let mut limit: libc::timeval = std::mem::zeroed();
+                if micros >= 0 { limit.tv_sec = micros / 1_000_000; limit.tv_usec = micros % 1_000_000; }
+                let when: *mut libc::timeval = if micros < 0 { std::ptr::null_mut() } else { &mut limit };
+                let found = libc::select(highest + 1, &mut read_set, &mut write_set, &mut error_set, when);
+                if found == -1 { Err(errno()) } else {
+                    let kept = |set: &libc::fd_set, row: &[i32]| Value::Vector(crate::tuples::Sequence::plain(
+                        row.iter().copied().filter(|fd| libc::FD_ISSET(*fd, set)).map(|fd| Value::Small(fd as i64)).collect()));
+                    Ok(Value::tuple(vec![kept(&read_set, &want_read), kept(&write_set, &want_write), kept(&error_set, &want_error)]))
+                }
+            }
             "urandom" => {
                 use std::io::Read as _;
                 let mut content = vec![0; int(0)? as usize];

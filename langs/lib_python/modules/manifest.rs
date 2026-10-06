@@ -163,6 +163,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("sched", include_str!("sched.py"), "sched.py"),
     ("secrets", include_str!("secrets.py"), "secrets.py"),
     ("select", include_str!("select.py"), "select.py"),
+    ("selectors", include_str!("selectors.py"), "selectors.py"),
     ("shlex", include_str!("shlex.py"), "shlex.py"),
     ("shutil", include_str!("shutil.py"), "shutil.py"),
     ("signal", include_str!("signal.py"), "signal.py"),
