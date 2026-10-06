@@ -11529,7 +11529,6 @@ impl<'a> Engine<'a> {
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
                     && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref())
                         || name.as_ref() == self.class_word("mro") || name.as_ref() == self.class_word("order") || name.as_ref() == self.class_word("bases")
-                        || self.names_subclass_listing(name.as_ref())
                         || self.lang.class_details.get("root.members").map_or(false, |words| words.iter().any(|word| word == name.as_ref())));
                 // A builtin kind the reference keeps a docstring for
                 // answers to the member that reads it, whether or not

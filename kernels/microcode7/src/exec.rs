@@ -18478,7 +18478,7 @@ impl<'a> Machine<'a> {
                 if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
                 if let Value::Intrinsic(_, kind) = &v[0] {
-                    let lined = word == self.rules.detail_mro || word == self.rules.detail_order || word == self.detail("bases") || self.is_offspring_word(&word);
+                    let lined = word == self.rules.detail_mro || word == self.rules.detail_order || word == self.detail("bases");
                     let inherited = self.rules.words_ext_stmt_class_detail_root_members.iter().any(|member| member == &word);
                     if kind.as_ref() == "type" || self.table.spells("ext.stmt.class.builtin", kind) && (lined || inherited || word == self.rules.detail_allocate || word == self.rules.detail_name || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
                 }

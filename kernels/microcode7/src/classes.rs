@@ -3,14 +3,6 @@
 use super::*;
 
 impl<'a> Machine<'a> {
-    /// The type-method row of the table keeps the word that lists the
-    /// classes made directly on a class in its second place.
-    pub(super) fn is_offspring_word(&self, key: &str) -> bool {
-        self.table.strings("ext.stmt.class.detail.order").get(1).is_some_and(|word| word == key)
-    }
-    fn offspring_listing(&self, parent: &Rc<Blueprint>) -> Value {
-        Self::wrap(190, vec![Value::Blueprint(parent.clone())])
-    }
     pub(super) fn detail(&self, key: &str) -> &str {
         match key {
             "defaults" => self.rules.detail_defaults,
@@ -1459,14 +1451,6 @@ impl<'a> Machine<'a> {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
                         Ok(self.prim(Prim::Weigh, "eval", &kept)?)
                     }
-                    // The classes standing directly on the one kept, read
-                    // anew whenever the member is called.
-                    190 => {
-                        if !values.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", match kept.first() { Some(Value::Blueprint(owner)) => owner.name.clone(), _ => String::new() }, values.len()).into()); }
-                        let Some(Value::Blueprint(parent)) = kept.first() else { return Err(self.class_unready()) };
-                        let seen = crate::ghost::offspring_of(parent).into_iter().map(|child| self.visible_blueprint(child)).collect::<Vec<_>>();
-                        Ok(Value::Vector(crate::tuples::Sequence::plain(seen)))
-                    }
                     127 => {
                         let first = values.first().cloned().ok_or_else(|| self.class_unready())?;
                         let row = self.read_class_member(first, "__args__", true)?;
@@ -1834,6 +1818,7 @@ impl<'a> Machine<'a> {
                     }
                     204 => {
                         let Value::Blueprint(c)=&kept[0] else{return Err(self.class_unready())};
+                        if !values.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", c.name, values.len()).into()); }
                         let mut standing=Vec::new();
                         let mut children=self.class_children.borrow_mut();
                         if let Some(list)=children.get_mut(&(Rc::as_ptr(c) as usize)) {
@@ -3529,7 +3514,6 @@ impl<'a> Machine<'a> {
                     let root = self.common_ancestor();
                     return Ok(Value::tuple(vec![Value::Blueprint(root)]));
                 }
-                if self.is_offspring_word(key){let kind=self.native_kind(word);return Ok(self.offspring_listing(&kind));}
                 if key==self.detail("mro")||key==self.detail("order"){
                     let listed=key==self.detail("order");
                     let word=word.to_string();
@@ -3665,7 +3649,6 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Window(Rc::new(Value::Blueprint(b.clone())), 'm'));
             }
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
-            if self.is_offspring_word(key){return Ok(self.offspring_listing(b));}
             if key==self.detail("mro")||key==self.detail("order"){
                 let mut all=Vec::new();all.push(self.visible_blueprint(b.clone()));all.extend(b.ancestry.iter().map(|p|self.visible_blueprint(p.clone())));
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
@@ -3686,7 +3669,8 @@ impl<'a> Machine<'a> {
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
             // The classes built beneath this one, the live ones, as the
             // reference's own type.__subclasses__ tells them.
-            if key==self.detail("subclasses") && !self.detail("subclasses").is_empty() { return Ok(Self::wrap(204, vec![value.clone()])); }
+            if key==self.detail("subclasses") && !self.detail("subclasses").is_empty()
+                && !Self::builder_over(b).is_some_and(|builder| self.inherited_entry(&builder,key).is_some() || builder.program(key).is_some()) { return Ok(Self::wrap(204, vec![value.clone()])); }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
             // A blueprint standing on a native kind reads that kind's
             // own class method too, bound to the blueprint, so that

@@ -397,13 +397,6 @@ pub fn remember(hold: Hold) {
     });
 }
 
-/// The classes still alive that name this one among their direct bases,
-/// in the order they were made.
-pub fn subclasses(target: &Rc<Class>) -> Vec<Rc<Class>> {
-    CANDIDATES.try_with(|c| c.borrow().0.iter().filter_map(|hold| match hold { Hold::Class(w) => w.upgrade(), _ => None })
-        .filter(|made| made.direct.iter().any(|base| Rc::ptr_eq(base, target))).collect()).unwrap_or_default()
-}
-
 /// Mutable containers can be the incoming side of a finalizable cycle.
 /// Keep a weak candidate even when the container has no weakref protocol.
 pub fn track_container(cell: &Rc<RefCell<Value>>) {

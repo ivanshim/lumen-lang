@@ -336,22 +336,6 @@ pub fn note(ghost: Ghost) {
     });
 }
 
-/// Every class made so far that is still alive and lists this one among
-/// its parents, oldest first.
-pub fn offspring_of(parent: &Rc<Blueprint>) -> Vec<Rc<Blueprint>> {
-    NOTABLE.try_with(|n| {
-        let mut found = Vec::new();
-        for ghost in n.borrow().0.iter() {
-            if let Ghost::Blueprint(weak) = ghost {
-                if let Some(child) = weak.upgrade() {
-                    if child.parents.iter().any(|p| Rc::ptr_eq(p, parent)) { found.push(child); }
-                }
-            }
-        }
-        found
-    }).unwrap_or_default()
-}
-
 /// The values embedded in compiled forms are owned by their routine.
 /// In particular, an exception arm may retain nested routine constants
 /// after a generator yields, and those routines may keep its globals.

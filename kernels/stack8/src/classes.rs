@@ -630,16 +630,6 @@ impl<'a> Engine<'a> {
         if Rc::ptr_eq(class, target) || class.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
         visit(class, target, &mut Vec::new())
     }
-    /// The second word of the type-method row is the one that lists the
-    /// classes standing directly on a class.
-    pub(super) fn names_subclass_listing(&self, name: &str) -> bool {
-        self.lang.class_details.get("order").and_then(|row| row.get(1)).is_some_and(|word| word == name)
-    }
-    /// The listing handed over by that member: a callable that answers the
-    /// classes made so far on the given one.
-    fn subclass_listing(&self, class: &Rc<Class>) -> Value {
-        Self::adapter(190, vec![Value::Class(class.clone())])
-    }
     fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
         Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
@@ -1395,14 +1385,6 @@ impl<'a> Engine<'a> {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
                     Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
                 }
-                // The classes standing directly on the one held, worked out
-                // afresh at every call.
-                190 => {
-                    if !args.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", match w.1.first() { Some(Value::Class(owner)) => owner.name.clone(), _ => String::new() }, args.len()).into()); }
-                    let Some(Value::Class(parent)) = w.1.first() else { return Err(self.class_refusal()); };
-                    let made = crate::faint::subclasses(parent).into_iter().map(|each| self.public_class(each)).collect();
-                    Ok(Value::array(made))
-                }
                 126 => {
                     let Some(Value::Object(union)) = args.first() else { return Err(self.class_refusal()); };
                     let mut parts = Vec::new();
@@ -1749,6 +1731,7 @@ impl<'a> Engine<'a> {
                 }
                 204 => {
                     let Value::Class(c) = &w.1[0] else { return Err(self.class_refusal()); };
+                    if !args.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", c.name, args.len()).into()); }
                     let mut live = Vec::new();
                     let mut children = self.class_children.borrow_mut();
                     if let Some(list) = children.get_mut(&(Rc::as_ptr(c) as usize)) {
@@ -3055,7 +3038,6 @@ impl<'a> Engine<'a> {
                 // The kind read as a class stands on the root and on
                 // nothing else, so that is the whole of its line.
                 if name == self.class_word("bases") { return Ok(Value::tuple(vec![Value::Class(self.root_class())])); }
-                if self.names_subclass_listing(name) { let kind = self.kind_class(word); return Ok(self.subclass_listing(&kind)); }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let listed=name==self.class_word("order");
                     let word=word.to_string();
@@ -3145,7 +3127,6 @@ impl<'a> Engine<'a> {
                     // value of the kind answers to.
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
                 }
-                if self.names_subclass_listing(name) { return Ok(self.subclass_listing(c)); }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![self.public_class(c.clone())]; order.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));
                     let tuple=Value::tuple(order);
@@ -3167,7 +3148,8 @@ impl<'a> Engine<'a> {
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 // The classes written beneath this one, the live ones,
                 // as the reference's own type.__subclasses__ tells them.
-                if !self.class_word("subclasses").is_empty() && name==self.class_word("subclasses") { return Ok(Self::adapter(204, vec![subject.clone()])); }
+                if !self.class_word("subclasses").is_empty() && name==self.class_word("subclasses")
+                    && !Self::maker_beneath(c).is_some_and(|maker| self.class_value(&maker, name).is_some() || maker.method(name).is_some()) { return Ok(Self::adapter(204, vec![subject.clone()])); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return self.bind_class_value(member,None,c.clone()); }
                 if Self::own_kind(c).is_none() {
