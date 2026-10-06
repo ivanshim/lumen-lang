@@ -27,7 +27,7 @@ class _Call:
     def __eq__(self, other):
         if isinstance(other, _Call):
             return self.args == other.args and self.kwargs == other.kwargs
-        return (list(self.args), self.kwargs) == other
+        return (self.args, self.kwargs) == other
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -135,7 +135,7 @@ class Mock:
     def assert_called_with(self, *args, **kwargs):
         if not self.called:
             raise AssertionError('expected a call and there was none')
-        wanted = (list(args), kwargs)
+        wanted = (args, kwargs)
         if self.call_args != wanted:
             raise AssertionError('expected ' + repr(wanted) + ' and the last call was ' + repr(self.call_args))
 
@@ -144,7 +144,7 @@ class Mock:
         self.assert_called_with(*args, **kwargs)
 
     def assert_any_call(self, *args, **kwargs):
-        wanted = (list(args), kwargs)
+        wanted = (args, kwargs)
         for made in self.call_args_list:
             if made == wanted:
                 return
