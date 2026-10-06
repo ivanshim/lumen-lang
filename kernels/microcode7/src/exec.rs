@@ -24728,12 +24728,12 @@ impl<'a> Machine<'a> {
             // What the builder answered may be no class at all: the cell
             // then names nothing and nothing is asked of it.
             let Value::Blueprint(made) = result.settled() else { return Ok(result) };
-            let shown = made.presentation.clone().unwrap_or_else(|| format!("<class '{}'>", made.name));
+            let shown = Value::Blueprint(made.clone()).quoted(false);
             let Some(held) = self.cell_contents(&items) else {
                 return Err(format!("RuntimeError: __class__ not set defining '{}' as {}. Was __classcell__ propagated to type.__new__?", name, shown).into());
             };
             if !matches!(held.settled(), Value::Blueprint(a) if Rc::ptr_eq(&a, &made)) {
-                let had = match held.settled() { Value::Blueprint(a) => a.presentation.clone().unwrap_or_else(|| format!("<class '{}'>", a.name)), other => other.quoted(false) };
+                let had = match held.settled() { Value::Blueprint(a) => Value::Blueprint(a).quoted(false), other => other.quoted(false) };
                 return Err(format!("TypeError: __class__ set to {} defining '{}' as {}", had, name, shown).into());
             }
         }

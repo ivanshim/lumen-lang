@@ -2113,7 +2113,6 @@ impl<'a> Engine<'a> {
     pub(super) fn typing_module(&mut self) -> Value {
         if let Some(module) = self.modules.get("_typing") { return module.clone(); }
         let mut fields = vec![("__name__".into(), Value::text("_typing"))];
-        fields.push(("_idfunc".into(), Value::Native(Builtin::ClassTool(22), Rc::from("_idfunc"))));
         fields.push(("Union".into(), Value::Class(self.kind_class("Union"))));
         for name in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let class = self.kind_class(name);
@@ -3448,7 +3447,7 @@ impl<'a> Engine<'a> {
                         return self.bind_class_value(descriptor,Some(subject.clone()),o.class_now().clone());
                     }
                     // A class that names its slots and leaves the namespace out of them has things without one.
-                    if o.class_now().mro_adopted.get() || !self.slots_allow(&o.class_now(),name) {return Err(self.missing_member(&subject,name));}
+                    if o.class_now().mro_adopted.get() || o.class_now().python_names.borrow().is_some() || !self.slots_allow(&o.class_now(),name) {return Err(self.missing_member(&subject,name));}
                     if let Some((_, dictionary)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace") { return Ok(dictionary.clone()); }
                     return Ok(Value::Fields(o.clone()));
                 }
@@ -5191,7 +5190,6 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
-        if which == 22 && args.len() == 1 { return Ok(args.remove(0)); }
 
         if (3..=6).contains(&which) && args.len() >= 2 {
             if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }

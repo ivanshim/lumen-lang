@@ -24258,12 +24258,12 @@ impl Engine<'_> {
             // cell then names nothing and nothing is asked of it.
             let Value::Class(made) = result.contents() else { return Ok(result) };
             let held = cell.borrow().contents();
-            let shown = made.outline.clone().unwrap_or_else(|| format!("<class '{}'>", made.name));
+            let shown = Value::Class(made.clone()).plain();
             if matches!(held, Value::Blank) {
                 return Err(format!("RuntimeError: __class__ not set defining '{}' as {}. Was __classcell__ propagated to type.__new__?", name, shown).into());
             }
             if !matches!(&held, Value::Class(a) if Rc::ptr_eq(a, &made)) {
-                let had = match &held { Value::Class(a) => a.outline.clone().unwrap_or_else(|| format!("<class '{}'>", a.name)), other => other.plain() };
+                let had = match &held { Value::Class(a) => Value::Class(a.clone()).plain(), other => other.plain() };
                 return Err(format!("TypeError: __class__ set to {} defining '{}' as {}", had, name, shown).into());
             }
         }

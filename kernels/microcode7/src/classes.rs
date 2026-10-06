@@ -2222,7 +2222,6 @@ impl<'a> Machine<'a> {
     pub(super) fn type_support_namespace(&mut self) -> Value {
         if let Some(cached) = self.imported.get("_typing") { return cached.clone(); }
         let mut entries = vec![(String::from("__name__"), Value::text("_typing"))];
-        entries.push(("_idfunc".into(), Value::Intrinsic(Prim::ClassWork(22), Rc::from("_idfunc"))));
         entries.push(("Union".into(), Value::Blueprint(self.native_kind("Union"))));
         for title in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let kind = self.native_kind(title);
@@ -3973,7 +3972,7 @@ impl<'a> Machine<'a> {
                     return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
                 }
                 // A blueprint naming its slots without the namespace among them has things without one.
-                if t.blueprint().order_supplied.get() || !self.allowed_slot(&t.blueprint(),key){return Err(self.absent_attribute(&value,key));}
+                if t.blueprint().order_supplied.get() || t.blueprint().type_names.borrow().is_some() || !self.allowed_slot(&t.blueprint(),key){return Err(self.absent_attribute(&value,key));}
                 if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary") { return Ok(mapping.clone()); }
                 return Ok(Value::Attributes(t.clone()));
             }
@@ -5421,7 +5420,6 @@ impl<'a> Machine<'a> {
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
-        if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op == 13 { return self.class_from_function(values); }
         if op == 14 { return self.check_class_builtin(); }
