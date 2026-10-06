@@ -4989,21 +4989,33 @@ impl<'a> Engine<'a> {
             if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
             // A map that changed size under the walk stops the next step.
             if let (Some((cell, size)), Some(said)) = (&kept.watched, &self.lang.map_resized) {
-                let now = Self::map_size(cell);
+                let cell = cell.clone();
+                let now = Self::map_size(&cell);
                 if now != *size {
-                    // A walk backwards holds the places the map had when
-                    // it began, so a clear followed by a key of the same
-                    // count leaves that count as it was and the walk
-                    // finds nothing more to hand out rather than making
-                    // a complaint about keys that changed.
                     let backwards = matches!(kept.walked.as_deref(), Some("dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator"));
                     if backwards && now.0 == size.0 {
+                        // The map holds the same count of keys but has
+                        // been written since the walk began. The keys the
+                        // walk keeps are weighed against the ones now in
+                        // the map: where they no longer stand, the keys
+                        // changed; where they still do, the walk is left
+                        // done, as the reference leaves a walk whose map
+                        // was emptied and built again.
+                        let still = kept.watched_keys.as_ref().map_or(true, |keys| {
+                            let live = Self::map_keys_reversed(&cell);
+                            live.len() == keys.len() && live.iter().zip(keys.iter()).all(|(a, b)| a.equals(b))
+                        });
+                        if !still {
+                            kept.closed = true;
+                            return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][1].clone()).into());
+                        }
                         kept.closed = true;
                         return Ok(None);
+                    } else {
+                        let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
+                        kept.closed = true;
+                        return Err(format!("\0{words}").into());
                     }
-                    let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
-                    kept.closed = true;
-                    return Err(format!("\0{words}").into());
                 }
             }
             let item = kept.items.get(kept.pc).cloned();
@@ -8118,7 +8130,20 @@ impl<'a> Engine<'a> {
                 };
                 if !self.sequence_equal_item(one, other)? {
                     return match op {
-                        Action::Eq | Action::Ne => Ok(Value::Flag(matches!(op, Action::Ne))),
+                        Action::Eq | Action::Ne => {
+                            // The members differ, but one of them may have
+                            // rewritten its own list while it answered: the
+                            // sizes are read afresh, and where the walk has
+                            // run off the end the lists are weighed by them.
+                            let (a, b) = (left.contents(), right.contents());
+                            let (Value::Array(x) | Value::Tuple(x), Value::Array(y) | Value::Tuple(y)) = (&a, &b) else { unreachable!() };
+                            if at >= x.len() || at >= y.len() {
+                                let order = x.len().cmp(&y.len());
+                                Ok(Value::Flag(if matches!(op, Action::Eq) { order.is_eq() } else { order.is_ne() }))
+                            } else {
+                                Ok(Value::Flag(matches!(op, Action::Ne)))
+                            }
+                        }
                         _ => self.special_dyad(op, one, other),
                     };
                 }
@@ -12686,6 +12711,20 @@ impl<'a> Engine<'a> {
             Value::Map(pairs) => (pairs.len(), pairs.revision),
             Value::Bond(within) | Value::Collection(within, _) => Self::map_size(within),
             _ => (0, 0),
+        }
+    }
+
+    /// The keys a map holds now, last written first, as a walk backwards
+    /// hands them out.
+    fn map_keys_reversed(cell: &Rc<RefCell<Value>>) -> Vec<Value> {
+        match &*cell.borrow() {
+            Value::Map(pairs) => {
+                let mut keys: Vec<Value> = pairs.iter().map(|(key, _)| match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() }).collect();
+                keys.reverse();
+                keys
+            }
+            Value::Bond(within) | Value::Collection(within, _) => Self::map_keys_reversed(within),
+            _ => Vec::new(),
         }
     }
 
@@ -22469,7 +22508,10 @@ impl Engine<'_> {
                     // hands out; a view of it walked backwards is named
                     // for the shape the view itself shows.
                     let word = match &args[0] { Value::View(view) => crate::value::reversed_view_kind(&view.1), _ => "dict_reversekeyiterator" };
-                    if let Value::Generator(state) = &walk { state.borrow_mut().walked = Some(Rc::from(word)); }
+                    if let Value::Generator(state) = &walk {
+                        if let Some(cell) = Self::map_cell(&args[0]) { state.borrow_mut().watched_keys = Some(Self::map_keys_reversed(&cell)); }
+                        state.borrow_mut().walked = Some(Rc::from(word));
+                    }
                     return Ok(walk);
                 }
                 // A byte string belongs here beside the text: what it

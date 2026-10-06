@@ -213,6 +213,10 @@ pub struct Generator {
     /// The cell of a map the walk hands the items of, with the size the
     /// map had when the walk began, so a step may see it has changed.
     pub watched: Option<(Rc<RefCell<Value>>, (usize, u64))>,
+    /// The keys a map walk backwards hands its members out in, so a step
+    /// may see the keys, and not only the size, have changed since the
+    /// walk began.
+    pub watched_keys: Option<Vec<Value>>,
     /// The tries the suspension stands inside, innermost first, and
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
@@ -232,7 +236,7 @@ impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
-            delegate: None, sent: Value::Null, current: None, watched: None,
+            delegate: None, sent: Value::Null, current: None, watched: None, watched_keys: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
     }
 }

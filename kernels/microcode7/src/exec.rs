@@ -239,6 +239,10 @@ pub struct Suspension {
     /// pairs it held then, so a step may notice the map has grown or
     /// shrunk under the walk.
     overseen: Option<(Rc<RefCell<Value>>, (usize, u64))>,
+    /// The keys a map walk backwards hands its members out in, so a step
+    /// may see the keys, and not only the size, have changed since the
+    /// walk began.
+    overseen_keys: Option<Vec<Value>>,
     /// The routine the body belongs to, where the walk is a routine's
     /// body and not a row of members already in hand. A step back into
     /// it stands inside that routine, so it is named while the step
@@ -279,6 +283,7 @@ impl Suspension {
         }
         if let Some(v) = &self.ready { out.push(Knot::Held(v.clone())); }
         if let Some((cell, _)) = &self.overseen { out.push(Knot::Held(Value::Shared(cell.clone()))); }
+        if let Some(keys) = &self.overseen_keys { for k in keys { out.push(Knot::Held(k.clone())); } }
         for v in &self.holding { out.push(Knot::Held(v.clone())); }
         if let Some(v) = &self.stepping_through { out.push(Knot::Held(v.clone())); }
         let mut plans = std::collections::HashSet::new();
@@ -342,7 +347,7 @@ impl Suspension {
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
+            inner: None, members: None, ready: None, overseen: None, overseen_keys: None, of: Some(program.clone()),
             holding: Vec::new(),
             walked: match program.flags & (128 | 512) { 512 => Some("async_generator"), 128 => Some("coroutine"), _ => None },
             stepping_through: None, source_reading: None }
@@ -358,7 +363,7 @@ impl Drop for Suspension {
                 begun: true, ended: false, receiving: self.receiving,
                 result: std::mem::replace(&mut self.result, Value::Nil),
                 inner: self.inner.take(), members: self.members.take(), ready: self.ready.take(),
-                overseen: self.overseen.take(), of: self.of.clone(),
+                overseen: self.overseen.take(), overseen_keys: self.overseen_keys.take(), of: self.of.clone(),
                 holding: std::mem::take(&mut self.holding), walked: self.walked.take(),
                 stepping_through: self.stepping_through.take(), source_reading: self.source_reading,
             };
@@ -4032,7 +4037,7 @@ impl<'a> Machine<'a> {
             holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
+            inner: None, members: Some(members.into_iter()), ready: None, overseen, overseen_keys: None, of: None,
             walked: None,
             stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
             source_reading: None,
@@ -4044,7 +4049,10 @@ impl<'a> Machine<'a> {
     fn walk_over_backwards(&self, source: &Value, members: Vec<Value>) -> Value {
         let walk = self.walk_over(source, members);
         let word = match source { Value::Window(_, portion) => crate::data::reversed_window_kind(*portion), _ => "dict_reversekeyiterator" };
-        if let Value::Generator(state) = &walk { state.borrow_mut().walked = Some(word); }
+        if let Value::Generator(state) = &walk {
+            if let Some(cell) = Self::dict_cell(source) { state.borrow_mut().overseen_keys = Some(Self::dict_keys_reversed(&cell)); }
+            state.borrow_mut().walked = Some(word);
+        }
         walk
     }
 
@@ -4068,6 +4076,20 @@ impl<'a> Machine<'a> {
             Value::Dict(entries) => (entries.len(), entries.serial),
             Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_extent(deeper),
             _ => (0, 0),
+        }
+    }
+
+    /// The keys a map holds now, last written first, as a walk backwards
+    /// hands them out.
+    fn dict_keys_reversed(cell: &Rc<RefCell<Value>>) -> Vec<Value> {
+        match &*cell.borrow() {
+            Value::Dict(entries) => {
+                let mut keys: Vec<Value> = entries.iter().map(|(key, _)| match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() }).collect();
+                keys.reverse();
+                keys
+            }
+            Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_keys_reversed(deeper),
+            _ => Vec::new(),
         }
     }
 
@@ -4497,21 +4519,36 @@ impl<'a> Machine<'a> {
         if state.ready.is_some() { return Ok(state.ready.take()); }
         // A map that changed size under the walk stops the step.
         if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
-            let current = Self::dict_extent(cell);
-            if current != *size {
-                // A walk taken backwards follows the places the map
-                // held when it began; emptying the map and putting back
-                // the same number of keys leaves that count as it was,
-                // so the walk just finds nothing further to hand over.
+            let cell = cell.clone();
+            let size = *size;
+            let current = Self::dict_extent(&cell);
+            if current != size {
                 let backwards = matches!(state.walked.as_deref(), Some("dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator"));
                 if backwards && current.0 == size.0 {
+                    // The map holds the same count of keys but has been
+                    // written since the walk began. The keys the walk
+                    // keeps are weighed against the ones now in the map:
+                    // where they no longer stand, the keys changed; where
+                    // they still do, the walk is left done, as the
+                    // reference leaves a walk whose map was emptied and
+                    // built again.
+                    let still = state.overseen_keys.as_ref().map_or(true, |keys| {
+                        let live = Self::dict_keys_reversed(&cell);
+                        live.len() == keys.len() && live.iter().zip(keys.iter()).all(|(a, b)| a.equals(b))
+                    });
+                    if !still {
+                        state.ended = true;
+                        let complaint = self.table.strings("ext.builtin.core.dict.changed")[1].clone();
+                        return Err(format!("\0{complaint}").into());
+                    }
                     state.ended = true;
                     return Ok(None);
+                } else {
+                    let which = usize::from(current.0 == size.0);
+                    let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
+                    state.ended = true;
+                    return Err(format!("\0{complaint}").into());
                 }
-                let which = usize::from(current.0 == size.0);
-                let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
-                state.ended = true;
-                return Err(format!("\0{complaint}").into());
             }
         }
         if let Some(members) = &mut state.members {
@@ -16071,8 +16108,19 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Flag(answer));
                 }
                 if self.member_agrees(&a[position], &b[position])? { position += 1; continue; }
-                if operation == Prim::Eq { return Ok(Value::Flag(false)); }
-                if operation == Prim::Ne { return Ok(Value::Flag(true)); }
+                // The members differ, but one may have rewritten its own
+                // list while it answered: read the sizes afresh, and when
+                // the walk has run off the end weigh the lists by them.
+                if operation == Prim::Eq || operation == Prim::Ne {
+                    let a = extract(first);
+                    let b = extract(second);
+                    if position >= a.len() || position >= b.len() {
+                        let length_order = a.len().cmp(&b.len());
+                        let truth = match operation { Prim::Eq => length_order.is_eq(), _ => !length_order.is_eq() };
+                        return Ok(Value::Flag(truth));
+                    }
+                    return Ok(Value::Flag(operation == Prim::Ne));
+                }
                 return self.prim(operation, "", &[a[position].clone(), b[position].clone()]);
             }
         })();
