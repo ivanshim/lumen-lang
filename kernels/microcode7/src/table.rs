@@ -23,6 +23,9 @@ enum Entry {
     Tiers(Vec<Vec<String>>),
 }
 
+/// How many places the table keeps to guess where a label is.
+const GUESSES: usize = 1024;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Infix {
     pub prim: Prim,
@@ -83,7 +86,15 @@ pub struct Table {
     pub blocks: Blocks,
     /// Reverse Polish: words over one stack, no expressions.
     pub rpn: bool,
-    cells: HashMap<&'static str, Entry, FxBuildHasher>,
+    cells: HashMap<&'static str, usize, FxBuildHasher>,
+    /// The labels in the order they were made, and what each holds.
+    names: Vec<&'static str>,
+    held: Vec<Entry>,
+    /// Where a label was last found, guessed from where the asking word
+    /// lies in memory: the builder asks after the same few labels by the
+    /// same literals, and confirming a guess costs less than hashing a
+    /// long label again.
+    guesses: Vec<std::cell::Cell<u32>>,
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
@@ -472,11 +483,15 @@ fn strings_at(key: &str, json: &Json) -> Result<Vec<String>, String> {
 impl Table {
     pub fn parse(text: &str) -> Result<Table, String> {
         let map = top_object(text)?;
-        let mut cells: HashMap<&'static str, Entry, FxBuildHasher> = HashMap::default();
+        let mut cells: HashMap<&'static str, usize, FxBuildHasher> = HashMap::default();
+        let mut names: Vec<&'static str> = Vec::new();
+        let mut held: Vec<Entry> = Vec::new();
         let mut known = tag_shapes(TAGS);
         for (key, shape) in &known {
             let json = map.get(*key).ok_or_else(|| format!("missing label '{key}'"))?;
-            cells.insert(*key, cell_of(key, *shape, json)?);
+            held.push(cell_of(key, *shape, json)?);
+            names.push(*key);
+            cells.insert(*key, held.len() - 1);
         }
         for (key, shape) in tag_shapes(EXT_TAGS) {
             let cell = match map.get(key) {
@@ -484,7 +499,9 @@ impl Table {
                 None if shape == 'B' => Entry::Flag(false),
                 None => Entry::Strings(Vec::new()),
             };
-            cells.insert(key, cell);
+            held.push(cell);
+            names.push(key);
+            cells.insert(key, held.len() - 1);
             known.push((key, shape));
         }
         let mut strange: Vec<&str> = map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !known.iter().any(|(l, _)| l == k)).collect();
@@ -497,6 +514,9 @@ impl Table {
             blocks: Blocks::Indented,
             rpn: false,
             cells,
+            names,
+            held,
+            guesses: (0..GUESSES).map(|_| std::cell::Cell::new(0)).collect(),
             dyadic: HashMap::new(),
             monadic: HashMap::new(),
             precedence: HashMap::new(),
@@ -530,7 +550,8 @@ impl Table {
         table.ident = table.lone("language").unwrap_or("").to_string();
         table.check()?;
         let extra_ends = table.strings("ext.stmt.terminator").to_vec();
-        if let Some(Entry::Strings(ends)) = table.cells.get_mut("stmt.terminator") {
+        let terminator = table.cells.get("stmt.terminator").copied();
+        if let Some(Entry::Strings(ends)) = terminator.map(|at| &mut table.held[at]) {
             ends.extend(extra_ends);
         }
         table.precedence_tables()?;
@@ -562,8 +583,19 @@ impl Table {
         self.builtin_continuations.get(prefix).map_or(&[], Vec::as_slice)
     }
 
+    fn cell(&self, key: &str) -> Option<&Entry> {
+        let hint = ((key.as_ptr() as usize >> 3) ^ key.len().wrapping_mul(0x9e37)) % GUESSES;
+        let guess = self.guesses[hint].get() as usize;
+        if guess != 0 && self.names[guess - 1] == key {
+            return Some(&self.held[guess - 1]);
+        }
+        let at = *self.cells.get(key)?;
+        self.guesses[hint].set(at as u32 + 1);
+        Some(&self.held[at])
+    }
+
     pub fn strings(&self, key: &str) -> &[String] {
-        match self.cells.get(key) {
+        match self.cell(key) {
             Some(Entry::Strings(l)) => l,
             _ => panic!("'{key}' is not a list label"),
         }
@@ -573,7 +605,7 @@ impl Table {
     /// such label. It is for a kernel asking after a label by a name it
     /// puts together rather than one the roster writes out.
     pub fn loose_strings(&self, key: &str) -> &[String] {
-        match self.cells.get(key) {
+        match self.cell(key) {
             Some(Entry::Strings(words)) => words,
             _ => &[],
         }
@@ -585,7 +617,14 @@ impl Table {
     /// It is for a label whose worth a run is started with rather than
     /// written into the definition.
     pub fn put_by(&mut self, key: &'static str) {
-        self.cells.insert(key, Entry::Strings(Vec::new()));
+        match self.cells.get(key).copied() {
+            Some(at) => self.held[at] = Entry::Strings(Vec::new()),
+            None => {
+                self.held.push(Entry::Strings(Vec::new()));
+                self.names.push(key);
+                self.cells.insert(key, self.held.len() - 1);
+            }
+        }
     }
 
     /// A required ending or an optional parting between statements.
@@ -621,7 +660,7 @@ impl Table {
     }
 
     pub fn flag(&self, key: &str) -> bool {
-        matches!(self.cells.get(key), Some(Entry::Flag(true)))
+        matches!(self.cell(key), Some(Entry::Flag(true)))
     }
 
     /// The number of the in-place method a compound working asks the
@@ -673,21 +712,21 @@ impl Table {
     }
 
     pub fn count(&self, key: &str) -> Option<usize> {
-        match self.cells.get(key) {
+        match self.cell(key) {
             Some(Entry::Count(n)) => *n,
             _ => None,
         }
     }
 
     pub fn lone(&self, key: &str) -> Option<&str> {
-        match self.cells.get(key) {
+        match self.cell(key) {
             Some(Entry::One(w)) => w.as_deref(),
             _ => None,
         }
     }
 
     fn tiers(&self) -> &[Vec<String>] {
-        match self.cells.get("op.precedence") {
+        match self.cell("op.precedence") {
             Some(Entry::Tiers(t)) => t,
             _ => &[],
         }
