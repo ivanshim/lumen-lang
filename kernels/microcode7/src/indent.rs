@@ -216,6 +216,8 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
             }
             if rising {
                 if n <= *characters.last().unwrap() { return Err(("TabError: inconsistent use of tabs and spaces in indentation".to_owned(), t.row, 1)); }
+                // CPython refuses a hundred levels of indentation.
+                if widths.len() >= 100 { return Err(("IndentationError: too many levels of indentation".to_owned(), t.row, t.column)); }
                 widths.push(t.span); characters.push(n);
                 let mut boundary = t.clone(); boundary.shape = Shape::Open; boundary.column = n + 1; output.push(boundary);
             } else {
