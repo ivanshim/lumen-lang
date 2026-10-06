@@ -25304,14 +25304,19 @@ impl Engine<'_> {
             Value::Object(tree) => {
                 // A tree from the library's ast reader keeps the text it
                 // was read from; compiling the tree compiles that text.
-                let fields = tree.fields.borrow();
-                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source");
+                let held = {
+                    let fields = tree.fields.borrow();
+                    fields.iter().find(|(word, _)| word == "_lumen_tree_source").map(|(_, value)| value.contents())
+                };
                 match held {
-                    Some((_, value)) => match value.contents() {
-                        Value::Text(source) => source,
-                        _ => return Err(self.source_unready()),
+                    Some(Value::Text(source)) => source,
+                    // Anything else handed over may still be a row of
+                    // bytes behind the buffer it exports, which the
+                    // reference reads the same way it reads bytes.
+                    _ => match self.number_buffer(&Value::Object(tree))? {
+                        Some(row) => self.source_bytes(&row, &file)?,
+                        None => return Err(self.source_unready()),
                     },
-                    None => return Err(self.source_unready()),
                 }
             }
             _ => return Err(self.source_unready()),
@@ -25325,6 +25330,31 @@ impl Engine<'_> {
         if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        // PyCF_ONLY_AST: the value handed back is the syntax tree the
+        // library's reader builds rather than a code value, and
+        // PyCF_OPTIMIZED_AST has the names the optimiser settles first
+        // folded in.
+        if flags & 1024 != 0 {
+            let module = match self.import_module("ast") {
+                Ok(module) => module,
+                Err(Fault::Note(told)) => return Err(told),
+                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+            };
+            let reader = match self.class_get(module, "_tree_for_compile", false) {
+                Ok(reader) => reader.contents(),
+                Err(Fault::Note(told)) => return Err(told),
+                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+            };
+            let comments = if flags & 4096 != 0 { 1 } else { 0 };
+            let settling = if flags & 32768 != 0 {
+                match args.get(5).map(Value::contents) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
+            } else { -1 };
+            return match self.class_apply(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
+                Ok(tree) => Ok(tree),
+                Err(Fault::Note(told)) => Err(told),
+                Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+            };
         }
         let allow_top_await = flags & 8192 != 0;
         let tokens = match self.text_tokens(&source, mode) {

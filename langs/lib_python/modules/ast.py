@@ -1057,10 +1057,12 @@ _CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
 _UNARY = {'+': UAdd, '-': USub, '~': Invert}
 
 class _Parser:
-    def __init__(self, source, toks):
+    def __init__(self, source, toks, optimize=-1, fold_debug=False):
         self.source = source
         self.toks = toks
         self.at = 0
+        self.optimize = optimize
+        self.fold_debug = fold_debug
 
     def peek(self):
         return self.toks[self.at]
@@ -1356,6 +1358,8 @@ class _Parser:
                 return self.keyword_constant(tok, False)
             if word == 'None':
                 return self.keyword_constant(tok, None)
+            if word == '__debug__' and (self.fold_debug or self.optimize >= 1):
+                return self.keyword_constant(tok, self.optimize < 1)
             if word in _STMT_WORDS or word in ('and', 'or', 'is', 'in', 'not', 'if', 'else'):
                 _no_tree()
             node = Name(id=word, ctx=Load(), lineno=tok.srow,
@@ -1616,12 +1620,12 @@ def _check_type_comments(toks, comments):
         after_comma = False
 
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
-          feature_version=None, optimize=-1):
+          feature_version=None, optimize=-1, fold_debug=False):
     if type(source) != type(''):
         _no_tree()
     if mode == 'eval':
         toks = _lex(source, 0, len(source), 1, 0, False)
-        parser = _Parser(source, toks)
+        parser = _Parser(source, toks, optimize, fold_debug)
         while parser.peek().kind == 'newline':
             parser.pop()
         node, ls, le = parser.parse_expr(False)
@@ -1634,10 +1638,22 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
     toks = _lex(source, 0, len(source), 1, 0, False, comments)
     if type_comments:
         _check_type_comments(toks, comments)
-    parser = _Parser(source, toks)
+    parser = _Parser(source, toks, optimize, fold_debug)
     tree = parser.parse_module()
     tree._lumen_tree_source = source
     return tree
+
+def _tree_for_compile(source, filename, mode, type_comments, optimize):
+    # compile() reaches the reader with the flags already read: whether
+    # type comments were asked for, and the optimisation those flags
+    # imply, both positional because the kernels' own call carries no
+    # keywords. A level below nought is PyCF_ONLY_AST alone, whose tree
+    # leaves the names the optimiser would settle as they are; a level
+    # from nought up is PyCF_OPTIMIZED_AST, whose tree settles them.
+    if optimize < 0:
+        return parse(source, filename, mode, type_comments=bool(type_comments))
+    return parse(source, filename, mode, type_comments=bool(type_comments),
+                 optimize=optimize, fold_debug=True)
 
 def unparse(ast_obj):
     raise _NO_TREE

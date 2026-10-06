@@ -25680,7 +25680,13 @@ impl<'a> Machine<'a> {
                 }
                 match carried {
                     Some(Value::Text(s)) => s,
-                    _ => return Err(self.source_refused()),
+                    // Failing that it may be some other bearer of a
+                    // buffer whose bytes the reference would read as
+                    // the source just the same.
+                    _ => match self.octet_argument(&v[0])? {
+                        Some(row) => self.decode_program(&row, &file)?,
+                        None => return Err(self.source_refused()),
+                    },
                 }
             }
             _ => return Err(self.source_refused()),
@@ -25694,6 +25700,23 @@ impl<'a> Machine<'a> {
         if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        // PyCF_ONLY_AST: the value handed back is the syntax tree the
+        // library's reader builds, not a code value; PyCF_OPTIMIZED_AST
+        // asks that tree with the names the optimiser settles already
+        // folded in.
+        if flags & 1024 != 0 {
+            let namespace = self.load_namespace("ast")?;
+            let reader = self.namespace_item(&namespace, "ast", "_tree_for_compile")?;
+            let comments = if flags & 4096 != 0 { 1 } else { 0 };
+            let settling = if flags & 32768 != 0 {
+                match v.get(5).map(Value::settled) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
+            } else { -1 };
+            return match self.apply_class_member(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
+                Ok(tree) => Ok(tree),
+                Err(Escape::Error(told)) => Err(told),
+                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+            };
         }
         let top_await = flags & 8192 != 0;
         self.report_escape_notices(&source, &file, None)?;
