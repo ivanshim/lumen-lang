@@ -16,7 +16,7 @@ def _check_format(format):
     if format not in _FORMAT_NAMES:
         raise 'ValueError: ' + str(format) + ' is not a valid Format'
     if format == Format.VALUE_WITH_FAKE_GLOBALS:
-        raise NotImplementedError("annotationlib cannot give annotations with fake globals here")
+        raise ValueError("The VALUE_WITH_FAKE_GLOBALS format is for internal use only")
 
 def get_annotate_from_class_namespace(obj):
     # A class body here never leaves an __annotate__ behind.
@@ -35,20 +35,37 @@ def get_annotate_from_class_namespace(obj):
             return result
         return annotate
 
+def _string_value(text):
+    # An annotation that is itself a string stands for that string.
+    if isinstance(text, str) and text[:1] in ('"', "'"):
+        try:
+            node = ast.parse(text, mode='eval').body
+        except SyntaxError:
+            return text
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+    return text
+
 def call_annotate_function(annotate, format, owner=None):
     _check_format(format)
+    # An annotate function may give the format itself: the ones written
+    # down here do for the text format, and dataclasses does for both.
+    try:
+        answered = annotate(format)
+    except NotImplementedError:
+        pass
+    else:
+        if format == Format.STRING:
+            return {key: _string_value(text) for key, text in answered.items()}
+        return answered
     if format == Format.STRING:
-        # A function that was written down here keeps the text of each of
-        # its annotations; any other annotate function cannot give them.
-        try:
-            return annotate(Format.STRING)
-        except NotImplementedError:
-            raise NotImplementedError("annotationlib cannot produce unevaluated annotation strings here")
+        # Without symbolic evaluation the values stand for their own text.
+        return {key: value if isinstance(value, str) else type_repr(value)
+                for key, value in annotate(Format.VALUE).items()}
     try:
         return annotate(Format.VALUE)
     except NameError:
-        if format != Format.FORWARDREF:
-            raise
+        pass
     # Some name is not there yet: each annotation is read again from its
     # written form, and the ones that cannot be worked out stand as
     # references to be resolved later.

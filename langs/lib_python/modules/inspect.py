@@ -182,7 +182,17 @@ class Signature:
         defaults = getattr(obj, '__defaults__', None) or ()
         kwdefaults = getattr(obj, '__kwdefaults__', None) or {}
         import annotationlib
-        notes = annotationlib.get_annotations(obj, format=annotation_format)
+        try:
+            notes = annotationlib.get_annotations(obj, format=annotation_format)
+        except NameError:
+            # Asked for in the value format a missing name is the caller's
+            # fault, as it is in the reference. In any other format the
+            # reference never fails; here an annotation written in a class
+            # body that names something not yet there cannot be told apart
+            # from the rest, so the whole row is left out of the text.
+            if annotation_format == annotationlib.Format.VALUE:
+                raise
+            notes = {}
 
         def written(name, prefix=''):
             # name, then its annotation, as Parameter.__str__ writes them
