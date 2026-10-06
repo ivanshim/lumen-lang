@@ -2,6 +2,7 @@
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
 import math as _math
 from _operator import index as _index
+from operator import length_hint as _length_hint
 from posix import _call as _posix_call
 
 error = OSError
@@ -80,16 +81,41 @@ class _Select:
             usec = (ns + 999) // 1000
         waiting = []
         for items in (rlist, wlist, xlist):
-            items = list(items)
+            # PySequence_Fast retains exact lists/tuples. Only failure
+            # to acquire an iterator replaces TypeError; consumption
+            # retains its own errors and list-conversion semantics.
+            if type(items) is not list and type(items) is not tuple:
+                try:
+                    iterator = iter(items)
+                except TypeError:
+                    raise TypeError('arguments 1-3 must be sequences')
+                # PySequence_List acquires the iterator again, then checks
+                # the offered iterator's hint before consuming any items.
+                walk = iter(iterator)
+                hint = int.__index__(_length_hint(iterator, 8))
+                if hint > 9223372036854775807:
+                    raise OverflowError('Python int too large to convert to C ssize_t')
+                items = []
+                while True:
+                    try:
+                        item = next(walk)
+                    except StopIteration:
+                        break
+                    items.append(item)
+            objects = []
             fds = []
-            for item in items:
+            index = 0
+            while index < len(items):
+                item = items[index]
                 fd = _as_fd(item)
-                # Conversion of the overflowing entry precedes the count
-                # check, just as seq2set does, including duplicate entries.
+                # Conversion precedes the entry-count check. Retain the
+                # converted object even if fileno() changes the live list.
                 if len(fds) >= FD_SETSIZE:
                     raise ValueError('too many file descriptors in select()')
+                objects.append(item)
                 fds.append(fd)
-            waiting.append((items, fds))
+                index += 1
+            waiting.append((objects, fds))
         ready = _posix_call('select', waiting[0][1], waiting[1][1], waiting[2][1], usec)
         return tuple([item for item, fd in zip(items, fds) if fd in ready[at]]
                      for at, (items, fds) in enumerate(waiting))
