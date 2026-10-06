@@ -472,3 +472,7 @@ def getfilesystemencoding():
 def getfilesystemencodeerrors():
     return "surrogateescape"
 
+
+def getdefaultencoding():
+    return "utf-8"
+
