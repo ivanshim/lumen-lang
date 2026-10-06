@@ -84,6 +84,9 @@ impl Value {
             Self::Wrapped(134, _) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _))) => "builtin_function_or_method",
             Self::Wrapped(14, _) => "builtin_function_or_method",
+            // A slot's own descriptor is a member; the two layout names
+            // it never is, __weakref__ and __dict__, read as attributes.
+            Self::Wrapped(32, parts) => if parts.len() == 2 && matches!(parts.first(), Some(Value::Text(name)) if &**name != "__weakref__") { "member_descriptor" } else { "getset_descriptor" },
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
