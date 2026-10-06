@@ -72,6 +72,62 @@ fn place(number:i64,size:usize)->usize {
     (positive as usize).min(size)
 }
 
+/// Cut a run of code units on a separator run, or on runs of blank
+/// space where none was given, with at most `quota` cuts. An empty
+/// separator is refused and every piece keeps the units it held.
+pub(crate) fn cut_units(units: &[u32], separator: Option<&[u32]>, quota: usize, from_end: bool) -> Option<Vec<Vec<u32>>> {
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    if let Some(sep) = separator {
+        if sep.is_empty() { return None; }
+        let width = sep.len();
+        let mut fence = if from_end { units.len() } else { 0 };
+        while pieces.len() < quota {
+            let hit = if from_end {
+                if fence < width { None }
+                else { (0..=fence - width).rev().find(|&at| units[at..at + width] == sep[..]) }
+            } else if fence + width > units.len() { None }
+            else { (fence..=units.len() - width).find(|&at| units[at..at + width] == sep[..]) };
+            let Some(at) = hit else { break };
+            if from_end {
+                pieces.push(units[at + width..fence].to_vec());
+                fence = at;
+            } else {
+                pieces.push(units[fence..at].to_vec());
+                fence = at + width;
+            }
+        }
+        if from_end { pieces.push(units[..fence].to_vec()); pieces.reverse(); }
+        else { pieces.push(units[fence..].to_vec()); }
+    } else {
+        let gap = |n: u32| matches!(n, 0x1c..=0x1f) || char::from_u32(n).is_some_and(char::is_whitespace);
+        if from_end {
+            let mut fence = units.len();
+            loop {
+                while fence > 0 && gap(units[fence - 1]) { fence -= 1; }
+                if fence == 0 { break; }
+                if pieces.len() == quota { pieces.push(units[..fence].to_vec()); break; }
+                let mut at = fence;
+                while at > 0 && !gap(units[at - 1]) { at -= 1; }
+                pieces.push(units[at..fence].to_vec());
+                fence = at;
+            }
+            pieces.reverse();
+        } else {
+            let mut fence = 0;
+            loop {
+                while fence < units.len() && gap(units[fence]) { fence += 1; }
+                if fence >= units.len() { break; }
+                if pieces.len() == quota { pieces.push(units[fence..].to_vec()); break; }
+                let mut at = fence;
+                while at < units.len() && !gap(units[at]) { at += 1; }
+                pieces.push(units[fence..at].to_vec());
+                fence = at;
+            }
+        }
+    }
+    Some(pieces)
+}
+
 impl Request<'_> {
     fn fail(&self,key:&str)->String{(self.complaint)(key)}
     fn unknown(&self)->String{(self.unanswered)(self.target,self.operation)}
@@ -124,6 +180,9 @@ impl Request<'_> {
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
+            // Code units standing in for a stowed surrogate half still
+            // split, and each piece keeps the units it was cut from.
+            Value::Unpaired(numbers) if self.operation=="split" || self.operation=="rsplit" => self.split_units(&numbers),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
@@ -214,7 +273,23 @@ impl Request<'_> {
             let trimmed=if op=="lstrip"{s.trim_start_matches(removes)}else if op=="rstrip"{s.trim_end_matches(removes)}else{s.trim_matches(removes)};
             return Ok(Value::text(trimmed));
         }
-        if op=="split"||op=="rsplit"{return self.split_text(s);}
+        if op=="split"||op=="rsplit"{
+            self.takes(0, 2)?;
+            // The cut count is read first, as CPython reads it, so a
+            // supplied None or non-integer is refused before any cut.
+            if let Some(given) = self.given.get(1) {
+                match given.settled() {
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {}
+                    other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word())),
+                }
+            }
+            // A separator that stows a surrogate half cannot occur in a
+            // text that stows none, so no cut is made.
+            if matches!(self.given.first().map(|v| v.settled()), Some(Value::Unpaired(_))) {
+                return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(s)])).keep(true));
+            }
+            return self.split_text(s);
+        }
         if op=="join"{
             // Written into the one answer as the members come, rather
             // than into a row of pieces that is then thrown away.
@@ -297,6 +372,26 @@ impl Request<'_> {
         }
         if reverse{chunks.reverse();}
         Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.iter().map(|part|Value::text(part)).collect::<Vec<_>>())).keep(true))
+    }
+    fn split_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 2)?;
+        let separator = match self.given.first().map(|v| v.settled()) {
+            Some(Value::Nil) | None => None,
+            Some(v) => Some(v.character_numbers().ok_or_else(|| self.fail("arguments"))?),
+        };
+        let quota = match self.given.get(1) {
+            None => -1i64,
+            Some(v) => match v.settled() {
+                Value::Small(n) => n,
+                Value::Huge(n) => n.to_i64().unwrap_or_else(|| if n.is_negative() { i64::MIN } else { i64::MAX }),
+                Value::Flag(b) => i64::from(b),
+                other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word())),
+            },
+        };
+        let quota = if quota < 0 { usize::MAX } else { quota as usize };
+        let pieces = cut_units(units, separator.as_deref(), quota, self.operation == "rsplit")
+            .ok_or_else(|| self.fail("separator"))?;
+        Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect::<Vec<_>>())).keep(true))
     }
     fn trim_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 1)?;

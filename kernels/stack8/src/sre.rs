@@ -363,6 +363,33 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let Some(Value::Text(name)) = args.get(1) else { return Err("TypeError: argument must be str".into()); };
         return crate::unicode::named_text(name).map(|text| Value::text(&text)).ok_or_else(|| "KeyError: undefined character name".into());
     }
+    if op == 11 {
+        let supplied = args.get(1).ok_or_else(|| "TypeError: normalize() argument 2 must be str".to_string())?;
+        let codes = supplied.type_text().text_codes().ok_or_else(|| {
+            let kind = match supplied.contents() { Value::Null => "None".to_string(), other => other.core_kind() };
+            format!("TypeError: normalize() argument 2 must be str, not {kind}")
+        })?;
+        // A run between two stowed halves folds on its own; each half
+        // is carried across untouched, as CPython carries it.
+        let mut out: Vec<u32> = Vec::with_capacity(codes.len());
+        let mut run = String::new();
+        for n in codes {
+            match char::from_u32(n) {
+                Some(c) => run.push(c),
+                None => {
+                    out.extend(crate::unicode::normalized(&run).chars().map(u32::from));
+                    run.clear();
+                    out.push(n);
+                }
+            }
+        }
+        out.extend(crate::unicode::normalized(&run).chars().map(u32::from));
+        return Ok(Value::from_codes(out));
+    }
+    if op == 12 {
+        let point = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
+        return Ok(Value::text(&crate::unicode::decomposition(point)));
+    }
     if !matches!(op, 0 | 7 | 8) {
         let n = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
         return Ok(if op == 1 || op == 2 { Value::Small(lower(n, op == 1) as i64) }

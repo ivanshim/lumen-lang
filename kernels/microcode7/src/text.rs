@@ -233,6 +233,28 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
     Ok(Value::Dict(Rc::new(entries.into())))
 }
 
+/// Split a text or a row of stowed code units on a separator of
+/// either kind, validating the cut count the way CPython does.
+fn split_unpaired(input: &[Value], from_end: bool, table: &Table) -> Result<Value, String> {
+    if input.len() > 3 { return Err(complaint(table, "arguments")); }
+    let units = input[0].character_numbers().ok_or_else(|| complaint(table, "receiver"))?;
+    let separator = match input.get(1) {
+        None => None,
+        Some(v) => match v.settled() {
+            Value::Nil => None,
+            other => Some(other.character_numbers().ok_or_else(|| complaint(table, "arguments"))?),
+        },
+    };
+    let quota = match input.get(2) {
+        None => -1i64,
+        Some(v) => count(v, table)?,
+    };
+    let quota = if quota < 0 { usize::MAX } else { quota as usize };
+    let pieces = crate::members::cut_units(&units, separator.as_deref(), quota, from_end)
+        .ok_or_else(|| complaint(table, "separator"))?;
+    Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect::<Vec<_>>())).keep(true))
+}
+
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
     let settled: Vec<Value> = input.iter().map(Value::settled).collect();
     let input = settled.as_slice();
@@ -254,6 +276,9 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let mut operands = input.to_vec(); operands[0] = Value::text(&string);
             let answer = apply(table, work, _name, &operands, names)?;
             return Ok(if work == ISASCII { Value::Flag(false) } else { answer });
+        }
+        if matches!(work, SPLIT | RSPLIT) {
+            return split_unpaired(input, work == RSPLIT, table);
         }
     }
     let Some(Value::Text(subject))=input.first() else {return Err(complaint(table,"receiver"));};
@@ -376,6 +401,9 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         SPLIT|RSPLIT=>{
             let maximum=g.whole(1,-1)?;
             let quota=if maximum<0 {usize::MAX} else {maximum as usize};
+            if matches!(g.tail.first(), Some(Value::Unpaired(_))) {
+                return split_unpaired(input, work == RSPLIT, table);
+            }
             let on=match g.tail.first() {None|Some(Value::Nil)=>None,Some(v)=>Some(letters(v,table)?)};
             let mut divided=Vec::new();let mut remaining=source;
             if on==Some("") {return Err(g.bad("separator"));}

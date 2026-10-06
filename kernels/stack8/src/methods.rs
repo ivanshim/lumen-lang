@@ -89,6 +89,66 @@ fn bound(n: i64, length: usize) -> usize {
     if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length) }
 }
 
+/// Cut a row of code units into pieces on a separator row, or on runs
+/// of whitespace where none was given, with at most `limit` cuts. An
+/// empty separator is refused; every piece keeps the units it held.
+pub(crate) fn split_units(units: &[u32], separator: Option<&[u32]>, limit: usize, reverse: bool) -> Result<Vec<Vec<u32>>, ()> {
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    match separator {
+        Some(sep) => {
+            if sep.is_empty() { return Err(()); }
+            if reverse {
+                let mut stop = units.len();
+                while pieces.len() < limit {
+                    if stop < sep.len() { break; }
+                    let Some(at) = (0..=stop - sep.len()).rev().find(|&at| units[at..at + sep.len()] == *sep) else { break };
+                    pieces.push(units[at + sep.len()..stop].to_vec());
+                    stop = at;
+                }
+                pieces.push(units[..stop].to_vec());
+                pieces.reverse();
+            } else {
+                let mut begin = 0;
+                while pieces.len() < limit {
+                    if begin + sep.len() > units.len() { break; }
+                    let Some(at) = (begin..=units.len() - sep.len()).find(|&at| units[at..at + sep.len()] == *sep) else { break };
+                    pieces.push(units[begin..at].to_vec());
+                    begin = at + sep.len();
+                }
+                pieces.push(units[begin..].to_vec());
+            }
+        }
+        None => {
+            let blank = |n: u32| (28..=31).contains(&n) || char::from_u32(n).is_some_and(char::is_whitespace);
+            if reverse {
+                let mut stop = units.len();
+                loop {
+                    while stop > 0 && blank(units[stop - 1]) { stop -= 1; }
+                    if stop == 0 { break; }
+                    if pieces.len() == limit { pieces.push(units[..stop].to_vec()); break; }
+                    let mut begin = stop;
+                    while begin > 0 && !blank(units[begin - 1]) { begin -= 1; }
+                    pieces.push(units[begin..stop].to_vec());
+                    stop = begin;
+                }
+                pieces.reverse();
+            } else {
+                let mut begin = 0;
+                loop {
+                    while begin < units.len() && blank(units[begin]) { begin += 1; }
+                    if begin >= units.len() { break; }
+                    if pieces.len() == limit { pieces.push(units[begin..].to_vec()); break; }
+                    let mut stop = begin;
+                    while stop < units.len() && !blank(units[stop]) { stop += 1; }
+                    pieces.push(units[begin..stop].to_vec());
+                    begin = stop;
+                }
+            }
+        }
+    }
+    Ok(pieces)
+}
+
 /// The names a value of a builtin kind answers to, by the working
 /// each stands for. A kind answers its own alone: a list appends, a
 /// tuple does not.
@@ -197,6 +257,29 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             };
             return Ok(Value::Flag(valid));
         }
+        // A string kept as code units because a surrogate half cannot
+        // live in a Rust str still splits, and each piece keeps the
+        // units it was cut from.
+        Value::Codepoints(row) if op == "split" || op == "rsplit" => {
+            arity(0, 2)?;
+            let separator = match a.first().map(Value::contents) {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.text_codes().ok_or_else(|| fault("arguments"))?),
+            };
+            let raw = match a.get(1) {
+                None => -1i64,
+                Some(v) => match v.contents() {
+                    Value::Small(n) => n,
+                    Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
+                    Value::Flag(b) => i64::from(b),
+                    other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+                },
+            };
+            let limit = if raw < 0 { usize::MAX } else { raw as usize };
+            let pieces = split_units(row.as_ref(), separator.as_deref(), limit, op == "rsplit")
+                .map_err(|_| fault("separator"))?;
+            return Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true));
+        }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;
             let number=hex_real(&s).ok_or_else(||fault("hex"))?;
@@ -231,8 +314,23 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 }
                 "split" | "rsplit" => {
                     arity(0,2)?;
-                    let limit = a.get(1).filter(|x| !matches!(x,Value::Null)).map(|x| integer(x,fault)).transpose()?.unwrap_or(-1);
-                    let limit = if limit < 0 { usize::MAX } else { limit as usize };
+                    let raw = match a.get(1) {
+                        None => -1i64,
+                        Some(v) => match v.contents() {
+                            Value::Small(n) => n,
+                            Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
+                            Value::Flag(b) => i64::from(b),
+                            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+                        },
+                    };
+                    let limit = if raw < 0 { usize::MAX } else { raw as usize };
+                    if matches!(a.first().map(Value::contents), Some(Value::Codepoints(_))) {
+                        let separator = a.first().and_then(|v| v.contents().text_codes());
+                        let codes: Vec<u32> = s.chars().map(u32::from).collect();
+                        let pieces = split_units(&codes, separator.as_deref(), limit, op == "rsplit")
+                            .map_err(|_| fault("separator"))?;
+                        return Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true));
+                    }
                     let sep = a.first().filter(|x| !matches!(x,Value::Null)).map(|x| text(x,fault)).transpose()?;
                     let mut parts: Vec<String> = Vec::new();
                     if let Some(sep) = sep {
