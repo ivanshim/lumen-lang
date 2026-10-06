@@ -274,9 +274,20 @@ impl Request<'_> {
             return Ok(Value::text(trimmed));
         }
         if op=="split"||op=="rsplit"{
+            self.takes(0, 2)?;
+            // The cut count is read first, as CPython reads it, so a
+            // supplied None or non-integer is refused before any cut.
+            if let Some(given) = self.given.get(1) {
+                match given.settled() {
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {}
+                    other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word())),
+                }
+            }
             // A separator that stows a surrogate half cannot occur in a
             // text that stows none, so no cut is made.
-            if matches!(self.given.first().map(|v| v.settled()), Some(Value::Unpaired(_))) { self.takes(0,2)?; return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(s)])).keep(true)); }
+            if matches!(self.given.first().map(|v| v.settled()), Some(Value::Unpaired(_))) {
+                return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(s)])).keep(true));
+            }
             return self.split_text(s);
         }
         if op=="join"{

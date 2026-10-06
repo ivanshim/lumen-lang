@@ -291,7 +291,11 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         };
     }
     if action == 11 {
-        let codes = input.get(1).and_then(|v| v.character_numbers()).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
+        let supplied = input.get(1).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
+        let codes = supplied.type_text().character_numbers().ok_or_else(|| {
+            let kind = match supplied.settled() { Value::Nil => "None".to_string(), other => other.kind_word() };
+            format!("TypeError: normalize() argument 2 must be str, not {kind}")
+        })?;
         // A stowed half is passed through as it stands; only the run
         // of real characters around it is folded.
         let mut folded: Vec<u32> = Vec::with_capacity(codes.len());

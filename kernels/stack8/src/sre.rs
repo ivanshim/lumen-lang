@@ -290,7 +290,11 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         return crate::unicode::named_text(name).map(|text| Value::text(&text)).ok_or_else(|| "KeyError: undefined character name".into());
     }
     if op == 11 {
-        let codes = args.get(1).and_then(|v| v.text_codes()).ok_or_else(|| "TypeError: normalize() argument 2 must be str".to_string())?;
+        let supplied = args.get(1).ok_or_else(|| "TypeError: normalize() argument 2 must be str".to_string())?;
+        let codes = supplied.type_text().text_codes().ok_or_else(|| {
+            let kind = match supplied.contents() { Value::Null => "None".to_string(), other => other.core_kind() };
+            format!("TypeError: normalize() argument 2 must be str, not {kind}")
+        })?;
         // A run between two stowed halves folds on its own; each half
         // is carried across untouched, as CPython carries it.
         let mut out: Vec<u32> = Vec::with_capacity(codes.len());
