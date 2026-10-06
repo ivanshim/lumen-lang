@@ -250,8 +250,22 @@ fn heredoc_at(text: &str, lang: &Lang) -> Option<Heredoc> {
     }
 }
 
+// Only names continued by punctuation need the longest-builtin scan.
+// Index them by the identifier already consumed, once per cursor tree.
+fn continued_names(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<String, Vec<String>>> {
+    let mut names: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
+        let head: String = name.chars().enumerate()
+            .take_while(|(at, letter)| *at == 0 || lang.extends_name(*letter))
+            .map(|(_, letter)| letter).collect();
+        if head.len() < name.len() { names.entry(head).or_default().push(name.clone()); }
+    }
+    std::rc::Rc::new(names)
+}
+
 struct Cursor<'a> {
     lang: &'a Lang,
+    continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
     text: Vec<char>,
     at: usize,
     row: usize,
@@ -915,7 +929,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(message) = inner.run(false) {
             self.row = inner.row;
             self.column = inner.column;
@@ -1170,7 +1184,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+            let mut inner = Cursor { lang, continued: self.continued.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1287,16 +1301,16 @@ impl<'a> Cursor<'a> {
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
-        for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
+        for name in self.continued.get(&s).into_iter().flatten() {
+            if name.len() <= s.len() || !name.starts_with(s.as_str()) {
+                continue;
+            }
             // Where the printer follows the module's own stream, the
             // stream names and the writer reached through them are
             // members read one dot at a time, not words of their own.
             let stream_word = Lang::spells(&lang.print_file_error, name) || Lang::spells(&lang.print_file_output, name)
                 || lang.builtins.get(name) == Some(&crate::code::Builtin::Echo);
             if stream_word && !lang.print_route.is_empty() { continue; }
-            if name.len() <= s.len() || !name.starts_with(s.as_str()) {
-                continue;
-            }
             let tail: Vec<char> = name[s.len()..].chars().collect();
             let fits = tail.iter().enumerate().all(|(i, c)| self.look(i) == Some(*c));
             let ends = self.look(tail.len()).map_or(true, |c| !lang.extends_name(c));
@@ -1498,7 +1512,7 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+    let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
@@ -1513,7 +1527,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+            let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1708,7 +1722,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }

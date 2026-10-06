@@ -42,3 +42,12 @@ def fromfd(fd, family, type, proto=0):
     """Create a socket from a duplicate of the supplied descriptor."""
     nfd = dup(fd)
     return socket(family, type, proto, nfd)
+error = OSError
+
+class gaierror(OSError):
+    pass
+
+class herror(OSError):
+    pass
+
+timeout = TimeoutError

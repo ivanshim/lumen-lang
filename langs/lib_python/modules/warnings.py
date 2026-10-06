@@ -82,9 +82,31 @@ def _location(stacklevel):
     return [frame.f_code.co_filename, frame.f_lineno]
 
 
-def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=None):
-    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
-        raise NotImplementedError('warning frame prefix selection cannot run yet')
+def _outside(prefixes, stacklevel):
+    # Begin at warn's caller, then count the requested external callers.
+    # Prefix matches do not consume any of the requested depth.
+    calls = __warning_calls()
+    remaining = max(2, stacklevel) - 1
+    for at in range(2, len(calls)):
+        frame = calls[at]
+        file = frame['file']
+        if any(file.startswith(prefix) for prefix in prefixes):
+            continue
+        remaining -= 1
+        if remaining == 0:
+            return [file, frame['line']]
+    return ['<sys>', 0]
+
+def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=()):
+    if not isinstance(stacklevel, int) and not hasattr(type(stacklevel), '__index__'):
+        raise TypeError("'" + type(stacklevel).__name__ + "' object cannot be interpreted as an integer")
+    import operator
+    stacklevel = operator.index(stacklevel)
+    if not isinstance(skip_file_prefixes, tuple):
+        raise TypeError('skip_file_prefixes must be a tuple of strs.')
+    for prefix in skip_file_prefixes:
+        if not isinstance(prefix, str):
+            raise TypeError("Found non-str '" + type(prefix).__name__ + "' in skip_file_prefixes.")
     if isinstance(message, Warning):
         category = type(message)
     elif category is None:
@@ -93,7 +115,10 @@ def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixe
         raise TypeError('category must be a Warning subclass')
     if not isinstance(message, Warning):
         message = category(message)
-    place = _location(stacklevel)
+    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
+        place = _outside(skip_file_prefixes, stacklevel)
+    else:
+        place = _location(stacklevel)
     filename = place[0]
     module = filename
     for position in range(len(filename)):

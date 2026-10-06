@@ -798,10 +798,12 @@ impl Value {
         }
         match self {
             Value::Arguments(row) => Self::argument_text(row, words),
-            Value::Thing(thing) => match self.arguments_held() {
+            Value::Thing(thing) => {
+                if let Some(shown) = Self::gathered_representation(thing, words) { return shown; }
+                match self.arguments_held() {
                 Some(row) => {
                     let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
-                    if thing.blueprint().every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                    if thing.blueprint().has_public_field("\0import-fault") {
                         for key in ["name", "path", "name_from"] {
                             let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
                             match value {
@@ -813,6 +815,7 @@ impl Value {
                     format!("{}({})", thing.blueprint().name, shown.join(", "))
                 },
                 None => self.render(words),
+                }
             },
             Value::Vector(row) => {
                 let among = Among::members(self);
@@ -825,6 +828,24 @@ impl Value {
         }
     }
 
+    fn gathered_representation(thing: &Rc<Thing>, words: Names) -> Option<String> {
+        let holds = thing.holds.borrow();
+        let style = match holds.iter().find(|(k, _)| k == "\0source-kind") { Some((_, Value::Small(style))) => *style, _ => return None };
+        let named = thing.blueprint().name.clone();
+        let message = holds.iter().find(|(k, _)| k == "\0heading").map(|(_, v)| v.representation(words)).unwrap_or_default();
+        let parts: Vec<Value> = match holds.iter().find(|(k, _)| k == "\0gathered") {
+            Some((_, Value::Tuple(items))) => items.to_vec(),
+            _ => Vec::new(),
+        };
+        let list_like = style == 1 && matches!(holds.iter().find(|(k, _)| k == "\0raised-values"), Some((_, Value::Arguments(row))) if row.len() == 2 && matches!(row[1].settled(), Value::Vector(_)));
+        let body = if style == 2 {
+            holds.iter().find(|(k, _)| k == "\0source-repr").map(|(_, v)| v.bare()).unwrap_or_default()
+        } else if list_like {
+            format!("[{}]", parts.iter().map(|v| v.representation(words)).collect::<Vec<_>>().join(", "))
+        } else { Self::argument_text(&parts, words) };
+        Some(format!("{named}({message}, {body})"))
+    }
+
     fn argument_text(row: &[Value], words: Names) -> String {
         let contents = row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ");
         if row.len() == 1 { format!("({contents},)") } else { format!("({contents})") }
@@ -832,7 +853,7 @@ impl Value {
 
     fn arguments_held(&self) -> Option<Vec<Value>> {
         if let Value::Thing(thing) = self {
-            if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+            if thing.blueprint().has_public_field("\0fault-kind") {
                 let holds = thing.holds.borrow();
                 return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
                     Some((_, Value::Arguments(row))) => row.to_vec(),
@@ -915,7 +936,7 @@ impl Value {
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
         Some(if row.is_empty() { String::new() }
             else if row.len() > 1 { Self::argument_text(&row, words) }
-            else if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else if thing.blueprint().has_public_field("\0key-fault") { row[0].representation(words) }
             else { row[0].render(words) })
     }
 
@@ -1774,6 +1795,18 @@ impl Blueprint {
     /// class holds alone is filed under its own name and the class's
     /// together, so a class built on it may declare one of the same name
     /// without the two becoming one.
+    /// Ask whether an inherited public field exists without constructing
+    /// the complete instance layout or cloning its names and values.
+    pub fn has_public_field(&self, name: &str) -> bool {
+        let mut current = Some(self);
+        while let Some(class) = current {
+            if class.fields.iter().enumerate().any(|(at, (key, _))|
+                key == name && class.reaches.get(at) != Some(&Reach::Alone)) { return true; }
+            current = class.under.as_deref();
+        }
+        false
+    }
+
     pub fn every_field(&self) -> Vec<(String, Value)> {
         let mut all = self.under.as_ref().map_or_else(Vec::new, |u| u.every_field());
         for (at, (name, value)) in self.fields.iter().enumerate() {
