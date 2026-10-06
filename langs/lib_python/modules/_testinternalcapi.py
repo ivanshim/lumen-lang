@@ -45,4 +45,4 @@ def get_recursion_depth():
 
 
 def __getattr__(name):
-    raise 'NotImplementedError: _testinternalcapi.' + name + ' is not supported'
+    raise AttributeError("module '_testinternalcapi' has no attribute '" + name + "'")
