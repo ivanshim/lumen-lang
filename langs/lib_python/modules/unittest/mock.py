@@ -2,8 +2,8 @@
 # out again afterwards. Only the patching a test here asks for is
 # written: an attribute of a thing already in hand, replaced by a stand-in
 # that records its calls and answers what it was told to answer. The
-# wider library -- specs, autospeccing, patching by dotted name, the
-# magic methods -- refuses by name rather than standing in for itself.
+# wider library -- specs, autospeccing and unsupported magic methods --
+# refuses by name rather than standing in for itself.
 
 class _Sentinel:
     def __init__(self, word):
@@ -225,12 +225,16 @@ class MagicMock(Mock):
 
 
 class _Patch:
-    def __init__(self, target, attribute, new, create, made):
+    def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=Mock):
+        if new_callable is not None and new is not DEFAULT:
+            raise ValueError("Cannot use 'new' and 'new_callable' together")
         self.target = target
         self.attribute = attribute
         self.new = new
         self.create = create
         self.made = made
+        self.new_callable = new_callable
+        self.default_factory = default_factory
         self.temporary = None
         self.held = DEFAULT
 
@@ -248,7 +252,13 @@ class _Patch:
         else:
             self.held = DEFAULT
         if self.new is DEFAULT:
-            self.temporary = Mock(name=self.attribute, **self.made)
+            if self.new_callable is not None:
+                options = dict(self.made)
+                if isinstance(self.new_callable, type) and issubclass(self.new_callable, Mock):
+                    options['name'] = self.attribute
+                self.temporary = self.new_callable(**options)
+            else:
+                self.temporary = self.default_factory(name=self.attribute, **self.made)
         else:
             self.temporary = self.new
         setattr(self.target, self.attribute, self.temporary)
@@ -286,6 +296,47 @@ class _Patch:
         return patched
 
 
+class _MultiplePatch:
+    # Several attributes of one thing stood in for at once, each by its
+    # own stand-in or plain value, put in together and taken out together.
+    # A value left at DEFAULT makes a stand-in, and the stand-ins made are
+    # handed back in a dictionary. Should one patch refuse to start, the
+    # patches already started are undone again before the fault escapes.
+    def __init__(self, target, values, create=False, new_callable=None):
+        self.target = target
+        self.patches = []
+        self.created = {}
+        for name, value in values.items():
+            one = _Patch(target, name, value, create, {}, new_callable, MagicMock)
+            self.patches.append(one)
+            if value is DEFAULT:
+                self.created[name] = one
+
+    def __enter__(self):
+        started = []
+        try:
+            # Resolve string targets when entering, so module and object paths
+            # see the current bindings rather than those at patch construction.
+            target = self.target
+            if isinstance(target, str):
+                import pkgutil
+                target = pkgutil.resolve_name(target)
+            for one in self.patches:
+                one.target = target
+                one.start()
+                started.append(one)
+        except BaseException:
+            for one in reversed(started):
+                one.stop()
+            raise
+        return {name: one.temporary for name, one in self.created.items()}
+
+    def __exit__(self, kind, value, traceback):
+        for one in reversed(self.patches):
+            one.stop()
+        return False
+
+
 _TAKEN = ('wraps', 'return_value', 'side_effect')
 
 # A dotted name is split at its last dot: what comes before is a chain
@@ -310,24 +361,28 @@ def _get_target(target):
     return thing, attribute
 
 class _Patcher:
-    def __call__(self, target, new=DEFAULT, create=False, **extra):
+    def __call__(self, target, new=DEFAULT, create=False, new_callable=None, **extra):
         for word in extra:
             if word not in _TAKEN:
                 raise 'NotImplementedError: patch does not take ' + word
         thing, attribute = _get_target(target)
-        return _Patch(thing, attribute, new, create, extra)
+        return _Patch(thing, attribute, new, create, extra, new_callable)
 
-    def object(self, target, attribute, new=DEFAULT, create=False, **extra):
+    def object(self, target, attribute, new=DEFAULT, create=False, new_callable=None, **extra):
         for word in extra:
             if word not in _TAKEN:
                 raise 'NotImplementedError: patch.object does not take ' + word
-        return _Patch(target, attribute, new, create, extra)
+        return _Patch(target, attribute, new, create, extra, new_callable)
 
     def dict(self, target, values=None, clear=False, **extra):
         raise 'NotImplementedError: patch.dict is not supported'
 
-    def multiple(self, target, **extra):
-        raise 'NotImplementedError: patch.multiple is not supported'
+    def multiple(self, target, spec=None, create=False, spec_set=None, autospec=None, new_callable=None, **extra):
+        if spec is not None or spec_set is not None or autospec is not None:
+            raise 'NotImplementedError: patch.multiple does not take spec, spec_set or autospec'
+        if not extra:
+            raise ValueError('Must supply at least one keyword argument with patch.multiple')
+        return _MultiplePatch(target, extra, create, new_callable)
 
 patch = _Patcher()
 

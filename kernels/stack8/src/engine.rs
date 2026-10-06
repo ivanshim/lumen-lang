@@ -5484,7 +5484,17 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            return Some(Value::Bond(self.book_here(true)));
+            // Inspect the saved frame's globals, not the namespace of the
+            // code performing this inspection (which may be another module).
+            let body = match &object.fields.borrow()[6].1 { Value::Routine(code) => code.clone(), _ => return None };
+            if let Some(book) = self.constructor_book(&body) { return Some(Value::Bond(book)); }
+            if let Some(globals) = &body.globe { return Some(globals.clone()); }
+            let module = body.written_in.as_ref().and_then(|file| self.module_slots.get(file))
+                .and_then(|(_, owner)| self.modules.get(owner));
+            if let Some(Value::Object(space)) = module {
+                return Some(Value::Bond(Rc::new(RefCell::new(Value::Fields(space.clone())))));
+            }
+            return Some(Value::Bond(self.outer_book_made()));
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);

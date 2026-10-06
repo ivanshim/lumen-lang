@@ -221,6 +221,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `types.py` | runtime adapter / implementation | `36f90be33b6a1bf0e45b038426343a37c90a60bdcf016b4239c130af1d0459e3` | `8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2` |
 | `typing.py` | runtime adapter / implementation | `8cab6db1cd142fccfb5ad262197adeb9f5862795c2f3afa5ac1625e7fa569f2b` | `de569368c2c4958b7aaddbe755056860a89b1d313f69d437177864f37cb2503b` |
 | `unicodedata.py` | runtime module; no Lib counterpart | `776531547872ac6a0dc7de238c65b785c8be4fe9a1cf0ae66b2ca662a282c273` | `—` |
+| `uuid.py` | unchanged release copy (beneath provenance header) | `83529261c33ec06057420d8142fa9f8d35a50232bc011ff33d9f442d056cbd9e` | `83529261c33ec06057420d8142fa9f8d35a50232bc011ff33d9f442d056cbd9e` |
 | `unittest.py` | runtime adapter / implementation | `59844316763609ebd8d74409e324c207e9305f76a973b5e32efbebffffad554c` | `2698f2daf7a02609a6825b89cd459ebaa283dec2403c7b846315a0701bc74a0d` |
 | `unittest/mock.py` | runtime adapter / implementation | `1cd52e4f3568e9bf3e081f24129fa5fba53c517fae4ab6de4ce6b0d98444a929` | `856148cdc93943b4ff948276e94561db3d6c44ddecacf53c3d25eb7dc46a108d` |
 | `warnings.py` | runtime adapter / implementation | `ee0bf5d9c33be43a8deec328c8970c4570ef75c9496979a7abeed64aafbfad6b` | `142225786de63c593f1c9abdacf5b4fc0b05dd847f6bed0ebb4b4aa2d4d93b02` |

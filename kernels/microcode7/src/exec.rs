@@ -5587,7 +5587,23 @@ impl<'a> Machine<'a> {
                     }
                     return Some(current);
                 }
-                if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 13 {
+                    // A frame retains its own namespace even when a caller
+                    // reads it from a different execution context.
+                    let program = match item.holds.borrow()[5].1.clone() {
+                        Value::Bound(code, _) => code,
+                        _ => return None,
+                    };
+                    let handed = self.constructor_world(&program).map(Value::Shared)
+                        .or_else(|| program.globe.clone());
+                    if handed.is_some() { return handed; }
+                    let owner = program.written_in.as_ref().and_then(|file| self.loaded_spaces.get(file));
+                    if let Some(Value::Thing(module)) = owner.and_then(|name| self.imported.get(name)) {
+                        let storage = Value::Attributes(module.clone());
+                        return Some(Value::Shared(Rc::new(RefCell::new(storage))));
+                    }
+                    return Some(Value::Shared(self.world_kept()));
+                }
                 if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
                     return Some(Value::Nil);
                 }

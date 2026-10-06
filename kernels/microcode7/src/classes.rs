@@ -5105,7 +5105,7 @@ impl<'a> Machine<'a> {
                 if self.namespace_holding(&subject).is_some() {
                     self.space_member_mirror(t, key, &replacement);
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
-                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) { *link.borrow_mut() = self.collection_cell(v); return Ok(Value::Nil); }
+                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) { *link.borrow_mut() = self.collection_cell(v.settled()); return Ok(Value::Nil); }
                     if replacement.is_none() {
                         // The cell is emptied first, so the name is gone
                         // from compiled readings of it too; a name that
@@ -5123,7 +5123,7 @@ impl<'a> Machine<'a> {
                             _ => None,
                         });
                         if let Some(Value::Shared(cell)) = again {
-                            *cell.borrow_mut() = self.collection_cell(v);
+                            *cell.borrow_mut() = self.collection_cell(v.settled());
                             Self::change_entry(&mut t.holds.borrow_mut(), key, Some(Value::Shared(cell)));
                             return Ok(Value::Nil);
                         }
