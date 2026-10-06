@@ -234,15 +234,6 @@ class _Input(_BinaryInput):
 stdout = _Output()
 stderr = _Error()
 stdin = _Input()
-# The three streams stand where the reference keeps its text
-# wrappers, so a representation picks the member written for
-# that class name; each also carries the channel it stands for.
-_Output.__name__ = 'TextIOWrapper'
-_Error.__name__ = 'TextIOWrapper'
-_Input.__name__ = 'TextIOWrapper'
-stdout.name = '<stdout>'
-stderr.name = '<stderr>'
-stdin.name = '<stdin>'
 __stdout__ = stdout
 __stderr__ = stderr
 __stdin__ = stdin
