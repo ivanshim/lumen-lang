@@ -20,11 +20,15 @@ def text_encoding(encoding, stacklevel=2):
     return encoding
 
 def _index(value):
+    if type(value) is int:
+        return value
     if not hasattr(type(value), '__index__'):
         raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
     return operator.index(value)
 
 def _size(value):
+    if type(value) is int and -sys.maxsize - 1 <= value <= sys.maxsize:
+        return value
     if value is None:
         return -1
     if not hasattr(type(value), '__index__'):
@@ -35,12 +39,16 @@ def _size(value):
     return result
 
 def _ssize(value):
+    if type(value) is int and -sys.maxsize - 1 <= value <= sys.maxsize:
+        return value
     value = _index(value)
     if value > sys.maxsize or value < -sys.maxsize - 1:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return value
 
 def _whence(value):
+    if type(value) is int and -2147483648 <= value <= 2147483647:
+        return value
     value = _index(value)
     if value < -2147483648 or value > 2147483647:
         raise OverflowError('Python int too large to convert to C int')
@@ -53,6 +61,11 @@ def _get_buffer(value):
     return _buffer_view(value, 8)
 
 def _buffer(value):
+    kind = type(value)
+    if kind is bytes:
+        return value
+    if kind is bytearray:
+        return bytes(value)
     with _get_buffer(value) as view:
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -285,22 +298,28 @@ class BytesIO(_BufferedIOBase):
         self._pos += len(data)
         return data
     def write(self, b):
+        kind = type(b)
+        if kind is bytes or kind is bytearray:
+            self._checkClosed()
+            self._check_exports()
+            return self._store(b)
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
             self._checkClosed()
             self._check_exports()
-            data = view.tobytes()
-            n = len(data)
-            if not n:
-                return 0
-            if self._pos > sys.maxsize - n:
-                raise OverflowError('new position too large')
-            if self._pos > len(self._data):
-                self._data.extend(b'\0' * (self._pos - len(self._data)))
-            self._data[self._pos:self._pos + n] = data
-            self._pos += n
-            return n
+            return self._store(view.tobytes())
+    def _store(self, data):
+        n = len(data)
+        if not n:
+            return 0
+        if self._pos > sys.maxsize - n:
+            raise OverflowError('new position too large')
+        if self._pos > len(self._data):
+            self._data.extend(b'\0' * (self._pos - len(self._data)))
+        self._data[self._pos:self._pos + n] = data
+        self._pos += n
+        return n
     def seek(self, pos, whence=0):
         pos = _ssize(pos)
         whence = _whence(whence)
@@ -511,10 +530,13 @@ class StringIO(_TextIOBase):
 
 # These bridge methods call the original Python algorithms with this object's
 # state. Import is delayed because io declares the ABCs that _pyio registers.
+_methods = {}
+
 def _method(instance, kind, name):
-    import _pyio
-    cls = getattr(_pyio, kind)
-    member = getattr(cls, name)
+    member = _methods.get((kind, name))
+    if member is None:
+        import _pyio
+        member = _methods[(kind, name)] = getattr(getattr(_pyio, kind), name)
     return member.__get__(instance, type(instance))
 
 def _text_option(value, name):
@@ -680,6 +702,8 @@ class IncrementalNewlineDecoder:
     def newlines(self):
         return self._impl.newlines
 
+_PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
+
 class FileIO(_RawIOBase):
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
@@ -687,9 +711,12 @@ class FileIO(_RawIOBase):
             self.close()
         if not isinstance(mode, str):
             raise TypeError('mode must be a string')
-        base = [letter for letter in mode if letter in 'rwax']
-        if len(base) != 1 or any(letter not in 'rwax+b' for letter in mode) or mode.count('+') > 1 or mode.count('b') > 1:
-            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+        if mode in _PLAIN_MODES:
+            base = mode[0]
+        else:
+            base = [letter for letter in mode if letter in 'rwax']
+            if len(base) != 1 or any(letter not in 'rwax+b' for letter in mode) or mode.count('+') > 1 or mode.count('b') > 1:
+                raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         self._readable = base[0] == 'r' or '+' in mode
         self._writable = base[0] != 'r' or '+' in mode
         self._closefd = bool(closefd)
@@ -730,7 +757,8 @@ class FileIO(_RawIOBase):
                     if fd < 0:
                         raise ValueError('opener returned ' + str(fd))
                 owned = True
-                os.set_inheritable(fd, False)
+                if opener is not None:
+                    os.set_inheritable(fd, False)
             try:
                 file_mode = os.fstat(fd).st_mode
             except OSError as exc:
@@ -761,7 +789,8 @@ class FileIO(_RawIOBase):
     def closefd(self):
         return self._closefd
     def fileno(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._fd
     def close(self):
         if not self.closed:
@@ -773,13 +802,16 @@ class FileIO(_RawIOBase):
                 self._fd = -1
                 self._closed = True
     def readable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._readable
     def writable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._writable
     def seekable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         try:
             self.seek(0, 1)
         except OSError:
@@ -789,8 +821,10 @@ class FileIO(_RawIOBase):
         import os
         return os.isatty(self.fileno())
     def read(self, size=-1):
-        self._checkClosed()
-        self._checkReadable()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._readable:
+            raise UnsupportedOperation('File or stream is not readable.')
         size = _size(size)
         if size < 0:
             return self.readall()
@@ -800,8 +834,10 @@ class FileIO(_RawIOBase):
         except BlockingIOError:
             return None
     def readall(self):
-        self._checkClosed()
-        self._checkReadable()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._readable:
+            raise UnsupportedOperation('File or stream is not readable.')
         chunks = []
         while True:
             chunk = self.read(DEFAULT_BUFFER_SIZE)
@@ -811,6 +847,12 @@ class FileIO(_RawIOBase):
                 return b''.join(chunks)
             chunks.append(chunk)
     def readinto(self, buffer):
+        if type(buffer) is bytearray:
+            data = self.read(len(buffer))
+            if data is None:
+                return None
+            buffer[:len(data)] = data
+            return len(data)
         with _get_buffer(buffer) as view:
             if view.readonly:
                 raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
@@ -820,20 +862,25 @@ class FileIO(_RawIOBase):
             view.cast('B')[:len(data)] = data
             return len(data)
     def write(self, buffer):
-        self._checkClosed()
-        self._checkWritable()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._writable:
+            raise UnsupportedOperation('File or stream is not writable.')
         import os
         try:
             return os.write(self._fd, _buffer(buffer))
         except BlockingIOError:
             return None
     def seek(self, offset, whence=0):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         import os
         return os.lseek(self._fd, _ssize(offset), _whence(whence))
     def truncate(self, size=None):
-        self._checkClosed()
-        self._checkWritable()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._writable:
+            raise UnsupportedOperation('File or stream is not writable.')
         if size is None:
             size = self.tell()
         size = _ssize(size)
@@ -855,8 +902,23 @@ class _CheckedRaw:
             return self.raw.close()
     def __getattr__(self, name):
         return getattr(self.raw, name)
+    # What the buffered layer asks of its raw stream most often is
+    # answered here directly rather than through __getattr__.
+    def readable(self):
+        return self.raw.readable()
+    def writable(self):
+        return self.raw.writable()
+    def seekable(self):
+        return self.raw.seekable()
+    def seek(self, *args, **kwargs):
+        return self.raw.seek(*args, **kwargs)
+    def tell(self):
+        return self.raw.tell()
+    def fileno(self):
+        return self.raw.fileno()
     def readinto(self, buffer):
-        count = self.raw.readinto(memoryview(buffer))
+        raw = self.raw
+        count = raw.readinto(buffer if type(raw) is FileIO and type(buffer) is bytearray else memoryview(buffer))
         if count is None:
             return None
         try:
@@ -916,6 +978,10 @@ class BufferedReader(_BufferedIOBase):
         self._implementation = factory(_CheckedRaw(raw), size)
     @property
     def _impl(self):
+        held = self.__dict__
+        result = held.get('_implementation')
+        if result is not None and not held.get('_detached'):
+            return result
         if getattr(self, '_detached', False):
             raise ValueError('raw stream has been detached')
         result = getattr(self, '_implementation', None)

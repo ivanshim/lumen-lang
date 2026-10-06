@@ -147,9 +147,19 @@ def _decode_error(encoding, obj, start, end, reason, errors):
 def _encode_error(encoding, obj, start, end, reason, errors):
     return _handle(UnicodeEncodeError(encoding, obj, start, end, reason), errors, False)
 
+_normalized = {}
+
 def _normalize(encoding):
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str')
+    known = _normalized.get(encoding)
+    if known is not None:
+        return known
+    known = _normalize_text(encoding)
+    _normalized[encoding] = known
+    return known
+
+def _normalize_text(encoding):
     # CPython's normalize_encoding: runs of anything but alphanumerics
     # and dots collapse to one underscore, and the edges lose it.
     lowered = encoding.lower()
@@ -208,15 +218,26 @@ class CodecInfo(tuple):
         self.incrementalencoder = incrementalencoder
         self.incrementaldecoder = incrementaldecoder
 
+_built_in_codecs = {}
+
 def lookup(encoding):
     if isinstance(encoding, str):
         encoding.encode('utf-8')
         if '\0' in encoding:
             raise ValueError('embedded null character')
     name = _normalize(encoding)
+    # The lookups are remembered under the lower-cased spelling, the way
+    # the reference's own table of them is kept, so a spelling asked
+    # again is answered with the very object it was answered with before.
+    spelling = encoding.lower().replace(' ', '_')
+    built = _built_in_codecs.get(spelling)
+    if built is not None:
+        return built
     if name in _charmaps or name in ('ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'unicode_escape', 'raw_unicode_escape', 'idna'):
-        return CodecInfo(lambda obj, errors='strict': (_encode(obj, name, errors), len(obj)),
-                         lambda obj, errors='strict': (_decode(obj, name, errors), len(obj)), name={'latin_1': 'iso8859-1', 'utf_8_sig': 'utf-8-sig'}.get(name, name.replace('_', '-')))
+        built = CodecInfo(lambda obj, errors='strict': (_encode(obj, name, errors), len(obj)),
+                          lambda obj, errors='strict': (_decode(obj, name, errors), len(obj)), name={'latin_1': 'iso8859-1', 'utf_8_sig': 'utf-8-sig'}.get(name, name.replace('_', '-')))
+        _built_in_codecs[spelling] = built
+        return built
     for search in _searches:
         found = search(name)
         if found is not None:
@@ -750,7 +771,10 @@ class _IncrementalDecoder(IncrementalDecoder):
                 end = len(data)
             name += '_be' if self.order == 1 else '_le'
         if not final:
-            if name in ('utf_8', 'utf_8_sig'):
+            if (name == 'utf_8' or name == 'utf_8_sig') and (not data or data[-1] < 0x80):
+                # A last byte below 0x80 closes whatever came before it.
+                pass
+            elif name in ('utf_8', 'utf_8_sig'):
                 # Retain only a valid, unfinished UTF-8 prefix. Malformed bytes
                 # belong to the current decode and its configured error policy.
                 start = max(0, len(data) - 3)
