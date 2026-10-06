@@ -223,6 +223,11 @@ pub struct Builder<'a> {
     /// so they are gathered here and counted.
     spoken_for: Vec<String>,
     gensyms: usize,
+    /// The places a member read keeps its receiver and its result in
+    /// while it works, with the depth of the scope that owns each; a
+    /// read that raises leaves them standing, so a clause that takes
+    /// the fault lets them go.
+    member_temps: Vec<(usize, Address)>,
     gather_names: Vec<(String, String)>,
     /// The iteration variables of the comprehensions around the reader,
     /// in the order their `for` clauses were read.
@@ -592,7 +597,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -3620,10 +3625,19 @@ impl<'a> Builder<'a> {
             }
             if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
         }
+        let temps_from = self.member_temps.len();
         steps.push(self.body()?);
         for (from, manager, bounds) in contexts.into_iter().rev() {
             let enclosed = sequence(steps.split_off(from));
             steps.push(self.located(bounds, Form::Attempt { context: Some(manager), async_context: asynchronous, body: Box::new(enclosed), clauses: Vec::new(), last: None, otherwise: None }));
+        }
+        // A member read in the block that raised leaves what it held
+        // standing; once the manager has swallowed the fault, or the block
+        // ended, the places let go.
+        if table.has_any("ext.builtin.exceptions.syntax") {
+            let depth = self.layers.len();
+            let stranded: Vec<Address> = self.member_temps.drain(temps_from..).filter(|(at, _)| *at == depth).map(|(_, place)| place).collect();
+            steps.extend(stranded.into_iter().map(Form::Forget));
         }
         Ok(sequence(steps))
     }
@@ -4048,7 +4062,14 @@ impl<'a> Builder<'a> {
         let table = self.table;
         self.advance();
         let bare_clauses = table.single("ext.stmt.catch.as").is_some();
+        let temps_from = self.member_temps.len();
         let body = self.guarded_attempt_body(bare_clauses)?;
+        // What the body's member reads were holding when one of them
+        // raised is let go as a clause takes the fault.
+        let depth = self.layers.len();
+        let stranded: Vec<Address> = if table.has_any("ext.builtin.exceptions.syntax") {
+            self.member_temps.drain(temps_from..).filter(|(at, _)| *at == depth).map(|(_, place)| place).collect()
+        } else { Vec::new() };
         let open = table.single("syntax.group.open").ok_or_else(|| "A catch needs syntax.group".to_string())?.to_string();
         let close = table.single("syntax.group.close").unwrap().to_string();
         let mut clauses: Vec<Clause> = Vec::new();
@@ -4149,6 +4170,11 @@ impl<'a> Builder<'a> {
             let body = match (&held, self.in_class_body()) {
                 (Some(place), true) => sequence(vec![body, Form::Forget(place.clone())]),
                 _ => body,
+            };
+            let body = if stranded.is_empty() { body } else {
+                let mut steps: Vec<Form> = stranded.iter().map(|place| Form::Forget(place.clone())).collect();
+                steps.push(body);
+                sequence(steps)
             };
             if takes_all {
                 all_at = Some(origin);
@@ -10598,6 +10624,8 @@ impl<'a> Builder<'a> {
                 // The subject is forgotten once the member is reached or
                 // called: what it holds must go when the program lets go.
                 let reached = self.gensym("reached");
+                self.member_temps.push((self.layers.len(), held.clone()));
+                self.member_temps.push((self.layers.len(), reached.clone()));
                 node = sequence(vec![save, Form::Write(reached.clone(), Box::new(branch)), Form::Forget(held), Form::Release(reached)]);
                 continue;
             }
