@@ -9876,24 +9876,32 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
-        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.spelling()) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
+        if Lang::spells(&lang.special_stop, &tok.spelling())
+            && !lang.exceptions.iter().any(|w| w == tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
-        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.spelling()) {
+        // The words for the lone value and the one a method declines with
+        // are literals only where the name is not kept this scope; a
+        // parameter or local of that name reads as the name it is.
+        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
         // The value a method declines an operation with, written by name.
-        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.spelling()) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
