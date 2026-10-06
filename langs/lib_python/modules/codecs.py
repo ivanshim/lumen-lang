@@ -339,7 +339,7 @@ def _utf7_encode(text):
                 result += '-'
     return result.encode('ascii')
 
-def _utf7_decode(data, errors):
+def _utf7_decode(data, errors, final=True):
     result = ''
     i = 0
     while i < len(data):
@@ -351,21 +351,38 @@ def _utf7_decode(data, errors):
                 result += '+'
                 i += 1
                 continue
+            shift_start = len(result)
             bits = 0
             count = 0
-            units = []
+            surrogate = 0
             while i < len(data) and chr(data[i]) in _b64:
                 bits = (bits << 6) | _b64.index(chr(data[i]))
                 count += 6
                 i += 1
                 if count >= 16:
                     count -= 16
-                    units.append((bits >> count) & 65535)
+                    unit = (bits >> count) & 65535
                     bits &= (1 << count) - 1
+                    if surrogate:
+                        if 0xdc00 <= unit <= 0xdfff:
+                            result += chr(65536 + ((surrogate - 0xd800) << 10) + unit - 0xdc00)
+                            surrogate = 0
+                            continue
+                        result += chr(surrogate)
+                        surrogate = 0
+                    if 0xd800 <= unit <= 0xdbff:
+                        surrogate = unit
+                    else:
+                        result += chr(unit)
+            # An unfinished shift, including every Base64 '+' inside it,
+            # belongs to the next chunk. Back off its decoded output too.
+            if i == len(data) and not final:
+                return result[:shift_start], start
             reason = None
-            if i == start + 1:
-                if i == len(data):
-                    continue
+            if i == len(data):
+                if surrogate or count >= 6 or bits:
+                    reason = 'unterminated shift sequence'
+            elif i == start + 1:
                 reason = 'ill-formed sequence'
             elif count >= 6:
                 reason = 'partial character in shift sequence'
@@ -375,14 +392,8 @@ def _utf7_decode(data, errors):
                 repl, i = _decode_error('utf7', data, start, min(i + 1, len(data)), reason, errors)
                 result += repl
                 continue
-            j = 0
-            while j < len(units):
-                n = units[j]
-                if 0xd800 <= n <= 0xdbff and j + 1 < len(units) and 0xdc00 <= units[j + 1] <= 0xdfff:
-                    j += 1
-                    n = 65536 + ((n - 0xd800) << 10) + units[j] - 0xdc00
-                result += chr(n)
-                j += 1
+            if surrogate and i < len(data) and data[i] < 128:
+                result += chr(surrogate)
             if i < len(data) and data[i] == 45:
                 i += 1
         elif n < 128:
@@ -391,7 +402,7 @@ def _utf7_decode(data, errors):
         else:
             repl, i = _decode_error('utf7', data, i, i + 1, 'unexpected special character', errors)
             result += repl
-    return result
+    return result, i
 
 _escape_decode = {'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v', '\\': '\\', "'": "'", '"': '"'}
 
@@ -583,7 +594,7 @@ def _decode(obj, encoding='utf-8', errors='strict'):
     if name.startswith('utf_16') or name.startswith('utf_32'):
         return _wide_decode(obj, name, errors)
     if name == 'utf_7':
-        return _utf7_decode(obj, errors)
+        return _utf7_decode(obj, errors)[0]
     if name in ('unicode_escape', 'raw_unicode_escape'):
         return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
     if name in _charmaps:
@@ -724,6 +735,10 @@ class _IncrementalDecoder(IncrementalDecoder):
         data = self.buffer + bytes(input)
         name = self.name
         end = len(data)
+        if name == 'utf_7':
+            result, end = _utf7_decode(data, self.errors, final)
+            self.buffer = data[end:]
+            return result
         if name == 'utf_8_sig' and self.order == 1:
             if len(data) < 3 and BOM_UTF8.startswith(data) and not final:
                 self.buffer = data
@@ -771,15 +786,6 @@ class _IncrementalDecoder(IncrementalDecoder):
                         end -= 2
             elif name.startswith('utf_32'):
                 end -= end % 4
-            elif name == 'utf_7':
-                # A shift sequence runs from its '+' to the first
-                # character that cannot continue it; when the chunk
-                # ends inside one, keep it whole for the next call.
-                plus = data.rfind(b'+')
-                if plus >= 0:
-                    alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-                    if all(unit in alphabet for unit in data[plus + 1:]):
-                        end = plus
         result = _decode(data[:end], 'utf_8' if name == 'utf_8_sig' else name, self.errors)
         self.buffer = data[end:]
         return result
