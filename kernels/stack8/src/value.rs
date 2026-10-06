@@ -293,9 +293,9 @@ pub struct Traceback {
     /// Position in the executing routine's native instruction array.
     pub instruction: i64,
     pub location: Option<(u32, u32, u32, u32)>,
-    pub line: u32,
+    pub line: i64,
     pub frame: Rc<Instance>,
-    pub next: Value,
+    pub next: RefCell<Value>,
 }
 
 #[derive(Debug)]
@@ -788,14 +788,18 @@ impl Value {
                 // itself: the hash is the map's own reckoning of where
                 // the thing lies and no part of the key a viewer of the
                 // keys, or of the pairs, should ever see.
-                Value::array(pairs.iter().map(|(k,v)| {
+                Value::array(pairs.iter().filter_map(|(k,v)| {
+                    // A pair whose cell stands empty names nothing yet:
+                    // a namespace read through a view answers only for
+                    // the names written in it so far.
+                    if matches!(v.contents(), Value::Blank | Value::Gap) { return None; }
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    match view.1.as_str() {
+                    Some(match view.1.as_str() {
                         // A reading of the map itself walks, and is
                         // measured, the very way its keys are: the map
                         // read only is asked after by key alone.
                         "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::tuple(vec![bare,v.clone()]),
-                    }
+                    })
                 }).collect())
             }
             _ => self.clone(),
@@ -1671,7 +1675,13 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
+            || kind == "bytearray" && name == "__release_buffer__" {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
+            "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
+            "type" if name == "__mro__" => Some(("member", "member_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

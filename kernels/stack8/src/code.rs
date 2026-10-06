@@ -632,6 +632,12 @@ pub enum Builtin {
     Collect,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
+    // The source of the file the run was started with.
+    LoaderSource,
+    /// The numbers a path's file answers with, or the host's reason
+    /// number where it answers none.
+    /// An empty file made where nothing stood by that name.
+    /// The source text of the file the run was started with.
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
     Crypto,
@@ -913,13 +919,16 @@ impl Builtin {
 pub struct Routine {
     pub postponed_annotation: bool,
     pub checks_annotation_format: bool,
-    /// The routine that answers the annotation evaluator when it is asked
-    /// for the written form of each annotation.
-    pub annotation_texts: Option<Rc<Routine>>,
+    /// Whether the routine is one whose own name reads, while annotations are
+    /// being read in the forward-reference format, may stand for a reference.
+    pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
+    pub source_tokens: Rc<str>,
+    pub source_end: usize,
+    pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
@@ -1032,5 +1041,81 @@ pub struct Plan {
 impl Drop for Routine {
     fn drop(&mut self) {
         crate::faint::plain_departing();
+    }
+}
+
+impl Routine {
+    pub fn replacing_constants(&self, supplied: &[Value]) -> Result<Self, String> {
+        if supplied.len() != self.code_constants.len() {
+            return Err("NotImplementedError: changing the constant table length is unavailable".into());
+        }
+        let replacements: Vec<Value> = supplied.iter().map(|value| match value.contents() {
+            Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
+            other => other,
+        }).collect();
+        let embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
+            .map(|value| matches!(value, Value::Small(number) if (0..=255).contains(number))).collect());
+        for left in 0..self.code_constants.len() {
+            if self.code_constants[left + 1..].iter().any(|right|
+                std::mem::discriminant(right) == std::mem::discriminant(&self.code_constants[left])
+                    && right.equals(&self.code_constants[left])) {
+                return Err("NotImplementedError: replacing ambiguous duplicate constants is unavailable".into());
+            }
+        }
+        let swap = |value: &Value| -> Result<Value, String> {
+            let Some(at) = self.code_constants.iter().position(|old|
+                std::mem::discriminant(old) == std::mem::discriminant(value) && old.equals(value)) else {
+                return Ok(value.clone());
+            };
+            if embedded[at] { return Ok(value.clone()); }
+            match (value, &replacements[at]) {
+                (Value::Routine(existing), Value::Routine(wanted)) => {
+                    if existing.source_tokens != wanted.source_tokens || existing.source_end != wanted.source_end || existing.declared_on != wanted.declared_on || existing.formals != wanted.formals {
+                        return Err("NotImplementedError: replacing a nested instruction body is unavailable".into());
+                    }
+                    let mut body = wanted.as_ref().clone();
+                    body.globe = existing.globe.clone();
+                    body.born = existing.born.clone();
+                    body.home = existing.home.clone();
+                    body.held = existing.held.clone();
+                    body.enclosed = existing.enclosed.clone();
+                    body.ident = wanted.ident.clone();
+                    body.qualified = wanted.qualified.clone();
+                    body.written_in = wanted.written_in.clone();
+                    body.declared_on = wanted.declared_on;
+                    body.code_flags = wanted.code_flags;
+                    Ok(Value::Routine(Rc::new(body)))
+                }
+                _ => Ok(replacements[at].clone()),
+            }
+        };
+        let mut result = self.clone();
+        let mut instructions = self.instrs.as_ref().clone();
+        for instruction in &mut instructions {
+            match instruction {
+                Instr::Const(value) => *value = swap(value)?,
+                Instr::Bump { by, .. } => {
+                    let updated = swap(by)?;
+                    if !matches!(updated, Value::Small(_)) {
+                        return Err("NotImplementedError: changing the type of a fused increment is unavailable".into());
+                    }
+                    *by = updated;
+                }
+                Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
+                    for operand in [a, b] {
+                        if let Operand::Const(value) = operand { *value = swap(value)?; }
+                    }
+                }
+                _ => {}
+            }
+        }
+        result.instrs = Rc::new(instructions);
+        result.code_constants = replacements;
+        result.embedded_integers = Some(embedded);
+        result.doc = result.code_constants.first().and_then(|value| match value {
+            Value::Text(text) => Some(text.to_string()), _ => None,
+        });
+        result.revised = RefCell::new(None);
+        Ok(result)
     }
 }

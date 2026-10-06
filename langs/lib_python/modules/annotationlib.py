@@ -36,104 +36,220 @@ def get_annotate_from_class_namespace(obj):
         return annotate
 
 def call_annotate_function(annotate, format, owner=None):
+    """Call an __annotate__ function in any of the formats.
+
+    The functions and classes the runtime makes answer the value format, and
+    given a maker of stand-ins beside it read their names by it: the value
+    format for a name nowhere defined only, the fake-globals format for every
+    name of the globals, as the reference's fake globals do.
+    """
+    if format == Format.VALUE_WITH_FAKE_GLOBALS:
+        raise ValueError("The VALUE_WITH_FAKE_GLOBALS format is for internal use only")
     _check_format(format)
-    # An annotate function may give the format itself: the ones written
-    # down here do for the text format, and dataclasses does for both.
     try:
         return annotate(format)
     except NotImplementedError:
         pass
     if format == Format.STRING:
-        # Without the written form, the values stand for their own text,
-        # names not yet defined among them as the text they were read by.
-        return {key: _string_of(value) for key, value in _evaluate_symbolic(annotate, owner, Format.FORWARDREF).items()}
+        # Evaluating with every name a stand-in gives the text of the source.
+        # Where that format is not there, the values stand for their own text.
+        try:
+            annotate(Format.VALUE_WITH_FAKE_GLOBALS)
+        except NotImplementedError:
+            return annotations_to_string(annotate(Format.VALUE))
+        except Exception:
+            pass
+        names = _StringifierDict({}, format=format)
+        annos = annotate(Format.VALUE_WITH_FAKE_GLOBALS, names)
+        return {key: _stringify_single(val) for key, val in annos.items()}
     if format == Format.FORWARDREF:
-        return _evaluate_symbolic(annotate, owner, format)
+        # First read with the real globals and builtins, a name nowhere
+        # defined standing for a reference; if that fails, read again with
+        # none of them, so that every name is one.
+        is_class = isinstance(owner, type)
+        scope = getattr(annotate, '__globals__', None)
+        names = _StringifierDict({}, globals=scope, owner=owner, is_class=is_class, format=format)
+        try:
+            result = annotate(Format.VALUE, names)
+        except NotImplementedError:
+            return annotate(Format.VALUE)
+        except Exception:
+            pass
+        else:
+            names.transmogrify(None)
+            return result
+        names = _StringifierDict({}, globals=scope, owner=owner, is_class=is_class, format=format)
+        result = annotate(Format.VALUE_WITH_FAKE_GLOBALS, names)
+        names.transmogrify(None)
+        return {
+            key: val.evaluate(format=Format.FORWARDREF) if isinstance(val, ForwardRef) else val
+            for key, val in result.items()
+        }
+    if format == Format.VALUE:
+        raise RuntimeError("annotate function does not support VALUE format")
     raise ValueError(f"Invalid format: {format!r}")
 
-def _string_of(value):
-    # A value as the text format writes it, a reference to be resolved
-    # later as the text it stands for, wherever in the value it is.
-    if isinstance(value, str):
-        return value
-    if isinstance(value, ForwardRef):
-        text = value.__forward_arg__
-        names = value.__extra_names__ or {}
-        for unique in sorted(names, key=len, reverse=True):
-            text = text.replace(unique, _string_of(names[unique]))
-        return text
-    if hasattr(value, '__origin__') and hasattr(value, '__args__') and _holds_reference(value):
-        return _string_of(value.__origin__) + '[' + ', '.join(_string_of(each) for each in value.__args__) + ']'
-    return type_repr(value)
-
-def _holds_reference(value):
-    if isinstance(value, ForwardRef):
-        return True
-    args = getattr(value, '__args__', None)
-    return isinstance(args, tuple) and any(_holds_reference(each) for each in args)
-
-def _home_of(annotate, owner):
-    # The module whose names the annotations are read among.
-    for thing in (annotate, owner):
-        name = getattr(thing, '__module__', None)
-        if isinstance(name, str) and name in sys.modules:
-            return sys.modules[name]
-    return None
-
-def _evaluate_symbolic(annotate, owner, format):
-    """Read the annotations in their own scope. A name that is nowhere
-    defined stands, for as long as they are read, as a reference to be
-    resolved later; any other error is the caller's."""
-    try:
-        return annotate(Format.VALUE)
-    except NameError as error:
-        first = error
-    home = _home_of(annotate, owner)
-    if home is None or getattr(first, 'name', None) is None:
-        raise first
-    names = _StringifierDict(
-        {}, globals=getattr(annotate, '__globals__', None), owner=owner,
-        is_class=isinstance(owner, type), format=format)
-    stood = []
-    try:
-        while True:
-            names.next_id = 1
-            try:
-                result = annotate(Format.VALUE)
-                break
-            except NameError as error:
-                name = getattr(error, 'name', None)
-                if name is None or name in stood or hasattr(home, name):
-                    raise
-                setattr(home, name, names[name])
-                stood.append(name)
-    finally:
-        for name in stood:
-            if name in vars(home) and isinstance(vars(home)[name], _Stringifier):
-                delattr(home, name)
-    names.transmogrify(None)
-    return result
+def _stringify_single(anno):
+    if anno is ...:
+        return "..."
+    # We have to handle str specially to support PEP 563 stringified annotations.
+    elif isinstance(anno, str):
+        return anno
+    else:
+        return repr(anno)
 
 def call_evaluate_function(evaluate, format, owner=None):
     _check_format(format)
     return evaluate(format)
 
-def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1):
-    _check_format(format)
-    annotate = getattr(obj, '__annotate__', None)
+def _get_and_call_annotate(obj, format):
+    """Get the __annotate__ function and call it.
+
+    May not return a fresh dictionary.
+    """
+    annotate = getattr(obj, "__annotate__", None)
     if annotate is not None:
-        result = call_annotate_function(annotate, format, owner=obj)
-        if result is None:
+        ann = call_annotate_function(annotate, format, owner=obj)
+        if not isinstance(ann, dict):
+            raise ValueError(f"{obj!r}.__annotate__ returned a non-dict")
+        return ann
+    return None
+
+def _get_dunder_annotations(obj):
+    """Return the annotations for an object, checking that it is a dictionary.
+
+    Does not return a fresh dictionary.
+    """
+    ann = getattr(obj, "__annotations__", None)
+    if ann is None:
+        return None
+    if not isinstance(ann, dict):
+        raise ValueError(f"{obj!r}.__annotations__ is neither a dict nor None")
+    return ann
+
+def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1):
+    """Compute the annotations dict for an object, as the reference does."""
+    if eval_str and format != Format.VALUE:
+        raise ValueError("eval_str=True is only supported with format=Format.VALUE")
+
+    if format == Format.VALUE:
+        # For VALUE, we first look at __annotations__
+        ann = _get_dunder_annotations(obj)
+        # If it's not there, try __annotate__ instead
+        if ann is None:
+            ann = _get_and_call_annotate(obj, format)
+    elif format == Format.FORWARDREF:
+        # For FORWARDREF, we use __annotations__ if it exists
+        try:
+            ann = _get_dunder_annotations(obj)
+        except Exception:
+            pass
+        else:
+            if ann is not None:
+                return dict(ann)
+        # But if __annotations__ threw a NameError, we try calling __annotate__
+        ann = _get_and_call_annotate(obj, format)
+        if ann is None:
+            # If that didn't work either, we have a very weird object: evaluating
+            # __annotations__ threw NameError and there is no __annotate__. In that case,
+            # we fall back to trying __annotations__ again.
+            ann = _get_dunder_annotations(obj)
+    elif format == Format.STRING:
+        # For STRING, we try to call __annotate__
+        ann = _get_and_call_annotate(obj, format)
+        if ann is not None:
+            return dict(ann)
+        # But if we didn't get it, we use __annotations__ instead.
+        ann = _get_dunder_annotations(obj)
+        if ann is not None:
+            return annotations_to_string(ann)
+    elif format == Format.VALUE_WITH_FAKE_GLOBALS:
+        raise ValueError("The VALUE_WITH_FAKE_GLOBALS format is for internal use only")
+    else:
+        raise ValueError(f"Unsupported format {format!r}")
+
+    if ann is None:
+        if isinstance(obj, type) or callable(obj):
             return {}
-        return dict(result)
-    stored = getattr(obj, '__annotations__', None)
-    if stored is None:
+        raise TypeError(f"{obj!r} does not have annotations")
+
+    if not ann:
         return {}
-    if eval_str:
-        raise 'NotImplementedError: annotationlib cannot evaluate string annotations here'
-    if format == Format.STRING:
-        return {key: value if isinstance(value, str) else type_repr(value) for key, value in stored.items()}
-    return dict(stored)
+
+    if not eval_str:
+        return dict(ann)
+
+    if globals is None or locals is None:
+        if isinstance(obj, type):
+            # class
+            obj_globals = None
+            module_name = getattr(obj, "__module__", None)
+            if module_name:
+                module = sys.modules.get(module_name, None)
+                if module:
+                    obj_globals = getattr(module, "__dict__", None)
+            obj_locals = dict(vars(obj))
+            unwrap = obj
+        elif isinstance(obj, types.ModuleType):
+            # module
+            obj_globals = getattr(obj, "__dict__")
+            obj_locals = None
+            unwrap = None
+        elif callable(obj):
+            # this includes types.Function, types.BuiltinFunctionType,
+            # types.BuiltinMethodType, functools.partial, functools.singledispatch,
+            # "class funclike" from Lib/test/test_inspect... on and on it goes.
+            obj_globals = getattr(obj, "__globals__", None)
+            obj_locals = None
+            unwrap = obj
+        else:
+            obj_globals = obj_locals = unwrap = None
+
+        if unwrap is not None:
+            # Use an id-based visited set to detect cycles in the __wrapped__
+            # and functools.partial.func chain (e.g. f.__wrapped__ = f).
+            _seen_ids = {id(unwrap)}
+            while True:
+                if hasattr(unwrap, "__wrapped__"):
+                    candidate = unwrap.__wrapped__
+                    if id(candidate) in _seen_ids:
+                        break
+                    _seen_ids.add(id(candidate))
+                    unwrap = candidate
+                    continue
+                functools = sys.modules.get("functools")
+                if functools:
+                    if isinstance(unwrap, functools.partial):
+                        candidate = unwrap.func
+                        if id(candidate) in _seen_ids:
+                            break
+                        _seen_ids.add(id(candidate))
+                        unwrap = candidate
+                        continue
+                break
+            if hasattr(unwrap, "__globals__"):
+                obj_globals = unwrap.__globals__
+
+        if globals is None:
+            globals = obj_globals
+        if locals is None:
+            locals = obj_locals
+
+    # "Inject" type parameters into the local namespace
+    # (unless they are shadowed by assignments *in* the local namespace),
+    # as a way of emulating annotation scopes when calling `eval()`
+    type_params = getattr(obj, "__type_params__", ())
+    if type_params:
+        if locals is None:
+            locals = {}
+        locals = {param.__name__: param for param in type_params} | locals
+
+    return_value = {
+        key: value if not isinstance(value, str)
+        else eval(_rewrite_star_unpack(value), globals, locals)
+        for key, value in ann.items()
+    }
+    return return_value
 
 # Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/annotationlib.py; PSF License.
 # ForwardRef uses conditionals for formats; symbolic AST transformation is unavailable.

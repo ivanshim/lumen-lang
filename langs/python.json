@@ -47,6 +47,7 @@
   "ext.builtin.posix": [
     "__posix"
   ],
+  "ext.builtin.loader.source": ["__loader_source"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -2778,7 +2779,9 @@
     "asend",
     "athrow",
     "aclose",
-    "__await__"
+    "__await__",
+    "__anext__",
+    "__aiter__"
   ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
@@ -3062,6 +3065,18 @@
   ],
   "ext.stmt.class.detail.set": [
     "__setattr__"
+  ],
+  "ext.stmt.class.detail.abstract": [
+    "__abstractmethods__",
+    "TypeError: Can't instantiate abstract class ",
+    " without an implementation for abstract method ",
+    " without an implementation for abstract methods "
+  ],
+  "ext.stmt.class.detail.abstractmethod": [
+    "__isabstractmethod__"
+  ],
+  "ext.stmt.class.detail.subclasses": [
+    "__subclasses__"
   ],
   "ext.stmt.class.detail.slots": [
     "__slots__"
