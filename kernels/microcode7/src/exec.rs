@@ -16139,6 +16139,18 @@ impl<'a> Machine<'a> {
         one.equals(other)
     }
 
+    /// The dict shape a value takes part in a `==` between maps with:
+    /// an object's own attribute pairs are turned into a plain Dict so
+    /// the shared `dicts_equal` road (which calls each pair's `__eq__`)
+    /// weighs them, while every other value is left exactly as it is.
+    fn dict_side(&self, value: &Value) -> Value {
+        let settled = value.settled();
+        match settled {
+            Value::Attributes(held) => Value::Dict(Rc::new(self.attribute_entries(&held).into())),
+            other => other,
+        }
+    }
+
     /// Whether two maps hold the same pairs, key for key, by the very
     /// road the subscript takes rather than `equal_contents`'s
     /// `one_place`/`equals`, which cannot call a key's own `__eq__`:
@@ -20617,7 +20629,15 @@ impl<'a> Machine<'a> {
                 Value::Flag(alike != (op == Prim::Ne))
             }
             Prim::Eq | Prim::Ne if self.rules.unordered_maps => {
-                let alike = match (&v[0], &v[1]) {
+                // An object's __dict__ reads as a dict but is served as
+                // the object's own attribute pairs, so a plain
+                // (Value::Dict, Value::Dict) match never sees it and the
+                // pair's own __eq__ is never asked. Settle each side into
+                // the Dict shape first, so dicts_equal weighs the pairs
+                // instead of equal_contents, whose one_place/equals road
+                // cannot call a custom __eq__ at all.
+                let (left, right) = (self.dict_side(&v[0]), self.dict_side(&v[1]));
+                let alike = match (&left, &right) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
                     _ => match self.native_sequence_equal(op, v)? {
                         Some(equal) => equal,

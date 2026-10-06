@@ -40,6 +40,12 @@ def isclass(object):
     return isinstance(object, type)
 
 
+def ismodule(object):
+    # A module is told apart the way CPython's ismodule tells it: by the
+    # class every module shares, without reading any compiled body.
+    return isinstance(object, types.ModuleType)
+
+
 def getmro(cls):
     return cls.__mro__
 
