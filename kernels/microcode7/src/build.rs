@@ -3543,8 +3543,10 @@ impl<'a> Builder<'a> {
             let expression = self.expr(0)?;
             let bounds = self.span_since(begin);
             let mut value = self.located(bounds, expression);
+            let mut entered_slot: Option<Address> = None;
             if table.strings("ext.stmt.class.special").get(33).is_some() {
                 let manager = self.gensym("manager");
+                let manager_slot = manager.clone();
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
                 let watched = if asynchronous {
@@ -3562,13 +3564,18 @@ impl<'a> Builder<'a> {
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
-                value = Form::Read(entered);
+                // The leaving method stands for an asynchronous manager from
+                // here on, and the entered value is read just once below.
+                if asynchronous && table.has_any("ext.builtin.exceptions.syntax") { steps.push(Form::Forget(manager_slot.clone())); }
+                value = Form::Read(entered.clone());
+                entered_slot = Some(entered);
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
+                let held_place = place.clone();
                 steps.push(Form::Write(place, Box::new(value)));
                 let start = self.pos;
                 let mut boundary = start;
@@ -3588,8 +3595,17 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: cannot assign to expression"));
                 }
                 steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
+                if table.has_any("ext.builtin.exceptions.syntax") {
+                    steps.push(Form::Forget(held_place));
+                    if let Some(entered) = entered_slot.take() { steps.push(Form::Forget(entered)); }
+                }
                 self.pos = boundary;
-            } else { steps.push(value); }
+            } else {
+                steps.push(value);
+                if let Some(entered) = entered_slot.take() {
+                    if table.has_any("ext.builtin.exceptions.syntax") { steps.push(Form::Forget(entered)); }
+                }
+            }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
             if !enclosed && table.has_any("ext.builtin.exceptions.syntax") && self.on_any("block.intro") {

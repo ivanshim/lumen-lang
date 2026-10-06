@@ -4499,6 +4499,9 @@ impl<'a> Engine<'a> {
             if plan.async_context { self.perform(&Action::Awaited, 1)?; }
             let answer = self.drop_top()?;
             self.data.truncate(kept);
+            // The block is over: the place that held its manager lets go,
+            // so the manager may go with the block rather than the frame.
+            if !self.lang.syntax_members.is_empty() { self.forget_cell(cell, frame)?; }
             if matches!(&ending, Err(Fault::Thrown(_))) && self.special_truth(&answer)? {
                 self.data.truncate(depth);
                 return Ok(Passage::Along(plan.after));

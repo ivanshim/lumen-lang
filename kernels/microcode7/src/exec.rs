@@ -5267,6 +5267,7 @@ impl<'a> Machine<'a> {
 
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
+        self.let_manager_go(address, frame)?;
         if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned();
         let arguments = match raised {
@@ -5286,6 +5287,13 @@ impl<'a> Machine<'a> {
         let answer = asked?.ok_or_else(|| self.bad_answer())?;
         let answer = if async_context { self.context_await(answer)? } else { answer };
         Ok(raised.is_some() && self.object_truth(&answer)?)
+    }
+
+    /// The place that held a manager lets go of it as the block ends, so
+    /// that the manager is freed with the block and not with the frame.
+    fn let_manager_go(&mut self, address: &Address, frame: &Rc<Env>) -> Result<(), Escape> {
+        if !self.rules.has_any_ext_builtin_exceptions { return Ok(()); }
+        self.value_of(&Form::Forget(address.clone()), frame).map(|_| ())
     }
 
     /// The clause that takes what was raised, with the place it is to be
@@ -6415,6 +6423,7 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
+                    self.let_manager_go(address, frame)?;
                     if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned().into());

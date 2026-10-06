@@ -3126,6 +3126,9 @@ impl<'a> Compiler<'a> {
                     self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::AsyncContext(false), 1);
+                    // The leaving method is bound to the manager and stands
+                    // for it from here on.
+                    if !lang.syntax_members.is_empty() { self.let_go(&manager); }
                     leaving
                 } else {
                     self.read(&manager);
@@ -3157,6 +3160,9 @@ impl<'a> Compiler<'a> {
                     return Err("SyntaxError: cannot assign to expression".into());
                 }
                 self.give_places(begin, end, &held).map_err(|e| self.loop_target_error(begin, end, e))?;
+                // Whatever the targets took, the temporary beside them must
+                // not keep it alive after they are rebound or deleted.
+                if !lang.syntax_members.is_empty() { self.let_go(&held); }
                 self.pos = end;
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
