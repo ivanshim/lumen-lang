@@ -240,6 +240,7 @@ struct Piece {
 }
 
 pub struct Compiler<'a> {
+    source_tokens: Rc<str>,
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
     annotation_target: Option<usize>,
@@ -622,7 +623,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -790,7 +791,8 @@ fn compile_pass(
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
-    Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[]);
+    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1828,7 +1830,7 @@ impl<'a> Compiler<'a> {
         }
         code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
-        Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_text(&self, start: usize, end: usize) -> String {
@@ -6979,7 +6981,7 @@ impl<'a> Compiler<'a> {
             // whatever its last bare statement came to.
             a.piece().python_fallthrough = true;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
-            a.spare_values(&spares, &given)?;
+            else { a.spare_values(&spares, &given)?; }
             // What a parameter that names a property was given is
             // written into the object before anything else runs.
             for member in &named {
@@ -8682,10 +8684,9 @@ impl<'a> Compiler<'a> {
                 return Err(format!("Cannot re-assign {}", this));
             }
         }
-        // Python composite stores mutate the evaluated object. They do not
-        // assign the object expression back into the class namespace.
-        if !self.lang.class_builder.is_empty()
-            && (self.in_class_body() || target.iter().any(|word| matches!(word, Instr::Act(Action::Invoke(_), _))))
+        // Python subscription stores mutate the object reached by the
+        // expression, without assigning it back through an attribute.
+        if self.lang.bind_names
             && matches!(target.last(), Some(Instr::Act(Action::At, 2))) {
             let value = self.gensym("target_value");
             if compound.is_none() { self.value_written(keep)?; self.write(&value); }
@@ -8700,6 +8701,11 @@ impl<'a> Compiler<'a> {
             }
             self.read(&key); self.read(&value); self.read(&object);
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            // A completed store must not leave its key or container rooted
+            // in hidden frame slots until the defining call returns.
+            self.let_go(&key);
+            self.let_go(&object);
+            self.let_go(&value);
             if hushed || silenced { self.put(if silenced { Instr::Mute(false) } else { Instr::Hush(false) }); }
             return Ok(());
         }
@@ -8867,7 +8873,7 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if shared_target || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
+                let stored = if shared_target || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again
@@ -8876,11 +8882,17 @@ impl<'a> Compiler<'a> {
                     for w in relocated(base, footing_at as i64 - from as i64) {
                         self.put(w);
                     }
-                    let was = self.waiting.replace(made);
+                    let was = self.waiting.replace(made.clone());
                     let stored = self.store_into(footing_at, None, None, "=");
                     self.waiting = was;
                     stored
+                };
+                // Release every part of the completed composite target,
+                // including keys that can themselves close a reference cycle.
+                for temporary in held.iter().chain(&inner).chain([&value, &made]) {
+                    self.let_go(temporary);
                 }
+                stored
             }
             [Instr::Read(slot), ..]
                 if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
@@ -8948,6 +8960,9 @@ impl<'a> Compiler<'a> {
                 }
                 self.read(&made);
                 self.rewritten(&name);
+                for temporary in inner.iter().chain(&held).chain([&made, &value]) {
+                    self.let_go(temporary);
+                }
                 Ok(())
             }
             // `p op= e` where the place is a member of something: what
@@ -10071,11 +10086,13 @@ impl<'a> Compiler<'a> {
                         let count = self.arguments(&call)?;
                         self.act(Action::Summon(named.as_str().into()), count + 2);
                     } else {
-                        // A parent's member read and not called: the
-                        // super proxy is made, then the member read off
-                        // it, bound to the thing this method runs upon.
+                        // A member of the forebear read and not called:
+                        // the proxy is made and the member read off it,
+                        // as a member of any other value is read.
                         self.discard();
                         self.discard();
+                        self.gathering().needs_class_cell = true;
+                        self.gathering().class_cell_protocol = true;
                         let cell = self.gathering().class_cell.clone();
                         self.read(&cell);
                         self.read(&this);
@@ -10106,6 +10123,24 @@ impl<'a> Compiler<'a> {
             Shape::Instr if Lang::spells(&lang.self_words, &tok.spelling()) || Lang::spells(&lang.parent_words, &tok.spelling()) => {
                 self.take();
                 self.read_class(&tok.lexeme)?;
+            }
+            // A dotted builtin spelling still reads the program's binding
+            // of its owner when that owner has been shadowed.
+            Shape::Instr if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::ValueMethod))
+                && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)) => {
+                self.take();
+                let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");
+                self.read(owner);
+                self.act(Action::Grab(Rc::from(member)), 1);
+                if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
+                    let method = self.gensym("shadowed_member");
+                    self.write(&method);
+                    self.take();
+                    let argc = self.arguments_of(member, &call)?;
+                    self.read(&method);
+                    self.let_go(&method);
+                    self.act(Action::Invoke(Rc::from(member)), argc + 1);
+                }
             }
             Shape::Instr => {
                 self.take();
@@ -10712,6 +10747,10 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 self.act(Action::BondNamed, 1);
+            }
+            [.., Instr::Act(Action::At, 2)] if self.lang.bind_names => {
+                let at = self.mark();
+                for word in relocated(read.to_vec(), at as i64 - from as i64) { self.put(word); }
             }
             [.., Instr::Act(Action::At, 2)] => {
                 let (keys, key_at) = keys_apart(read, from, &self.keyed);

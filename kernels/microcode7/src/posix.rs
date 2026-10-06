@@ -265,7 +265,22 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let message = CStr::from_ptr(libc::strerror(int(0)? as _)).to_string_lossy();
                 Ok(Value::text(&message))
             }
-            "isatty" => Ok(Value::Flag(libc::isatty(int(0)? as _) == 1)),
+            "get_inheritable" | "set_inheritable" => {
+            let fd = int(0)? as i32;
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else if operation.as_ref() == "get_inheritable" { Ok(Value::Flag(flags & libc::FD_CLOEXEC == 0)) }
+            else {
+                let next = if params[1].is_true() { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
+                checked(libc::fcntl(fd, libc::F_SETFD, next) as i64)
+            }
+        },
+        "pipe" => {
+            let mut descriptors = [-1; 2];
+            checked(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
+                .map(|_| Value::tuple(descriptors.into_iter().map(|fd| Value::Small(fd as i64)).collect()))
+        },
+        "isatty" => Ok(Value::Flag(libc::isatty(int(0)? as _) == 1)),
             "terminal" => {
                 let mut dimensions: libc::winsize = std::mem::zeroed();
                 if libc::ioctl(int(0)? as _, libc::TIOCGWINSZ, &mut dimensions) == -1 {Err(errno())}

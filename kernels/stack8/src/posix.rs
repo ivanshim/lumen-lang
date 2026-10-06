@@ -285,6 +285,21 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut size = std::mem::zeroed::<libc::winsize>();
             status(libc::ioctl(number(0)? as i32, libc::TIOCGWINSZ, &mut size) as i64).map(|_| Value::tuple(vec![Value::Small(size.ws_col as i64),Value::Small(size.ws_row as i64)]))
         },
+        "get_inheritable" | "set_inheritable" => {
+            let fd = number(0)? as i32;
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else if op.as_ref() == "get_inheritable" { Ok(Value::Flag(flags & libc::FD_CLOEXEC == 0)) }
+            else {
+                let next = if a[1].is_true() { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
+                status(libc::fcntl(fd, libc::F_SETFD, next) as i64)
+            }
+        },
+        "pipe" => {
+            let mut descriptors = [-1; 2];
+            status(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
+                .map(|_| Value::tuple(descriptors.into_iter().map(|fd| Value::Small(fd as i64)).collect()))
+        },
         "isatty" => Ok(Value::Flag(libc::isatty(number(0)? as i32) != 0)),
         "urandom" => {
             use std::io::Read;
