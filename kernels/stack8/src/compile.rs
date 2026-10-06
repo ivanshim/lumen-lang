@@ -133,6 +133,13 @@ impl Registry {
         self.idents.len() - 1
     }
 
+    /// Leave the first `count` slots to the names an earlier registry
+    /// holds: they are never looked up by name here, so each takes an
+    /// empty word rather than a spelled and hashed one.
+    pub fn leave_outside(&mut self, count: usize) {
+        self.idents.resize(count, String::new());
+    }
+
     /// The most recently registered slot for a module member. Dynamic
     /// text needs these aliases, but must not scan every compiled name
     /// for every member each time eval or exec is called.

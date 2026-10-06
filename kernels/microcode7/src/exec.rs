@@ -2884,6 +2884,16 @@ impl<'a> Machine<'a> {
         self.reaping = true;
         let mut web = self.round_web(&[]);
         let mut original = web.unreachable();
+        // With no lost knot there is nothing to silence or farewell, and
+        // the web just woven still describes the machine: reuse it.
+        if original.is_empty() {
+            self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !web.unowned(&function)));
+            self.constructor_records.borrow_mut().clear();
+            drop(web);
+            self.attend_to_gone();
+            self.reaping = false;
+            return 0;
+        }
         original.sort_by_key(|node| match node { Knot::Held(Value::Thing(thing)) => thing.turn, _ => usize::MAX });
         let notices = crate::ghost::silence_group(&original);
         for (notify, bearer) in notices {

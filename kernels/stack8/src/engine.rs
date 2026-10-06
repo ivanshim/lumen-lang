@@ -2143,6 +2143,15 @@ impl<'a> Engine<'a> {
         self.collecting_cycles = true;
         let mut graph = self.cycle_graph(&[]);
         let mut group = graph.unreached();
+        // Nothing unreachable means nothing is said or cleared, so the
+        // heap is the same afterwards and the first walk still stands.
+        if group.is_empty() {
+            self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
+            drop(graph);
+            self.settle_departed();
+            self.collecting_cycles = false;
+            return 0;
+        }
         group.sort_by_key(|value| match value { Value::Object(object) => object.mark, _ => usize::MAX });
         for (callback, bearer) in crate::faint::clear_group(&group) {
             self.speak_ignoring(callback, vec![bearer], "callback");
@@ -23491,7 +23500,7 @@ impl Engine<'_> {
         }
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
-        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        local.leave_outside(offset);
         let filename = own_file.as_deref().unwrap_or(path);
         let tokens = match self.text_tokens(&source, 0) {
             Ok(tokens) => tokens,
@@ -24326,6 +24335,17 @@ impl Engine<'_> {
     /// changed the module reads the change; before the module is read
     /// in, the kernel's own dictionary answers.
     fn builtin_from_module(&mut self, name: &str) -> Res<Option<Value>> {
+        // A name the module simply holds is read off its fields; building
+        // the whole namespace dictionary for one lookup made every
+        // import statement cost a copy of all the builtins.
+        if let Some(Value::Object(module)) = self.modules.get("builtins") {
+            let fields = module.fields.borrow();
+            if let Some((_, held)) = fields.iter().find(|(key, _)| key == name) {
+                if !name.starts_with(['\0', '#']) && !matches!(held.contents(), Value::Blank) {
+                    return Ok(Some(held.contents()));
+                }
+            }
+        }
         let dictionary = match self.modules.get("builtins").cloned() {
             Some(module) => {
                 let namespace = self.class_word("namespace").to_string();
@@ -25666,7 +25686,7 @@ impl Engine<'_> {
         };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
-        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        local.leave_outside(offset);
         // A dynamic namespace can bind any builtin spelling, including
         // after this code is compiled. Use the name lookup path for each.
         local.program_bound.extend(self.lang.builtins.keys().cloned());

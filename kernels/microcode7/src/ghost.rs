@@ -14,6 +14,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::data::{Adornment, Blueprint, Env, IteratorKind, SetStore, Thing, Value};
@@ -605,9 +606,27 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
-    strands: HashMap<usize, Strand>,
-    bookkeeping: HashMap<usize, usize>,
+    strands: Addressed<Strand>,
+    bookkeeping: Addressed<usize>,
 }
+
+/// Maps keyed by where a thing lives. An address needs no more than one
+/// multiplication and a fold to be spread over the buckets, and the web
+/// looks one up for every hold it counts.
+#[derive(Default)]
+pub struct AddressMix(u64);
+
+impl Hasher for AddressMix {
+    fn finish(&self) -> u64 { self.0 ^ (self.0 >> 31) }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes { self.0 = (self.0 ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3); }
+    }
+    fn write_usize(&mut self, at: usize) {
+        self.0 = ((at as u64) >> 3).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    }
+}
+
+type Addressed<V> = HashMap<usize, V, BuildHasherDefault<AddressMix>>;
 
 /// An inline value is an engine root even though it has no shared
 /// pointer of its own. Follow its parts to the first shared owners.
@@ -625,7 +644,7 @@ fn external_knots(knot: Knot, out: &mut Vec<Knot>) {
 impl Web {
     /// Woven from the notable things still about.
     pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
-        let mut bookkeeping = HashMap::new();
+        let mut bookkeeping = Addressed::default();
         for knot in &extra {
             let parts = match knot {
                 Knot::Held(value) => Knot::Held(value.clone()).parts(),
@@ -653,8 +672,8 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize>) -> Web {
-        let mut strands: HashMap<usize, Strand> = HashMap::new();
+    fn weave(roots: Vec<Knot>, bookkeeping: Addressed<usize>) -> Web {
+        let mut strands: Addressed<Strand> = Addressed::default();
         let mut frontier: Vec<usize> = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
             if let Some(place) = root.place() {
