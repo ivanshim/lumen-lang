@@ -212,9 +212,9 @@ pub struct TraceLink {
     /// Preorder position of the executing expression in the compiled form tree.
     pub instruction: i64,
     pub extent: Option<(u32, u32, u32, u32)>,
-    pub location: u32,
+    pub location: i64,
     pub activation: Rc<Thing>,
-    pub following: Value,
+    pub following: RefCell<Value>,
 }
 
 #[derive(Debug)]
@@ -617,6 +617,10 @@ impl Value {
                 // is the dictionary's own reckoning of where the thing
                 // lies and no part of the key a window upon it shows.
                 for (key,value) in entries.iter() {
+                    // A pair whose place is still empty stands for a name
+                    // not yet written: a namespace that shows it shows a
+                    // name it does not have, so the window passes it by.
+                    if matches!(value.settled(), Value::Unset) { continue; }
                     let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
                     // A reading of the map itself walks, and is
                     // measured, the very way its keys are: it is asked
@@ -723,6 +727,7 @@ impl Value {
             Value::Intrinsic(_, name) => Ok(["intrinsic/", name.as_ref()].concat()),
             Value::OctetKind { changeable, .. } => Ok(format!("octetkind/{changeable}")),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
+            Value::Wrapped(8, names) => Ok(format!("kind/{names:?}")),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
                 let mut address = format!("native/{tag}");
@@ -1065,6 +1070,45 @@ impl Value {
         })
     }
 
+    /// Two code values' fields weigh the same where they do in
+    /// content: a nested code value weighs by the text its routine was
+    /// read from and how it was called, the way the reference's
+    /// co_consts weigh their code objects recursively.
+    fn code_worth_eq(one: &Value, two: &Value) -> bool {
+        match (one, two) {
+            (Value::Wrapped(7, p), Value::Wrapped(7, q)) => match (p.first(), q.first()) {
+                (Some(Value::Routine(a)), Some(Value::Routine(b))) =>
+                    a.lexical_origin == b.lexical_origin && a.formals == b.formals && a.flags == b.flags && a.generator == b.generator,
+                _ => Rc::ptr_eq(p, q),
+            },
+            (Value::Tuple(p), Value::Tuple(q)) => p.len() == q.len() && p.iter().zip(q.iter()).all(|(x, y)| Self::code_worth_eq(x, y)),
+            _ => one.equals(two),
+        }
+    }
+
+    /// The hash a code value's field owes the weighing: a nested code
+    /// value hashes by the text its routine was read from, so two fields
+    /// that weigh the same hash alike.
+    pub(crate) fn code_worth_hash(value: &Value) -> Option<i64> {
+        match value {
+            Value::Wrapped(7, parts) => match parts.first() {
+                Some(Value::Routine(body)) => Value::text(&body.lexical_origin).hash_number(),
+                _ => value.hash_number(),
+            },
+            Value::Tuple(parts) => {
+                let mut accum: u64 = 2_870_177_450_012_600_261;
+                for part in parts.iter() {
+                    let lane = Self::code_worth_hash(part)? as u64;
+                    accum = accum.wrapping_add(lane.wrapping_mul(14_029_467_366_897_019_727)).rotate_left(31);
+                    accum = accum.wrapping_mul(11_400_714_785_074_694_791);
+                }
+                accum = accum.wrapping_add(parts.len() as u64 ^ (2_870_177_450_012_600_261u64 ^ 3_527_539));
+                Some(if accum == u64::MAX { 1_546_275_796 } else { accum as i64 })
+            }
+            _ => value.hash_number(),
+        }
+    }
+
     pub fn equals(&self, other: &Value) -> bool {
         for (candidate, text) in [(self, other), (other, self)] {
             if let (Value::Thing(object), Value::Text(word)) = (candidate, text) {
@@ -1174,7 +1218,7 @@ impl Value {
                 if is_code(a) && is_code(b) {
                     let held = |thing: &Thing| thing.holds.borrow().iter().filter(|(name, _)| name != "filename" && name != "co_filename").map(|(_, item)| item.settled()).collect::<Vec<_>>();
                     let (left, right) = (held(a), held(b));
-                    return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| x.equals(&y));
+                    return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| Self::code_worth_eq(x, y));
                 }
                 Rc::ptr_eq(a, b)
             },
@@ -1590,7 +1634,12 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
+        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
+            || kind == "bytearray" && name == "__release_buffer__" {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
+            "type" if matches!(name, "__dict__" | "__mro__") => Some(if name == "__dict__" { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

@@ -293,9 +293,9 @@ pub struct Traceback {
     /// Position in the executing routine's native instruction array.
     pub instruction: i64,
     pub location: Option<(u32, u32, u32, u32)>,
-    pub line: u32,
+    pub line: i64,
     pub frame: Rc<Instance>,
-    pub next: Value,
+    pub next: RefCell<Value>,
 }
 
 #[derive(Debug)]
@@ -788,14 +788,18 @@ impl Value {
                 // itself: the hash is the map's own reckoning of where
                 // the thing lies and no part of the key a viewer of the
                 // keys, or of the pairs, should ever see.
-                Value::array(pairs.iter().map(|(k,v)| {
+                Value::array(pairs.iter().filter_map(|(k,v)| {
+                    // A pair whose cell stands empty names nothing yet:
+                    // a namespace read through a view answers only for
+                    // the names written in it so far.
+                    if matches!(v.contents(), Value::Blank | Value::Gap) { return None; }
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    match view.1.as_str() {
+                    Some(match view.1.as_str() {
                         // A reading of the map itself walks, and is
                         // measured, the very way its keys are: the map
                         // read only is asked after by key alone.
                         "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::tuple(vec![bare,v.clone()]),
-                    }
+                    })
                 }).collect())
             }
             _ => self.clone(),
@@ -1265,6 +1269,44 @@ impl Value {
         }
     }
 
+    /// Two code values' fields agree where they agree in content: a
+    /// nested code value compares by the text its routine was read from
+    /// and how it was called, the way the reference's co_consts compare
+    /// their code objects recursively.
+    fn code_field_eq(one: &Value, two: &Value) -> bool {
+        match (one, two) {
+            (Value::Adapter(p), Value::Adapter(q)) if p.0 == 7 && q.0 == 7 => match (p.1.first(), q.1.first()) {
+                (Some(Value::Routine(a)), Some(Value::Routine(b))) =>
+                    a.source_tokens == b.source_tokens && a.formals == b.formals && a.code_flags == b.code_flags && a.generator == b.generator,
+                _ => Rc::ptr_eq(p, q),
+            },
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| Self::code_field_eq(x, y)),
+            _ => one.equals(two),
+        }
+    }
+
+    /// The hash a code value's field owes the comparison: a nested code
+    /// value hashes by the text its routine was read from, so two fields
+    /// that compare equal hash alike.
+    pub(crate) fn code_field_hash(value: &Value) -> Option<i64> {
+        match value {
+            Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
+                Some(Value::Routine(body)) => Value::Text(body.source_tokens.clone()).core_hash(),
+                _ => value.core_hash(),
+            },
+            Value::Tuple(items) => {
+                let mut h = 2870177450012600261u64;
+                for item in items.iter() {
+                    h = h.wrapping_add((Self::code_field_hash(item)? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                h = h.wrapping_add(items.len() as u64 ^ (2870177450012600261 ^ 3527539));
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
+            }
+            _ => value.core_hash(),
+        }
+    }
+
     pub fn equals(&self, other: &Value) -> bool {
         if let (Value::Object(instance), plain @ Value::Text(_)) | (plain @ Value::Text(_), Value::Object(instance)) = (self, other) {
             if let Some((_, value @ Value::Text(_))) = instance.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return value.equals(plain); }
@@ -1347,7 +1389,7 @@ impl Value {
                 if native(a).as_deref() == Some("code") && native(b).as_deref() == Some("code") {
                     let held = |object: &Rc<Instance>| object.fields.borrow().iter().filter(|(key, _)| key != "filename" && key != "co_filename").map(|(_, value)| value.contents()).collect::<Vec<_>>();
                     let (one, two) = (held(a), held(b));
-                    return one.len() == two.len() && one.iter().zip(two.iter()).all(|(x, y)| x.equals(&y));
+                    return one.len() == two.len() && one.iter().zip(two.iter()).all(|(x, y)| Self::code_field_eq(x, y));
                 }
                 Rc::ptr_eq(a, b)
             },
@@ -1680,7 +1722,13 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
+            || kind == "bytearray" && name == "__release_buffer__" {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         match kind {
+            "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
+            "type" if name == "__mro__" => Some(("member", "member_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),
