@@ -2661,6 +2661,16 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.file.stat`: a builtin answering with the measurements of
+  the file a path names as a row of ten (kind, serials, links, owners,
+  size and the three times), or with the host's reason number where the
+  path names no file to measure.
+- `ext.builtin.file.make`: a builtin making an empty file where the path
+  named none, answering true when it was made, false when the name was
+  already taken, or the host's reason number.
+- `ext.builtin.loader.source`: a builtin answering with the source text
+  of the file the run was started with, as the main module's loader
+  answers `get_source` with it.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither. A second boolean argument
   requests POSIX stat fields, following symlinks when true; a failed query
@@ -3624,6 +3634,8 @@ only. The extension labels so far, all from PHP:
   a whole-valued result. Other exact reals retain their former spelling.
   This Python-only switch also enables the `frexp`, `frexp_plain`,
   `ldexp_plain`, `fsum_partial`, `fsum_finite` and `dist_float` workings.
+  It also enables `float_bits32`, `float_bits64`, `bits_float32` and
+  `bits_float64`, the IEEE binary conversions used by numeric arrays.
   Without it these names retain the unknown-working path and its arity.
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
@@ -4691,6 +4703,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.json.scanstring` | - | - | `__json_string_scan` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.loader.source` | - | - | `__loader_source` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
@@ -5281,7 +5294,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
-| `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` `__anext__` `__aiter__` | - | - | - | - | - | - | - |
 | `ext.stmt.async.stop` | - | - | `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
@@ -5314,6 +5327,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
+| `ext.stmt.class.detail.abstract` | - | - | `__abstractmethods__` `TypeError: Can't instantiate abstract class ` ` without an implementation for abstract method ` ` without an implementation for abstract methods ` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.abstractmethod` | - | - | `__isabstractmethod__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.arguments.init` | - | - | `TypeError: ` `.__init__() takes exactly one argument (the instance to initialize)` | - | - | - | - | - | - | - |
@@ -5390,6 +5405,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.set` | - | - | `__setattr__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.subclasses` | - | - | `__subclasses__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.type_params` | - | - | `__type_params__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
@@ -5726,7 +5742,14 @@ Frames are allocated on demand when an exception first records its location.
 
 `ext.builtin.text.getnewargs` exposes a string’s reconstruction arguments as a one-item tuple containing a fresh base string.
 `ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
-
+`ext.stmt.class.detail.abstract` names the member a class's maker
+leaves its set of unanswered abstract method names under, and words the
+refusal for making a thing of such a class: the opening, then the middle
+for one name and the middle for many.
+`ext.stmt.class.detail.abstractmethod` names the abstract-method mark a
+wrapped routine answers for through its wrapper.
+`ext.stmt.class.detail.subclasses` names the metaclass method that lists a
+class's living subclasses.
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
 `ext.builtin.core.abs.type` names an unsupported magnitude operand;
 `ext.builtin.core.bool.declined` refuses boolean use of the comparison sentinel.
@@ -5947,16 +5970,17 @@ follows `Modules/_io/bytesio.c` and `stringio.c`, while buffered streams and
 text decoding dispatch to the original `_pyio` algorithms. The embedded
 `codecs` adapter provides incremental UTF and single-byte codecs, and the two
 Python kernels provide bytearray resizing, export leases, and buffer writes.
-Real file descriptors remain outside this port; `FileIO` refuses them, and
-`io.open` retains the existing host file adapter. Unsupported codecs still
-raise `LookupError`. The upstream memory tests retain their failures for
+Python `FileIO` uses the POSIX descriptor bridge in both full kernels.
+Filename and custom-opener descriptors are non-inheritable; integer descriptors
+preserve their supplied inheritance flag. Unsupported codecs still raise
+`LookupError`. The upstream memory tests retain their failures for
 collector behavior that cannot yet reclaim a cycle containing a memoryview.
 The review regressions and buffer-protocol comparisons live in
 `scratch/io-memory/`, with expected output produced by Python 3.14.
-
-`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation. SRE operation 9 converts indexed bounds to host ssize_t and clamps them to the subject length before matching. Operation 10 extracts primitive indexed/named captures from immutable text; Python protocol objects retain the adapter conversion path.
 
 Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
+
 
 `ext.builtin.namespace_type` provides the native namespace class used by `sys.implementation` and discovered by the pure Python `types` fallback.
 
@@ -5971,7 +5995,7 @@ the native type name used in exception messages and an immutable type namespace.
 This metadata belongs to the
 class itself and is not inherited by Python subclasses.
 
-`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
+`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. Descriptor operations include read, write, seek, truncate, status flags and terminal checks; read and write retry interrupted calls. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
 

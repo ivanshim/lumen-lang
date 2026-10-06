@@ -88,6 +88,10 @@ class RLock:
     def locked(self):
         return self._count > 0
 
+    def _is_owned(self):
+        # One thread, so the owner of a held reentrant lock is this one.
+        return self._count > 0
+
     def __enter__(self):
         self.acquire()
         return self
@@ -162,6 +166,13 @@ class Condition:
         self._lock = lock if lock is not None else RLock()
         self.acquire = self._lock.acquire
         self.release = self._lock.release
+
+    def _is_owned(self):
+        # Asked of the lock the condition keeps, as CPython asks.
+        owned = getattr(self._lock, '_is_owned', None)
+        if owned is None:
+            return self._lock.locked()
+        return owned()
 
     def __enter__(self):
         self._lock.acquire()
