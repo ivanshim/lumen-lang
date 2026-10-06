@@ -1965,6 +1965,10 @@ impl<'a> Engine<'a> {
                     let thing = match &args[0] { Value::Null => None, other => Some(other.clone()) };
                     let owner = match (args.get(1), &thing) {
                         (Some(Value::Class(c)), _) => c.clone(),
+                        (Some(native), _) if self.stands_for_kind(native) => {
+                            let word = native.kind_it_names().map(Rc::<str>::from).or_else(|| self.kind_spelled(native)).ok_or_else(|| self.class_refusal())?;
+                            self.kind_class(&word)
+                        }
                         (_, Some(Value::Object(o))) => o.class_now().clone(),
                         (_, Some(_)) => self.root_class(),
                         (_, None) => return Err(self.class_refusal()),
@@ -2534,13 +2538,13 @@ impl<'a> Engine<'a> {
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
             if self.lang.bind_names && w.0 == 29 {
+                let native = w.1[0].plain();
+                let class_method = native == "dict" && w.1[1].plain() == "fromkeys";
+                if class_method && Self::kind_beneath(&class).as_deref() != Some("dict") {
+                    return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{}'", class.name).into());
+                }
                 if let Some(target) = &subject {
-                    let native = w.1[0].plain();
                     let stored = Self::worth_of(target).unwrap_or_else(|| target.clone()).contents();
-                    let class_method = native == "dict" && w.1[1].plain() == "fromkeys";
-                    if class_method && Self::kind_beneath(&class).as_deref() != Some("dict") {
-                        return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{}'", class.name).into());
-                    }
                     let accepts = if class_method || native == self.class_word("root") { true } else if native == "type" { self.stands_for_kind(target) }
                         else { self.lang.builtins.get(&native).filter(|op| Self::kind_builtin(op))
                             .map_or_else(|| stored.core_kind() == native, |op| self.kind_holds(op, &native, &stored)) };

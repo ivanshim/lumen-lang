@@ -8655,7 +8655,11 @@ impl<'a> Machine<'a> {
         if matches!(value, Value::Intrinsic(Prim::AsReal, _)) && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
             return Some(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
         }
-        if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
+        if let Some(carried) = self.carried_by_kind(value, name) {
+            let bound_class_method = self.names_in_calls && self.table.spells("ext.builtin.method.fromkeys", name)
+                && matches!(&carried, Value::Wrapped(60, parts) if parts[0].bare() == "dict");
+            return Some(if bound_class_method { Value::Member(Rc::new(value.clone()), name.to_string()) } else { carried });
+        }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.

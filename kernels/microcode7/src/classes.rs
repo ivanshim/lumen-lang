@@ -2089,6 +2089,10 @@ impl<'a> Machine<'a> {
                         let receiver=match &values[0]{Value::Nil=>None,other=>Some(other.clone())};
                         let owner=match (values.get(1),&receiver) {
                             (Some(Value::Blueprint(b)),_)=>b.clone(),
+                            (Some(native), _) if self.stands_for_a_kind(native) => {
+                                let word = native.kind_it_names().map(Rc::<str>::from).or_else(|| self.kind_spelling(native)).ok_or_else(|| self.class_unready())?;
+                                self.native_kind(&word)
+                            }
                             (_,Some(Value::Thing(t)))=>t.blueprint().clone(),
                             (_,Some(_))=>self.common_ancestor(),
                             (_,None)=>return Err(self.class_unready()),
@@ -2530,14 +2534,14 @@ impl<'a> Machine<'a> {
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         if let Value::Wrapped(60, parts) = &entry {
             if self.names_in_calls {
+                let declaring = parts[0].bare();
+                let is_class_method = declaring == "dict" && parts[1].bare() == "fromkeys";
+                if is_class_method && Self::native_beneath(&owner).as_deref() != Some("dict") {
+                    let name = &owner.name;
+                    return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{name}'").into());
+                }
                 if let Some(instance) = receiver.as_ref() {
-                    let declaring = parts[0].bare();
                     let contents = Self::underlying(instance).unwrap_or_else(|| instance.clone()).settled();
-                    let is_class_method = declaring == "dict" && parts[1].bare() == "fromkeys";
-                    if is_class_method && Self::native_beneath(&owner).as_deref() != Some("dict") {
-                        let name = &owner.name;
-                        return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{name}'").into());
-                    }
                     let appropriate = if is_class_method || declaring == self.detail("root") { true } else { match declaring.as_str() {
                         "type" => self.stands_for_a_kind(instance),
                         _ => match self.table.prims.get(&declaring).filter(|primitive| Self::names_a_kind(primitive)) {
@@ -3564,7 +3568,12 @@ impl<'a> Machine<'a> {
             // Everything a value of the kind answers to the kind itself
             // carries, standing loose: the value worked upon is the
             // first the entry is handed when it is called.
-            if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
+            if let Some(carried)=self.carried_by_kind(&value,key) {
+                if self.names_in_calls && word.as_ref() == "dict" && self.table.spells("ext.builtin.method.fromkeys", key) {
+                    return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                }
+                return Ok(carried);
+            }
             let native_class = self.native_kind(&word);
             if let Some(inherited) = self.from_the_root(key, false, &native_class) { return Ok(inherited); }
         }
