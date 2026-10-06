@@ -10905,7 +10905,13 @@ impl<'a> Engine<'a> {
                 if self.exception_class(&class) {
                     // A subclass that writes its own maker is made through
                     // it; the builtin classes still make themselves here.
-                    if self.class_value(&class, self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(_))) {
+                    // A maker the class wrote itself -- bare, or kept as a
+                    // method taking no receiver -- is its own; the native
+                    // allocators, which are the other wrappers, are not.
+                    if self.class_value(&class, self.class_word("allocate")).is_some_and(|value| match value {
+                        Value::Adapter(entry) => entry.0 == 4,
+                        _ => true,
+                    }) {
                         let made = self.class_construct(class, args)?;
                         self.data.push(made);
                         return Ok(());
