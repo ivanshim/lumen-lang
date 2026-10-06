@@ -251,7 +251,8 @@ class BytesIO(_BufferedIOBase):
             raise ValueError('I/O operation on closed file')
     def __init__(self, initial_bytes=None):
         if hasattr(self, '_data'):
-            self._check_exports()
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
         self._data = bytearray() if initial_bytes is None else bytearray(_buffer(initial_bytes))
         self._pos = 0
         self._closed = False
@@ -259,27 +260,32 @@ class BytesIO(_BufferedIOBase):
         if _export(self._data, True):
             raise BufferError('Existing exports of data: object cannot be re-sized')
     def getvalue(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         return bytes(self._data)
     def getbuffer(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         view = memoryview(self._data)
         view._object = _BytesIOBuffer(self)
         return view
     def close(self):
         if not self.closed:
-            self._check_exports()
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
             self._data.clear()
             self._closed = True
     def readable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         return True
     writable = readable
     seekable = readable
     def read(self, size=-1):
         if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
             size = _size(size)
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
         if end <= self._pos:
             return b''
@@ -302,7 +308,8 @@ class BytesIO(_BufferedIOBase):
     readinto1 = readinto
     def readline(self, size=-1):
         size = _size(size)
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
         start = self._pos
         if end <= start:
@@ -316,14 +323,18 @@ class BytesIO(_BufferedIOBase):
     def write(self, b):
         kind = type(b)
         if kind is bytes or kind is bytearray:
-            self._checkClosed()
-            self._check_exports()
+            if self._closed:
+                raise ValueError('I/O operation on closed file')
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
             return self._store(b)
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
-            self._checkClosed()
-            self._check_exports()
+            if self._closed:
+                raise ValueError('I/O operation on closed file')
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
             return self._store(view.tobytes())
     def _store(self, data):
         n = len(data)
@@ -337,9 +348,12 @@ class BytesIO(_BufferedIOBase):
         self._pos += n
         return n
     def seek(self, pos, whence=0):
-        pos = _ssize(pos)
-        whence = _whence(whence)
-        self._checkClosed()
+        if type(pos) is not int or pos > _MAXSIZE or pos < _MINSIZE:
+            pos = _ssize(pos)
+        if type(whence) is not int or whence > 2147483647 or whence < -2147483648:
+            whence = _whence(whence)
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         if whence == 0:
             if pos < 0:
                 raise ValueError('negative seek value ' + str(pos))
@@ -354,18 +368,22 @@ class BytesIO(_BufferedIOBase):
         self._pos = max(0, pos)
         return self._pos
     def tell(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         return self._pos
     def truncate(self, size=None):
         size = self._pos if size is None else _ssize(size)
-        self._checkClosed()
-        self._check_exports()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
+        if _export(self._data, True):
+            raise BufferError('Existing exports of data: object cannot be re-sized')
         if size < 0:
             raise ValueError('negative size value ' + str(size))
         del self._data[size:]
         return size
     def __getstate__(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file')
         return self.getvalue(), self._pos, self.__dict__.copy()
     def __setstate__(self, state):
         if getattr(self, '_closed', False):
