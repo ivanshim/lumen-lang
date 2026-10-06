@@ -5366,14 +5366,6 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            if let Value::Thing(object) = &values[0] {
-                let blueprint = object.blueprint();
-                if Self::native_beneath(&blueprint).as_deref() == Some("module") || blueprint.ancestry.borrow().iter().any(|parent| parent.name == "ModuleType") {
-                    if let Some(dict) = Self::own_entry(&blueprint, self.detail("namespace")) {
-                        if !matches!(dict.settled(), Value::Dict(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()); }
-                    }
-                }
-            }
             if let Value::Thing(module) = &values[0] {
                 let blueprint=module.blueprint();
                 let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module") || blueprint.name == "ModuleType" || blueprint.ancestry.borrow().iter().any(|parent| parent.name == "ModuleType");

@@ -5174,14 +5174,6 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                if let Value::Object(thing) = &one {
-                    let class = thing.class_now();
-                    if Self::kind_beneath(&class).as_deref() == Some("module") || class.lineage.borrow().iter().any(|base| base.name == "ModuleType") {
-                        if let Some(value) = Self::own_class_value(&class, self.class_word("namespace")) {
-                            if !matches!(value.contents(), Value::Map(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".into()); }
-                        }
-                    }
-                }
                 if let Value::Object(module) = &one {
                     let class=module.class_now();
                     let module_kind=Self::kind_beneath(&class).as_deref() == Some("module") || class.name == "ModuleType" || class.lineage.borrow().iter().any(|base| base.name == "ModuleType");
