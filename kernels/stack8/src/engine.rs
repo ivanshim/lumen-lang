@@ -17361,7 +17361,7 @@ impl<'a> Engine<'a> {
         &self.lang.byte_words[if mutable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }][0]
     }
 
-    fn byte_kind(&self, mutable: bool) -> Value {
+    pub(super) fn byte_kind(&self, mutable: bool) -> Value {
         let name = self.byte_kind_word(mutable);
         let words = &self.lang.byte_words["ext.system.bytes.type"];
         Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1])))

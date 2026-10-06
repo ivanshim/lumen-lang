@@ -736,6 +736,9 @@ impl<'a> Machine<'a> {
         if self.builds_classes(&class){return self.kind_builder_word();}
         if let Some(word)=Self::native_word(&class) {
             if let Some(op)=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind) {
+                if self.names_in_calls {
+                    if let Prim::Octets(form @ 0..=1) = op { return self.octet_type(form != 0); }
+                }
                 return Value::Intrinsic(op,Rc::from(word));
             }
         }

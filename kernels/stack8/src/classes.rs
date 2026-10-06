@@ -658,7 +658,12 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
-        Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
+        let visible = Self::own_kind(&class).and_then(|word| self.spelled_kind(&word));
+        match visible {
+            Some(Value::Native(Builtin::Bytes(mode @ 0..=1), _)) if self.lang.bind_names => self.byte_kind(mode == 1),
+            Some(value) => value,
+            None => Value::Class(class),
+        }
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
         if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }

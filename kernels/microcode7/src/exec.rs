@@ -12359,7 +12359,7 @@ impl<'a> Machine<'a> {
         self.table.single(if changeable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }).unwrap_or("")
     }
 
-    fn octet_type(&self, changeable: bool) -> Value {
+    pub(super) fn octet_type(&self, changeable: bool) -> Value {
         let parts = self.table.strings("ext.system.bytes.type");
         Value::OctetKind { changeable, shown: format!("{}{}{}", parts[0], self.octet_kind_word(changeable), parts[1]).into() }
     }
