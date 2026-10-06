@@ -1397,10 +1397,19 @@ impl<'a> Machine<'a> {
                             && matches!(values.first().map(Value::settled),Some(Value::Thing(_)))
                             && (needed==1 || matches!(values[1].settled(),Value::Small(n) if n>=0));
                         if ordinary {
-                            let stream=self.read_class_member(values[0].clone(),"_stream",false);
+                            // A plain drawing reads the stream mark straight
+                            // from the thing's own members rather than walking
+                            // its whole kind for the one name, and passes the
+                            // working the very name it was made with rather
+                            // than spelling that name afresh.
+                            let held=match values[0].settled() {
+                                Value::Thing(thing)=>thing.holds.borrow().iter().find(|(key,_)| key=="_stream").map(|(_,held)|held.clone()),
+                                _=>None,
+                            };
+                            let stream=match held {Some(mark)=>Ok(mark),None=>self.read_class_member(values[0].clone(),"_stream",false)};
                             match stream {
                                 Ok(Value::Small(mark))=>{
-                                    let mut request=vec![Value::text(&operation),Value::Small(mark)];
+                                    let mut request=vec![kept[0].clone(),Value::Small(mark)];
                                     request.extend(values.into_iter().skip(1));
                                     return self.apply_class_member(Value::text("__random"),request);
                                 }
