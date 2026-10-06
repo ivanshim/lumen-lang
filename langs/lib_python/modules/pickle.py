@@ -403,7 +403,7 @@ def _escape_decode(data):
     out = bytearray()
     at = 0
     end = len(data)
-    warned = False
+    first_invalid_escape = -1
     while at < end:
         c = data[at]
         if c != 0x5c:
@@ -445,9 +445,8 @@ def _escape_decode(data):
                 if at < end and 0x30 <= data[at] <= 0x37:
                     value = (value << 3) + data[at] - 0x30
                     at += 1
-            if value > 0o377 and not warned:
-                warned = True
-                warnings.warn('b"\\%o" is an invalid octal escape sequence. Such sequences will not work in the future. ' % value, DeprecationWarning)
+            if value > 0o377 and first_invalid_escape == -1:
+                first_invalid_escape = value
             out.append(value & 0xff)
         elif esc == 0x78:
             if at + 1 < end and _hex_digit(data[at]) < 16 and _hex_digit(data[at + 1]) < 16:
@@ -456,12 +455,19 @@ def _escape_decode(data):
             else:
                 raise ValueError("invalid \\x escape at position %d" % (at - 2))
         else:
-            if not warned:
-                warned = True
-                warnings.warn('b"\\%c" is an invalid escape sequence. Such sequences will not work in the future. ' % esc, DeprecationWarning)
+            if first_invalid_escape == -1:
+                first_invalid_escape = esc
             out.append(0x5c)
             at -= 1
-    return bytes(out)
+    result = bytes(out)
+    # Decode errors take precedence over warnings, including warnings
+    # promoted to exceptions. Report only the first invalid escape,
+    # after producing the decoded bytes, as PyBytes_DecodeEscape does.
+    if first_invalid_escape > 0xff:
+        warnings.warn('b"\\%o" is an invalid octal escape sequence. Such sequences will not work in the future. ' % first_invalid_escape, DeprecationWarning)
+    elif first_invalid_escape != -1:
+        warnings.warn('b"\\%c" is an invalid escape sequence. Such sequences will not work in the future. ' % first_invalid_escape, DeprecationWarning)
+    return result
 
 def _read_protocol(data, encoding='ASCII', errors='strict'):
     # The stack machine also accepts older standard range-iterator pickles.
