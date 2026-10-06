@@ -96,16 +96,19 @@ def _global_name(value):
     module = getattr(value, '__module__', None)
     if name is not None and '<locals>' not in name:
         if module is not None:
+            missing = False
             try:
                 advertised = _global(module, name)
             except (ImportError, AttributeError, KeyError):
                 advertised = None
+                missing = True
             if advertised is value:
                 return (module, name)
-            if isinstance(value, type):
-                # A kind that names the module it lives in is looked for
-                # only there; not being found there is a refusal, as it
-                # is in the reference.
+            if missing and isinstance(value, type):
+                # A kind that names a module which does not hold it at
+                # all is refused, as the reference refuses it; a module
+                # that holds another value of that name is looked for
+                # elsewhere, where a builtin kind may live.
                 raise PicklingError("Can't pickle " + repr(value)
                                     + ": it's not found as " + module + "." + name)
         parts = name.split('.')
