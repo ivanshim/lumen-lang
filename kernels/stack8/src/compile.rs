@@ -3388,6 +3388,15 @@ impl<'a> Compiler<'a> {
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
+                if self.lang.type_parameters {
+                    let separator = self.lang.calling.as_ref().and_then(|call| call.between.clone());
+                    self.subscription_key(&pair.close, separator.as_deref())?;
+                    self.want_sign(&pair.close, "after the index")?;
+                    keyed.push(at);
+                    self.act(Action::At, 2);
+                    on_call = false;
+                    continue;
+                }
                 if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
                     let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
                     self.slice_part(&pair.close, comma.as_deref())?;
@@ -11156,6 +11165,44 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Build a subscription key, including slice values and iterable expansion.
+    fn subscription_key(&mut self, close: &str, separator: Option<&str>) -> Res<()> {
+        let lang = self.lang;
+        let mut portions = Vec::new();
+        let mut comma = false;
+        let mut expanded = false;
+        loop {
+            let star = lang.type_parameters && self.on_any(&lang.array_spread);
+            if star {
+                let next = self.look_ahead(1).lexeme.as_str();
+                if next == close || next == ":" { return Err("SyntaxError: Invalid star expression".into()); }
+                self.take(); expanded = true;
+            }
+            let start = self.mark();
+            if star { self.expr(0)?; } else { self.slice_part(close, separator)?; }
+            if star && self.on_any(&lang.slice_marks) { return Err("SyntaxError: invalid syntax".into()); }
+            let code = self.piece().instrs.drain(start..).collect::<Vec<_>>();
+            portions.push((start, code, star));
+            if lang.slice_marks.is_empty() || !separator.is_some_and(|sep| self.at_symbol(sep)) { break; }
+            comma = true;
+            self.take();
+            if self.at_symbol(close) { break; }
+        }
+        let count = portions.len();
+        if expanded { self.act(Action::MakeArray, 0); }
+        for (start, code, star) in portions {
+            let destination = self.mark();
+            for word in relocated(code, destination as i64 - start as i64) { self.put(word); }
+            if expanded { self.act(Action::GatherItem { map: false, spread: star }, 2); }
+        }
+        if expanded {
+            self.act(Action::Builtin(Builtin::Tuple, Rc::from("tuple")), 1);
+        } else if comma {
+            self.act(if lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, count);
+        }
+        Ok(())
+    }
+
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
         if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
@@ -11398,34 +11445,7 @@ impl<'a> Compiler<'a> {
             }
             let began = self.mark();
             let separator = self.lang.calling.as_ref().and_then(|b| b.between.clone());
-            let mut portions = Vec::new();
-            let mut comma = false;
-            let mut expanded = false;
-            loop {
-                let star = lang.type_parameters && self.on_any(&lang.array_spread);
-                if star { self.take(); expanded = true; }
-                let start = self.mark();
-                if star { self.expr(0)?; } else { self.slice_part(&index.close, separator.as_deref())?; }
-                if star && self.on_any(&lang.slice_marks) { return Err("SyntaxError: invalid syntax".into()); }
-                let code = self.piece().instrs.drain(start..).collect::<Vec<_>>();
-                portions.push((start, code, star));
-                if lang.slice_marks.is_empty() || !separator.as_ref().is_some_and(|sep| self.at_symbol(sep)) { break; }
-                comma = true;
-                self.take();
-                if self.at_symbol(&index.close) { break; }
-            }
-            let count = portions.len();
-            if expanded { self.act(Action::MakeArray, 0); }
-            for (start, code, star) in portions {
-                let destination = self.mark();
-                for word in relocated(code, destination as i64 - start as i64) { self.put(word); }
-                if expanded { self.act(Action::GatherItem { map: false, spread: star }, 2); }
-            }
-            if expanded {
-                self.act(Action::Builtin(Builtin::Tuple, Rc::from("tuple")), 1);
-            } else if comma {
-                self.act(if lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, count);
-            }
+            self.subscription_key(&index.close, separator.as_deref())?;
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
             self.act(Action::At, 2);

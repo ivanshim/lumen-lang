@@ -3801,6 +3801,14 @@ impl<'a> Builder<'a> {
                 place = self.called_on_value(place)?;
             } else if self.on_any("op.index.open") {
                 self.advance();
+                if self.table.flag("ext.stmt.type_parameters") {
+                    let closing = self.table.single("op.index.close").unwrap().to_owned();
+                    let comma = self.table.single("syntax.call.separator").map(str::to_owned);
+                    let key = self.subscription_key(&closing, comma.as_deref())?;
+                    self.need_sign(&closing, "after the index")?;
+                    place = prim_call(Prim::At, vec![place, key]);
+                    continue;
+                }
                 if self.table.has_any("ext.stmt.class.special") && self.table.has_any("ext.op.index.slice") {
                     let end = self.table.single("op.index.close").unwrap().to_owned();
                     let separator = self.table.single("syntax.call.separator").map(str::to_owned);
@@ -10696,6 +10704,41 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// Read a scalar, sliced, or expanded tuple key for a subscription target.
+    fn subscription_key(&mut self, close: &str, separator: Option<&str>) -> Res<Form> {
+        let mut entries = Vec::new();
+        let mut tuple_key = false;
+        loop {
+            let unpack = self.table.flag("ext.stmt.type_parameters") && self.on_any("ext.syntax.array.spread");
+            if unpack {
+                if self.glance(1).lexeme == close || self.glance(1).lexeme == ":" {
+                    return Err(String::from("SyntaxError: Invalid star expression"));
+                }
+                self.advance();
+            }
+            let term = if unpack { self.expr(0)? } else { self.bracket_part(close, separator)? };
+            if unpack && self.on_any("ext.op.index.slice") { return Err(String::from("SyntaxError: invalid syntax")); }
+            entries.push((term, unpack));
+            if !self.table.has_any("ext.op.index.slice") || !separator.is_some_and(|word| self.sign(word)) { break; }
+            tuple_key = true;
+            self.advance();
+            if self.sign(close) { break; }
+        }
+        let result = if entries.iter().any(|entry| entry.1) {
+            let mut row = prim_call(Prim::MakeArray, Vec::new());
+            for (term, unpack) in entries {
+                row = prim_call(Prim::ExtendLiteral(false, unpack), vec![row, term]);
+            }
+            prim_call(Prim::Tupling, vec![row])
+        } else {
+            let mut keys: Vec<Form> = entries.into_iter().map(|entry| entry.0).collect();
+            if tuple_key {
+                prim_call(if self.table.has_any("ext.builtin.slice") { Prim::MakeTuple } else { Prim::SliceRefused }, keys)
+            } else { keys.pop().expect("one key") }
+        };
+        Ok(result)
+    }
+
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
         if self.table.flag("ext.syntax.call.chained") || self.table.has_any("ext.op.lambda") {
             node = self.called_on_value(node)?;
@@ -10728,31 +10771,7 @@ impl<'a> Builder<'a> {
                 if incomplete { return Err(String::from("SyntaxError: Invalid star expression")); }
             }
             let separator = self.table.single("syntax.call.separator");
-            let mut entries = Vec::new();
-            let mut tuple_key = false;
-            loop {
-                let unpack = self.table.flag("ext.stmt.type_parameters") && self.on_any("ext.syntax.array.spread");
-                if unpack { self.advance(); }
-                let term = if unpack { self.expr(0)? } else { self.bracket_part(close, separator)? };
-                if unpack && self.on_any("ext.op.index.slice") { return Err(String::from("SyntaxError: invalid syntax")); }
-                entries.push((term, unpack));
-                if !self.table.has_any("ext.op.index.slice") || !separator.is_some_and(|word| self.sign(word)) { break; }
-                tuple_key = true;
-                self.advance();
-                if self.sign(close) { break; }
-            }
-            let key = if entries.iter().any(|entry| entry.1) {
-                let mut row = prim_call(Prim::MakeArray, Vec::new());
-                for (term, unpack) in entries {
-                    row = prim_call(Prim::ExtendLiteral(false, unpack), vec![row, term]);
-                }
-                prim_call(Prim::Tupling, vec![row])
-            } else {
-                let mut keys: Vec<Form> = entries.into_iter().map(|entry| entry.0).collect();
-                if tuple_key {
-                    prim_call(if self.table.has_any("ext.builtin.slice") { Prim::MakeTuple } else { Prim::SliceRefused }, keys)
-                } else { keys.pop().expect("one key") }
-            };
+            let key = self.subscription_key(close, separator)?;
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
             // What a look comes to may itself be called.
