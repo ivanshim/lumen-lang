@@ -2,13 +2,51 @@
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
 import math as _math
 from _operator import index as _index
-from operator import length_hint as _length_hint
 from posix import _call as _posix_call
 
 error = OSError
 
 FD_SETSIZE = 1024
 _missing = object()
+
+
+# Find a special-method descriptor without instance or metaclass overrides.
+def _type_slot(cls, name):
+    for base in type.__getattribute__(cls, '__mro__'):
+        namespace = type.__getattribute__(base, '__dict__')
+        if name in namespace:
+            return namespace[name]
+    return _missing
+
+
+# Match PyObject_LengthHint, including lookup versus call error boundaries.
+def _length_hint(obj, default):
+    try:
+        return len(obj)
+    except TypeError:
+        pass
+    cls = type(obj)
+    hint = _type_slot(cls, '__length_hint__')
+    if hint is _missing:
+        return default
+    bind = _type_slot(type(hint), '__get__')
+    if bind is not _missing:
+        hint = bind(hint, obj, cls)
+    try:
+        result = hint()
+    except TypeError:
+        return default
+    if result is NotImplemented:
+        return default
+    if not isinstance(result, int):
+        name = type.__getattribute__(type(result), '__name__')[:100]
+        raise TypeError('__length_hint__ must be an integer, not ' + name)
+    value = int.__index__(result)
+    if value < -9223372036854775808 or value > 9223372036854775807:
+        raise OverflowError('Python int too large to convert to C ssize_t')
+    if value < 0:
+        raise ValueError('__length_hint__() should return >= 0')
+    return value
 
 
 def _as_fd(item):
@@ -92,9 +130,7 @@ class _Select:
                 # PySequence_List acquires the iterator again, then checks
                 # the offered iterator's hint before consuming any items.
                 walk = iter(iterator)
-                hint = int.__index__(_length_hint(iterator, 8))
-                if hint > 9223372036854775807:
-                    raise OverflowError('Python int too large to convert to C ssize_t')
+                _length_hint(iterator, 8)
                 items = []
                 while True:
                     try:

@@ -15836,7 +15836,14 @@ impl<'a> Machine<'a> {
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
             (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
-                let length = self.ask_special(one, 10, &[])?.unwrap();
+                let reported = self.ask_special(one, 10, &[])?.unwrap();
+                // Strip Python integer wrappers before inspecting their value.
+                let length = if self.rules.has_any_ext_builtin_bool_result {
+                    match Self::underlying(&reported).map(|v| v.settled()).unwrap_or(reported) {
+                        Value::Flag(bit) => Value::Small(if bit { 1 } else { 0 }),
+                        integer => integer,
+                    }
+                } else { reported };
                 if !matches!(length, Value::Small(_) | Value::Huge(_)) { return Err(self.bad_answer()); }
                 if length.as_big()? < BigInt::from(0) {
                     return Err(if self.rules.has_any_ext_builtin_bool_result {

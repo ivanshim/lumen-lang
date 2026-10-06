@@ -9340,7 +9340,15 @@ impl<'a> Engine<'a> {
                 args[2].clone()
             }
             Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
-                let answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
+                let mut answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
+                // Python reads an integer subclass's stored length directly.
+                if self.lang.bool_result.is_some() {
+                    if let Some(stored) = Self::worth_of(&answer) {
+                        let plain = stored.contents();
+                        if matches!(plain, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { answer = plain; }
+                    }
+                    if let Value::Flag(flag) = answer { answer = Value::Small(i64::from(flag)); }
+                }
                 match answer {
                     Value::Small(n) if n >= 0 => Value::Small(n),
                     Value::Huge(ref n) if **n > BigInt::from(i64::MAX) => return Err("OverflowError: cannot fit 'int' into an index-sized integer".into()),
