@@ -253,6 +253,25 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     Ok(Value::Map(Rc::new(pairs.into())))
 }
 
+/// Split a text or a row of stowed code units on a separator of
+/// either kind, validating the cut count the way CPython does.
+fn split_units_text(args: &[Value], reverse: bool, lang: &Lang) -> Result<Value, String> {
+    if args.len() > 3 { return Err(fault(lang, "arguments")); }
+    let units = args[0].text_codes().ok_or_else(|| fault(lang, "receiver"))?;
+    let separator = match args.get(1).map(Value::contents) {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.text_codes().ok_or_else(|| fault(lang, "arguments"))?),
+    };
+    let raw = match args.get(2) {
+        None => -1i64,
+        Some(v) => integer(v, lang)?,
+    };
+    let limit = if raw < 0 { usize::MAX } else { raw as usize };
+    let pieces = crate::methods::split_units(&units, separator.as_deref(), limit, reverse)
+        .map_err(|_| fault(lang, "separator"))?;
+    Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true))
+}
+
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
     let opened: Vec<Value> = args.iter().map(Value::contents).collect();
     let args = opened.as_slice();
@@ -275,6 +294,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let mut supplied = args.to_vec(); supplied[0] = Value::text(&clean);
             let result = run(op, _name, &supplied, lang, words)?;
             return Ok(if op == Isascii { Value::Flag(false) } else { result });
+        }
+        if matches!(op, Split | Rsplit) {
+            return split_units_text(args, op == Rsplit, lang);
         }
     }
     let Some(Value::Text(source)) = args.first() else { return Err(fault(lang,"receiver")); };
@@ -381,10 +403,8 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         Split | Rsplit => {
             let limit=number(1,-1)?; let cap=if limit<0 {usize::MAX} else {limit as usize};
-            // A separator that stows a surrogate half cannot occur in
-            // a text that stows none, so no cut is made.
             if matches!(params.first(), Some(Value::Codepoints(_))) {
-                return Ok(Value::array(vec![Value::text(s)]).held(true));
+                return split_units_text(args, op == Rsplit, lang);
             }
             let sep=match params.first() {None|Some(Value::Null)=>None,Some(v)=>Some(text(v,lang)?)};
             let backward=op==Rsplit; let mut parts=Vec::new();

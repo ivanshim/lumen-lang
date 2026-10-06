@@ -290,13 +290,22 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Err(String::from("TypeError: argument must be str")),
         };
     }
-    if action == 7 {
-        return match input.get(1) {
-            Some(Value::Text(word)) => Ok(Value::text(&crate::unicode::collated(word))),
-            _ => Err(String::from("TypeError: normalize() argument 2 must be str")),
-        };
+    if action == 11 {
+        let codes = input.get(1).and_then(|v| v.character_numbers()).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
+        // A stowed half is passed through as it stands; only the run
+        // of real characters around it is folded.
+        let mut folded: Vec<u32> = Vec::with_capacity(codes.len());
+        let mut plain = String::new();
+        for number in codes {
+            if let Some(letter) = char::from_u32(number) { plain.push(letter); continue; }
+            folded.extend(crate::unicode::collated(&plain).chars().map(|c| c as u32));
+            plain.clear();
+            folded.push(number);
+        }
+        folded.extend(crate::unicode::collated(&plain).chars().map(|c| c as u32));
+        return Ok(Value::characters(folded));
     }
-    if action == 8 {
+    if action == 12 {
         let point = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return Ok(Value::text(&crate::unicode::decomposition(point)));
     }
