@@ -24082,6 +24082,10 @@ impl Engine<'_> {
         if let Some(book) = &self.natives { return book.clone(); }
         let mut names: Vec<String> = self.lang.builtins.keys().cloned().collect();
         names.extend(self.lang.exceptions.iter().cloned());
+        if self.fuller_classes() && !self.class_word("root").is_empty() {
+            self.root_class();
+            names.push(self.class_word("root").to_owned());
+        }
         names.sort();
         names.dedup();
         let mut pairs = Vec::with_capacity(names.len());
@@ -25129,7 +25133,7 @@ impl Engine<'_> {
             };
             if let Some(held) = &existing {
                 let kept = held.contents();
-                if held.core_kind() != "mappingproxy" && !matches!(kept, Value::Map(_) | Value::Object(_)) {
+                if held.core_kind() != "mappingproxy" && !matches!(kept, Value::Map(_) | Value::Object(_) | Value::Fields(_)) {
                     return Err(format!("TypeError: '{}' object is not subscriptable", kept.core_kind()));
                 }
             }
@@ -25165,6 +25169,12 @@ impl Engine<'_> {
         }
         if let Some(Value::Object(module)) = self.module_slots.get(&self.source).and_then(|(_, name)| self.modules.get(name)).cloned() {
             let globals = Rc::new(RefCell::new(Value::Fields(module)));
+            if let Some(word) = self.lang.module_builtins.first().cloned() {
+                if self.book_builtins(&globals, &word).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_none() {
+                    let builtins = self.native_dict();
+                    self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                }
+            }
             return self.run_text_booked(source, file, mode, globals, None, top_await);
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());

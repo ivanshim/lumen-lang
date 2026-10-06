@@ -444,6 +444,13 @@ struct ExecutionRules<'a> {
     has_any_ext_system_bytes_encodings: bool,
     has_any_ext_system_scope_unready: bool,
     has_any_op_concat: bool,
+    class_builder: bool,
+    weak_members: bool,
+    detail_get: &'a str,
+    detail_set: &'a str,
+    detail_remove: &'a str,
+    detail_call: &'a str,
+    detail_subclass: &'a str,
     detail_allocate: &'a str,
     detail_descriptor_get: &'a str,
     detail_doc: &'a str,
@@ -1754,6 +1761,13 @@ impl<'a> Machine<'a> {
                 has_any_ext_system_bytes_encodings: table.has_any("ext.system.bytes.encodings"),
                 has_any_ext_system_scope_unready: table.has_any("ext.system.scope.unready"),
                 has_any_op_concat: table.has_any("op.concat"),
+                class_builder: table.has_any("ext.stmt.class.builder"),
+                weak_members: table.has_any("ext.builtin.weak.get"),
+                detail_get: table.single("ext.stmt.class.detail.get").unwrap_or(""),
+                detail_set: table.single("ext.stmt.class.detail.set").unwrap_or(""),
+                detail_remove: table.single("ext.stmt.class.detail.remove").unwrap_or(""),
+                detail_call: table.single("ext.stmt.class.detail.call").unwrap_or(""),
+                detail_subclass: table.single("ext.stmt.class.detail.subclass").unwrap_or(""),
                 detail_allocate: table.single("ext.stmt.class.detail.allocate").unwrap_or(""),
                 detail_descriptor_get: table.single("ext.stmt.class.detail.descriptor.get").unwrap_or(""),
                 detail_doc: table.single("ext.stmt.class.detail.doc").unwrap_or(""),
@@ -2358,7 +2372,7 @@ impl<'a> Machine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
-        if self.table.has_any("ext.stmt.class.builder") {
+        if self.rules.class_builder {
             if let Value::Shared(cell) = &v {
                 let held = cell.borrow().clone();
                 if !matches!(held, Value::Vector(_) | Value::Dict(_)) { return self.what_it_spells(held); }
@@ -5588,7 +5602,7 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
             callable => callable,
         };
-        if args.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
+        if args.is_empty() && self.rules.class_builder && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
             let Value::Intrinsic(operation, _) = stands else { unreachable!() };
             return self.names_here(frame, operation).map_err(Escape::Error);
         }
@@ -6366,7 +6380,7 @@ impl<'a> Machine<'a> {
                         // A class the seal marked unchangeable stands
                         // as no class's base.
                         Some(Value::Blueprint(b)) if Self::sealed(&b) => {
-                            let home = if b.shared.borrow().iter().any(|(word, value)| word == "\0buffer_allocator" && value.is_true()) { Self::own_entry(&b, self.detail("module")).map(|v| format!("{}.", v.bare())).unwrap_or_default() } else if self.table.has_any("ext.builtin.weak.get") && ["ProxyType", "CallableProxyType"].contains(&b.name.as_str()) { "weakref.".to_owned() } else { String::new() };
+                            let home = if b.shared.borrow().iter().any(|(word, value)| word == "\0buffer_allocator" && value.is_true()) { Self::own_entry(&b, self.detail("module")).map(|v| format!("{}.", v.bare())).unwrap_or_default() } else if self.rules.weak_members && ["ProxyType", "CallableProxyType"].contains(&b.name.as_str()) { "weakref.".to_owned() } else { String::new() };
                             return Err(format!("TypeError: type '{home}{}' is not an acceptable base type", b.name).into());
                         },
                         Some(Value::Blueprint(b)) => Some(b),
@@ -6394,7 +6408,7 @@ impl<'a> Machine<'a> {
                 for _ in 1..n_bases {
                     match given.next() {
                         Some(Value::Blueprint(b)) if Self::sealed(&b) => {
-                            let home = if b.shared.borrow().iter().any(|(word, value)| word == "\0buffer_allocator" && value.is_true()) { Self::own_entry(&b, self.detail("module")).map(|v| format!("{}.", v.bare())).unwrap_or_default() } else if self.table.has_any("ext.builtin.weak.get") && ["ProxyType", "CallableProxyType"].contains(&b.name.as_str()) { "weakref.".to_owned() } else { String::new() };
+                            let home = if b.shared.borrow().iter().any(|(word, value)| word == "\0buffer_allocator" && value.is_true()) { Self::own_entry(&b, self.detail("module")).map(|v| format!("{}.", v.bare())).unwrap_or_default() } else if self.rules.weak_members && ["ProxyType", "CallableProxyType"].contains(&b.name.as_str()) { "weakref.".to_owned() } else { String::new() };
                             return Err(format!("TypeError: type '{home}{}' is not an acceptable base type", b.name).into());
                         },
                         Some(Value::Blueprint(b)) => answers.push(b),
@@ -6804,7 +6818,7 @@ impl<'a> Machine<'a> {
                         let constructor=self.read_class_member(subject.settled(),&called,false)?;
                         return self.apply_class_member(constructor,values);
                     }
-                    if self.has_class_order() && (matches!(&subject, Value::Intrinsic(op, _) if (Self::names_a_kind(op) && (self.table.single("ext.stmt.class.constructor") == Some(called.as_str()) || called == "__getformat__") || !Self::names_a_kind(op) && [81, 79].into_iter().any(|slot| self.table.strings("ext.stmt.class.special").get(slot).is_some_and(|word| word == &called)))) || matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Member(..) | Value::TextCall { .. } | Value::Intrinsic(Prim::Truthful, _))) || (self.table.has_any("ext.stmt.class.builder") && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.has_class_order() && (matches!(&subject, Value::Intrinsic(op, _) if (Self::names_a_kind(op) && (self.table.single("ext.stmt.class.constructor") == Some(called.as_str()) || called == "__getformat__") || !Self::names_a_kind(op) && [81, 79].into_iter().any(|slot| self.table.strings("ext.stmt.class.special").get(slot).is_some_and(|word| word == &called)))) || matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Member(..) | Value::TextCall { .. } | Value::Intrinsic(Prim::Truthful, _))) || (self.rules.class_builder && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.rules.member_pipes {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -7230,10 +7244,10 @@ impl<'a> Machine<'a> {
                     // not hold, and take the write of one: where the
                     // language names such methods and the class is
                     // written with them, they stand in its place.
-                    if *op == Prim::Of && self.table.has_any("ext.stmt.class.builder") {
+                    if *op == Prim::Of && self.rules.class_builder {
                         if let Some(subject) = values.first_mut() { *subject = self.what_it_spells(subject.clone()); }
                     }
-                    if values.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(op, Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook) {
+                    if values.is_empty() && self.rules.class_builder && matches!(op, Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook) {
                         return self.names_here(frame, *op).map_err(Escape::Error);
                     }
                     if self.has_class_order() {
@@ -7542,7 +7556,7 @@ impl<'a> Machine<'a> {
     }
 
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
-        if matches!(stands, Value::Intrinsic(Prim::ClassWork(13), _)) && self.table.has_any("ext.stmt.class.builder") {
+        if matches!(stands, Value::Intrinsic(Prim::ClassWork(13), _)) && self.rules.class_builder {
             return Some((|| { let values = self.value_list(args, frame)?; self.work_on_class(13, values) })());
         }
         let octet_name;
@@ -8550,7 +8564,7 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         if let Some(operation) = setted {
-            let callable = if self.table.has_any("ext.stmt.class.builder") {
+            let callable = if self.rules.class_builder {
                 Value::Intrinsic(operation, Rc::from(name))
             } else { Value::text(name) };
             return Some(Value::Wrapped(3, Rc::new(vec![callable, value.settled()]).into()));
@@ -8698,7 +8712,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
-                if args.is_empty() && self.table.has_any("ext.stmt.class.builder")
+                if args.is_empty() && self.rules.class_builder
                     && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
                     let Value::Intrinsic(operation, _) = stands else { unreachable!() };
                     return self.names_here(frame, operation).map_err(Escape::Error).map(Next::Value);
@@ -15954,7 +15968,7 @@ impl<'a> Machine<'a> {
     }
 
     fn dictionary(&mut self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        let positional: Vec<Value> = positional.iter().map(|value| if self.table.has_any("ext.stmt.class.builder") { value.settled() } else { collection_read(value) }).collect();
+        let positional: Vec<Value> = positional.iter().map(|value| if self.rules.class_builder { value.settled() } else { collection_read(value) }).collect();
         if positional.len() > 1 {
             return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or("A map takes at most one source").to_string());
         }
@@ -15962,7 +15976,7 @@ impl<'a> Machine<'a> {
         let source_pairs = match positional.first() {
             None => Vec::new(),
             Some(Value::Dict(entries)) => entries.to_vec(),
-            Some(Value::Attributes(owner)) if self.table.has_any("ext.stmt.class.builder") => self.attribute_entries(owner),
+            Some(Value::Attributes(owner)) if self.rules.class_builder => self.attribute_entries(owner),
             Some(value @ Value::Thing(_)) if self.appointment(value, 15).is_none() && matches!(Self::underlying(value).map(|under| under.settled()), Some(Value::Dict(_))) => {
                 let Some(Value::Dict(entries)) = Self::underlying(value).map(|under| under.settled()) else { unreachable!() };
                 entries.to_vec()
@@ -16696,7 +16710,7 @@ impl<'a> Machine<'a> {
             if called == "__getformat__" && matches!(subject.settled(), Value::Frac(_)) {
                 return self.read_class_member(subject.clone(), &called, false).map_err(|fault| self.suspension_fault(fault));
             }
-            if self.table.has_any("ext.builtin.weak.get") {
+            if self.rules.weak_members {
                 if let Value::Thing(proxy) = subject.settled() {
                     if ["ProxyType", "CallableProxyType"].contains(&proxy.blueprint().name.as_str()) {
                         return self.read_class_member(Value::Thing(proxy), &called, false).map_err(|escape| self.suspension_fault(escape));
@@ -17950,7 +17964,7 @@ impl<'a> Machine<'a> {
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
                 let ancestor = match &v[1] {
                     Value::Blueprint(old) if Self::sealed(old) => {
-                        let prefix = match old.name.as_str() { "ProxyType" | "CallableProxyType" if self.table.has_any("ext.builtin.weak.get") => "weakref.", _ => "" };
+                        let prefix = match old.name.as_str() { "ProxyType" | "CallableProxyType" if self.rules.weak_members => "weakref.", _ => "" };
                         return Err(format!("TypeError: type '{prefix}{}' is not an acceptable base type", old.name));
                     },
                     Value::Blueprint(old) => old.clone(),
@@ -19419,7 +19433,7 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                if op == Prim::ClassMethods && self.table.has_any("ext.stmt.class.builder") { gathered.retain(|called| !called.starts_with('\0')); }
+                if op == Prim::ClassMethods && self.rules.class_builder { gathered.retain(|called| !called.starts_with('\0')); }
                 Value::Vector(crate::tuples::Sequence::plain(gathered.iter().map(|called| Value::text(called)).collect()))
             }
             // The class a class stands on, by name: a thing is asked of
@@ -24429,7 +24443,12 @@ impl<'a> Machine<'a> {
         let mut words: Vec<&String> = self.table.prims.keys().chain(self.table.strings("ext.builtin.exceptions")).collect();
         words.sort();
         words.dedup();
-        let entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        let mut entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        if self.has_class_order() && !self.rules.detail_root.is_empty() {
+            let root = self.common_ancestor();
+            entries.retain(|(word, _)| !spells_key(word, self.rules.detail_root));
+            entries.push((Value::text(self.rules.detail_root), Value::Blueprint(root)));
+        }
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.natives_book = Some(book.clone());
         book
@@ -25390,7 +25409,7 @@ impl<'a> Machine<'a> {
             };
             if let Some(value) = &already {
                 let kept = value.settled();
-                if value.kind_word() != "mappingproxy" && !matches!(kept, Value::Dict(_) | Value::Thing(_)) {
+                if value.kind_word() != "mappingproxy" && !matches!(kept, Value::Dict(_) | Value::Thing(_) | Value::Attributes(_)) {
                     return Err(format!("TypeError: '{}' object is not subscriptable", kept.kind_word()));
                 }
             }
@@ -25426,7 +25445,15 @@ impl<'a> Machine<'a> {
         }
         let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| self.imported.get(module)).cloned();
         if let Some(Value::Thing(namespace)) = owner {
-            return self.perform_booked(source, file, mode, Rc::new(RefCell::new(Value::Attributes(namespace))), None, top_await);
+            let book = Rc::new(RefCell::new(Value::Attributes(namespace)));
+            if let Some(key) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
+                let present = self.builtin_entry(&book, &key).map_err(|escape| self.carried_native_fault(escape))?;
+                if present.is_none() {
+                    let defaults = Value::Shared(self.natives_kept());
+                    self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
+                }
+            }
+            return self.perform_booked(source, file, mode, book, None, top_await);
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -26864,7 +26891,7 @@ impl Machine<'_> {
                 let mut incoming = Vec::new();
                 if let Some(source) = input.first() {
                     if let Value::Dict(pairs) = source { incoming.extend(pairs.iter().cloned()); }
-                    else if let Some(Value::Dict(pairs)) = Self::underlying(source).filter(|_| self.table.has_any("ext.stmt.class.builder") && self.appointment(source, 15).is_none()).map(|base| base.settled()) { incoming.extend(pairs.iter().cloned()); }
+                    else if let Some(Value::Dict(pairs)) = Self::underlying(source).filter(|_| self.rules.class_builder && self.appointment(source, 15).is_none()).map(|base| base.settled()) { incoming.extend(pairs.iter().cloned()); }
                     else if let Some(method) = self.attribute(source, "keys").or_else(|| Self::underlying(source).and_then(|base| self.attribute(&base, "keys"))) {
                         let offered = self.apply_within(method, Vec::new())?;
                         let keys = self.core_collect(&offered)?;
