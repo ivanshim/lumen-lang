@@ -158,6 +158,71 @@ def isgeneratorfunction(obj):
 
 
 # A marker for markcoroutinefunction and iscoroutinefunction.
+_static_missing = object()
+
+
+def _static_mro(cls):
+    return __static_namespace__(cls, 1)
+
+
+def _static_shadowed_dict(cls):
+    import types
+    for base in _static_mro(cls):
+        namespace = __static_namespace__(base, 0)
+        if '__dict__' in namespace:
+            return not isinstance(namespace['__dict__'], types.GetSetDescriptorType)
+    return False
+
+
+def _static_class_attribute(cls, name):
+    for base in _static_mro(cls):
+        if _static_shadowed_dict(type(base)):
+            continue
+        namespace = __static_namespace__(base, 0)
+        if name in namespace:
+            return namespace[name]
+    return _static_missing
+
+
+def _static_data_descriptor(value):
+    if isinstance(value, property):
+        return True
+    cls = type(value)
+    return (_static_class_attribute(cls, '__get__') is not _static_missing
+            and (_static_class_attribute(cls, '__set__') is not _static_missing
+                 or _static_class_attribute(cls, '__delete__') is not _static_missing))
+
+
+def getattr_static(obj, attr, default=_static_missing):
+    """Look in raw namespaces, preserving descriptors without calling them."""
+    cls = type(obj)
+    class_value = _static_class_attribute(cls, attr)
+    if isinstance(obj, type):
+        own = _static_class_attribute(obj, attr)
+        if own is not _static_missing:
+            return own
+    else:
+        own = _static_missing
+        # A shadowed __dict__ may itself be a descriptor. Never invoke it.
+        if not _static_shadowed_dict(cls):
+            try:
+                namespace = __static_namespace__(obj, 0)
+            except (AttributeError, TypeError):
+                namespace = None
+            if isinstance(namespace, dict) and attr in namespace:
+                own = namespace[attr]
+        if class_value is not _static_missing and _static_data_descriptor(class_value):
+            return class_value
+        if own is not _static_missing:
+            return own
+    if class_value is not _static_missing:
+        return class_value
+    if default is not _static_missing:
+        return default
+    raise AttributeError(attr)
+
+
+# Coroutine recognition follows the flags and marker rules in CPython 3.14.8.
 _is_coroutine_mark = object()
 
 

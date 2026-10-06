@@ -18,6 +18,7 @@
     "inspect": "runtime_adapters/inspect.py",
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
-    "importlib": "runtime_adapters/importlib.py"
+    "importlib": "runtime_adapters/importlib.py",
+    "abc": "runtime_adapters/abc.py"
   }
 }

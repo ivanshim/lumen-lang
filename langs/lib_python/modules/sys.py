@@ -502,3 +502,11 @@ def getfilesystemencoding():
 def getfilesystemencodeerrors():
     return "surrogateescape"
 
+
+
+def gettrace():
+    return __trace_native__(0)
+
+
+def settrace(trace):
+    __trace_native__(1, trace)

@@ -909,6 +909,8 @@
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
+  "ext.builtin.static_namespace": ["__static_namespace__"],
+  "ext.builtin.trace_native": ["__trace_native__"],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],

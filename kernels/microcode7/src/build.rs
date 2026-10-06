@@ -505,6 +505,40 @@ pub(crate) fn member_spelling(class: &str, ident: &str) -> String {
     ident.to_owned()
 }
 
+// Locate the suite containing a case word before treating it as a clause.
+fn inside_matching_arm(input: &[Token], position: usize, table: &Table) -> bool {
+    let mut skipped = 0i32;
+    let mut cursor = position;
+    let entrance = loop {
+        if cursor == 0 { return false; }
+        cursor -= 1;
+        if input[cursor].shape == Shape::Close { skipped += 1; }
+        else if input[cursor].shape == Shape::Open {
+            if skipped == 0 { break cursor; }
+            skipped -= 1;
+        }
+    };
+    cursor = entrance;
+    while cursor > 0 && input[cursor - 1].shape == Shape::LineEnd { cursor -= 1; }
+    let Some(ending) = cursor.checked_sub(1) else { return false };
+    if input[ending].shape != Shape::Sign || !table.spells("block.intro", &input[ending].lexeme) { return false; }
+    cursor = ending;
+    let mut punctuation = 0i32;
+    while cursor > 0 {
+        cursor -= 1;
+        let item = &input[cursor];
+        if item.shape == Shape::Sign {
+            if [")", "]", "}"].contains(&item.lexeme.as_str()) { punctuation += 1; }
+            else if ["(", "[", "{"].contains(&item.lexeme.as_str()) { punctuation -= 1; }
+        }
+        if punctuation == 0 && [Shape::LineEnd, Shape::Open, Shape::Close].contains(&item.shape) {
+            cursor += 1;
+            break;
+        }
+    }
+    input.get(cursor).map_or(false, |head| table.spells("ext.stmt.match", &head.lexeme))
+}
+
 /// Give each class suite its lexical names before collecting scope bindings.
 /// An inner suite replaces the enclosing prefix, including in nested functions.
 fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
@@ -537,15 +571,39 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
         suites.push((start, stop, class.lexeme.as_str()));
     }
     for (begin, end, owner) in suites {
+        let mut in_pattern = false;
+        let mut pattern_nesting = 0i32;
         for offset in begin..end {
-            if input[offset].shape == Shape::Bare {
+            let shape = input[offset].shape;
+            // A case opens a pattern, whose keyword names are not names of
+            // the class and so are never mangled; the guard or the opening
+            // of the case's body closes it.
+            let begins_arm = !in_pattern && shape == Shape::Bare
+                && table.spells("ext.stmt.match.case", &input[offset].lexeme)
+                && offset.checked_sub(1).and_then(|prior| input.get(prior))
+                    .map_or(false, |prior| [Shape::LineEnd, Shape::Open, Shape::Close].contains(&prior.shape))
+                && input.get(offset + 1).map_or(false, |after| after.shape != Shape::LineEnd && after.shape != Shape::Finish && !table.spells("stmt.assign", &after.lexeme))
+                && inside_matching_arm(input, offset, table);
+            if begins_arm {
+                in_pattern = true;
+                pattern_nesting = 0;
+            } else if in_pattern && shape == Shape::Bare && table.spells("ext.stmt.match.guard", &input[offset].lexeme) {
+                in_pattern = false;
+            } else if in_pattern && shape == Shape::Sign {
+                let sign = input[offset].lexeme.as_str();
+                if ["(", "[", "{"].contains(&sign) { pattern_nesting += 1; }
+                else if [")", "]", "}"].contains(&sign) { pattern_nesting -= 1; }
+                else if pattern_nesting == 0 && table.spells("block.intro", sign) { in_pattern = false; }
+            }
+            if shape == Shape::Bare {
                 // A name the table spells for a builtin is that builtin
                 // in a class body as out of one: the private-name
                 // mangling does not reach it.
                 let word = &input[offset].lexeme;
                 let named = word.starts_with("__") && !word.ends_with("__")
                     && crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
-                if !named {
+                let keyword = in_pattern && input.get(offset + 1).map_or(false, |next| next.shape == Shape::Sign && table.spells("stmt.assign", &next.lexeme));
+                if !named && !keyword {
                     output[offset].lexeme = member_spelling(owner, word);
                 }
             }
@@ -2679,8 +2737,9 @@ impl<'a> Builder<'a> {
         }
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
+            let while_loop = self.table.has_any("ext.builtin.trace_native") && self.key("stmt.while");
             let made = self.plain_or_kind()?;
-            return Ok(Form::OnLine(row, 0, Box::new(made)));
+            return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
         }
         self.plain_or_kind()
     }
@@ -2774,11 +2833,15 @@ impl<'a> Builder<'a> {
             }
             if self.look().spelling() == "case" && self.glance(1).lexeme != ":" {
                 let mut nested = 0usize;
-                let arm = self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|token| {
+                let mut arm = false;
+                for token in self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)) {
                     if ["(", "[", "{"].contains(&token.lexeme.as_str()) { nested += 1; }
                     else if [")", "]", "}"].contains(&token.lexeme.as_str()) { nested = nested.saturating_sub(1); }
-                    token.lexeme == ":" && nested == 0
-                });
+                    if nested == 0 {
+                        if self.table.spells("stmt.assign", &token.lexeme) || self.table.compound.contains_key(&token.lexeme) { break; }
+                        if token.lexeme == ":" { arm = true; break; }
+                    }
+                }
                 if arm { return Err("SyntaxError: case statement must be inside match statement".to_owned()); }
             }
             if self.look().spelling() == "lazy" && ["import", "from"].contains(&self.glance(1).spelling()) {
@@ -2999,12 +3062,14 @@ impl<'a> Builder<'a> {
                 return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true, otherwise: None });
             }
             if self.key("stmt.while") {
+                let loop_row = self.look().row.saturating_sub(self.before);
                 self.advance();
                 let test_at = self.pos;
                 return self.cycle(
                     move |r| {
                         r.pos = test_at;
-                        r.expr(0)
+                        let test = r.expr(0)?;
+                        Ok(if r.table.has_any("ext.builtin.trace_native") { Form::OnLine(loop_row, 0, Box::new(test)) } else { test })
                     },
                     |r| r.body(),
                     None::<fn(&mut Self) -> Res<Form>>,
@@ -6109,6 +6174,7 @@ impl<'a> Builder<'a> {
         if self.look().shape != Shape::Open { return Err(self.bad_case()); }
         self.advance();
         let mut arms = Vec::new();
+        let mut unreachable = false;
         loop {
             self.skip_line_ends();
             if self.look().shape == Shape::Close { self.advance(); break; }
@@ -6118,6 +6184,10 @@ impl<'a> Builder<'a> {
                 }
                 return Err(self.bad_case());
             }
+            // A case whose test fits everything leaves no subject for a
+            // later case, which the reference refuses to read.
+            if unreachable { return Err(self.bad_case()); }
+            let case_row = (self.look().row as u32).saturating_sub(self.before);
             self.advance();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
@@ -6138,6 +6208,7 @@ impl<'a> Builder<'a> {
             }
             if starts_wide && !separated { return Err(self.bad_case()); }
             let pattern = if separated { crate::form::CaseTest::Series { members, spread } } else { members.pop().unwrap() };
+            let falls_through = Self::irrefutable_case(&pattern);
             let names = pattern.names().map_err(|_| self.bad_case())?;
             let slots = names.into_iter().map(|name| {
                 let address = self.address_to_write(&name);
@@ -6145,11 +6216,16 @@ impl<'a> Builder<'a> {
             }).collect();
             let kinds = std::mem::take(&mut self.pattern_kinds);
             let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple, kinds };
+            let mut has_guard = false;
             if self.key("ext.stmt.match.guard") {
                 self.advance();
                 let guard = self.expr(0)?;
                 fits = self.choose(fits, guard, constant(Value::Flag(false)));
+                has_guard = true;
             }
+            // A guard keeps a case that fits everything from leaving the
+            // later cases with nothing to fit.
+            unreachable = falls_through && !has_guard;
             if !self.on_any("block.intro") { return Err(self.bad_case()); }
             let same_line = self.glance(1).row == self.look().row;
             let mut statements = vec![self.body()?];
@@ -6160,6 +6236,7 @@ impl<'a> Builder<'a> {
                     statements.push(self.stmt()?);
                 }
             }
+            if self.table.has_any("ext.builtin.trace_native") { fits = Form::OnLine(case_row, 0, Box::new(fits)); }
             arms.push((fits, sequence(statements)));
         }
         if arms.is_empty() { return Err(self.bad_case()); }
@@ -6220,6 +6297,26 @@ impl<'a> Builder<'a> {
         Ok(CaseTest::Keep(word))
     }
 
+    /// Whether a case test fits every subject: a capture or a wildcard,
+    /// or an alternative of such. Such a test leaves nothing for a later
+    /// alternative or a later case to fit.
+    /// Whether two literal mapping keys are the same key. A flag is the
+    /// number it stands for, as a map's own keying has it.
+    fn key_alike(a: &Value, b: &Value) -> bool {
+        let plain = |v: &Value| match v { Value::Flag(flag) => Value::Small(i64::from(*flag)), other => other.clone() };
+        plain(a).equals(&plain(b))
+    }
+
+    fn irrefutable_case(test: &crate::form::CaseTest) -> bool {
+        use crate::form::CaseTest;
+        match test {
+            CaseTest::Ignore | CaseTest::Keep(_) => true,
+            CaseTest::Also { test, .. } => Self::irrefutable_case(test),
+            CaseTest::AnyOf(arms) => arms.iter().any(Self::irrefutable_case),
+            _ => false,
+        }
+    }
+
     fn pattern_choice(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let first = self.pattern_single()?;
@@ -6229,6 +6326,11 @@ impl<'a> Builder<'a> {
                 self.advance();
                 alternatives.push(self.pattern_single()?);
                 if !self.on_any("ext.stmt.match.or") { break; }
+            }
+            // An alternative that fits everything leaves no subject for
+            // the alternatives after it, which the reference refuses.
+            if alternatives[..alternatives.len() - 1].iter().any(Self::irrefutable_case) {
+                return Err(self.bad_case());
             }
             CaseTest::AnyOf(alternatives)
         } else { first };
@@ -6295,19 +6397,66 @@ impl<'a> Builder<'a> {
         (end, last.end_row.max(last.row))
     }
 
+    /// A signed numeral in a pattern, answering whether it names an
+    /// imaginary part. A minus before an imaginary part is a complex of
+    /// its own, so both coordinates are turned apart.
+    fn pattern_number(&mut self) -> Res<(Value, bool)> {
+        let table = self.table;
+        let below = self.on_any("op.sub");
+        if below { self.advance(); }
+        if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+        let text = self.advance().lexeme;
+        let letters = table.letters("ext.lexical.number.imaginary");
+        let imaginary = text.chars().next_back().map_or(false, |c| letters.contains(&c));
+        let number = numeral(&text, table)?;
+        if !below { return Ok((number, imaginary)); }
+        let turned = if imaginary {
+            let (real, sole) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
+            crate::complex::pair(table, -real, -sole)
+        } else {
+            math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??
+        };
+        Ok((turned, imaginary))
+    }
+
+    /// The imaginary part of a complex literal: a numeral with no sign
+    /// of its own, the sign before it being the one that joins it to the
+    /// real part. `case 1 + -2j` is no pattern at all.
+    fn pattern_imaginary(&mut self) -> Res<Value> {
+        let table = self.table;
+        if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+        let text = self.advance().lexeme;
+        let letters = table.letters("ext.lexical.number.imaginary");
+        if !text.chars().next_back().map_or(false, |c| letters.contains(&c)) { return Err(self.bad_case()); }
+        numeral(&text, table)
+    }
+
     fn pattern_single(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let table = self.table;
         if self.look().shape == Shape::Numeral || self.on_any("op.sub") {
-            let negative = self.on_any("op.sub");
-            if negative { self.advance(); }
-            if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
-            let text = self.advance().lexeme;
-            let mut number = numeral(&text, table)?;
-            if negative {
-                number = math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??;
+            let (mut number, mut imaginary) = self.pattern_number()?;
+            // A real part met by a plus or a minus and an imaginary part
+            // makes a complex literal; every other pairing is refused.
+            while self.on_any("op.add") || self.on_any("op.sub") {
+                if imaginary { return Err(self.bad_case()); }
+                let below = self.on_any("op.sub");
+                self.advance();
+                let part = self.pattern_imaginary()?;
+                let (real, _) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
+                let (_, sole) = crate::complex::coordinates(&part).ok_or_else(|| self.bad_case())?;
+                number = crate::complex::pair(table, real, if below { -sole } else { sole });
+                imaginary = true;
             }
             return Ok(CaseTest::Equal(number));
+        }
+        if self.look().shape == Shape::ByteQuote {
+            let mut octets = Vec::new();
+            while self.look().shape == Shape::ByteQuote {
+                octets.extend(self.advance().lexeme.chars().map(|c| c as u8));
+            }
+            return Ok(CaseTest::Equal(Value::Octets { cell: Rc::new(std::cell::RefCell::new(octets)), changeable: false,
+                lead: Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()) }));
         }
         if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
             let mut numbers = Vec::new();
@@ -6366,6 +6515,13 @@ impl<'a> Builder<'a> {
                 } else {
                     let key = self.pattern_single()?;
                     if !matches!(key, CaseTest::Equal(_) | CaseTest::Worth(_)) { return Err(self.bad_case()); }
+                    // A key a literal already written down equals is refused
+                    // as a duplicate; a key read ahead is left to the fit.
+                    if let CaseTest::Equal(value) = &key {
+                        for (old, _) in &pairs {
+                            if matches!(old, CaseTest::Equal(prev) if Self::key_alike(prev, value)) { return Err(self.bad_case()); }
+                        }
+                    }
                     self.need_sign(table.single("syntax.map.pair").unwrap_or_default(), "between a key and its pattern")?;
                     pairs.push((key, self.pattern_choice()?));
                 }

@@ -514,6 +514,37 @@ pub(crate) fn private_name(owner: &str, name: &str) -> String {
     }
 }
 
+// A soft case identifier is a pattern introducer only in a match suite.
+fn match_suite_at(words: &[Token], arm: usize, lang: &Lang) -> bool {
+    let mut finished_blocks = 0usize;
+    let mut opening = None;
+    for place in (0..arm).rev() {
+        match words[place].shape {
+            Shape::Close => finished_blocks += 1,
+            Shape::Open if finished_blocks != 0 => finished_blocks -= 1,
+            Shape::Open => { opening = Some(place); break; }
+            _ => {}
+        }
+    }
+    let Some(mut end) = opening else { return false };
+    while end != 0 && words[end - 1].shape == Shape::LineEnd { end -= 1; }
+    if end == 0 || words[end - 1].shape != Shape::Sign || !lang.block_intros.contains(&words[end - 1].lexeme) { return false; }
+    let mut enclosed = 0usize;
+    for place in (0..end - 1).rev() {
+        if words[place].shape == Shape::Sign {
+            match words[place].lexeme.as_str() {
+                ")" | "]" | "}" => enclosed += 1,
+                "(" | "[" | "{" => enclosed = enclosed.saturating_sub(1),
+                _ => {}
+            }
+        }
+        if enclosed == 0 && matches!(words[place].shape, Shape::LineEnd | Shape::Open | Shape::Close) {
+            return words.get(place + 1).map_or(false, |head| lang.match_words.contains(&head.lexeme));
+        }
+    }
+    words.first().map_or(false, |head| lang.match_words.contains(&head.lexeme))
+}
+
 fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
     let mut result = source.to_vec();
     if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return result; }
@@ -542,16 +573,36 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
         while source.get(begin).map_or(false, |t| t.shape == Shape::LineEnd) { begin += 1; }
         let indented = source.get(begin).map_or(false, |t| t.shape == Shape::Open);
         let mut depth = 0usize;
+        let mut in_pattern = false;
+        let mut pattern_depth = 0usize;
         for i in begin..source.len() {
             match source[i].shape {
                 Shape::Open => depth += 1,
                 Shape::Close => { depth = depth.saturating_sub(1); if depth == 0 { break; } }
                 Shape::LineEnd if !indented => break,
                 Shape::Finish => break,
+                // A case begins a pattern, whose keyword names are not
+                // names of the class and so are never mangled.
+                Shape::Instr if !in_pattern && lang.match_cases.contains(&source[i].lexeme)
+                    && i > 0 && matches!(source[i - 1].shape, Shape::LineEnd | Shape::Open | Shape::Close)
+                    && source.get(i + 1).map_or(false, |next| !matches!(next.shape, Shape::LineEnd | Shape::Finish) && !lang.assign_words.contains(&next.lexeme))
+                    && match_suite_at(source, i, lang) => { in_pattern = true; pattern_depth = 0; },
+                Shape::Instr if in_pattern && lang.match_guards.contains(&source[i].lexeme) => in_pattern = false,
+                Shape::Sign if in_pattern => {
+                    match source[i].lexeme.as_str() {
+                        "(" | "[" | "{" => pattern_depth += 1,
+                        ")" | "]" | "}" => pattern_depth = pattern_depth.saturating_sub(1),
+                        _ if pattern_depth == 0 && lang.block_intros.contains(&source[i].lexeme) => in_pattern = false,
+                        _ => {}
+                    }
+                },
                 // A private builtin's spelling is no class's private
                 // name: it keeps its own spelling wherever it is written.
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
-                Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
+                Shape::Instr => {
+                    let keyword = in_pattern && source.get(i + 1).map_or(false, |next| lang.assign_words.contains(&next.lexeme));
+                    if !keyword { result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme); }
+                }
                 _ => {}
             }
         }
@@ -2650,10 +2701,12 @@ impl<'a> Compiler<'a> {
             }
             if word == "case" && self.look_ahead(1).lexeme != ":" {
                 let mut depth = 0usize;
-                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| {
+                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).find_map(|item| {
                     match item.lexeme.as_str() { "(" | "[" | "{" => depth += 1, ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {} }
-                    item.lexeme == ":" && depth == 0
-                });
+                    if depth != 0 { return None; }
+                    if self.lang.assign_words.contains(&item.lexeme) || self.lang.compound.contains_key(&item.lexeme) { return Some(false); }
+                    (item.lexeme == ":").then_some(true)
+                }).unwrap_or(false);
                 if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
             }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
@@ -4348,6 +4401,7 @@ impl<'a> Compiler<'a> {
         self.skip_seps();
         let mut ends = Vec::new();
         let mut count = 0;
+        let mut unreachable = false;
         while self.look().shape != Shape::Close && !self.exhausted() {
             if !self.on_keyword(&self.lang.match_cases) {
                 if !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "=" {
@@ -4355,9 +4409,18 @@ impl<'a> Compiler<'a> {
                 }
                 return Err(self.pattern_fault());
             }
+            // A case whose test fits everything leaves no subject for a
+            // later case, which the reference refuses to read.
+            if unreachable { return Err(self.pattern_fault()); }
+            if !self.lang.trace_native.is_empty() {
+                let row = (self.look().row as u32).saturating_sub(self.before);
+                self.put(Instr::Line(row));
+                self.piece().line = row;
+            }
             self.take();
             self.pattern_values = 0;
             let pattern = self.case_pattern()?;
+            let falls_through = Self::irrefutable_pattern(&pattern);
             let names = pattern.bindings().map_err(|_| self.pattern_fault())?;
             self.read(&subject);
             // The values the pattern read ahead stand under the subject.
@@ -4379,6 +4442,9 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 Some(self.skip())
             } else { None };
+            // A guard keeps a case that fits everything from leaving the
+            // later cases with nothing to fit.
+            unreachable = falls_through && guarded.is_none();
             if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
             let inline = !matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish);
             self.body()?;
@@ -4468,12 +4534,37 @@ impl<'a> Compiler<'a> {
         else { Ok(crate::code::Pattern::Capture(name)) }
     }
 
+    /// Whether a case test fits every subject: a capture or a wildcard,
+    /// or an alternative of such. Such a test leaves nothing for a later
+    /// alternative or a later case to fit.
+    /// Whether two literal mapping keys are the same key. A flag is the
+    /// number it stands for, as a map's own keying has it.
+    fn key_alike(a: &Value, b: &Value) -> bool {
+        let plain = |v: &Value| match v { Value::Flag(flag) => Value::Small(i64::from(*flag)), other => other.clone() };
+        plain(a).equals(&plain(b))
+    }
+
+    fn irrefutable_pattern(pattern: &crate::code::Pattern) -> bool {
+        use crate::code::Pattern;
+        match pattern {
+            Pattern::Any | Pattern::Capture(_) => true,
+            Pattern::Bound(inner, _) => Self::irrefutable_pattern(inner),
+            Pattern::Alternatives(choices) => choices.iter().any(Self::irrefutable_pattern),
+            _ => false,
+        }
+    }
+
     fn pattern_part(&mut self) -> Res<crate::code::Pattern> {
         use crate::code::Pattern;
         let mut choices = vec![self.pattern_atom()?];
         while self.on_any(&self.lang.match_ors) {
             self.take();
             choices.push(self.pattern_atom()?);
+        }
+        // An alternative that fits everything leaves no subject for the
+        // alternatives after it, which the reference refuses to read.
+        if choices.len() > 1 && choices[..choices.len() - 1].iter().any(Self::irrefutable_pattern) {
+            return Err(self.pattern_fault());
         }
         let mut pattern = if choices.len() == 1 { choices.pop().unwrap() } else { Pattern::Alternatives(choices) };
         if self.on_keyword(&self.lang.match_as) {
@@ -4544,18 +4635,68 @@ impl<'a> Compiler<'a> {
         "SyntaxError: cannot use expression as pattern target".into()
     }
 
+    /// A signed number in a pattern, answering whether the numeral names
+    /// an imaginary part. A minus in front of an imaginary part is kept
+    /// as a complex of its own, which the shared arithmetic will not
+    /// make: the two real parts are turned one by one.
+    fn pattern_numeral(&mut self) -> Res<(Value, bool)> {
+        let lang = self.lang;
+        let below = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Sub));
+        if below { self.take(); }
+        if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
+        let token = self.take();
+        let imaginary = token.lexeme.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c));
+        let number = parse_number(&token.lexeme, lang)?;
+        if !below { return Ok((number, imaginary)); }
+        let turned = if imaginary {
+            let (real, sole) = crate::complex::parts(&number).ok_or_else(|| self.pattern_fault())?;
+            crate::complex::made(lang, -real, -sole)
+        } else {
+            arith::calculate(arith::Operation::Minus, &Value::Small(0), &number).ok_or_else(|| self.pattern_fault())??
+        };
+        Ok((turned, imaginary))
+    }
+
+    /// The imaginary part of a complex literal: a numeral with no sign
+    /// of its own, the sign before it being the one that joins it to the
+    /// real part. `case 1 + -2j` is no pattern at all.
+    fn pattern_imaginary(&mut self) -> Res<Value> {
+        let lang = self.lang;
+        if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
+        let token = self.take();
+        if !token.lexeme.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c)) {
+            return Err(self.pattern_fault());
+        }
+        parse_number(&token.lexeme, lang)
+    }
+
     fn pattern_atom(&mut self) -> Res<crate::code::Pattern> {
         use crate::code::Pattern;
         let lang = self.lang;
         let token = self.look().clone();
         if token.shape == Shape::Numeral || lang.dyadic.get(token.spelling()).map_or(false, |op| matches!(op.action, Action::Sub)) {
-            self.take();
-            let value = if token.shape == Shape::Numeral { parse_number(&token.lexeme, lang)? } else {
-                if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
-                let positive = parse_number(&self.take().lexeme, lang)?;
-                arith::calculate(arith::Operation::Minus, &Value::Small(0), &positive).ok_or_else(|| self.pattern_fault())??
-            };
-            return Ok(Pattern::Literal(value));
+            let (mut number, mut imaginary) = self.pattern_numeral()?;
+            // A real part met by a plus or a minus and an imaginary part
+            // makes a complex literal; every other pairing is refused.
+            while lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Add | Action::Sub)) {
+                if imaginary { return Err(self.pattern_fault()); }
+                let below = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Sub));
+                self.take();
+                let part = self.pattern_imaginary()?;
+                let (real, _) = crate::complex::parts(&number).ok_or_else(|| self.pattern_fault())?;
+                let (_, sole) = crate::complex::parts(&part).ok_or_else(|| self.pattern_fault())?;
+                number = crate::complex::made(lang, real, if below { -sole } else { sole });
+                imaginary = true;
+            }
+            return Ok(Pattern::Literal(number));
+        }
+        if token.shape == Shape::Bytes {
+            let mut octets = Vec::new();
+            while self.look().shape == Shape::Bytes {
+                octets.extend(self.take().lexeme.chars().map(|c| c as u8));
+            }
+            return Ok(Pattern::Literal(Value::Bytes(Rc::new(std::cell::RefCell::new(octets)), false,
+                Rc::from(lang.byte_words["ext.system.bytes.repr"][0].as_str()))));
         }
         if matches!(token.shape, Shape::Quote | Shape::Codepoints) {
             let mut points = Vec::new();
@@ -4612,6 +4753,14 @@ impl<'a> Compiler<'a> {
                     } else {
                         let key = self.pattern_atom()?;
                         if !matches!(key, Pattern::Literal(_) | Pattern::Value(_)) { return Err(self.pattern_fault()); }
+                        // A key a literal already written down equals is
+                        // refused as a duplicate; a key read ahead is left
+                        // to be checked when the pattern is fitted.
+                        if let Pattern::Literal(value) = &key {
+                            for (old, _) in &pairs {
+                                if matches!(old, Pattern::Literal(prev) if Self::key_alike(prev, value)) { return Err(self.pattern_fault()); }
+                            }
+                        }
                         self.want_sign(lang.pair_mark.as_deref().unwrap_or_default(), "between a key and its pattern")?;
                         pairs.push((key, self.pattern_part()?));
                     }
@@ -4968,6 +5117,8 @@ impl<'a> Compiler<'a> {
     /// two. The condition is read once to find the body, discarded, and
     /// read again after it.
     fn while_stmt(&mut self) -> Res<()> {
+        let loop_row = (self.look().row as u32).saturating_sub(self.before);
+        if !self.lang.trace_native.is_empty() && matches!(self.piece().instrs.last(), Some(Instr::Line(line)) if *line == loop_row) { self.piece().instrs.pop(); }
         self.take();
         let cond_at = self.pos;
         // Skip the condition's tokens for now: parse it once, discard.
@@ -4983,6 +5134,7 @@ impl<'a> Compiler<'a> {
         let after = self.pos;
         let test = self.mark();
         self.land(to_test);
+        if !self.lang.trace_native.is_empty() { self.put(Instr::Line(loop_row)); }
         self.pos = cond_at;
         self.expr(0)?;
         self.pos = after;
