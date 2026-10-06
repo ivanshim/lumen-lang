@@ -16346,10 +16346,20 @@ impl<'a> Machine<'a> {
             if !new_names.insert(name.clone()) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&name))); }
             additions.push((Value::text(&name), value));
         }
-        for (key, value) in additions {
-            self.map_enter(&mut result, key, value)?;
+        let mut positions = Vec::new();
+        let mut extent = 0;
+        let mut allocation = (1, 0, true);
+        if let Some(Value::Dict(offered)) = positional.first() {
+            crate::data::MapStore::plan_merge(&mut positions, &mut extent, &mut allocation, offered);
         }
-        Ok(Value::Dict(Rc::new(result.into())))
+        for (key, value) in additions {
+            if self.map_enter(&mut result, key, value)? {
+                let key = &result.last().expect("dictionary addition").0;
+                crate::data::MapStore::extend_positions(&mut positions, &mut extent, &mut allocation, key);
+            }
+        }
+        let store = crate::data::MapStore::kept(result, positions, extent, 0, allocation);
+        Ok(Value::Dict(Rc::new(store)))
     }
 
     fn collection_cell(&self, value: Value) -> Value {
@@ -27602,6 +27612,13 @@ impl Machine<'_> {
                 // iterable of many pairs is not scanned again in full
                 // for every pair it grows by.
                 let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
+                if let Some(Value::Dict(source)) = input.first() {
+                    let mut position = 0;
+                    let mut locations = Vec::new();
+                    let mut table = entries.entry_budget;
+                    MapStore::plan_merge(&mut locations, &mut position, &mut table, source);
+                    Rc::make_mut(&mut entries).entry_budget = table;
+                }
                 for (key, item) in incoming {
                     // A thing as a key carries its own hash, as it does in
                     // a dictionary literal.

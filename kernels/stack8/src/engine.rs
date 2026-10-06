@@ -23016,6 +23016,13 @@ impl Engine<'_> {
                 // iterable of many pairs is not scanned again in full
                 // for every pair it grows by.
                 let mut made: Rc<KeyedPairs> = Rc::new(Vec::new().into());
+                if let Some(Value::Map(source)) = args.first() {
+                    let mut slots = Vec::new();
+                    let mut span = 0;
+                    let mut budget = made.entry_budget;
+                    KeyedPairs::reserve_merge(&mut slots, &mut span, &mut budget, source);
+                    Rc::make_mut(&mut made).entry_budget = budget;
+                }
                 for (k,v) in pairs {
                     // A thing as a key is keyed by its own hash method, as a
                     // dictionary literal keys it.

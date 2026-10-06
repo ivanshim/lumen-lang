@@ -709,13 +709,18 @@ impl KeyedPairs {
             *budget = (source.entry_budget.0, source.entry_budget.1 + source.len(), source.entry_budget.2);
         } else if budget.0 * 2 / 3 < source.len() {
             Self::resize_entries(slots, span, budget, (slots.len() + source.len()).saturating_mul(3).div_ceil(2));
+            budget.2 &= source.entry_budget.2;
         }
     }
 
     pub fn copied(&self) -> Self {
         if self.rows.is_empty() { return Vec::new().into(); }
         if self.rows.len() >= self.span * 2 / 3 { self.clone() }
-        else { self.rows.clone().into() }
+        else {
+            let mut packed = Self::from(self.rows.clone());
+            packed.entry_budget.2 = self.entry_budget.2;
+            packed
+        }
     }
 
     pub fn pop_last(&mut self) -> Option<(Value, Value)> {

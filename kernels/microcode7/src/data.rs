@@ -521,6 +521,7 @@ impl MapStore {
         if allocation.0 * 2 / 3 < count {
             let expected = positions.len() + count;
             Self::rebuild(positions, extent, allocation, (expected * 3 + 1) / 2);
+            allocation.2 = allocation.2 && string_only;
         }
     }
 
@@ -529,7 +530,11 @@ impl MapStore {
         let enough_live = self.pairs.len() >= (self.span * 2) / 3;
         match enough_live {
             true => self.clone(),
-            false => MapStore::from(self.pairs.to_vec()),
+            false => {
+                let mut compact = MapStore::from(self.pairs.to_vec());
+                compact.entry_budget.2 = self.entry_budget.2;
+                compact
+            },
         }
     }
 
