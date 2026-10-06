@@ -6603,3 +6603,6 @@
 {"t":"2026-10-06T22:05:14Z","event":"quota","codex_week_used":79,"codex_credits":0,"claude_week_used":23,"claude_5h_used":10,"kimi_5h_used":0,"kimi_month_used":0.8907,"kimi_code_used":0,"deepseek_usd":359.69}
 {"t":"2026-10-06T22:09:08Z","event":"decision","text":"Ivan: acceptance threshold — ACCEPT with a clean full check, no integrity issue, a real gain on both kernels, and only untested edge cases left (recorded as follow-up events); RETURN only for integrity, failing check, regression, kernel disagreement, wrong behaviour in tested/common paths, introduced general bugs, unfaithful copies"}
 {"t":"2026-10-06T22:09:11Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-06T22:10:15Z","event":"note","text":"coord-log history squashed into one signed commit (1edaa0b51); the redundant old-logs tarball is gone from the branch history"}
+{"t":"2026-10-06T22:13:11Z","event":"quota","codex_week_used":79,"codex_credits":0,"claude_week_used":23,"claude_5h_used":11,"kimi_5h_used":0,"kimi_month_used":0.8907,"kimi_code_used":0,"deepseek_usd":359.48}
+{"t":"2026-10-06T22:13:16Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":79,"expected":81.3,"gap":-2.3,"status":"ok"}
