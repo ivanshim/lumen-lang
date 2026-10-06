@@ -1348,6 +1348,19 @@ impl<'a> Builder<'a> {
         self.mark_met(name, MET_READ);
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
+        // A routine that said the class's kind word `nonlocal` reads
+        // the hidden cell the declaration named, exactly as it writes
+        // it.
+        if let Some(hidden) = self.class_cell_written(name) {
+            if self.table.flag("ext.stmt.function.closes_over") && !self.survey {
+                if let Some(slot) = self.lexical_address(&hidden, false) { return slot; }
+            }
+        }
+        // The class's kind word where the routine keeps no name of its
+        // own for it is the hidden cell a class around closes over.
+        if !self.layers.last().map_or(false, |layer| layer.idents.iter().any(|named| named == name)) {
+            if let Some(slot) = self.class_cell_read(name) { return slot; }
+        }
         if let Some(slot) = self.aliased(name) {
             return slot;
         }
@@ -1408,6 +1421,14 @@ impl<'a> Builder<'a> {
     /// top level makes the name if it has none, a block makes its own.
     fn address_to_write(&mut self, name: &str) -> Address {
         if !self.importing { self.mark_met(name, MET_WRITTEN); }
+        // A routine that said the class's kind word `nonlocal` writes
+        // the hidden cell the declaration named, before a member or a
+        // name of its own is ever thought of.
+        let declared;
+        let name = match self.class_cell_written(name) {
+            Some(hidden) => { declared = hidden; declared.as_str() }
+            None => name,
+        };
         // A name a class body knows is written into the place the body
         // keeps it in, as it is read out of there: the loops, imports
         // and handlers of a body bind members by ordinary writes.
@@ -1533,6 +1554,50 @@ impl<'a> Builder<'a> {
         }
         self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)
             .map_or(false, |layer| layer.aliases.iter().any(|(named, _)| named == name) || layer.borrowed.iter().any(|named| named == name))
+            || self.class_cell_written(name).is_some()
+    }
+
+    /// The hidden cell a `nonlocal` said of the class's own kind word
+    /// declares: the cell of the class whose body holds this routine,
+    /// or, said in a class body itself, of the class standing around
+    /// that body. The class is marked as keeping the cell, so the
+    /// making fills it. Any other word, or the word said where no such
+    /// class stands, declares nothing hidden.
+    fn class_cell_declared(&mut self, name: &str) -> Option<String> {
+        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        let back = if self.in_class_body() { 2 } else { 1 };
+        let at = self.under_way.len().checked_sub(back)?;
+        self.under_way[at].needs_class_cell = true;
+        self.under_way[at].class_cell_protocol = true;
+        Some(self.under_way[at].completed_class.ident.to_string())
+    }
+
+    /// The hidden cell a write of the class's kind word lands in where
+    /// the routine said that word `nonlocal`: the declaration put the
+    /// cell's own name where nonlocals are kept, so the write goes
+    /// where the cell is kept rather than to a member or a name of the
+    /// routine's own.
+    fn class_cell_written(&self, name: &str) -> Option<String> {
+        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        let scope = self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)?;
+        self.under_way.iter().rev().map(|held| held.completed_class.ident.to_string())
+            .find(|hidden| scope.borrowed.iter().any(|named| named == hidden))
+    }
+
+    /// The hidden cell a class body's own read of the class's kind word
+    /// reaches: the cell of the class standing around the body, so a
+    /// class nested in a routine reads the very cell that class keeps,
+    /// however many routines stand between. The survey pass wires
+    /// nothing: the plan of bindings it draws would take the read for a
+    /// name of the body's own.
+    fn class_cell_read(&mut self, name: &str) -> Option<Address> {
+        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        if !self.table.flag("ext.stmt.function.closes_over") || self.survey || !self.in_class_body() { return None; }
+        let at = self.under_way.len().checked_sub(2)?;
+        self.under_way[at].needs_class_cell = true;
+        self.under_way[at].class_cell_protocol = true;
+        let hidden = self.under_way[at].completed_class.ident.to_string();
+        self.lexical_address(&hidden, false)
     }
 
     /// The parts gathered so far of the class whose body is being read.
@@ -3025,6 +3090,10 @@ impl<'a> Builder<'a> {
                 self.advance();
                 loop {
                     let word = self.need_word("after the nonlocal keyword")?;
+                    // Said of the class's own kind word, the declaration
+                    // names the hidden cell that class keeps, so a write
+                    // of the word fills the class's very place.
+                    let word = self.class_cell_declared(&word).unwrap_or(word);
                     // A class body pushes no layer of its own, so the
                     // layer around it is the very one a name declared
                     // `nonlocal` there means to reach: the declaration
@@ -4971,6 +5040,49 @@ impl<'a> Builder<'a> {
             }
         }
         false
+    }
+
+    /// A parent call written with no argument: the word read as a name,
+    /// then how much of the frame the call may take — the class cell and
+    /// the first parameter where a class stands around the routine, the
+    /// first parameter alone where none does, nothing where the routine
+    /// takes no parameter at all. Each of the two is read without
+    /// complaint, with a flag saying whether it was there, so the working
+    /// can say which one was not there to give.
+    fn parent_without_arguments(&mut self, word: &str) -> Form {
+        let mut given = vec![self.read(word)];
+        let first = self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)
+            .and_then(|layer| layer.formal_slots.first().and_then(|&at| layer.idents.get(at)).cloned());
+        match first {
+            Some(this) if !self.under_way.is_empty() => {
+                self.parts().needs_class_cell = true;
+                self.parts().class_cell_protocol = true;
+                given.push(constant(Value::Small(0)));
+                let hidden = self.parts().completed_class.ident.to_string();
+                let cell = self.address_to_read(&hidden);
+                let held = self.address_to_read(&this);
+                given.push(Form::Glance(cell.clone()));
+                given.push(Form::Glance(held.clone()));
+                given.push(Form::Missing(cell));
+                given.push(Form::Missing(held));
+            }
+            Some(this) => {
+                given.push(constant(Value::Small(1)));
+                given.push(constant(Value::Nil));
+                let held = self.address_to_read(&this);
+                given.push(Form::Glance(held.clone()));
+                given.push(constant(Value::Flag(false)));
+                given.push(Form::Missing(held));
+            }
+            None => {
+                given.push(constant(Value::Small(2)));
+                given.push(constant(Value::Nil));
+                given.push(constant(Value::Nil));
+                given.push(constant(Value::Flag(false)));
+                given.push(constant(Value::Flag(false)));
+            }
+        }
+        prim_call(Prim::Parentless, given)
     }
 
     fn class_not_ready(&self) -> Form {
@@ -9618,9 +9730,9 @@ impl<'a> Builder<'a> {
         }
         if table.spells("ext.stmt.class.special.stop", &t.spelling()) && !table.spells("ext.builtin.exceptions", &t.spelling()) {
             self.advance();
-            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
-                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), type_names: std::cell::RefCell::new(None),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None),
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
@@ -9755,6 +9867,14 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling())
                 && self.uses_bound_callable(&t.lexeme) => {
                 self.advance();
+                // A method that names the parent word at all carries
+                // the class's hidden cell, however the word was bound.
+                if table.has_any("ext.stmt.class.detail.root") && !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                    self.parts().needs_class_cell = true;
+                    self.parts().class_cell_protocol = true;
+                    let hidden = self.parts().completed_class.ident.to_string();
+                    self.lexical_address(&hidden, false);
+                }
                 let target = self.read(&t.lexeme);
                 if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
                     self.advance();
@@ -9775,10 +9895,21 @@ impl<'a> Builder<'a> {
                 self.advance();
                 self.read(&t.lexeme)
             }
+            // Standing alone the parent word is a name like another:
+            // the program's own `super`, where it gave the name one, is
+            // what the reading finds. A method that names it at all
+            // carries the class's hidden cell, as the reference has
+            // every naming of the word count as a use of it.
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.spelling())
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
                 self.advance();
-                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone()).into()))
+                if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                    self.parts().needs_class_cell = true;
+                    self.parts().class_cell_protocol = true;
+                    let hidden = self.parts().completed_class.ident.to_string();
+                    self.lexical_address(&hidden, false);
+                }
+                self.read(&t.lexeme)
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling()) => {
                 self.advance();
@@ -9793,7 +9924,7 @@ impl<'a> Builder<'a> {
                 // the definition asks for that form, the parent word
                 // answers with the stand-in that reads that class's
                 // forebears on that thing, their members bound to it.
-                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") {
+                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") && !table.has_any("ext.stmt.class.detail.root") {
                     let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
                     return self.subscript(invoke(parent_word, extra));
                 }
@@ -9801,8 +9932,23 @@ impl<'a> Builder<'a> {
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (false, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
-                        let callable = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
-                        invoke(callable, extra)
+                        // The parent word is a name the program may have
+                        // given a meaning of its own, so it is read where
+                        // names are read and what it stands for is called
+                        // with the arguments written. A method that names
+                        // it at all carries the class's hidden cell.
+                        if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                            self.parts().needs_class_cell = true;
+                            self.parts().class_cell_protocol = true;
+                            let hidden = self.parts().completed_class.ident.to_string();
+                            self.lexical_address(&hidden, false);
+                        }
+                        let callable = self.read(&t.lexeme);
+                        return self.subscript(invoke(callable, extra));
+                    }
+                    (true, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
+                        let made = self.parent_without_arguments(&t.lexeme);
+                        return self.subscript(made);
                     }
                     (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
                         && (member.is_none() || self.glance(2).lexeme != open) => {
@@ -9844,9 +9990,13 @@ impl<'a> Builder<'a> {
                 let book = self.parts().book.clone().expect("class namespace prepared");
                 self.read(&book.ident.to_string())
             }
-            Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
+            Shape::Bare if !self.in_class_body() && self.place_depth == 0 && !self.under_way.is_empty()
                 && table.spells("ext.stmt.class.detail.kind", &t.spelling())
                 && !self.layers.last().unwrap().idents.contains(&t.lexeme)
+                // An explicit `__class__` anywhere outward keeps its
+                // ordinary meaning; only where nothing has bound it does
+                // the word stand for the hidden cell.
+                && !(1..self.layers.len()).any(|depth| self.layers[depth].idents.iter().any(|named| named == &t.lexeme))
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
                 self.parts().needs_class_cell = true;

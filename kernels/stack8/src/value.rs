@@ -1262,6 +1262,13 @@ impl Value {
             (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
             (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            // A cell asked after twice is the one cell: the wrappers
+            // differ, the storage they look into is one.
+            (Value::Adapter(x), Value::Adapter(y)) if x.0 == 31 && y.0 == 31 => match (x.1.first(), y.1.first()) {
+                (Some(Value::Bond(a) | Value::Binding(a)), Some(Value::Bond(b) | Value::Binding(b))) => Rc::ptr_eq(a, b),
+                _ => Rc::ptr_eq(x, y),
+            },
+            (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Flag(x), Value::Flag(y)) => x == y,
             (Value::Null, Value::Null) => true,
@@ -1359,6 +1366,21 @@ impl Value {
             },
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
                 a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
+            },
+            // A method taken off a thing is another where what is called
+            // is equal and what it is called upon is the very same, as a
+            // bound method in the reference compares.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 3 && b.0 == 3 => {
+                match (a.1.first(), a.1.get(1), b.1.first(), b.1.get(1)) {
+                    (Some(f), Some(x), Some(g), Some(y)) => a.1.len() == b.1.len() && f.equals(g) && x.same_value(y),
+                    _ => Rc::ptr_eq(a, b),
+                }
+            },
+            // A cell asked after twice is the one cell: the wrappers
+            // differ, the storage they look into is one.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 31 && b.0 == 31 => match (a.1.first(), b.1.first()) {
+                (Some(Value::Bond(x) | Value::Binding(x)), Some(Value::Bond(y) | Value::Binding(y))) => Rc::ptr_eq(x, y),
+                _ => Rc::ptr_eq(a, b),
             },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
@@ -1564,7 +1586,7 @@ impl Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
             let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.lineage.borrow().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
@@ -1647,6 +1669,10 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
+                let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
+                format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1832,7 +1858,7 @@ pub struct Class {
     /// Python heap-type names, the module label, and the original
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
-    pub lineage: Vec<Rc<Class>>,
+    pub lineage: RefCell<Vec<Rc<Class>>>,
     pub direct: Vec<Rc<Class>>,
     pub outline: Option<String>,
     pub name: String,
@@ -1855,6 +1881,13 @@ pub struct Class {
     pub sealed: std::cell::Cell<bool>,
     /// Instance slot storage established when the class was constructed.
     pub declares_slots: bool,
+    /// Whether a metaclass's own mro supplied the order the class
+    /// keeps: the order is then complete, and no allocation link may
+    /// add a forebear it left out.
+    pub mro_adopted: std::cell::Cell<bool>,
+    // The complete supplied order uses weak links for the owner; lineage
+    // retains its other entries without introducing an owner cycle.
+    pub adopted_order: RefCell<Vec<std::rc::Weak<Class>>>,
 }
 
 impl Class {

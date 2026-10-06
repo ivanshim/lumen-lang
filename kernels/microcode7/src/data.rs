@@ -1185,6 +1185,13 @@ impl Value {
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
             (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
+            // A cell asked after twice is the one cell where both
+            // wrappers name the one room they look into.
+            (Value::Wrapped(35, x), Value::Wrapped(35, y)) => match (x.as_slice(), y.as_slice()) {
+                ([Value::Shared(a)], [Value::Shared(b)]) => Rc::ptr_eq(a, b),
+                ([Value::Bound(p, r), Value::Small(i), ..], [Value::Bound(q, s), Value::Small(j), ..]) => Rc::ptr_eq(p, q) && Rc::ptr_eq(r, s) && i == j,
+                _ => Rc::ptr_eq(x, y),
+            },
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,
@@ -1417,7 +1424,7 @@ impl Value {
         let value = self.settled();
         if let Value::Thing(thing) = &value {
             let class = thing.blueprint();
-            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry.borrow().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
@@ -1511,6 +1518,10 @@ impl Value {
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
             // descriptor that carries it.
+            Value::Wrapped(32, fields) if matches!(fields.get(2), Some(Value::Small(-2))) => match &fields[1] {
+                Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
+                _ => "<member wrapper>".into(),
+            },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1690,7 +1701,7 @@ pub struct TypeNames {
 pub struct Blueprint {
     /// The mutable names of a Python class, outside its dictionary.
     pub type_names: RefCell<Option<TypeNames>>,
-    pub ancestry: Vec<Rc<Blueprint>>,
+    pub ancestry: RefCell<Vec<Rc<Blueprint>>>,
     pub parents: Vec<Rc<Blueprint>>,
     pub presentation: Option<String>,
     pub name: String,
@@ -1712,6 +1723,13 @@ pub struct Blueprint {
     pub sealed: Cell<bool>,
     /// Instance slot storage established when the class was constructed.
     pub has_slot_storage: bool,
+    /// Whether a builder's own mro supplied the order the class keeps:
+    /// the order is then complete, and no allocation link may add a
+    /// forebear it left out.
+    pub order_supplied: Cell<bool>,
+    // A custom order is separate from layout parents. Other entries remain
+    // alive through ancestry, while this blueprint refers to itself weakly.
+    pub supplied_order: RefCell<Vec<std::rc::Weak<Blueprint>>>,
 }
 
 impl Blueprint {

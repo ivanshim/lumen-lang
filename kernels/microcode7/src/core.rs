@@ -94,11 +94,13 @@ impl Value {
             Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {
                 if let Some(Self::Blueprint(_)) = parts.get(1) { "method" } else { "builtin_function_or_method" }
             },
+            Self::Wrapped(3, fields) if matches!(fields.first(), Some(Self::Wrapped(60, descriptor)) if descriptor.get(2).is_some_and(Self::is_true)) => "builtin_function_or_method",
             Self::Wrapped(3, _) => "method-wrapper",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
+            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(60, parts) => return match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
                 _ => "object".to_owned(),

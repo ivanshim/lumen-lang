@@ -73,6 +73,7 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => "getset_descriptor",
             Value::Adapter(w) if w.0 == 29 => return match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
                 _ => "object".to_string(),
@@ -93,6 +94,7 @@ impl Value {
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(method)) if method.0 == 29 && method.1.get(2).is_some_and(Value::is_true)) => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
