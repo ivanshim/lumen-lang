@@ -1674,14 +1674,16 @@ impl Value {
     /// an attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if name == "__get__" && matches!(kind, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
         if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
             || kind == "bytearray" && name == "__release_buffer__" {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
         match kind {
-            "type" if matches!(name, "__dict__" | "__name__") => Some(("attribute", "getset_descriptor")),
-            "type" if name == "__mro__" => Some(("member", "member_descriptor")),
+            "type" if matches!(name, "__dict__" | "__name__" | "__mro__") => Some(("attribute", "getset_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

@@ -105,6 +105,15 @@ impl<'a> Machine<'a> {
             let get = self.detail("descriptor.get").to_owned();
             kind.shared.borrow_mut().push((get, Self::wrap(31, Vec::new())));
         }
+        if self.names_in_calls {
+            match word {
+                "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor" => {
+                    let reader = self.detail("descriptor.get").to_string();
+                    kind.shared.borrow_mut().push((reader.clone(), self.kind_entry(word, &reader)));
+                }
+                _ => (),
+            }
+        }
         self.native_kinds.push((word.to_owned(),kind.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for (at, key) in self.rules.specials.iter().enumerate() {
@@ -1972,6 +1981,13 @@ impl<'a> Machine<'a> {
                             let mut inputs = vec![subject]; inputs.extend(values);
                             return self.apply_class_member(Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{word}.{entry}"))), inputs);
                         }
+                        if self.names_in_calls && of_own_kind && entry == self.detail("descriptor.get") {
+                            match word.as_str() {
+                                "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor" =>
+                                    return self.apply_class_member(Self::wrap(31, vec![subject]), values),
+                                _ => (),
+                            }
+                        }
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
                             Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
                         } else if of_own_kind{self.attribute(&receiver,&entry)}else{None};
@@ -2513,6 +2529,28 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         if let Value::Wrapped(60, parts) = &entry {
+            if self.names_in_calls {
+                if let Some(instance) = receiver.as_ref() {
+                    let declaring = parts[0].bare();
+                    let contents = Self::underlying(instance).unwrap_or_else(|| instance.clone()).settled();
+                    let is_class_method = declaring == "dict" && parts[1].bare() == "fromkeys";
+                    if is_class_method && Self::native_beneath(&owner).as_deref() != Some("dict") {
+                        let name = &owner.name;
+                        return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{name}'").into());
+                    }
+                    let appropriate = if is_class_method || declaring == self.detail("root") { true } else { match declaring.as_str() {
+                        "type" => self.stands_for_a_kind(instance),
+                        _ => match self.table.prims.get(&declaring).filter(|primitive| Self::names_a_kind(primitive)) {
+                            Some(primitive) => self.kind_covers(primitive, &declaring, &contents),
+                            None => contents.kind_word() == declaring,
+                        },
+                    } };
+                    if !appropriate {
+                        let field = parts[1].bare();
+                        return Err(format!("TypeError: descriptor '{field}' for '{declaring}' objects doesn't apply to a '{}' object", instance.kind_word()).into());
+                    }
+                }
+            }
             let key = parts[1].bare();
             if parts[0].bare() == "type" && receiver.is_some() && ["namespace", "mro", "name"].iter().any(|part| key == self.detail(part)) {
                 let target = receiver.as_ref().unwrap().settled();
@@ -2535,6 +2573,17 @@ impl<'a> Machine<'a> {
                     return Ok(Value::tuple(ranks));
                 }
                 return Ok(Value::Window(Rc::new(Value::Blueprint(owner)), 'm'));
+            }
+            if let Some(instance) = receiver.as_ref() {
+                let slot = Value::loose_member_descriptor(&parts[0].bare(), &key);
+                if self.names_in_calls && matches!(slot, Some(("attribute" | "member", _))) {
+                    let raw = Self::underlying(instance).unwrap_or_else(|| instance.clone()).settled();
+                    return match self.attribute(&raw, &key) {
+                        Some(Value::Member(..)) => self.method_of_value(raw, &key),
+                        Some(value) => Ok(value),
+                        None => self.read_class_member(raw, &key, false),
+                    };
+                }
             }
             if parts[0].bare() == "int" {
                 let value = receiver.as_ref().cloned().unwrap_or(Value::Blueprint(owner.clone()));

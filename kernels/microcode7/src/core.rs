@@ -99,6 +99,10 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
+            Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
+                Some("__dict__" | "__weakref__") => "getset_descriptor",
+                _ => "member_descriptor",
+            },
             Self::Wrapped(60, parts) => return match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
                 _ => "object".to_owned(),

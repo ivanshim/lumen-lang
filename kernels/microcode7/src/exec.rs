@@ -9311,7 +9311,7 @@ impl<'a> Machine<'a> {
     /// What a member standing for a value's method comes to: the method
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
-    fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+    pub(super) fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
         if operation == "__index__" {
             if self.native_place(&receiver, operation).is_none() {
                 return Err(self.member_missing(&receiver, operation).into());

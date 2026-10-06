@@ -110,6 +110,10 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && word == "function" {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_owned(), Self::adapter(15, vec![])));
         }
+        if self.lang.bind_names && matches!(word, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
+            let get = self.class_word("descriptor.get").to_owned();
+            c.shared.borrow_mut().push((get.clone(), self.held_kind_descriptor(word, &get)));
+        }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for name in self.lang.class_special.iter().enumerate().filter(|(at, _)| *at == 8 || *at == 17 && word != "NoneType").map(|(_, name)| name) {
@@ -1871,6 +1875,10 @@ impl<'a> Engine<'a> {
                         let mut inputs = vec![subject]; inputs.extend(args);
                         return self.class_apply(Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.{member}"))), inputs);
                     }
+                    if of_own_kind && self.lang.bind_names && member == self.class_word("descriptor.get")
+                        && matches!(word.as_str(), "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
+                        return self.class_apply(Self::adapter(15, vec![subject]), args);
+                    }
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
                         Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
@@ -2525,6 +2533,22 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
+            if self.lang.bind_names && w.0 == 29 {
+                if let Some(target) = &subject {
+                    let native = w.1[0].plain();
+                    let stored = Self::worth_of(target).unwrap_or_else(|| target.clone()).contents();
+                    let class_method = native == "dict" && w.1[1].plain() == "fromkeys";
+                    if class_method && Self::kind_beneath(&class).as_deref() != Some("dict") {
+                        return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{}'", class.name).into());
+                    }
+                    let accepts = if class_method || native == self.class_word("root") { true } else if native == "type" { self.stands_for_kind(target) }
+                        else { self.lang.builtins.get(&native).filter(|op| Self::kind_builtin(op))
+                            .map_or_else(|| stored.core_kind() == native, |op| self.kind_holds(op, &native, &stored)) };
+                    if !accepts {
+                        return Err(format!("TypeError: descriptor '{}' for '{native}' objects doesn't apply to a '{}' object", w.1[1].plain(), Self::shown_kind(target)).into());
+                    }
+                }
+            }
             if w.0 == 29 && w.1[0].plain() == "type" && subject.is_some() {
                 let name = w.1[1].plain();
                 if ["mro", "namespace", "name"].iter().any(|part| name == self.class_word(part)) {
@@ -2546,6 +2570,14 @@ impl<'a> Engine<'a> {
                     line.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));
                     return Ok(Value::tuple(line));
                 }
+            }
+            if self.lang.bind_names && w.0 == 29 && subject.is_some() && Value::loose_member_descriptor(&w.1[0].plain(), &w.1[1].plain())
+                .is_some_and(|(form, _)| matches!(form, "attribute" | "member")) {
+                let raw = subject.as_ref().unwrap();
+                let stored = Self::worth_of(raw).unwrap_or_else(|| raw.clone()).contents();
+                let field = w.1[1].plain();
+                if let Some(answer) = self.builtin_member(&stored, &field).map_err(Fault::from)? { return Ok(answer); }
+                return self.class_get(stored, &field, false);
             }
             if w.0 == 29 && w.1[0].plain() == "int" {
                 let receiver = subject.clone().unwrap_or_else(|| Value::Class(class.clone()));
