@@ -311,6 +311,7 @@ pub struct Builder<'a> {
     generic_class_body: bool,
     generic_class_parameters: Vec<String>,
     annotations_as_strings: bool,
+    barry_as_flufl: bool,
     annotation_sites: Vec<(String, usize)>,
     module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
@@ -589,7 +590,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, barry_as_flufl: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -3340,6 +3341,7 @@ impl<'a> Builder<'a> {
                     return Err(format!("SyntaxError: {complaint}"));
                 }
                 if future && original == "annotations" { self.annotations_as_strings = true; }
+                if future && original == "barry_as_FLUFL" { self.barry_as_flufl = true; }
                 gathered.push((original, local, alias));
                 if !self.on_any("syntax.call.separator") {
                     break;
@@ -9045,6 +9047,25 @@ impl<'a> Builder<'a> {
             // Infix and conditional words are matched by the spelling the
             // text wrote, not the folded name an identifier binds as.
             let text = t.spelling().to_string();
+            // The old diamond `<>`, its two signs written together, is
+            // not a word of Python's definition. The future import
+            // barry_as_FLUFL makes it the not-equal operator, two
+            // signs wide; without that import it is the mistake the
+            // reference reports against the pair.
+            let diamond = table.has_any("ext.builtin.exceptions.syntax") && text == "<" && {
+                let following = self.glance(1);
+                following.lexeme == ">" && (following.row, following.column) == (t.row, t.column + 1)
+            };
+            if diamond && !self.barry_as_flufl {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            // Where Barry is at the helm, `!=` is the spelling to
+            // avoid and `<>` the one to write, wherever it stands.
+            if self.barry_as_flufl && !diamond && table.dyadic.get(&text).map_or(false, |inf| matches!(inf.prim, Prim::Ne)) {
+                self.range_end = Some((t.column + t.lexeme.chars().count(), t.row));
+                return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
+            }
             if table.has_any("ext.builtin.exceptions.syntax") && (text == "|" || text == "&") {
                 let following = self.glance(1);
                 if following.lexeme == text && (following.row, following.column) == (t.row, t.column + 1) {
@@ -9071,7 +9092,7 @@ impl<'a> Builder<'a> {
                 left = self.choose(test, left, no);
                 continue;
             }
-            if table.flag("ext.op.compare.chained") {
+            if table.flag("ext.op.compare.chained") && !diamond {
                 if let Some((operation, level, words)) = self.comparison_head() {
                     if floor > level { break; }
                     let saved = self.gensym("middle");
@@ -9172,7 +9193,10 @@ impl<'a> Builder<'a> {
             if op.level < floor {
                 break;
             }
-            let consumed = if let Some((prim, _, width)) = head { op.prim = prim; width } else { 1 };
+            let consumed = if diamond { 2 } else if let Some((prim, _, width)) = head { op.prim = prim; width } else { 1 };
+            if diamond {
+                if let Some(ne) = table.dyadic.get("!=") { op.prim = ne.prim; op.level = ne.level; }
+            }
             for _ in 0..consumed { self.advance(); }
             let floor_right = if op.right_assoc { op.level } else { op.level + 1 };
             left = match op.prim {
