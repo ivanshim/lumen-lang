@@ -9,8 +9,7 @@ impl<'a> Machine<'a> {
         self.table.strings("ext.stmt.class.detail.order").get(1).is_some_and(|word| word == key)
     }
     fn offspring_listing(&self, parent: &Rc<Blueprint>) -> Value {
-        let seen = crate::ghost::offspring_of(parent).into_iter().map(|child| self.visible_blueprint(child)).collect::<Vec<_>>();
-        Self::wrap(0, vec![Value::Vector(crate::tuples::Sequence::plain(seen))])
+        Self::wrap(190, vec![Value::Blueprint(parent.clone())])
     }
     pub(super) fn detail(&self, key: &str) -> &str {
         match key {
@@ -1250,6 +1249,14 @@ impl<'a> Machine<'a> {
                     130 => {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
                         Ok(self.prim(Prim::Weigh, "eval", &kept)?)
+                    }
+                    // The classes standing directly on the one kept, read
+                    // anew whenever the member is called.
+                    190 => {
+                        if !values.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", match kept.first() { Some(Value::Blueprint(owner)) => owner.name.clone(), _ => String::new() }, values.len()).into()); }
+                        let Some(Value::Blueprint(parent)) = kept.first() else { return Err(self.class_unready()) };
+                        let seen = crate::ghost::offspring_of(parent).into_iter().map(|child| self.visible_blueprint(child)).collect::<Vec<_>>();
+                        Ok(Value::Vector(crate::tuples::Sequence::plain(seen)))
                     }
                     127 => {
                         let first = values.first().cloned().ok_or_else(|| self.class_unready())?;
@@ -3713,6 +3720,19 @@ impl<'a> Machine<'a> {
     }
     /// Whether the blueprint, or one it stands on, names the entries its
     /// things may hold. Such a thing keeps no namespace of its own.
+    /// Two blueprints that declare the very same slots, and stand on
+    /// nothing else that declares any, lay their things out alike.
+    fn alike_in_slots(&self, one: &Blueprint, other: &Blueprint) -> bool {
+        let names = |b: &Blueprint| Self::own_entry(b, self.detail("slots")).map(|held| match held.settled() {
+            Value::Tuple(items) | Value::Vector(items) => items.iter().map(|item| item.bare()).collect::<Vec<_>>(),
+            single => vec![single.bare()],
+        });
+        let bare = |b: &Blueprint| b.parents.iter().filter(|p| p.name != self.detail("root")).all(|p| !self.slots_named(p));
+        match (names(one), names(other)) {
+            (Some(a), Some(b)) => a == b && bare(one) && bare(other),
+            _ => false,
+        }
+    }
     fn slots_named(&self,b:&Blueprint)->bool {
         if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
@@ -3970,11 +3990,20 @@ impl<'a> Machine<'a> {
                     match replacement {
                         Some(Value::Blueprint(next)) => {
                             let previous = t.blueprint();
+                            let alike = self.alike_in_slots(&previous, &next);
                             let compatible = Self::own_entry(&previous, self.detail("module")).is_some()
                                 && Self::own_entry(&next, self.detail("module")).is_some()
                                 && Self::native_beneath(&previous) == Self::native_beneath(&next)
-                                && !self.slots_named(&previous) && !self.slots_named(&next);
+                                && (alike || (!self.slots_named(&previous) && !self.slots_named(&next)));
                             if !compatible { return Err("TypeError: __class__ assignment: object layout differs".to_owned().into()); }
+                            // The worth a slot keeps stands under the key of
+                            // the blueprint that declared it: move it over.
+                            if alike {
+                                let (was, now) = (format!(":{:p}", Rc::as_ptr(&previous)), format!(":{:p}", Rc::as_ptr(&next)));
+                                for entry in t.holds.borrow_mut().iter_mut() {
+                                    if entry.0.starts_with("\0slot:") && entry.0.ends_with(&was) { let cut = entry.0.len() - was.len(); entry.0.truncate(cut); entry.0.push_str(&now); }
+                                }
+                            }
                             t.reclassified.replace(Some(next));
                             return Ok(Value::Nil);
                         }
@@ -5009,6 +5038,11 @@ impl<'a> Machine<'a> {
                 let mut names = Vec::new();
                 for parameter in self.gathered_members(&tuple)? {
                     let name = if matches!(parameter, Value::Nil) { String::from("None") }
+                        else if matches!(parameter.settled(), Value::Blueprint(_)) {
+                            let namespace = self.read_class_member(parameter.clone(), "__module__", false)?.bare();
+                            let qualified = self.read_class_member(parameter.clone(), "__qualname__", false)?.bare();
+                            if namespace == "builtins" { qualified } else { namespace + "." + &qualified }
+                        }
                         else { match parameter.kind_it_names() { Some(name) => name, None => self.prim(Prim::Quoted, "repr", &[parameter])?.bare() } };
                     names.push(name);
                 }

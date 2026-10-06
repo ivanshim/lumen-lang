@@ -125,6 +125,8 @@ def __getattr__(name):
 def formatannotation(annotation, base_module=None, *, quote_annotation_strings=True):
     # Source: CPython Lib/inspect.py formatannotation at v3.14.8; PSF License.
     import types
+    if not quote_annotation_strings and isinstance(annotation, str):
+        return annotation
     if getattr(annotation, '__module__', None) == 'typing':
         import re
         def repl(match):
@@ -182,17 +184,7 @@ class Signature:
         defaults = getattr(obj, '__defaults__', None) or ()
         kwdefaults = getattr(obj, '__kwdefaults__', None) or {}
         import annotationlib
-        try:
-            notes = annotationlib.get_annotations(obj, format=annotation_format)
-        except NameError:
-            # Asked for in the value format a missing name is the caller's
-            # fault, as it is in the reference. In any other format the
-            # reference never fails; here an annotation written in a class
-            # body that names something not yet there cannot be told apart
-            # from the rest, so the whole row is left out of the text.
-            if annotation_format == annotationlib.Format.VALUE:
-                raise
-            notes = {}
+        notes = annotationlib.get_annotations(obj, format=annotation_format)
 
         def written(name, prefix=''):
             # name, then its annotation, as Parameter.__str__ writes them

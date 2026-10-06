@@ -142,39 +142,9 @@ def _kind_name(kind):
         return repr(kind)
 
 
-# A kind named with the kinds it was given, as list[int] is.
-class GenericAlias:
-    def __init__(self, origin, args):
-        self.__origin__ = origin
-        if isinstance(args, tuple):
-            self.__args__ = args
-        else:
-            self.__args__ = (args,)
-        parameters = []
-        for arg in self.__args__:
-            found = (arg,) if type(arg).__name__ in ('TypeVar', 'ParamSpec', 'TypeVarTuple') else getattr(arg, '__parameters__', ())
-            for parameter in found:
-                if parameter not in parameters:
-                    parameters.append(parameter)
-        self.__parameters__ = tuple(parameters)
-        self.__unpacked__ = False
-
-    def __call__(self, *args, **keywords):
-        return self.__origin__(*args, **keywords)
-
-    def __eq__(self, other):
-        if isinstance(other, GenericAlias):
-            return self.__origin__ is other.__origin__ and self.__args__ == other.__args__
-        return NotImplemented
-
-    def __repr__(self):
-        shown = []
-        for given in self.__args__:
-            shown.append(_kind_name(given))
-        return _kind_name(self.__origin__) + '[' + ', '.join(shown) + ']'
-
-    def __iter__(self):
-        return _GenericAliasIterator(self)
+# A kind named with the kinds it was given, as list[int] is: the one class the
+# runtime makes every such alias of.
+GenericAlias = type(list[int])
 
 
 class _UnpackedGenericAlias:

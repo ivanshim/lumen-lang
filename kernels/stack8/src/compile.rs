@@ -1831,6 +1831,15 @@ impl<'a> Compiler<'a> {
         Ok(Rc::new(Routine { class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation_texts: None, annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
+    /// What an annotation that is one plain string stands for: the string
+    /// itself, where the text format gives it rather than its written form.
+    fn annotation_literal(&self, start: usize, end: usize) -> Option<String> {
+        let mut words = self.tokens[start..end].iter().filter(|token| !matches!(token.shape, Shape::LineEnd | Shape::Open | Shape::Close));
+        match (words.next(), words.next()) {
+            (Some(token), None) if token.shape == Shape::Quote => Some(token.lexeme.clone()),
+            _ => None,
+        }
+    }
     fn annotation_text(&self, start: usize, end: usize) -> String {
         let mut output = String::new();
         let mut previous = String::new();
@@ -1886,7 +1895,7 @@ impl<'a> Compiler<'a> {
                 c.expr_at(0, false)?;
                 c.reading_annotation = previous;
                 let text = c.annotation_text(*start, c.pos);
-                written.push((key.clone(), text.clone()));
+                written.push((key.clone(), c.annotation_literal(*start, c.pos).unwrap_or_else(|| text.clone())));
                 if c.future_annotations {
                     c.piece().instrs.truncate(expression);
                     c.constant(Value::text(&text));

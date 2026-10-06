@@ -592,8 +592,7 @@ impl<'a> Engine<'a> {
     /// The listing handed over by that member: a callable that answers the
     /// classes made so far on the given one.
     fn subclass_listing(&self, class: &Rc<Class>) -> Value {
-        let made = crate::faint::subclasses(class).into_iter().map(|each| self.public_class(each)).collect();
-        Self::adapter(0, vec![Value::array(made)])
+        Self::adapter(190, vec![Value::Class(class.clone())])
     }
     fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
@@ -1110,6 +1109,14 @@ impl<'a> Engine<'a> {
                 129 => {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
                     Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
+                }
+                // The classes standing directly on the one held, worked out
+                // afresh at every call.
+                190 => {
+                    if !args.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", match w.1.first() { Some(Value::Class(owner)) => owner.name.clone(), _ => String::new() }, args.len()).into()); }
+                    let Some(Value::Class(parent)) = w.1.first() else { return Err(self.class_refusal()); };
+                    let made = crate::faint::subclasses(parent).into_iter().map(|each| self.public_class(each)).collect();
+                    Ok(Value::array(made))
                 }
                 126 => {
                     let Some(Value::Object(union)) = args.first() else { return Err(self.class_refusal()); };
@@ -3612,9 +3619,18 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("kind") {
                     let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
                     let old = o.class_now();
+                    let same_slots = self.same_slot_layout(&old, &next);
                     if Self::own_class_value(&old, self.class_word("module")).is_none() || Self::own_class_value(&next, self.class_word("module")).is_none()
-                        || Self::kind_beneath(&old) != Self::kind_beneath(&next) || self.slots_named(&old) || self.slots_named(&next) {
+                        || Self::kind_beneath(&old) != Self::kind_beneath(&next) || (!same_slots && (self.slots_named(&old) || self.slots_named(&next))) {
                         return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
+                    }
+                    // What the slots hold is kept under the class that
+                    // declares them, so it moves to the new class's keys.
+                    if same_slots {
+                        let (was, now) = (format!(":{:p}", Rc::as_ptr(&old)), format!(":{:p}", Rc::as_ptr(&next)));
+                        for (key, _) in o.fields.borrow_mut().iter_mut() {
+                            if key.starts_with("\0slot:") && key.ends_with(&was) { key.truncate(key.len() - was.len()); key.push_str(&now); }
+                        }
                     }
                     *o.replacement_class.borrow_mut() = Some(next);
                     return Ok(Value::Null);
@@ -3926,6 +3942,23 @@ impl<'a> Engine<'a> {
     }
     /// Whether the class, or one it stands on, names the members its
     /// things may hold. Such a thing keeps no namespace of its own.
+    /// The names a class declares for its slots, where it declares any.
+    fn slot_names(&self, c: &Class) -> Option<Vec<String>> {
+        let declared = Self::own_class_value(c, self.class_word("slots"))?;
+        Some(match declared.contents() {
+            Value::Tuple(items) | Value::Array(items) => items.iter().map(Value::plain).collect(),
+            single => vec![single.plain()],
+        })
+    }
+    /// Two classes that declare the very same slots, and stand on nothing
+    /// else that has any, lay their things out alike.
+    fn same_slot_layout(&self, one: &Class, other: &Class) -> bool {
+        let bare = |c: &Class| c.direct.iter().filter(|b| b.name != self.class_word("root")).all(|b| !self.slots_named(b));
+        match (self.slot_names(one), self.slot_names(other)) {
+            (Some(a), Some(b)) => a == b && bare(one) && bare(other),
+            _ => false,
+        }
+    }
     fn slots_named(&self,c:&Class)->bool {
         Self::own_class_value(c,self.class_word("slots")).is_some()
             || c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
@@ -4758,6 +4791,11 @@ impl<'a> Engine<'a> {
                 let mut parts = Vec::new();
                 for arg in self.comprehension_items(&args)? {
                     parts.push(if matches!(arg, Value::Null) { "None".into() }
+                        else if matches!(arg.contents(), Value::Class(_)) {
+                            let module = self.class_get(arg.clone(), "__module__", false)?.plain();
+                            let name = self.class_get(arg.clone(), "__qualname__", false)?.plain();
+                            if module == "builtins" { name } else { format!("{module}.{name}") }
+                        }
                         else if let Some(word) = arg.kind_it_names() { word }
                         else { self.builtin(Builtin::Repr, "repr", &mut vec![arg])?.plain() });
                 }

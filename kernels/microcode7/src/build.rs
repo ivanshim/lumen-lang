@@ -1899,6 +1899,15 @@ impl<'a> Builder<'a> {
         Ok(constant(Value::Routine(Rc::new(Routine { definition: None, class_namespace: None, annotation_is_text: false, annotation_protocol: false, spelled_annotations: None, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
+    /// An annotation that is one plain string stands for that string in the
+    /// text format, not for the way it was written.
+    fn annotation_content(&self, first: usize, last: usize) -> Option<String> {
+        let mut seen = self.tokens[first..last].iter().filter(|word| !matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close));
+        match (seen.next(), seen.next()) {
+            (Some(word), None) if matches!(word.shape, Shape::Quote) => Some(word.lexeme.clone()),
+            _ => None,
+        }
+    }
     fn annotation_spelling(&self, first: usize, last: usize) -> String {
         let mut pieces: Vec<String> = Vec::new();
         for word in &self.tokens[first..last] {
@@ -1949,7 +1958,7 @@ impl<'a> Builder<'a> {
                 b.annotation_lookup = true;
                 let expression = b.expr_at(0, false)?;
                 b.annotation_lookup = outer;
-                spelled.push((word.clone(), b.annotation_spelling(at, b.pos)));
+                spelled.push((word.clone(), b.annotation_content(at, b.pos).unwrap_or_else(|| b.annotation_spelling(at, b.pos))));
                 let expression = if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(at, b.pos))) } else { expression };
                 if module {
                     let target = b.read_to_write(&map.ident);
