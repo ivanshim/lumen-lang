@@ -1,3 +1,4 @@
+# Source: CPython Lib/_collections_abc.py at v3.14.8 / 8e6e75d9102e; PSF License.
 # Copyright 2007 Google, Inc. All Rights Reserved.
 # Licensed to PSF under a Contributor Agreement.
 

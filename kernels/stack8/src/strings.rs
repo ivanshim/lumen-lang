@@ -347,7 +347,8 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 }
             }
             if start<s.len() { parts.push(s[start..].to_string()); }
-            Value::Words(Rc::new(parts),false)
+            // The reference answers a list of the parts.
+            Value::array(parts.iter().map(|part| Value::text(part)).collect())
         }
         Partition | Rpartition => {
             let sep=text(&params[0],lang)?;
@@ -434,10 +435,28 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 if matches!(op,Index|Rindex) {return Err(fault(lang,"missing"));}
                 return Ok(Value::Small(-1));
             }
-            // The bounds count characters, not bytes. When every byte is
-            // already its own character the needed slice is the text's own
-            // bytes, so the character positions are never laid out in a
-            // row; only a text with a wide character pays for a walk.
+            if s.is_ascii() && matches!(op, Count | Find | Rfind | Index | Rindex) {
+                let size = s.len();
+                let trim = |value: i64| if value < 0 { (size as i64).saturating_add(value).max(0) as usize } else { value as usize };
+                let lower = trim(match params.get(1) { None | Some(Value::Null) => 0, Some(value) => integer(value, lang)? });
+                let upper = trim(match params.get(2) { None | Some(Value::Null) => size as i64, Some(value) => integer(value, lang)? }).min(size);
+                let usable = lower <= upper && lower <= size;
+                let needle = text(&params[0], lang)?;
+                let selected = if usable { &s[lower..upper] } else { "" };
+                if op == Count {
+                    let amount = if !usable { 0 } else if needle.is_empty() { upper - lower + 1 } else { selected.matches(needle).count() };
+                    return Ok(Value::Small(amount as i64));
+                }
+                let found = if !usable { None } else if matches!(op, Rfind | Rindex) { selected.rfind(needle) } else { selected.find(needle) };
+                if let Some(position) = found { return Ok(Value::Small((lower + position) as i64)); }
+                if matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
+                return Ok(Value::Small(-1));
+            }
+            // A plain ASCII text answers its bounds with byte positions,
+            // which are its own character positions too, so the selected
+            // slice is taken straight; only a text with a wide character
+            // walks for a row of them. Startswith and endswith, whose
+            // windows the fast path above does not take, are covered here.
             let narrow=s.is_ascii();
             let length=if narrow {s.len()} else {s.chars().count()};
             let adjust=|n:i64| if n<0 {(length as i64).saturating_add(n).max(0) as usize} else {n as usize};
