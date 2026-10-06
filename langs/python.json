@@ -996,6 +996,9 @@
     "FileExistsError",
     "NotADirectoryError",
     "BrokenPipeError",
+    "FloatingPointError",
+    "EnvironmentError",
+    "IOError",
     "ChildProcessError",
     "ConnectionError",
     "ConnectionAbortedError",
@@ -1003,7 +1006,9 @@
     "ConnectionResetError",
     "InterruptedError",
     "ProcessLookupError",
-    "TimeoutError"
+    "TimeoutError",
+    "PythonFinalizationError",
+    "_IncompleteInputError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -4109,5 +4114,17 @@
     "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."
   ],
   "ext.builtin.iter.stop_value": [],
-  "ext.builtin.iter.stop_exception": []
+  "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.bytes.escape_decode": [
+    "__escape_decode_native__"
+  ],
+  "ext.builtin.struct_native": [
+    "__struct_native"
+  ],
+  "ext.builtin.pickle_buffer": [
+    "__pickle_buffer_native__"
+  ],
+  "ext.builtin.text.intern": [
+    "__intern_native__"
+  ]
 }

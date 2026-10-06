@@ -4522,6 +4522,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |
@@ -4631,7 +4632,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` `ChildProcessError` `ConnectionError` `ConnectionAbortedError` `ConnectionRefusedError` `ConnectionResetError` `InterruptedError` `ProcessLookupError` `TimeoutError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` `FloatingPointError` `EnvironmentError` `IOError` `ChildProcessError` `ConnectionError` `ConnectionAbortedError` `ConnectionRefusedError` `ConnectionResetError` `InterruptedError` `ProcessLookupError` `TimeoutError` `PythonFinalizationError` `_IncompleteInputError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4828,6 +4829,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.pickle_buffer` | - | - | `__pickle_buffer_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
@@ -4970,6 +4972,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.format_map` | - | - | `format_map` `str.format_map` | - | - | - | - | - | - | - |
 | `ext.builtin.text.getnewargs` | - | - | `__getnewargs__` `str.__getnewargs__` | - | - | - | - | - | - | - |
 | `ext.builtin.text.index` | - | - | `index` `str.index` | - | - | - | - | - | - | - |
+| `ext.builtin.text.intern` | - | - | `__intern_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isascii` | - | - | `isascii` `str.isascii` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isdecimal` | - | - | `isdecimal` `str.isdecimal` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isidentifier` | - | - | `isidentifier` `str.isidentifier` | - | - | - | - | - | - | - |
@@ -6006,6 +6009,10 @@ class itself and is not inherited by Python subclasses.
 `ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
+
+`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols.
+
+`ext.builtin.bytes.escape_decode` names the Python-only byte escape decoder, following CPython v3.14.8 Objects/bytesobject.c and Modules/_codecsmodule.c. It preserves consumed buffer length and reports invalid escapes for the warning adapter.
 `ext.stmt.class.detail.mro.entries` names the non-type base substitution hook; `ext.stmt.class.detail.original.bases` names the retained original base tuple. Module-load helpers accept a false second argument to query source availability without importing and a true second argument to return its source path.
 
 The class-seal helper also seals completed instance storage against all subsequent attribute writes, including direct object writes. Template-prefix labels construct the native template storage adapter; the public templatelib executes pinned source.
@@ -6061,6 +6068,9 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
 
+`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator.
+
+`ext.builtin.text.intern` retains canonical Python strings for sys.intern and attribute-name dictionaries, including surrogate-containing strings.
 The Python-only type-parameter labels also expose `_typing` primitives to the
 unchanged CPython v3.14.8 `typing.py`. Generic subscription and subclass
 initialization call its `_generic_class_getitem` and `_generic_init_subclass`;

@@ -10,6 +10,7 @@ impl<'a> Machine<'a> {
             "descriptor.delete" => self.rules.detail_descriptor_delete,
             "descriptor.set" => self.rules.detail_descriptor_set,
             "remove" => self.rules.detail_delete,
+            "subclass" => self.rules.detail_subclass,
             "set" => self.rules.detail_set,
             "get" => self.rules.detail_get,
             "allocate" => self.rules.detail_allocate,
@@ -60,6 +61,11 @@ impl<'a> Machine<'a> {
             let names = self.rules.specials;
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
+        if matches!(self.table.prims.get(word), Some(Prim::Uniques | Prim::Unchanging | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Backwards)) {
+            if let Some(method) = self.table.strings("ext.stmt.class.special").get(79) {
+                protocols.push((method.to_owned(), Self::wrap(136, vec![Value::text(word)])));
+            }
+        }
         if word == "Union" {
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
             // The reference builds a union by subscription; the folded
@@ -92,6 +98,9 @@ impl<'a> Machine<'a> {
                 kind.shared.borrow_mut().push((self.detail("call").to_owned(), Self::wrap(79, Vec::new())));
             }
         }
+        if word == "classmethod_descriptor" && self.protocol_spelled() {
+            kind.shared.borrow_mut().push((self.detail("descriptor.get").to_string(), Self::wrap(235, Vec::new())));
+        }
         if word == "module" && !self.detail("kind").is_empty() {
             if let Some(key) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) {
                 kind.shared.borrow_mut().push((key.to_owned(), Self::wrap(2, vec![Value::text("module")])));
@@ -117,7 +126,7 @@ impl<'a> Machine<'a> {
         }
         if matches!(word, "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
             let allocation = self.detail("allocate").to_string();
-            kind.shared.borrow_mut().push((allocation, Self::wrap(14, vec![Value::text(word)])));
+            kind.shared.borrow_mut().push((allocation, self.native_allocation(word)));
         }
         if self.table.spells("ext.stmt.class.builtin", "bytes") && matches!(word, "bytes" | "bytearray") {
             kind.shared.borrow_mut().push(("__buffer__".to_owned(), self.kind_entry(word, "__buffer__")));
@@ -133,6 +142,17 @@ impl<'a> Machine<'a> {
                 && !kind.shared.borrow().iter().any(|(key, _)| key == name))
                 .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| (name, entry))).collect::<Vec<_>>();
             kind.shared.borrow_mut().extend(descriptors);
+        }
+        if word == "dict" {
+            let mut entries = kind.shared.borrow_mut();
+            entries.retain(|(name, _)| name != "fromkeys");
+            entries.push(("fromkeys".to_owned(), Self::wrap(60, vec![Value::text(word), Value::text("fromkeys"), Value::Flag(true)])));
+        }
+        if word == "bytearray" {
+            if let Some(task) = self.table.prims.get("bytearray.maketrans") {
+                let function = Value::Intrinsic(*task, Rc::from("bytearray.maketrans"));
+                kind.shared.borrow_mut().push(("maketrans".to_owned(), Self::wrap(4, vec![function])));
+            }
         }
         kind
     }
@@ -535,7 +555,7 @@ impl<'a> Machine<'a> {
             values.extend(named.into_iter().map(|(key, value)| Value::Couple(Rc::new((Value::text(&key), value)))));
             let Prim::ClassWork(operation) = op else { unreachable!() };
             self.work_on_class(operation, values)?
-        } else if !self.rules.words_ext_stmt_class_builder.is_empty() && op == Prim::Dictionary { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
+        } else if self.rules.class_builder && op == Prim::Dictionary { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{let mut arguments=positional;match self.builtin_names(op,word,&mut arguments,named)?{Some(result)=>result,None=>self.prim(op,word,&arguments)?}};
         let made = if matches!(word, "str" | "bytes" | "bytearray") { Self::underlying(&made).unwrap_or(made) } else { made };
         let kept=match made.settled(){
             held @ (Value::Vector(_)|Value::Dict(_))=>Value::Mutable(Rc::new(RefCell::new(held)),true),
@@ -686,7 +706,7 @@ impl<'a> Machine<'a> {
         let keywords=named.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k),v)))).collect();
         self.assemble_class(title,ancestors,body,selected,keywords,plain[1].settled())
     }
-    fn reject_type_surrogates(&mut self, text: &Value) -> Result<(), Escape> {
+    pub(super) fn reject_type_surrogates(&mut self, text: &Value) -> Result<(), Escape> {
         let Value::Unpaired(numbers) = text.settled() else { return Ok(()); };
         for (begin, &number) in numbers.iter().enumerate() {
             if !(0xd800..0xe000).contains(&number) { continue; }
@@ -831,6 +851,14 @@ impl<'a> Machine<'a> {
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
         entries.retain(|(_,v)|!matches!(v,Value::Unset));
+        let allocation = self.detail("allocate").to_owned();
+        if !allocation.is_empty() {
+            for (word, entry) in &mut entries {
+                if word == &allocation && matches!(entry, Value::Routine(_) | Value::Bound(..)) {
+                    *entry = Self::wrap(4, vec![entry.clone()]);
+                }
+            }
+        }
         if !self.table.strings("ext.system.module.cache").is_empty() {
             for (key, value) in &entries {
                 if key == "__abc_tpflags__" && matches!(value.settled(), Value::Small(bits) if bits & 96 == 96) {
@@ -1428,7 +1456,7 @@ impl<'a> Machine<'a> {
             _=>false,
         }
     }
-    fn own_entry(b:&Blueprint,key:&str)->Option<Value> {
+    pub(super) fn own_entry(b:&Blueprint,key:&str)->Option<Value> {
         if let Some((_, held)) = b.shared.borrow().iter().find(|(word, _)| word == key) {
             return (!matches!(held.settled(), Value::Unset)).then(|| held.clone());
         }
@@ -1485,7 +1513,21 @@ impl<'a> Machine<'a> {
         match word.strip_prefix("#completed_class") { Some(_) => "__class__", None => word }
     }
     fn wrap(tag:u8,items:Vec<Value>)->Value {Value::Wrapped(tag,Rc::new(items).into())}
+    pub(super) fn check_constructor_expansion(&self, class: &Rc<Blueprint>, values: &[Value]) -> Res<()> {
+        for item in values {
+            let Value::Couple(pair)=item else{continue};
+            if !matches!(pair.0,Value::Flag(true)){continue}
+            let expanded=Self::underlying(&pair.1).unwrap_or_else(||pair.1.settled());
+            if !matches!(expanded,Value::Dict(_)|Value::Attributes(_)) {
+                let namespace=Self::own_entry(class,self.detail("module"));
+                let title=namespace.filter(|home|home.bare()!=self.builtin_module()).map_or_else(||class.name.clone(),|home|format!("{}.{}",home.bare(),class.name));
+                return Err(format!("TypeError: {title}() argument after ** must be a mapping, not {}",pair.1.kind_word()).into());
+            }
+        }
+        Ok(())
+    }
     pub(super) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
+        if let Value::Blueprint(class)=&f { self.check_constructor_expansion(class, &values)?; }
         let f = if matches!(f, Value::Shared(_)) { self.what_it_spells(f) } else { f };
         match f {
             Value::Wrapped(82, _) => {
@@ -1511,7 +1553,7 @@ impl<'a> Machine<'a> {
             Value::Intrinsic(Prim::ClassWork(op), _) if !self.rules.words_ext_stmt_class_builder.is_empty() => self.work_on_class(op, values),
             Value::Intrinsic(Prim::SortOf, _) if !self.rules.words_ext_stmt_class_builder.is_empty() => self.class_from_type(values),
             Value::Intrinsic(operation, name) => {
-                let (mut input, keywords) = self.open_arguments(values)?;
+                let (mut input, keywords) = self.arguments_for_native(&name, values)?;
                 if let Some(answer) = self.builtin_names(operation, &name, &mut input, keywords)? { return Ok(answer); }
                 let result = self.prim(operation, &name, &input);
                 if let Some(raised) = self.got_away.take() { return Err(raised); }
@@ -1541,6 +1583,16 @@ impl<'a> Machine<'a> {
                 if message.is_empty() { self.class_unready() } else { message.into() }
             })?;self.deeper()?;values.insert(0,Value::Thing(t));let answer=self.apply_class_member(called,values);self.standing-=1;answer},
             Value::Blueprint(c)=>self.construct_ordered(c,values),
+            Value::Wrapped(235, _) => {
+                let (mut input, keywords) = self.open_arguments(values)?;
+                let Some(first) = input.first().map(Value::settled) else { return Err(String::from("TypeError: descriptor '__get__' of 'classmethod_descriptor' object needs an argument").into()); };
+                match &first {
+                    Value::Wrapped(60, fields) if fields.len() == 3 => (),
+                    other => return Err(format!("TypeError: descriptor '__get__' requires a 'classmethod_descriptor' object but received a '{}'", other.kind_word()).into()),
+                }
+                input.remove(0);
+                self.get_native_classmethod(&first, input, keywords)
+            },
             Value::Wrapped(tag,kept)=>{
                 // A loose `dict.fromkeys` descriptor is the class method:
                 // its first argument is the iterable, not a receiver.
@@ -1810,8 +1862,34 @@ impl<'a> Machine<'a> {
                         } else {self.apply_class_member(kept[1].clone(),values)}
                     }
                     0=>Ok(kept[0].clone()),
+                    136=>{
+                        let word = kept[0].bare();
+                        let Some(first) = values.first() else { return Err(format!("TypeError: unbound method {word}.__reduce__() needs an argument").into()); };
+                        let base = Self::underlying(first).unwrap_or_else(|| first.settled()).settled();
+                        let walking_type = matches!(self.table.prims.get(&word), Some(Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Backwards));
+                        if walking_type && matches!(base, Value::Iterator(_)) && base.kind_word() == word {
+                            if values.len() > 1 { return Err(format!("TypeError: {word}.__reduce__() takes no arguments ({} given)", values.len()-1).into()); }
+                            return self.reduce_iterator(first).map_err(Escape::from);
+                        }
+                        let fixed = self.table.prims.get(&word) == Some(&Prim::Unchanging);
+                        if !matches!(base, Value::Set(_)) || base.set_sealed() != fixed {
+                            return Err(format!("TypeError: descriptor '__reduce__' for '{word}' objects doesn't apply to a '{}' object", first.kind_word()).into());
+                        }
+                        if values.len() != 1 { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", first.kind_word(), values.len() - 1).into()); }
+                        self.reduction_of_set(first)
+                    },
+                    135=>{
+                        if values.len() != 0 { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", values.len()).into()); }
+                        Ok(kept[0].clone())
+                    },
                     1 if !values.is_empty()=>{
-                        let Some(Value::Blueprint(c))=values.first() else{return Err(self.class_unready())};
+                        let Some(Value::Blueprint(c))=values.first() else{return Err(format!("TypeError: object.__new__(X): X is not a type object ({})",values.first().map_or_else(|| "NoneType".to_owned(),Value::kind_word)).into())};
+                        let buffer_kind = c.shared.borrow().iter().any(|(word, bit)| word == "\0buffer_allocator" && bit.is_true());
+                        if buffer_kind {
+                            let module = Self::own_entry(c, self.detail("module")).map(|home| home.bare()).unwrap_or_default();
+                            let title = format!("{module}.{}", c.name);
+                            return Err(format!("TypeError: object.__new__({title}) is not safe, use {title}.__new__()").into());
+                        }
                         if self.is_fault_kind(c) { return Ok(self.make_fault(c.clone(), values[1..].to_vec(), Value::Nil)); }
                         self.abstract_turned_away(c)?;
                         if values.len()>1{self.root_turns_away(c,'n')?;}
@@ -1851,6 +1929,7 @@ impl<'a> Machine<'a> {
                         let key = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).unwrap_or_default().to_owned();
                         self.fault_method(receiver, &key, &values)
                     }
+                    2 if matches!(values.first().map(Value::settled), Some(Value::Tuple(_))) => Ok(Value::Nil),
                     2 if values.len()==1=>Ok(Value::Nil),
                     2 if values.len()>1=>{
                         let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
@@ -1947,9 +2026,12 @@ impl<'a> Machine<'a> {
                     }
                     // The maker of a native kind: the blueprint to make a
                     // thing of, then what the kind's primitive takes.
+                    233 if values.len()==1=>self.display_clock_record(&values[0]),
+                    234 if values.len()==1=>self.reduce_clock_record(&values[0]),
                     14 if !values.is_empty()=>{
                         let target = values.remove(0);
                         let word=kept[0].bare();
+                        if word=="struct_time" {return self.clock_record(target,values)}
                         if self.has_class_order() && word == "super" {
                             let Value::Blueprint(of) = &target else { return Err(self.class_unready()); };
                             if !Self::parent_kind_descended(of) { return Err(self.class_unready()); }
@@ -1977,7 +2059,12 @@ impl<'a> Machine<'a> {
                         if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) && self.table.prims.get(&word) == Some(&Prim::AsInt) {
                             return Err("TypeError: int.__new__(bool) is not safe, use bool.__new__()".to_owned().into());
                         }
-                        let Value::Blueprint(c)=target else{return Err(self.class_unready());};
+                        if let Value::Intrinsic(operation,title)=&target {
+                            if operation.names_a_kind() && title.as_ref()==word {return self.apply_held(target,values)}
+                            if operation.names_a_kind() {return Err(format!("TypeError: {word}.__new__({title}): {title} is not a subtype of {word}").into())}
+                        }
+                        let Value::Blueprint(c)=target else{return Err(format!("TypeError: {word}.__new__(X): X is not a type object ({})",target.kind_word()).into())};
+                        if Self::native_beneath(&c).as_deref()!=Some(word.as_str()){return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
                         if matches!(self.table.prims.get(&word), Some(Prim::Uniques | Prim::Listed | Prim::Dictionary)) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
@@ -2577,6 +2664,47 @@ impl<'a> Machine<'a> {
         }
         Ok(created)
     }
+    pub(super) fn get_native_classmethod(&mut self, entry: &Value, input: Vec<Value>, options: Vec<(String, Value)>) -> Res {
+        let count = input.len();
+        if options.len() != 0 { return Err(String::from("TypeError: wrapper __get__() takes no keyword arguments").into()); }
+        match count {
+            0 => return Err(String::from("TypeError: __get__ expected at least 1 argument, got 0").into()),
+            1 | 2 => (),
+            _ => return Err(format!("TypeError: __get__ expected at most 2 arguments, got {count}").into()),
+        }
+        let candidate = input.get(1).map(Value::settled).unwrap_or(Value::Nil);
+        let target = if matches!(candidate, Value::Nil) {
+            if matches!(input[0].settled(), Value::Nil) { return Err(String::from("TypeError: __get__(None, None) is invalid").into()); }
+            self.class_from_type(vec![input[0].clone()])?
+        } else { candidate };
+        let Value::Wrapped(60, metadata) = entry else { return Err(self.class_unready()); };
+        let limited_name = |mut text: String| {
+            while text.len() > 100 { text.pop(); }
+            text
+        };
+        let home = metadata[0].bare();
+        let public = metadata[1].bare();
+        let bad_type_name = if let Value::Thing(instance) = &target {
+            let kind = instance.blueprint();
+            let native_buffer = kind.shared.borrow().iter().any(|entry| entry.0 == "\0buffer_allocator" && entry.1.is_true());
+            let named = kind.type_names.borrow().is_some();
+            if named && !native_buffer { Self::type_argument_kind(&target) }
+            else { self.full_class_name(&kind) }
+        } else { Self::type_argument_kind(&target) };
+        let class = if let Value::Blueprint(type_object) = &target { type_object.clone() } else if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) { self.native_kind("bool") } else { match self.parent_from_type(&target) { Ok(kind) => kind, Err(_) => {
+            return Err(format!("TypeError: descriptor '{public}' for type '{home}' needs a type, not a '{}' as arg 2", limited_name(bad_type_name)).into());
+        }} };
+        let parent = self.kind_by_word(&home).ok_or_else(|| self.class_unready())?;
+        let exported = class.shared.borrow().iter().any(|entry| entry.0 == "\0buffer_allocator" && entry.1.is_true());
+        let public_type = match class.type_names.borrow().as_ref() {
+            Some(names) if !exported => names.short.type_text().bare(),
+            _ => self.full_class_name(&class),
+        };
+        if self.is_beneath(&target, &parent, true)? == false {
+            return Err(format!("TypeError: descriptor '{public}' requires a subtype of '{home}' but received '{}'", limited_name(public_type)).into());
+        }
+        self.member_binding(entry.clone(), None, class)
+    }
     pub(super) fn full_class_name(&self, kind: &Blueprint) -> String {
         let entries = kind.shared.borrow();
         let local = kind.type_names.borrow().as_ref().map(|names| names.full.bare()).unwrap_or_else(|| entries.iter().find(|(key, _)| key == self.detail("qualified")).map_or_else(|| kind.name.clone(), |(_, value)| value.bare()));
@@ -2657,6 +2785,11 @@ impl<'a> Machine<'a> {
         told.into()
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
+        if receiver.is_some() {
+            if let Value::Intrinsic(Prim::Textual(_), spelling) = &entry {
+                if spelling.contains('.') { return Ok(Value::Member(Rc::new(receiver.clone().unwrap()), spelling.rsplit('.').next().unwrap().to_string())); }
+            }
+        }
         if let Value::Wrapped(tag @ 10..=12, state) = &entry {
             if state.first().is_some_and(|owner| owner.bare() == self.detail("root")) {
                 if let Some(target) = receiver {
@@ -2671,6 +2804,16 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Wrapped(60, parts) = &entry {
+            if parts.len() == 3 {
+                let owner = if let Some(Value::Thing(instance)) = &receiver { instance.blueprint() }
+                    else if let Some(Value::Blueprint(class)) = &receiver { class.clone() } else { owner };
+                let qualified = format!("{}.{}", parts[0].bare(), parts[1].bare());
+                if Self::native_word(&owner).as_deref() == Some(parts[0].bare().as_str()) {
+                    if let Some(task) = self.table.prims.get(&qualified) { return Ok(Value::Intrinsic(*task, Rc::from(qualified))); }
+                }
+                return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), parts[1].bare()));
+
+            }
             let key = parts[1].bare();
             if parts[0].bare() == "type" && receiver.is_some() && (key == self.detail("namespace") || key == self.detail("mro")) {
                 let target = receiver.as_ref().unwrap().settled();
@@ -2723,15 +2866,16 @@ impl<'a> Machine<'a> {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(133 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
             Value::Wrapped(32,items) if receiver.is_some()=>return self.slot_value(&receiver.unwrap(),items),
             // A working of the property blueprint, reached through a
             // property, is tied to it; a kept accessor reads at once.
+
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 233..=235,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
@@ -3022,6 +3166,14 @@ impl<'a> Machine<'a> {
     /// names among the root's members, or, read off a thing, one of the
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting, left loose to be bound to it.
+    fn common_allocation(&self) -> Value {
+        self.loose_members.borrow_mut().entry("allocate the root".to_owned())
+            .or_insert_with(|| Self::wrap(1, Vec::new())).clone()
+    }
+    fn common_initialiser(&self) -> Value {
+        let spelling = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
+        self.loose_entries.borrow_mut().entry((String::from("object"), spelling)).or_insert_with(|| Self::wrap(2, Vec::new())).clone()
+    }
     fn from_the_root(&self,key:&str,of_a_thing:bool,class:&Blueprint)->Option<Value> {
         if key.is_empty(){return None;}
         if self.rules.words_ext_stmt_class_detail_root_members.iter().any(|word|word==key) {
@@ -3041,11 +3193,11 @@ impl<'a> Machine<'a> {
             _ if key == self.detail("subclass") => vec![Value::text(key)],
             _ => Vec::new(),
         };
-        Some(Self::wrap(tag, state))
+        Some(if tag == 1 { self.common_allocation() } else if tag == 2 && self.table.single("ext.stmt.class.constructor") == Some(key) { self.common_initialiser() } else { Self::wrap(tag, state) })
     }
     /// The root's own answer for one of its members, the value it
     /// answers about coming first.
-    fn root_answers(&mut self,named:&str,values:Vec<Value>)->Res {
+    pub(super) fn root_answers(&mut self,named:&str,values:Vec<Value>)->Res {
         let which=self.rules.words_ext_stmt_class_detail_root_members.iter().position(|word|word==named);
         if which == Some(9) && values.len() != 1 { return Err(self.method_fault("arguments").into()); }
         let not_mine=Value::Refusal(Rc::from(self.rules.words_ext_stmt_class_special_declined.first().map(String::as_str).unwrap_or("NotImplemented")));
@@ -3081,22 +3233,28 @@ impl<'a> Machine<'a> {
             Some(9)=>self.ordinary_directory(&first),
             Some(10)=>Self::held_as_state(&first),
             Some(11|12)=>{
+                let version = if which == Some(11) { 0 } else {
+                    if values.len() != 2 { return Err(String::from("TypeError: __reduce_ex__() takes exactly one argument").into()); }
+                    let argument = values[1].settled();
+                    let whole = match argument {
+                        Value::Small(_) | Value::Huge(_) | Value::Flag(_) => argument,
+                        _ => self.ask_special(&argument, 43, &[])?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", argument.kind_word()))?,
+                    };
+                    whole.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?
+                };
                 if which == Some(12) {
-                    match self.ask_special(&first, 79, &[])? {
-                        None => {},
-                        Some(reduction) => return Ok(reduction),
+                    if let Some(reduction) = self.ask_special(&first, 79, &[])? { return Ok(reduction); }
+                    if let Value::Thing(owner) = &first {
+                        if self.is_fault_kind(&owner.blueprint()) {
+                            let method = self.table.single("ext.builtin.exceptions.reduce").unwrap_or_default().to_owned();
+                            return self.fault_method(owner.clone(), &method, &[]);
+                        }
                     }
                 }
                 self.reduction_permitted(&first)?;
-                let kind=self.class_from_type(vec![first.clone()])?;
-                let state = if let Value::Thing(object) = &first {
-                    let name = self.rules.words_ext_stmt_class_detail_root_members.get(10).cloned().unwrap_or_default();
-                    if let Some(getter) = self.inherited_entry(&object.blueprint(), &name) {
-                        let bound = self.member_binding(getter, Some(first.clone()), object.blueprint())?;
-                        self.apply_class_member(bound, Vec::new())?
-                    } else { Self::held_as_state(&first) }
-                } else { Self::held_as_state(&first) };
-                Value::tuple(vec![kind,Value::tuple(Vec::new()),state])
+                let native = Self::underlying(&first).unwrap_or_else(|| first.settled());
+                if matches!(native.settled(), Value::Set(_)) { return self.reduction_of_set(&first); }
+                return self.reduction_for_object(&first, version);
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
             _=>return Err(self.class_unready()),
@@ -3104,6 +3262,73 @@ impl<'a> Machine<'a> {
     }
     /// What a thing holds of its own as a dictionary, or nothing where
     /// it holds nothing.
+    pub(super) fn reduction_of_set(&mut self, value: &Value) -> Res<Value> {
+        let class = self.class_from_type(vec![value.clone()])?;
+        let items = self.core_collect(value)?;
+        let state = match self.read_class_member(value.clone(), "__getstate__", false) {
+            Ok(method) => self.apply_class_member(method, vec![])?,
+            Err(fault) if self.missing_member_escape(&fault) => Self::held_as_state(value),
+            Err(fault) => return Err(fault),
+        };
+        Ok(Value::tuple(vec![class, Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(items))]), state]))
+    }
+    fn reduction_for_object(&mut self, value: &Value, version: i32) -> Res {
+        self.reduction_permitted(value)?;
+        let copyreg = self.load_namespace("copyreg")?;
+        if version <= 1 {
+            let operation = self.read_class_member(copyreg, "_reduce_ex", false)?;
+            return self.apply_class_member(operation.settled(), vec![value.clone(), Value::Small(version as i64)]);
+        }
+        let mut positional = Vec::new();
+        let mut named = Value::Dict(Rc::new(Vec::new().into()));
+        let mut extension = false;
+        let extra = self.read_class_member(value.clone(), "__getnewargs_ex__", true);
+        match extra {
+            Err(ref failed) if self.missing_member_escape(failed) => (),
+            Err(failed) => return Err(failed),
+            Ok(callable) => {
+                let pair = self.apply_class_member(callable, vec![])?.settled();
+                let Value::Tuple(parts) = pair else { return Err(format!("TypeError: __getnewargs_ex__ should return a tuple, not '{}'", pair.kind_word()).into()); };
+                if parts.len() != 2 { return Err(format!("ValueError: __getnewargs_ex__ should return a tuple of length 2, not {}", parts.len()).into()); }
+                let Value::Tuple(args) = parts[0].settled() else { return Err(format!("TypeError: first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '{}'", parts[0].kind_word()).into()); };
+                named = parts[1].settled();
+                if !matches!(named, Value::Dict(_)) { return Err(format!("TypeError: second item of the tuple returned by __getnewargs_ex__ must be a dict, not '{}'", named.kind_word()).into()); }
+                positional.extend(args.iter().cloned()); extension = true;
+            }
+        }
+        if !extension {
+            match self.read_class_member(value.clone(), "__getnewargs__", true) {
+                Err(ref absent) if self.missing_member_escape(absent) => (),
+                Err(absent) => return Err(absent),
+                Ok(callable) => {
+                    let obtained = self.apply_class_member(callable, vec![])?.settled();
+                    if let Value::Tuple(args) = obtained { positional.extend(args.iter().cloned()); }
+                    else { return Err(format!("TypeError: __getnewargs__ should return a tuple, not '{}'", obtained.kind_word()).into()); }
+                }
+            }
+        }
+        let kind = self.class_from_type(vec![value.clone()])?;
+        let (helper, args) = match &named {
+            Value::Dict(entries) if !entries.is_empty() => ("__newobj_ex__", vec![kind, Value::tuple(positional), named]),
+            _ => { positional.insert(0, kind); ("__newobj__", positional) }
+        };
+        let maker = self.read_class_member(copyreg, helper, false)?;
+        let state = match self.read_class_member(value.clone(), "__getstate__", false) {
+            Ok(getter) => self.apply_class_member(getter, vec![])?,
+            Err(ref missing) if self.missing_member_escape(missing) => Self::held_as_state(value),
+            Err(missing) => return Err(missing),
+        };
+        let underlying = Self::underlying(value).unwrap_or_else(|| value.settled());
+        let row = if matches!(underlying.settled(), Value::Vector(_)) {
+            self.core_primitive(Prim::Iterator, "iter", vec![value.clone()], vec![])?
+        } else { Value::Nil };
+        let mapping = if matches!(underlying.settled(), Value::Dict(_)) {
+            let member = self.read_class_member(value.clone(), "items", false)?;
+            let pairs = self.apply_class_member(member, vec![])?;
+            self.core_primitive(Prim::Iterator, "iter", vec![pairs], vec![])?
+        } else { Value::Nil };
+        Ok(Value::tuple(vec![maker.settled(), Value::tuple(args), state, row, mapping]))
+    }
     pub(super) fn held_as_state(value:&Value)->Value {
         let Value::Thing(t)=value else{return Value::Nil};
         let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
@@ -3250,6 +3475,51 @@ impl<'a> Machine<'a> {
             _ => None,
         }
     }
+    pub(super) fn clock_record_type(&mut self) -> Rc<Blueprint> {
+        for (spelling, class) in &self.native_kinds { if spelling == "struct_time" { return class.clone(); } }
+        let parent=self.native_kind("tuple");
+        let mut ranks=parent.ancestry.borrow().clone(); ranks.insert(0,parent.clone());
+        let mut members=vec![("__module__".to_string(),Value::text("time")),("__new__".to_string(),self.native_allocation("struct_time"))];
+        for (name, tag) in [("__repr__",233),("__str__",233),("__reduce__",234)] { members.push((name.into(),Self::wrap(tag,Vec::new()))); }
+        for (name, count) in [("n_sequence_fields",9),("n_fields",11),("n_unnamed_fields",0)] { members.push((name.into(),Value::Small(count))); }
+        let result=Rc::new(Blueprint { name:String::from("struct_time"),presentation:Some(String::from("<class 'time.struct_time'>")),under:Some(parent.clone()),parents:vec![parent],ancestry:RefCell::new(ranks),answers:Vec::new(),fields:Vec::new(),reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".into(),Value::text("struct_time"))],shared:RefCell::new(members),weak_slot:Cell::new(None),has_slot_storage:true,sealed:Cell::new(true),order_supplied:Cell::new(false),supplied_order:RefCell::new(Vec::new()),type_names:RefCell::new(None) });
+        self.native_kinds.push(("struct_time".into(),result.clone())); result
+    }
+    pub(super) fn clock_record(&mut self, target:Value, parameters:Vec<Value>) -> Res {
+        let Value::Blueprint(class)=target else{return Err("TypeError: struct_time.__new__(X): X is not a type object".to_owned().into())};
+        let (ordered,named)=self.open_arguments(parameters)?;
+        if ordered.len()>2{return Err("TypeError: struct_time() takes at most 2 arguments".to_owned().into())}
+        let mut source=ordered.get(0).cloned();let mut attributes=ordered.get(1).cloned();
+        for (name,held) in named { match name.as_str(){"sequence"=>source=Some(held),"dict"=>attributes=Some(held),_=>return Err(format!("TypeError: '{name}' is an invalid keyword argument for struct_time()").into())} }
+        let source=source.ok_or_else(|| String::from("TypeError: struct_time() missing required argument 'sequence' (pos 1)"))?;
+        let mut row=self.core_collect(&source)?;
+        if row.len()<9 {return Err(format!("TypeError: time.struct_time() takes an at least 9-sequence ({}-sequence given)",row.len()).into())}
+        if row.len()>11 {return Err(format!("TypeError: time.struct_time() takes an at most 11-sequence ({}-sequence given)",row.len()).into())}
+        let attributes=attributes.unwrap_or_else(||Value::Dict(Rc::new(Vec::new().into())));
+        let attributes=Self::underlying(&attributes).unwrap_or(attributes).settled();
+        let Value::Dict(attributes)=attributes else{return Err("TypeError: time.struct_time() takes a dict as second arg, if any".to_owned().into())};
+        let words=["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"];
+        for name in &words[row.len()..] {row.push(attributes.iter().find_map(|(key,value)|matches!(key,Value::Text(text) if text.as_ref()==*name).then(||value.clone())).unwrap_or(Value::Nil));}
+        let mut holds=vec![("\0underlying".to_owned(),Value::tuple(row[..9].to_vec()))];
+        holds.extend(words.into_iter().zip(row).map(|(name,held)|(name.into(),held)));
+        self.made+=1;Ok(Value::Thing(Rc::new(Thing {of:class,reclassified:RefCell::new(None),holds:RefCell::new(holds),turn:self.made})))
+    }
+    fn display_clock_record(&mut self, instance:&Value) -> Res {
+        let keys=["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst"];
+        let mut text=String::from("time.struct_time(");
+        for name in keys {if !text.ends_with('('){text.push_str(", ");}text.push_str(name);text.push('=');let value=self.read_class_member(instance.clone(),name,false)?;text.push_str(&self.object_words(&value,true)?);}
+        text.push(')');Ok(Value::text(&text))
+    }
+    fn reduce_clock_record(&mut self, instance:&Value) -> Res {
+        let entries=Self::underlying(instance).ok_or_else(||String::from("TypeError: invalid struct_time receiver"))?;
+        let zone=self.read_class_member(instance.clone(),"tm_zone",false)?;let offset=self.read_class_member(instance.clone(),"tm_gmtoff",false)?;
+        let details=Value::Dict(Rc::new(vec![(Value::text("tm_zone"),zone),(Value::text("tm_gmtoff"),offset)].into()));
+        let kind=Value::Blueprint(self.clock_record_type());Ok(Value::tuple(vec![kind,Value::tuple(vec![entries,details])]))
+    }
+    fn native_allocation(&self, spelling: &str) -> Value {
+        let mut saved = self.loose_members.borrow_mut();
+        saved.entry(format!("allocate {spelling}")).or_insert_with(|| Self::wrap(14, vec![Value::text(spelling)])).clone()
+    }
     pub(super) fn integer_attribute(&self, value: &Value, key: &str) -> Option<Value> {
         if let Value::Intrinsic(Prim::Truthful, title) = value {
             if key == self.detail("allocate") {
@@ -3341,16 +3611,6 @@ impl<'a> Machine<'a> {
             _ => {}
         }
 
-        if let Value::Member(owner, operation) = &value {
-            if key == self.detail("receiver") { return Ok(owner.as_ref().clone()); }
-            let public_format = (operation == "float_getformat").then(|| self.table.single("ext.builtin.method.getformat")).flatten();
-            if key == self.detail("qualified") {
-                return Ok(Value::text(&public_format.map(str::to_owned).unwrap_or_else(|| [owner.kind_word(), operation.clone()].join("."))));
-            }
-            if key == self.detail("name") {
-                return Ok(Value::text(public_format.and_then(|word| word.rsplit('.').next()).unwrap_or(operation)));
-            }
-        }
         if let Value::TextCall { subject, name, .. } = &value {
             if key == self.detail("receiver") { return Ok(Value::Text(subject.clone())); }
             if key == self.detail("name") { return Ok(Value::Text(name.clone())); }
@@ -3388,6 +3648,10 @@ impl<'a> Machine<'a> {
             }
         }
 
+        if let Value::Wrapped(134, kept) = &value {
+            if key == self.detail("module") { return self.read_class_member(kept[1].clone(), key, direct); }
+            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|word| word == key) { return Ok(Self::wrap(135, vec![kept[0].clone()])); }
+        }
         match &value {
             Value::Wrapped(133|134,parts) if matches!(key,"__doc__"|"__qualname__"|"__name__")=>{
                 let original=parts[1].clone();
@@ -3476,6 +3740,131 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        let defining = match &value {
+            Value::Wrapped(14, fields) => self.kind_by_word(&fields[0].bare()),
+            Value::Wrapped(1, fields) if fields.is_empty() => Some(Value::Blueprint(self.common_ancestor())),
+            Value::Wrapped(40, _) => Some(self.kind_builder_word()),
+            _ => None,
+        };
+        if let Some(kind) = defining {
+            match key {
+                "__self__" => return Ok(kind),
+                "__name__" => return Ok(Value::text("__new__")),
+                "__qualname__" => { let title = self.read_class_member(kind.clone(), "__name__", false)?.bare(); return Ok(Value::text(&[title, "__new__".into()].join("."))); }
+                "__module__" => return Ok(Value::Nil),
+                "__reduce__" => { let get = Value::Intrinsic(Prim::GetMember, Rc::from("getattr")); return Ok(Self::wrap(135, vec![Value::tuple(vec![get, Value::tuple(vec![kind, Value::text("__new__")])])])); }
+                "__reduce_ex__" => return Ok(Value::Member(Rc::new(value), String::from("callable_reduce_ex"))),
+                _ => (),
+            }
+        }
+        if key == self.detail("allocate") && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Unpaired(_) | Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Octets { .. } | Value::Set(_)) {
+            let class = self.kind_named_after(&value.settled());
+            return self.read_class_member(class, key, direct);
+        }
+        if key == "__reduce__" {
+            let parts = match &value {
+                Value::Method(code, receiver, _) => Some((Value::Routine(code.clone()), Value::Thing(receiver.clone()))),
+                Value::Wrapped(3, entries) if matches!(entries.first(), Some(Value::Routine(_) | Value::Bound(..))) => Some((entries[0].clone(), entries[1].clone())),
+                _ => None,
+            };
+            if let Some((function, receiver)) = parts {
+                let name = self.read_class_member(function, self.detail("name").to_owned().as_str(), false)?;
+                let getter = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
+                return Ok(Self::wrap(135, vec![Value::tuple(vec![getter, Value::tuple(vec![receiver, name])])]));
+            }
+        }
+        if key == self.detail("allocate") && matches!(&value, Value::Intrinsic(op, _) if !Self::names_a_kind(op)) { return Ok(self.common_allocation()); }
+        if key == "__reduce_ex__" && matches!(&value, Value::Intrinsic(working, _) if !Self::names_a_kind(working)) || key == "__reduce_ex__" && matches!(&value, Value::Member(..) | Value::TextCall { .. } | Value::Method(..) | Value::Wrapped(3, _)) {
+            return Ok(Value::Member(Rc::new(value), "callable_reduce_ex".into()));
+        }
+        let raw_descriptor = matches!(&value, Value::Wrapped(4 | 5, _)) || matches!(&value, Value::Wrapped(60, parts) if parts.len() == 3);
+        if raw_descriptor {
+            if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == key).filter(|slot| [79, 81].contains(slot)) {
+                let operation = if slot == 79 { "descriptor_reduce" } else { "descriptor_reduce_ex" };
+                return Ok(Value::Member(Rc::new(value.clone()), operation.to_owned()));
+            }
+        }
+        if self.table.single("ext.stmt.class.constructor") == Some(key) && matches!(&value, Value::Blueprint(class) if self.ancestor.as_ref().is_some_and(|root| Rc::ptr_eq(root, class))) { return Ok(self.common_initialiser()); }
+        if key == "__getformat__" {
+            let class = match value.settled() {
+                Value::Intrinsic(Prim::AsReal, _) => Some(value.clone()),
+                Value::Frac(_) => self.kind_by_word("float"),
+                Value::Blueprint(kind) if Self::native_word(&kind).or_else(|| Self::native_beneath(&kind)).as_deref() == Some("float") => Some(value.clone()),
+                Value::Thing(thing) if Self::native_beneath(&thing.blueprint()).as_deref() == Some("float") => Some(Value::Blueprint(thing.blueprint())),
+                _ => None,
+            };
+            if let Some(class) = class { return Ok(Value::Member(Rc::new(class), String::from("float_getformat"))); }
+        }
+        let binding = match &value {
+            Value::Member(receiver, working) => {
+                let public = match working.as_str() {
+                    "classmethod_get" => "__get__", "callable_reduce_ex" => "__reduce_ex__", "integer_size" => "__sizeof__",
+                    "integer_bytes" => "to_bytes", "integer_from_bytes" => "from_bytes",
+                    "complex_from_number" | "float_from_number" => "from_number",
+                    "bytearray_fromhex" | "bytes_fromhex" | "float_fromhex" => "fromhex",
+                    "float_getformat" => "__getformat__", other => other,
+                };
+                Some((receiver.as_ref().clone(), public.to_string()))
+            },
+            Value::TextCall { subject, name, .. } => Some((Value::Text(subject.clone()), name.to_string())),
+            Value::Wrapped(3, parts) => match parts.first() {
+                Some(Value::Wrapped(60, descriptor)) => Some((parts[1].clone(), descriptor[1].bare())),
+                Some(Value::Intrinsic(_, label)) => Some((parts[1].clone(), label.rsplit('.').next().unwrap_or(label).to_string())),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((receiver, word)) = binding {
+            if key == self.detail("name") { return Ok(Value::text(&word)); }
+            if key == self.detail("receiver") { return Ok(receiver); }
+            if key == self.detail("qualified") {
+                let defining = if matches!(&receiver, Value::Blueprint(_)) { self.read_class_member(receiver.clone(), key, false)?.bare() } else if let Value::Intrinsic(_, spelling) = &receiver { spelling.to_string() } else { receiver.kind_word() };
+                return Ok(Value::text(&format!("{}.{}", defining, word)));
+            }
+            if key == self.detail("module") { return Ok(Value::Nil); }
+            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                let restore = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
+                return Ok(Self::wrap(135, vec![Value::tuple(vec![restore, Value::tuple(vec![receiver, Value::text(&word)])])]));
+            }
+        }
+        if let Value::Wrapped(14, arguments) = &value {
+            if key == self.detail("receiver") {
+                if let Some(owner) = self.kind_by_word(&arguments[0].bare()) { return Ok(owner); }
+            }
+        }
+        if let Value::Wrapped(60, description) = &value {
+            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                let class = self.kind_by_word(&description[0].bare()).ok_or_else(|| self.class_unready())?;
+                let restore = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
+                let arguments = Value::tuple(vec![class, description[1].clone()]);
+                return Ok(Self::wrap(135, vec![Value::tuple(vec![restore, arguments])]));
+            }
+        }
+        match &value {
+            Value::Intrinsic(working, spelling) if !working.names_a_kind() && !self.detail("name").is_empty() => {
+                if let Some((owner_word, member)) = spelling.rsplit_once('.') {
+                    if let Some(kind) = self.kind_by_word(owner_word) {
+                        let bound_to_type = ["fromkeys", "fromhex", "from_bytes", "from_number", "__getformat__"].contains(&member);
+                        let unbound_static = member == "maketrans";
+                        if key == self.detail("receiver") && (bound_to_type || unbound_static) { return Ok(if bound_to_type { kind.clone() } else { Value::Nil }); }
+                        if key == "__objclass__" && !(bound_to_type || unbound_static) { return Ok(kind.clone()); }
+                        if key == self.detail("module") && (bound_to_type || unbound_static) { return Ok(Value::Nil); }
+                        if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                            let lookup = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
+                            let pair = Value::tuple(vec![lookup, Value::tuple(vec![kind, Value::text(member)])]);
+                            return Ok(Self::wrap(135, vec![pair]));
+                        }
+                    }
+                }
+                if key == self.detail("qualified") { return Ok(Value::text(spelling)); }
+                if key == self.detail("name") { return Ok(Value::text(spelling.rsplit('.').next().unwrap_or(spelling))); }
+                if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
+                if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                    return Ok(Self::wrap(135, vec![Value::text(spelling)]));
+                }
+            }
+            _ => ()
+        }
         if let Value::Intrinsic(Prim::SortOf, title) = &value {
             if key == self.detail("name") || key == self.detail("qualified") { return Ok(Value::text(title)); }
             if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
@@ -3487,8 +3876,16 @@ impl<'a> Machine<'a> {
         if matches!(&value, Value::Wrapped(62, _)) {
             if let Some(method) = self.attribute(&value, key) { return Ok(method); }
         }
+        if matches!(&value, Value::Wrapped(235, _)) {
+            let metadata = if key == self.detail("name") { Some(Value::text("__get__")) }
+                else if key == self.detail("qualified") { Some(Value::text("classmethod_descriptor.__get__")) }
+                else if key == "__objclass__" { Some(Value::Blueprint(self.native_kind("classmethod_descriptor"))) }
+                else { None };
+            if let Some(answer) = metadata { return Ok(answer); }
+        }
         if let Value::Wrapped(60, parts) = &value {
-            if let [Value::Text(kind), Value::Text(word)] = parts.as_slice() {
+            if let [Value::Text(kind), Value::Text(word), ..] = parts.as_slice() {
+                if parts.len() == 3 && key == self.detail("descriptor.get") { return Ok(Value::Member(Rc::new(value.clone()), String::from("classmethod_get"))); }
                 if key==self.detail("qualified") { return Ok(Value::text(&format!("{}.{}", kind, word))); }
                 if key==self.detail("name") { return Ok(Value::text(word)); }
                 if key=="__objclass__" {
@@ -3527,7 +3924,9 @@ impl<'a> Machine<'a> {
                 if word.as_ref() == "type" { let slots = self.rules.specials; names.extend([8, 17].iter().filter_map(|at| slots.get(*at).cloned())); }
                 if word.as_ref() == "dict" { names.extend(self.table.strings("ext.builtin.method.fromkeys").iter().cloned()); }
                 let mut pairs = names.into_iter().filter_map(|name| {
-                    self.carried_by_kind(&value, &name).map(|descriptor| (Value::text(&name), descriptor))
+                    if word.as_ref() == "dict" && name == "fromkeys" {
+                        Some((Value::text(&name), Self::wrap(60, vec![Value::text("dict"), Value::text(&name), Value::Flag(true)])))
+                    } else { self.carried_by_kind(&value, &name).map(|descriptor| (Value::text(&name), descriptor)) }
                 }).collect::<Vec<_>>();
                 if matches!(word.as_ref(), "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
                     pairs.push((Value::text(self.detail("allocate")), Self::wrap(14, vec![Value::text(&word)])));
@@ -3634,7 +4033,7 @@ impl<'a> Machine<'a> {
                     // Making a property outright allocates the subclass it
                     // is handed, the way the root's making does.
                     if *op == Prim::ClassWork(11) { return Ok(Self::wrap(1, Vec::new())); }
-                    return Ok(Self::wrap(14,vec![Value::text(word)]));
+                    return Ok(self.native_allocation(word));
                 }
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 // The flags of the kind read as a class: a native kind
@@ -3642,7 +4041,7 @@ impl<'a> Machine<'a> {
                 // so only the standing bits answer here.
                 if key==self.detail("flags") {
                     let kind=self.native_kind(word);
-                    let mut bits=512|1024;
+                    let mut bits=1024;
                     if self.allowed_slot(&kind,self.detail("namespace")) {
                         bits|=16;
                         if Self::native_beneath(&kind).is_none() { bits|=4; }
@@ -3686,8 +4085,11 @@ impl<'a> Machine<'a> {
             // carries, standing loose: the value worked upon is the
             // first the entry is handed when it is called.
             if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
-            let native_class = self.native_kind(&word);
-            if let Some(inherited) = self.from_the_root(key, false, &native_class) { return Ok(inherited); }
+            if Self::names_a_kind(op) && self.table.single("ext.stmt.class.constructor") == Some(key) { return Ok(self.common_initialiser()); }
+            if Self::names_a_kind(op) {
+                let native_class = self.native_kind(&word);
+                if let Some(inherited) = self.from_the_root(key, false, &native_class) { return Ok(inherited); }
+            }
         }
         if self.table.spells("ext.stmt.class.builtin", "bytes") && (key == "__buffer__" || key == "__release_buffer__") {
             let provider = match &value {
@@ -3740,12 +4142,13 @@ impl<'a> Machine<'a> {
             let builtin_origin = Self::native_word(b).is_some()
                 || (b.under.is_none() && b.name == self.detail("root"));
             if builtin_origin && !key.is_empty() && key == self.detail("module") {
-                return Ok(Value::text(self.builtin_module()));
+                return Ok(Self::own_entry(b,key).unwrap_or_else(||Value::text(self.builtin_module())));
             }
             if key == self.detail("flags") {
                 // The seal takes the base-standing bit off and puts the
                 // unchangeable one on.
-                let mut bits = if Self::sealed(b) { 512 | 256 } else { 512 | 1024 };
+                let mut bits = if Self::sealed(b) { 256 } else { 1024 };
+                if Self::native_word(b).is_none() && !(b.under.is_none() && b.name == self.detail("root")) { bits |= 512; }
                 if b.constants.iter().any(|(label, _)| label == "\0native-name") { bits |= 256; }
                 // Things of a class's own making answer to the cycle
                 // collector; what stands on an atomic worth does not.
@@ -3765,6 +4168,12 @@ impl<'a> Machine<'a> {
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "__getformat__" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_getformat")));
+            }
+            if key == "fromhex" {
+                let base = Self::native_beneath(b);
+                if base.as_deref() == Some("bytes") || base.as_deref() == Some("bytearray") {
+                    return Ok(Value::Member(Rc::new(value.clone()), format!("{}_fromhex", base.unwrap())));
+                }
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
@@ -3803,13 +4212,10 @@ impl<'a> Machine<'a> {
             }
             if let Some(word)=Self::native_word(b) {
                 if key == self.detail("allocate") && self.table.prims.get(&word).is_some_and(Self::names_a_kind) {
-                    return Ok(Self::wrap(14, vec![Value::text(&word)]));
+                    return Ok(self.native_allocation(&word));
                 }
                 if key==self.detail("module") { return Ok(Value::text(if matches!(word.as_str(), "SimpleNamespace" | "GenericAlias") { "types" } else if word == "Union" { "typing" } else { self.builtin_module() })); }
                 if key==self.detail("qualified") { return Ok(Value::text(&word)); }
-                if key=="__getformat__" && word=="float" {
-                    return Ok(Value::Member(Rc::new(value.clone()), "float_getformat".to_owned()));
-                }
             }
             if key==self.detail("name"){let names=b.type_names.borrow();return Ok(names.as_ref().map_or_else(|| Value::text(&b.name), |names| names.short.clone()));}
             if key==self.detail("qualified"){return Ok(b.type_names.borrow().as_ref().map(|names| names.full.clone()).unwrap_or_else(|| self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name))));}
@@ -3882,8 +4288,11 @@ impl<'a> Machine<'a> {
                 }
             }
             if key == self.detail("allocate") {
-                let mut cache = self.loose_members.borrow_mut();
-                return Ok(cache.entry("root:allocation".into()).or_insert_with(|| Self::wrap(1, Vec::new())).clone());
+                let inherited = Self::native_beneath(b).and_then(|word| self.table.prims.get(&word).filter(|op| Self::names_a_kind(op)).map(|_| word));
+                return Ok(match inherited {
+                    Some(word) => self.native_allocation(&word),
+                    None => self.common_allocation(),
+                });
             }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
@@ -4066,6 +4475,25 @@ impl<'a> Machine<'a> {
                 let root = Self::wrap(36, vec![Value::text(key)]);
                 return Ok(Self::wrap(3, vec![root, value.clone()]));
             }
+            if matches!(key, "__reduce__" | "__reduce_ex__" | "__getstate__") {
+                if let Some(method) = self.from_the_root(key, true, &t.blueprint()) {
+                    return Ok(Self::wrap(3, vec![method, value.clone()]));
+                }
+            }
+            if key == "__getnewargs__" {
+                if let Some(base) = Self::underlying(&value) {
+                    match base.settled() {
+                        Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Tuple(_) | Value::Text(_) | Value::Unpaired(_) | Value::Octets { changeable: false, .. } => return Ok(Value::Member(Rc::new(value.clone()), "__getnewargs__".to_owned())),
+                        _ => (),
+                    }
+                }
+            }
+            if Self::underlying(&value).is_some_and(|base| matches!(base.settled(), Value::Set(_))) {
+                if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == key).filter(|slot| *slot == 79 || *slot == 81) {
+                    let method = if slot == 79 { "set_reduce" } else { "set_reduce_ex" };
+                    return Ok(Value::Member(Rc::new(value.clone()), method.to_owned()));
+                }
+            }
             // The worth a thing keeps answers for the methods of its kind.
             let native=Self::underlying(&value);
             // A mapping subclass's subscript member stays bound to the
@@ -4103,7 +4531,7 @@ impl<'a> Machine<'a> {
                     if named_slot == Some(11) && matches!(under.settled(), Value::Dict(_)) {
                         return Ok(Self::wrap(3, vec![Self::wrap(60, vec![Value::text("dict"), Value::text(key)]), value.clone()]));
                     }
-                    return Ok(Value::Member(Rc::new(under),key.to_owned()));
+                    return Ok(Value::Member(Rc::new(value.clone()),key.to_owned()));
                 }
                 if let Some(operation)=Self::kind_method_named(self.table,key){
                     // The parts of a complex number are members read and
@@ -4119,7 +4547,7 @@ impl<'a> Machine<'a> {
                     if operation == "fromkeys" {
                         return Ok(Value::Member(Rc::new(value.clone()),operation));
                     }
-                    return Ok(Value::Member(Rc::new(under),operation));
+                    return Ok(Value::Member(Rc::new(value.clone()),operation));
                 }
                 // A row of bytes answers to the methods its kind keeps,
                 // which the worth beneath the thing carries out.
@@ -4533,6 +4961,12 @@ impl<'a> Machine<'a> {
                     };
                     if reset { replacement = Some(Value::Nil); }
                 }
+            }
+        }
+        if let Value::Thing(instance)=&subject {
+            if Self::native_word(&instance.blueprint()).as_deref()==Some("struct_time") {
+                let member=instance.holds.borrow().iter().any(|(field,_)|field==key&&!field.starts_with('\0'));
+                return Err(if member {String::from("AttributeError: readonly attribute")}else{format!("AttributeError: 'time.struct_time' object has no attribute '{key}'")}.into());
             }
         }
         let writing=replacement.is_some();
@@ -4954,14 +5388,17 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
         let settled = parent.settled();
-        if !self.rules.words_ext_stmt_class_builder.is_empty() && self.spells_property_kind(&settled) { return Ok(self.property_blueprint()); }
-        if !self.rules.words_ext_builtin_bool_base.is_empty() && matches!(settled, Value::Intrinsic(Prim::Truthful, _)) { return Err(self.rules.words_ext_builtin_bool_base.first().map(String::as_str).unwrap_or("").to_owned().into()); }
+        if self.rules.class_builder && self.spells_property_kind(&settled) { return Ok(self.property_blueprint()); }
+        if self.table.has_any("ext.builtin.bool.base") && matches!(settled, Value::Intrinsic(Prim::Truthful, _)) { return Err(self.table.single("ext.builtin.bool.base").unwrap_or("").to_owned().into()); }
         if let Value::Blueprint(class) = settled {
             if Self::sealed(&class) {
-                let qualified = match class.name.as_str() {
-                    "ProxyType" | "CallableProxyType" if !self.rules.words_ext_builtin_weak_get.is_empty() => "weakref.".to_owned() + &class.name,
+                let qualified = if class.shared.borrow().iter().any(|(word, bit)| word == "\0buffer_allocator" && bit.is_true()) {
+                    let home = Self::own_entry(&class, self.detail("module")).map(|v| v.bare()).unwrap_or_default();
+                    format!("{home}.{}", class.name)
+                } else { match class.name.as_str() {
+                    "ProxyType" | "CallableProxyType" if self.rules.weak_members => "weakref.".to_owned() + &class.name,
                     _ => class.name.clone(),
-                };
+                } };
                 return Err(format!("TypeError: type '{qualified}' is not an acceptable base type").into());
             }
             return Ok(class);
@@ -5163,6 +5600,7 @@ impl<'a> Machine<'a> {
             Prim::Span=>matches!(value,Value::Progression(_)),
             Prim::SpanOf=>matches!(value,Value::Span(_)),
             Prim::Octets(which)=>matches!(value,Value::Octets{changeable,..} if *changeable==(*which==1)),
+            Prim::ClassWork(9 | 10) => match value { Value::Wrapped(tag, _) => *tag == if *op == Prim::ClassWork(9) { 4 } else { 5 }, _ => false },
             Prim::Numbered|Prim::Zipped|Prim::Mapped|Prim::Filtered|Prim::Backwards=>value.kind_word()==word,
             _=>false,
         }
@@ -5529,6 +5967,16 @@ impl<'a> Machine<'a> {
                 if let Some(text @ Value::Text(_)) = Self::underlying(name) { *name = text; }
             }
         }
+        if matches!(op,3..=6) && values.len()>=2 {
+            if let (Value::Thing(owner),Value::Unpaired(_))=(&values[0],&values[1]) {
+                let mut entries=self.attribute_entries(owner);
+                let found=entries.iter().position(|(key,_)|key.equals(&values[1]));
+                if op==6{return Ok(Value::Flag(found.is_some()))}
+                if op==3 {if let Some(at)=found{return Ok(entries[at].1.clone())}if let Some(default)=values.get(2){return Ok(default.clone())}}
+                if op==4 && values.len()==3 {match found{Some(at)=>entries[at].1=values[2].clone(),None=>entries.push((values[1].clone(),values[2].clone()))}self.attribute_restore(owner,entries);return Ok(Value::Nil)}
+                if op==5 {if let Some(at)=found{entries.remove(at);self.attribute_restore(owner,entries);return Ok(Value::Nil)}}
+            }
+        }
         if matches!(op, 24 | 25) && values.len() == 1 {
             let function = Self::wrap(44, vec![values[0].settled()]);
             return if op == 24 { Ok(function) } else { self.apply_class_member(function, vec![Value::Small(1)]) };
@@ -5556,7 +6004,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|81..=85|122|200..=204|132|133|134))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..)|Value::TextCall {..})||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|81..=85|122|200..=204|132|133|134|135|136))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

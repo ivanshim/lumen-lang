@@ -25,6 +25,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_patma.py` | `Lib/test/test_patma.py` (unchanged; SHA-256 `ce4a802e1722fdd02ca6da58138a465a050edd360a150bbbba829586b3d15f55`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/{test_pickle,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
@@ -76,6 +77,12 @@ here for each newly registered series.
 The embedded `langs/lib_python/modules/tempfile.py` is also a complete copy of
 CPython v3.14.8 `Lib/tempfile.py`, unchanged beneath its single PSF provenance
 header. Descriptor I/O is supplied by the runtime `_io` adapter and both kernels.
+The pickle library sources `pickle.py`, `pickletools.py`, `_compat_pickle.py` and
+`copyreg.py` in `langs/lib_python/modules/` preserve the v3.14.8 release bodies
+under PSF provenance headers. The same is true for the pickle support modules
+and their imports `dbm/{__init__,dumb}.py` and `http/{__init__,cookies}.py`.
+The `_pickle` accelerator is absent; the upstream module selects its Python
+implementation and the upstream tests select their accelerator cases accordingly.
 ## Runtime fixture integrity audit (2026-10-02)
 
 The annotation fixtures are test inputs, not runtime adapters. The earlier

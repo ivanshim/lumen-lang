@@ -556,6 +556,7 @@ _repr_factories = set()
 
 
 class defaultdict(dict):
+    __module__ = 'collections'
     # The factory is kept in a slot the class alone names, apart from any
     # attribute a subclass may define, the way the reference keeps it in
     # a member of its own.
