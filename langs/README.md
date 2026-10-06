@@ -3467,7 +3467,11 @@ only. The extension labels so far, all from PHP:
   members for an operating-system fault's number and its words, filled
   in when it is made with two arguments or more; `.os.message` holds the
   words written before the number and between it and the words when such
-  a fault is shown. `.value` is the member on which an exhaustion carries
+  a fault is shown. `.os.errno` pairs each operating-system number with
+  the class the language's own OSError is remade as when it is called
+  with that number and a word beside it, one number and class to an
+  entry, the class left as it was where no entry names it. `.value` is
+  the member on which an exhaustion carries
   what a generator returned, which is the first of its arguments where it
   was given any.
 - `ext.builtin.exceptions.group.message` and `.group.members`: the
@@ -4632,6 +4636,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.notes` | - | - | `__notes__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.object` | - | - | `obj` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.os` | - | - | `errno` `strerror` `filename` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os.errno` | - | - | `1 PermissionError` `2 FileNotFoundError` `3 ProcessLookupError` `4 InterruptedError` `10 ChildProcessError` `11 BlockingIOError` `13 PermissionError` `17 FileExistsError` `20 NotADirectoryError` `21 IsADirectoryError` `32 BrokenPipeError` `103 ConnectionAbortedError` `104 ConnectionResetError` `108 BrokenPipeError` `110 TimeoutError` `111 ConnectionRefusedError` `114 BlockingIOError` `115 BlockingIOError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.reduce` | - | - | `__reduce__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.setstate` | - | - | `__setstate__` | - | - | - | - | - | - | - |
@@ -4645,6 +4650,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.value` | - | - | `value` | - | - | - | - | - | - | - |
 | `ext.builtin.exec` | - | - | `exec` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
+| `ext.builtin.file.create` | - | - | `__file_create` | - | - | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.link` | - | - | `__file_link` | - | - | - | - | - | - | - |

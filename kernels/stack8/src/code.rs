@@ -596,6 +596,9 @@ pub enum Builtin {
     FileThere,
     FileLink,
     FileGone,
+    /// A fresh empty file made where the path names, its length set
+    /// to nothing (ext.builtin.file.create).
+    FileCreate,
     /// A directory's own entries, by name alone; a fresh directory made
     /// under one already there, named uniquely from a prefix and a
     /// suffix; and a directory taken away along with everything under

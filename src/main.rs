@@ -185,6 +185,7 @@ struct Invocation {
     program_args: Vec<String>,
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
+    module_name: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -552,6 +553,10 @@ fn run_all() {
     // to a file to say this: the words travel with the run.
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
+    // Only an actual -m invocation carries module execution metadata;
+    // a script child must not inherit its parent's module identity.
+    if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
+    else { std::env::remove_var("LUMEN_RUN_MODULE"); }
     if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
 
     let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
@@ -867,6 +872,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut python: Option<String> = None;
     let mut file: Option<String> = None;
     let mut module_source = None;
+    let mut module_name = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -933,13 +939,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
             // the reference's own, and like its own they are looked for
             // only before the file: what stands after the file belongs
             // to the program and is left to it.
-            Some("-m") if file.is_none() => {
-                if rest.len() < 2 { usage(program); }
+            Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2
+                && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python"))) => {
+                let (module, used) = if flag == "-m" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
                 if language.as_ref().is_some_and(|definition| definition.name() != "python") {
                     eprintln!("Error: -m requires the Python language");
                     process::exit(1);
                 }
-                let module = said(&rest[1]);
                 let path = module.replace('.', "/");
                 let mut found = None;
                 for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
@@ -947,7 +956,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
-                    if let Some((_, source, filename)) = embedded_modules::MODULES.iter().find(|(name, _, _)| *name == module || *name == executable_module) {
+                    if let Some((_, source, filename)) = embedded_modules::MODULES.iter().find(|(name, _, _)| *name == executable_module)
+                        .or_else(|| embedded_modules::MODULES.iter().find(|(name, _, _)| *name == module)) {
                         found = Some((format!("langs/lib_python/modules/{filename}"), source.to_string()));
                     }
                 }
@@ -955,10 +965,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     eprintln!("No module named {module}");
                     process::exit(1);
                 };
+                module_name = Some(if filename.ends_with("/__main__.py") { format!("{module}.__main__") } else { module });
                 file = Some(filename);
                 module_source = Some(source);
                 language = Some(Language::Named("python".to_string()));
-                rest = &rest[2..];
+                rest = &rest[used..];
                 break;
             }
             Some("-d") if file.is_none() => {
@@ -991,23 +1002,6 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 emit = Some(language_from_flag(&said(&rest[1])));
                 rest = &rest[2..];
-            }
-            Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2)
-                && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")) => {
-                let (module, used) = if flag == "-m" {
-                    if rest.len() < 2 { usage(program); }
-                    (said(&rest[1]), 2)
-                } else { (flag[2..].to_owned(), 1) };
-                let entry = embedded_modules::MODULES.iter().find(|entry| entry.0 == format!("{module}.__main__"))
-                    .or_else(|| embedded_modules::MODULES.iter().find(|entry| entry.0 == module));
-                let Some((_, source, _)) = entry else { eprintln!("No module named {module}"); process::exit(1); };
-                let Some(mut directory) = fresh_private_dir() else { eprintln!("Cannot create module script"); process::exit(1); };
-                directory.push("__main__.py");
-                if let Err(error) = fs::write(&directory, source) { eprintln!("Cannot create module script: {error}"); process::exit(1); }
-                file = Some(directory.to_string_lossy().into_owned());
-                language = Some(language_from_flag("python"));
-                rest = &rest[used..];
-                break;
             }
             Some(_) | None if file.is_none() && !rest.is_empty() => {
                 file = Some(said(&rest[0]));
@@ -1066,7 +1060,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
