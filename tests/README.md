@@ -315,3 +315,11 @@ The runtime has one `test.support.subTests` implementation. Its async wrapper
 awaits coroutine methods, including partials. The inspect adapter recognises
 partial/partialmethod wrappers and coroutine markers. Deliberately failing
 async subtests and async partial subtests are checked on both full kernels.
+
+Partial native and support interfaces with CPython-derived sections keep their
+runtime implementations under `langs/lib_python/modules/runtime_adapters/`.
+The `replacements` entries in `manifest-layout.json` bind those implementations
+while retaining byte-for-byte v3.14.8 library files at the upstream paths.
+An existing `adapters` overlay still follows a replacement body. The ten source
+moves preserve the registered interpreter source bytes, including the single
+async-aware `test.support.subTests` binding and coroutine recognition.
