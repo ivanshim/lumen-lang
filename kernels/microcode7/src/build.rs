@@ -10715,6 +10715,25 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: Invalid star expression"));
                 }
                 self.advance();
+                if self.sign("(") {
+                    if let Some(stop) = self.pair_close(self.pos, self.tokens.len()) {
+                        let mut brackets: Vec<&str> = Vec::new();
+                        let mut waiting_lambda = 0usize;
+                        for word in self.tokens[self.pos + 1..stop].iter() {
+                            if word.shape != Shape::Bare && word.shape != Shape::Sign { continue; }
+                            let text = word.lexeme.as_str();
+                            if brackets.len() == 0 {
+                                if self.table.spells("ext.op.lambda", word.spelling()) { waiting_lambda += 1; }
+                                if text == ":" {
+                                    if waiting_lambda == 0 { return Err(String::from("SyntaxError: Invalid star expression")); }
+                                    waiting_lambda -= 1;
+                                }
+                            }
+                            if ["(", "[", "{"].contains(&text) { brackets.push(text); }
+                            if [")", "]", "}"].contains(&text) { brackets.pop(); }
+                        }
+                    }
+                }
             }
             let term = if unpack { self.expr(0)? } else { self.bracket_part(close, separator)? };
             if unpack && self.on_any("ext.op.index.slice") { return Err(String::from("SyntaxError: invalid syntax")); }
