@@ -14762,6 +14762,8 @@ impl<'a> Engine<'a> {
             }
             let index = match at {
                 Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                // A flag answers for the place its truth counts out.
+                Value::Flag(b) => Some(*b as usize),
                 _ => as_index(at).ok(),
             };
             return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| match self.lang.sequence_values {
