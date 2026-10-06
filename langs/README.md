@@ -2404,7 +2404,11 @@ only. The extension labels so far, all from PHP:
   takes in place of text; `ext.builtin.compile.parameters` names its
   arguments in order, and `ext.builtin.compile.modes` the three manners:
   statements, one expression, and one statement whose value is written
-  out as it runs. Text that cannot be read is refused with
+  out as it runs. Where the fourth argument to `compile` names the
+  reference's dont-imply-dedent or allow-incomplete-input flags,
+  `ext.builtin.compile.incomplete` names the fault raised for text that
+  ended before it was whole and the words it speaks with. Text that
+  cannot be read is refused with
   `ext.builtin.source.syntax`; where `ext.builtin.source.syntax.place`
   holds three pieces, they set the file the text stands for and the line
   the reading stopped on about that complaint, so a reader may say where
@@ -4540,6 +4544,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.compile` | - | - | `compile` | - | - | - | - | - | - | - |
+| `ext.builtin.compile.incomplete` | - | - | `_IncompleteInputError` `incomplete input` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.kind` | - | - | `code` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.modes` | - | - | `exec` `eval` `single` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.parameters` | - | - | `source` `filename` `mode` `flags` `dont_inherit` `optimize` `_feature_version` | - | - | - | - | - | - | - |
@@ -4619,7 +4624,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` `ChildProcessError` `ConnectionError` `ConnectionAbortedError` `ConnectionRefusedError` `ConnectionResetError` `InterruptedError` `ProcessLookupError` `TimeoutError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` `PermissionError` `FileExistsError` `NotADirectoryError` `BrokenPipeError` `ChildProcessError` `ConnectionError` `ConnectionAbortedError` `ConnectionRefusedError` `ConnectionResetError` `InterruptedError` `ProcessLookupError` `TimeoutError` `_IncompleteInputError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |

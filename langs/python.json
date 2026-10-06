@@ -1000,7 +1000,8 @@
     "ConnectionResetError",
     "InterruptedError",
     "ProcessLookupError",
-    "TimeoutError"
+    "TimeoutError",
+    "_IncompleteInputError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -2162,6 +2163,10 @@
   ],
   "ext.builtin.compile.kind": [
     "code"
+  ],
+  "ext.builtin.compile.incomplete": [
+    "_IncompleteInputError",
+    "incomplete input"
   ],
   "ext.builtin.source.syntax": [
     "SyntaxError: invalid syntax"
