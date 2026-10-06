@@ -241,7 +241,7 @@ class BytesIO(_BufferedIOBase):
         obj._closed = False
         return obj
     def _checkClosed(self):
-        if self.closed:
+        if self._closed:
             raise ValueError('I/O operation on closed file')
     def __init__(self, initial_bytes=None):
         if hasattr(self, '_data'):
@@ -551,7 +551,17 @@ def _text_option(value, name):
         value.encode('utf-8')
     return value
 
+_TEXT = {}
+
+def _text_function(name):
+    import _pyio
+    function = _TEXT[name] = getattr(_pyio.TextIOWrapper, name)
+    return function
+
 class TextIOWrapper(_TextIOBase):
+    # Read without a trip through __getattr__ before the stream is made.
+    _initialized = False
+    _buffer = None
     @property
     def _CHUNK_SIZE(self):
         return getattr(self, '_chunk_size', 8192)
@@ -635,11 +645,12 @@ class TextIOWrapper(_TextIOBase):
         return _method(self, 'TextIOWrapper', name)
     @property
     def buffer(self):
-        if not getattr(self, '_initialized', False):
-            raise ValueError('I/O operation on uninitialized object')
-        if self._buffer is None:
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            if not self._initialized:
+                raise ValueError('I/O operation on uninitialized object')
             raise ValueError('underlying buffer has been detached')
-        return self._buffer
+        return buffer
     @property
     def line_buffering(self):
         return self._line_buffering
@@ -661,19 +672,25 @@ class TextIOWrapper(_TextIOBase):
     def read(self, size=-1):
         if not self.readable():
             raise UnsupportedOperation('not readable')
-        return _method(self, 'TextIOWrapper', 'read')(size)
+        function = _TEXT.get('read') or _text_function('read')
+        return function(self, size)
     def readline(self, size=-1):
-        return _method(self, 'TextIOWrapper', 'readline')(size)
+        function = _TEXT.get('readline') or _text_function('readline')
+        return function(self, size)
     def write(self, text):
         if not self.writable():
             raise UnsupportedOperation('not writable')
-        return _method(self, 'TextIOWrapper', 'write')(text)
+        function = _TEXT.get('write') or _text_function('write')
+        return function(self, text)
     def seek(self, cookie, whence=0):
-        return _method(self, 'TextIOWrapper', 'seek')(cookie, whence)
+        function = _TEXT.get('seek') or _text_function('seek')
+        return function(self, cookie, whence)
     def tell(self):
-        return _method(self, 'TextIOWrapper', 'tell')()
+        function = _TEXT.get('tell') or _text_function('tell')
+        return function(self)
     def truncate(self, pos=None):
-        return _method(self, 'TextIOWrapper', 'truncate')(pos)
+        function = _TEXT.get('truncate') or _text_function('truncate')
+        return function(self, pos)
     def readable(self):
         return self.buffer.readable()
     def writable(self):
@@ -681,17 +698,21 @@ class TextIOWrapper(_TextIOBase):
     def seekable(self):
         return self.buffer.seekable()
     def flush(self):
-        return _method(self, 'TextIOWrapper', 'flush')()
+        function = _TEXT.get('flush') or _text_function('flush')
+        return function(self)
     def close(self):
-        return _method(self, 'TextIOWrapper', 'close')()
+        function = _TEXT.get('close') or _text_function('close')
+        return function(self)
     def detach(self):
-        return _method(self, 'TextIOWrapper', 'detach')()
+        function = _TEXT.get('detach') or _text_function('detach')
+        return function(self)
     def fileno(self):
         return self.buffer.fileno()
     def isatty(self):
         return self.buffer.isatty()
     def __next__(self):
-        return _method(self, 'TextIOWrapper', '__next__')()
+        function = _TEXT.get('__next__') or _text_function('__next__')
+        return function(self)
 
 class IncrementalNewlineDecoder:
     def __init__(self, decoder, translate, errors='strict'):
@@ -925,8 +946,11 @@ class _CheckedRaw:
     def __init__(self, raw):
         self.raw = raw
         self._owned = True
+        self._plain = type(raw) is FileIO or type(raw) is BytesIO
     @property
     def closed(self):
+        if self._plain:
+            return not self._owned or self.raw._closed
         return not self._owned or self.raw.closed
     def close(self):
         if self._owned:
@@ -993,6 +1017,9 @@ class _CheckedRaw:
         return count
 
 class BufferedReader(_BufferedIOBase):
+    # The implementation while it is usable, read without a property call;
+    # None whenever _impl has to say why not.
+    _live = None
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
         self._initialize(_pyio.BufferedReader, raw, buffer_size)
@@ -1000,6 +1027,7 @@ class BufferedReader(_BufferedIOBase):
         previous = getattr(self, '_implementation', None)
         if previous is not None and previous.raw is not None:
             previous.raw._owned = False
+        self._live = None
         self._implementation = None
         self._detached = False
         self._raw = raw
@@ -1007,6 +1035,7 @@ class BufferedReader(_BufferedIOBase):
         if size <= 0:
             raise ValueError('buffer size must be strictly positive')
         self._implementation = factory(_CheckedRaw(raw), size)
+        self._live = self._implementation
     @property
     def _impl(self):
         held = self.__dict__
@@ -1042,26 +1071,50 @@ class BufferedReader(_BufferedIOBase):
     def __getstate__(self):
         raise TypeError("cannot pickle '" + type(self).__name__ + "' instances")
     def readinto(self, buffer):
-        return self._impl.readinto(buffer)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readinto(buffer)
     def readinto1(self, buffer):
-        return self._impl.readinto1(buffer)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readinto1(buffer)
     def truncate(self, pos=None):
-        return self._impl.truncate(pos)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.truncate(pos)
     def isatty(self):
-        return self._impl.isatty()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.isatty()
     def fileno(self):
-        return self._impl.fileno()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.fileno()
     def read(self, size=-1):
-        return self._impl.read(size)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.read(size)
     def read1(self, size=-1):
-        return self._impl.read1(size)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.read1(size)
     def readline(self, size=-1):
         size = _size(size)
         self._checkClosed()
         return self._impl.readline(size)
     @property
     def closed(self):
-        return self._impl.closed
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.closed
     def close(self):
         if self.closed:
             return None
@@ -1070,29 +1123,52 @@ class BufferedReader(_BufferedIOBase):
         finally:
             self._impl.raw.close()
     def flush(self):
-        return self._impl.flush()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.flush()
     def readable(self):
-        return self._impl.readable()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readable()
     def writable(self):
-        return self._impl.writable()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.writable()
     def seekable(self):
-        return self._impl.seekable()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.seekable()
     def seek(self, pos, whence=0):
-        return self._impl.seek(pos, whence)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.seek(pos, whence)
     def tell(self):
-        return self._impl.tell()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.tell()
     def detach(self):
         self.flush()
         checked = self._impl.detach()
         self._detached = True
+        self._live = None
         self._raw = None
         return checked.raw
     def write(self, b):
         # The accelerated buffer consumes bytes from a buffer provider,
         # including arrays whose iteration yields wider numeric elements.
-        if not isinstance(b, (bytes, bytearray)):
+        kind = type(b)
+        if kind is not bytes and kind is not bytearray and not isinstance(b, (bytes, bytearray)):
             b = memoryview(b).tobytes()
-        return self._impl.write(b)
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.write(b)
 
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
@@ -1108,6 +1184,7 @@ class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
+        self._live = self._implementation
     def close(self):
         return self._impl.close()
 
