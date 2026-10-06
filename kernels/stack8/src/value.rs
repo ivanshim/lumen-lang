@@ -195,6 +195,7 @@ pub struct Generator {
     pub name: String,
     pub qualified: String,
     pub trace_frame: Option<Rc<Instance>>,
+    pub suspended_position: Option<(u32, u32, u32, u32)>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
     pub stack: Vec<Value>,
@@ -230,7 +231,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }

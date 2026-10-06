@@ -4257,14 +4257,14 @@ impl<'a> Engine<'a> {
         self.inside.push(program.within.clone());
         let caller_routine = self.running_routine.replace(program.clone());
         if !self.lang.trace_fields.is_empty() { self.line = program.declared_on; self.location = None; }
-        let outcome = self.trace_event("call", Value::Null).and_then(|()| self.run_instrs(program, &mut frame));
-        let outcome = match outcome {
+        let outcome = if matches!(self.trace_hook, Value::Null) { self.run_instrs(program, &mut frame) } else { self.trace_event("call", Value::Null).and_then(|()| self.run_instrs(program, &mut frame)) };
+        let outcome = if matches!(self.trace_hook, Value::Null) { outcome } else { match outcome {
             Ok(()) => { let result = self.data.last().cloned().unwrap_or(Value::Null); self.trace_event("return", result) },
             Err(fault) => match self.trace_event("return", Value::Null) {
                 Ok(()) => Err(fault),
                 Err(callback) => { self.trace_outside_body(&callback); Err(callback) },
             },
-        };
+        } };
         // A signal still left pending as the outermost body's own last
         // statement is done is taken up here, while the body's frame
         // and line still stand: what it raises is the run's ending,
@@ -4654,7 +4654,7 @@ impl<'a> Engine<'a> {
             if !self.lang.trace_fields.is_empty() {
                 self.line = arm.line;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
-                self.trace_event("line", Value::Null)?;
+                if !matches!(self.trace_hook, Value::Null) { self.trace_event("line", Value::Null)?; }
             }
             let mut takes = arm.bare;
             for span in &arm.kinds {
@@ -5277,42 +5277,33 @@ impl<'a> Engine<'a> {
         if let Some(active) = &self.trace_frame {
             let fields = active.fields.borrow();
             if let Value::Small(row) = &fields[0].1 { self.line = *row as u32; }
-            self.location = fields.iter().find_map(|(key, value)| match (key.as_str(), value) {
-                ("\0suspended_position", Value::Tuple(parts)) if parts.len() == 4 => match parts.as_slice() {
-                    [Value::Small(a), Value::Small(b), Value::Small(c), Value::Small(d)] => Some((*a as u32, *b as u32, *c as u32, *d as u32)),
-                    _ => None,
-                },
-                _ => None,
-            });
         }
-        let result = self.trace_event("call", Value::Null).and_then(|()|
-            self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept)));
-        let leaving = if result.is_ok() { kept.handed.clone().unwrap_or_else(|| self.data.last().cloned().unwrap_or(Value::Null)) } else { Value::Null };
-        let result = match self.trace_event("return", leaving) {
-            Ok(()) => result,
-            Err(Fault::Thrown(value)) if result.is_ok() && kept.handed.is_some() => {
-                // A failed yield callback raises at the yield expression. The
-                // body's handlers and finalizers run with tracing disabled.
-                kept.handed = None;
-                kept.waiting = false;
-                kept.resuming = true;
-                kept.hurled = Some(value);
-                kept.sent = Value::Null;
-                self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))
-            }
-            Err(fault) => {
-                if result.is_err() { self.trace_outside_body(&fault); }
-                Err(fault)
-            }
-        };
+        self.location = kept.suspended_position;
+        let result = if matches!(self.trace_hook, Value::Null) {
+            self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))
+        } else { self.trace_event("call", Value::Null).and_then(|()|
+            self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))) };
+        let result = if matches!(self.trace_hook, Value::Null) { result } else {
+            let leaving = if result.is_ok() { kept.handed.clone().unwrap_or_else(|| self.data.last().cloned().unwrap_or(Value::Null)) } else { Value::Null };
+            match self.trace_event("return", leaving) {
+                Ok(()) => result,
+                Err(Fault::Thrown(value)) if result.is_ok() && kept.handed.is_some() => {
+                    // A failed yield callback raises at the yield expression. The
+                    // body's handlers and finalizers run with tracing disabled.
+                    kept.handed = None;
+                    kept.waiting = false;
+                    kept.resuming = true;
+                    kept.hurled = Some(value);
+                    kept.sent = Value::Null;
+                    self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))
+                }
+                Err(fault) => {
+                    if result.is_err() { self.trace_outside_body(&fault); }
+                    Err(fault)
+                }
+        } };
         if let Err(Fault::Thrown(value)) = &result { self.record_trace(value, &program); }
-        if let Some(active) = &self.trace_frame {
-            let mut fields = active.fields.borrow_mut();
-            fields.retain(|(key, _)| key != "\0suspended_position");
-            if let Some((a, b, c, d)) = self.location {
-                fields.push(("\0suspended_position".into(), Value::tuple([a, b, c, d].into_iter().map(|part| Value::Small(part as i64)).collect())));
-            }
-        }
+        kept.suspended_position = self.location;
         self.running_routine = previous_routine;
         self.location = caller_position;
         self.refresh_observed_frame();
@@ -5442,7 +5433,7 @@ impl<'a> Engine<'a> {
 
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
-        let keys = self.lang.trace_fields.clone();
+        let keys = &self.lang.trace_fields;
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
@@ -5456,7 +5447,7 @@ impl<'a> Engine<'a> {
         // Code metadata is materialized when the frame is inspected.
         let code = Value::Null;
         self.made += 1;
-        Some(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
+        let mut fields = vec![
             (keys[4].clone(), Value::Small(program.declared_on as i64)),
             (keys[5].clone(), code),
             (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
@@ -5465,14 +5456,22 @@ impl<'a> Engine<'a> {
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
-            ("f_trace".into(), Value::Null), ("f_trace_lines".into(), Value::Flag(true)),
-        ]) }))
+        ];
+        if !matches!(self.trace_hook, Value::Null) {
+            fields.push(("f_trace".into(), Value::Null));
+            fields.push(("f_trace_lines".into(), Value::Flag(true)));
+        }
+        Some(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(fields) }))
     }
 
     pub(super) fn frame_member(&mut self, object: &Rc<Instance>, name: &str) -> Option<Value> {
         if !self.frame_class.as_ref().map_or(false, |class| Rc::ptr_eq(class, &object.class_now())) { return None; }
         if name == "clear" {
             return Some(Value::ValueMethod(Rc::new((Value::Object(object.clone()), name.to_string()))));
+        }
+        if matches!(name, "f_trace" | "f_trace_lines") {
+            return Some(object.fields.borrow().iter().find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone()).unwrap_or_else(|| if name == "f_trace" { Value::Null } else { Value::Flag(true) }));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
         if index == 5 {
@@ -6104,7 +6103,7 @@ impl<'a> Engine<'a> {
                     }
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                     self.refresh_observed_frame();
-                    self.trace_event("line", Value::Null)?;
+                    if !matches!(self.trace_hook, Value::Null) { self.trace_event("line", Value::Null)?; }
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
                     // business.
@@ -17133,7 +17132,7 @@ impl<'a> Engine<'a> {
             supplied.extend(named.into_iter().map(|(key, argument)| (Some(key), argument)));
             return self.builtin_call(Builtin::Text(crate::strings::TextOp::Getnewargs), operation, supplied);
         }
-        if matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
+        if matches!(&contents, Value::Text(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
                 let working = crate::strings::operation(operation);

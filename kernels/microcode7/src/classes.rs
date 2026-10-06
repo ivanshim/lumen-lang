@@ -1517,7 +1517,8 @@ impl<'a> Machine<'a> {
         for item in values {
             let Value::Couple(pair)=item else{continue};
             if !matches!(pair.0,Value::Flag(true)){continue}
-            let expanded=Self::underlying(&pair.1).unwrap_or_else(||pair.1.settled());
+            let source=pair.1.settled();
+            let expanded=Self::underlying(&source).unwrap_or(source).settled();
             if !matches!(expanded,Value::Dict(_)|Value::Attributes(_)) {
                 let namespace=Self::own_entry(class,self.detail("module"));
                 let title=namespace.filter(|home|home.bare()!=self.builtin_module()).map_or_else(||class.name.clone(),|home|format!("{}.{}",home.bare(),class.name));
@@ -2787,7 +2788,7 @@ impl<'a> Machine<'a> {
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         if receiver.is_some() {
             if let Value::Intrinsic(Prim::Textual(_), spelling) = &entry {
-                if spelling.contains('.') { return Ok(Value::Member(Rc::new(receiver.clone().unwrap()), spelling.rsplit('.').next().unwrap().to_string())); }
+                if spelling.contains('.') { return Ok(Self::wrap(3, vec![entry.clone(), receiver.clone().unwrap()])); }
             }
         }
         if let Value::Wrapped(tag @ 10..=12, state) = &entry {
@@ -3764,7 +3765,7 @@ impl<'a> Machine<'a> {
         if key == "__reduce__" {
             let parts = match &value {
                 Value::Method(code, receiver, _) => Some((Value::Routine(code.clone()), Value::Thing(receiver.clone()))),
-                Value::Wrapped(3, entries) if matches!(entries.first(), Some(Value::Routine(_) | Value::Bound(..))) => Some((entries[0].clone(), entries[1].clone())),
+                Value::Wrapped(3, entries) if matches!(entries.first(), Some(Value::Routine(_) | Value::Bound(..) | Value::Intrinsic(Prim::Textual(_), _))) => Some((entries[0].clone(), entries[1].clone())),
                 _ => None,
             };
             if let Some((function, receiver)) = parts {
@@ -3959,7 +3960,7 @@ impl<'a> Machine<'a> {
             }
         }
         if self.protocol_spelled() {
-            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|10|11|12|32|60|124,_));
+            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|10|11|12|32|60|124,_))||matches!(&value,Value::Intrinsic(Prim::Textual(_), name) if name.contains('.'));
             if binds && key==self.detail("descriptor.get"){return Ok(Self::wrap(31,vec![value]));}
             if let Value::Wrapped(32,parts)=&value {
                 if key==self.detail("descriptor.set"){return Ok(Self::wrap(33,parts.as_ref().clone()));}

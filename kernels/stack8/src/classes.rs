@@ -2859,7 +2859,7 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let (Value::Native(Builtin::Text(_), word), Some(receiver)) = (&value, &subject) {
-            if let Some((_, member)) = word.rsplit_once('.') { return Ok(Value::ValueMethod(Rc::new((receiver.clone(), member.to_owned())))); }
+            if word.contains('.') { return Ok(Self::adapter(3, vec![value.clone(), receiver.clone()])); }
         }
         if let Value::Adapter(w) = &value {
             if w.0 == 29 && w.1.len() == 3 {
@@ -3187,7 +3187,7 @@ impl<'a> Engine<'a> {
         if name == "__reduce__" {
             let python_binding = match &subject {
                 Value::Method(owner, code, _) => Some((Value::Object(owner.clone()), Value::Routine(code.clone()))),
-                Value::Adapter(entry) if entry.0 == 3 && matches!(entry.1.first(), Some(Value::Routine(_))) => Some((entry.1[1].clone(), entry.1[0].clone())),
+                Value::Adapter(entry) if entry.0 == 3 && matches!(entry.1.first(), Some(Value::Routine(_) | Value::Native(Builtin::Text(_), _))) => Some((entry.1[1].clone(), entry.1[0].clone())),
                 _ => None,
             };
             if let Some((owner, code)) = python_binding {
@@ -3487,7 +3487,7 @@ impl<'a> Engine<'a> {
         // A routine, a wrapped routine and a slot each read as a member
         // that binds; the slot writes and removes as well.
         if name == self.class_word("descriptor.get") && !name.is_empty()
-            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if (matches!(w.0, 4 | 5 | 10 | 11 | 12 | 16 | 236) || w.0 == 29 && w.1.len() == 2))) {
+            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Native(Builtin::Text(_), word) if word.contains('.')) || matches!(&subject, Value::Adapter(w) if (matches!(w.0, 4 | 5 | 10 | 11 | 12 | 16 | 236) || w.0 == 29 && w.1.len() == 2))) {
             return Ok(Self::adapter(15, vec![subject]));
         }
         if let Value::Adapter(w) = &subject {

@@ -699,7 +699,10 @@ class _OrderedDictIterator:
         return len(self._keys) - self._at
 
     def __reduce__(self):
-        return (type(self), (self._mapping, self._kind, self._back), (self._at, self._version))
+        clone = type(self)(self._mapping, self._kind, self._back)
+        clone._at = self._at
+        clone._version = self._version
+        return (iter, (list(clone),))
 
     def __setstate__(self, state):
         self._at, self._version = state
@@ -837,6 +840,7 @@ def _native_ordered_dict(base):
                     raise RuntimeError('OrderedDict mutated during iteration')
                 current = current.prev
 
+    OrderedDict.__module__ = 'collections'
     OrderedDict.__qualname__ = 'OrderedDict'
     OrderedDict.__name__ = 'OrderedDict'
     return OrderedDict

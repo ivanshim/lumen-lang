@@ -267,7 +267,7 @@ pub fn walk_departing(dying: &mut Generator) {
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(),
+                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),

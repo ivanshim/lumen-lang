@@ -232,6 +232,7 @@ enum Stepped {
 pub struct Suspension {
     pub(crate) titles: [String; 2],
     trace_state: Option<Rc<Thing>>,
+    resume_extent: Option<(u32, u32, u32, u32)>,
     frame: Rc<Env>,
     owed: Vec<Owed>,
     found: Vec<Value>,
@@ -347,7 +348,7 @@ impl Suspension {
     }
 
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
-        Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
+        Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, resume_extent: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
             holding: Vec::new(),
@@ -360,7 +361,7 @@ impl Drop for Suspension {
     fn drop(&mut self) {
         if self.asleep() && crate::ghost::bidding() {
             let again = Suspension {
-                titles: self.titles.clone(), trace_state: self.trace_state.take(), frame: self.frame.clone(),
+                titles: self.titles.clone(), trace_state: self.trace_state.take(), resume_extent: self.resume_extent, frame: self.frame.clone(),
                 owed: std::mem::take(&mut self.owed), found: std::mem::take(&mut self.found),
                 begun: true, ended: false, receiving: self.receiving,
                 result: std::mem::replace(&mut self.result, Value::Nil),
@@ -4248,6 +4249,7 @@ impl<'a> Machine<'a> {
         Value::Generator(Rc::new(RefCell::new(Suspension {
             titles: [String::new(), String::new()],
             trace_state: None,
+            resume_extent: None,
             holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
@@ -4761,42 +4763,27 @@ impl<'a> Machine<'a> {
         if let Some(activation) = &self.active_trace {
             let held = activation.holds.borrow();
             if let Value::Small(line) = held[0].1 { self.row = line as u32; }
-            for (word, value) in held.iter() {
-                if word == "\0resume_bounds" {
-                    if let Value::Tuple(items) = value {
-                        if let [Value::Small(first), Value::Small(column), Value::Small(last), Value::Small(end)] = items.as_slice() {
-                            self.extent = Some((*first as u32, *column as u32, *last as u32, *end as u32));
-                        }
-                    }
-                }
-            }
         }
-        let outcome = match self.emit_trace("call", Value::Nil) {
+        self.extent = state.resume_extent;
+        let outcome = if matches!(self.tracing_function, Value::Nil) { self.unfold(&mut state, sent, hurled) } else { match self.emit_trace("call", Value::Nil) {
             Ok(()) => self.unfold(&mut state, sent, hurled),
             Err(callback) => Err(callback),
-        };
+        } };
         let outcome = self.traced_result(outcome);
-        let returned = match &outcome { Ok(Some(yielded)) => yielded.clone(), Ok(None) => state.result.clone(), Err(_) => Value::Nil };
-        let outcome = match self.emit_trace("return", returned) {
-            Ok(()) => outcome,
-            Err(Escape::Thrown(fault)) if matches!(outcome, Ok(Some(_))) => {
-                let unwound = self.unfold(&mut state, Value::Nil, Some(fault));
-                self.traced_result(unwound)
-            }
-            Err(failed) => {
-                if outcome.is_err() { self.exclude_trace_origin(&failed); }
-                Err(failed)
-            }
-        };
-        if let Some(activation) = &self.active_trace {
-            let position = self.extent;
-            let mut held = activation.holds.borrow_mut();
-            held.retain(|(word, _)| word != "\0resume_bounds");
-            if let Some(bounds) = position {
-                let values = vec![Value::Small(bounds.0 as i64), Value::Small(bounds.1 as i64), Value::Small(bounds.2 as i64), Value::Small(bounds.3 as i64)];
-                held.push((String::from("\0resume_bounds"), Value::tuple(values)));
-            }
-        }
+        let outcome = if matches!(self.tracing_function, Value::Nil) { outcome } else {
+            let returned = match &outcome { Ok(Some(yielded)) => yielded.clone(), Ok(None) => state.result.clone(), Err(_) => Value::Nil };
+            match self.emit_trace("return", returned) {
+                Ok(()) => outcome,
+                Err(Escape::Thrown(fault)) if matches!(outcome, Ok(Some(_))) => {
+                    let unwound = self.unfold(&mut state, Value::Nil, Some(fault));
+                    self.traced_result(unwound)
+                }
+                Err(failed) => {
+                    if outcome.is_err() { self.exclude_trace_origin(&failed); }
+                    Err(failed)
+                }
+        } };
+        state.resume_extent = self.extent;
         self.extent = caller_extent;
         self.update_watched_locals();
         state.trace_state = std::mem::replace(&mut self.active_trace, caller_trace);
@@ -4885,7 +4872,7 @@ impl<'a> Machine<'a> {
                         self.stand_at_instruction(at as i64);
                         self.row = row;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
-                        self.emit_trace("line", Value::Nil)?;
+                        if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
                         // A statement reached inside a sleeping walk is
                         // an edge all the same: a signal waiting is
                         // taken up here.
@@ -5368,7 +5355,7 @@ impl<'a> Machine<'a> {
             if !self.rules.trace_words.is_empty() {
                 self.row = clause.source_line;
                 if let Some(activation) = &self.active_trace { activation.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
-                self.emit_trace("line", Value::Nil)?;
+                if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
             }
             let accepts = match &clause.choices {
                 None => match raised {
@@ -5543,14 +5530,24 @@ impl<'a> Machine<'a> {
         entries.push((String::from("\0environment"), body));
         entries.push((String::from("\0observed"), Value::Nil));
         entries.push((String::from("\0instruction"), Value::Small(-1)));
-        entries.push(("f_trace".to_owned(), Value::Nil));
-        entries.push(("f_trace_lines".to_owned(), Value::Flag(true)));
+        if !matches!(self.tracing_function, Value::Nil) {
+            entries.push(("f_trace".to_owned(), Value::Nil));
+            entries.push(("f_trace_lines".to_owned(), Value::Flag(true)));
+        }
         self.made += 1;
         Some(Rc::new(Thing { reclassified: RefCell::new(None), of: self.activation_kind.as_ref().unwrap().clone(), turn: self.made, holds: RefCell::new(entries) }))
     }
 
     pub(super) fn activation_member(&mut self, value: &Value, key: &str) -> Option<Value> {
         let words = self.rules.trace_words;
+        if matches!(key, "f_trace" | "f_trace_lines") {
+            if let Value::Thing(frame) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) {
+                    let stored = frame.holds.borrow().iter().find(|(name, _)| name == key).map(|(_, held)| held.clone());
+                    return Some(stored.unwrap_or_else(|| if key == "f_trace_lines" { Value::Flag(true) } else { Value::Nil }));
+                }
+            }
+        }
         if key == "clear" {
             if let Value::Thing(item) = value {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
@@ -5918,7 +5915,7 @@ impl<'a> Machine<'a> {
                 self.row = *row;
                 if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
                 self.update_watched_locals();
-                self.emit_trace("line", Value::Nil)?;
+                if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
                 // A statement reached is a fault gone by: whatever calls
                 // an earlier one was raised under are none of its
                 // business.
@@ -6652,7 +6649,7 @@ impl<'a> Machine<'a> {
                                 if self.rules.has_any_ext_builtin_exceptions_traceback {
                                     self.row = clause.source_line;
                                     if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
-                                    self.emit_trace("line", Value::Nil)?;
+                                    if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
                                 }
                                 let accepts = match &clause.choices {
                                     None => match &raised {
@@ -10261,7 +10258,7 @@ impl<'a> Machine<'a> {
             crate::text::fit_names(self.table, crate::text::Work::NEWARGS, &mut supplied, keywords)?;
             return self.prim(Prim::Textual(crate::text::Work::NEWARGS), name, &supplied).map_err(Escape::from);
         }
-        if matches!(&actual, Value::Text(_) | Value::Unpaired(_)) {
+        if matches!(&actual, Value::Text(_)) {
             let key = format!("ext.builtin.text.{}", name);
             if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
@@ -12370,7 +12367,7 @@ impl<'a> Machine<'a> {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
         if mine && !self.rules.trace_words.is_empty() { self.row = program.declared_on; }
-        let trace_started = if mine { self.emit_trace("call", Value::Nil) } else { Ok(()) };
+        let trace_started = if mine && !matches!(self.tracing_function, Value::Nil) { self.emit_trace("call", Value::Nil) } else { Ok(()) };
         let outcome: Res = if let Err(error) = trace_started { Err(error) } else { loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -12484,7 +12481,7 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         } };
-        let outcome = if mine { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => match self.emit_trace("return", Value::Nil) { Ok(()) => Err(error), Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) } } } } else { outcome };
+        let outcome = if mine && !matches!(self.tracing_function, Value::Nil) { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => match self.emit_trace("return", Value::Nil) { Ok(()) => Err(error), Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) } } } } else { outcome };
         let mut outcome = outcome;
         let mut body_namespace = None;
         if outcome.is_ok() {
