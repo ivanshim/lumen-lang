@@ -1,4 +1,5 @@
 thread_local! {
+    static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 thread_local! {
@@ -10332,7 +10333,14 @@ impl<'a> Engine<'a> {
         let key = match &value { Value::Text(text) => text.chars().map(u32::from).collect(), Value::Codepoints(points) => points.to_vec(), _ => unreachable!() };
         PY_ATTRIBUTE_TEXT.with(|cache| cache.borrow_mut().entry(key).or_insert(value).clone())
     }
-    fn attribute_name(word: &str) -> Value { Self::interned_text(Value::text(word)) }
+    fn attribute_name(word: &str) -> Value {
+        PY_ATTRIBUTE_NAMES.with(|names| {
+            if let Some(held) = names.borrow().get(word) { return held.clone(); }
+            let held = Self::interned_text(Value::text(word));
+            names.borrow_mut().insert(word.to_owned(), held.clone());
+            held
+        })
+    }
 
     pub(super) fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();

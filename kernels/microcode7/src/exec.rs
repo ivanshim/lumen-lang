@@ -1,4 +1,5 @@
 thread_local! {
+    static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 thread_local! {
@@ -1236,7 +1237,9 @@ impl<'a> Machine<'a> {
         let consumed = position.max(self.stack_origin) - position.min(self.stack_origin);
         // Leave room to report a Python failure rather than exhausting the
         // execution thread while walking the nested expression forms.
-        if original.is_some() && consumed > (1 << 28) { return Some(0); }
+        // Debug dispatch frames grow with native operations. The execution
+        // thread has a 1 GiB stack; retain half for failure unwinding.
+        if original.is_some() && consumed > (1 << 29) { return Some(0); }
         let [module, binding] = self.rules.words_ext_system_recursion_variable else { return original };
         let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
         let held = namespace.holds.borrow();
@@ -14946,7 +14949,14 @@ impl<'a> Machine<'a> {
             kept.borrow_mut().insert(points, input.clone()); input
         })
     }
-    fn attribute_key(word: &str) -> Value { Self::shared_text(Value::text(word)) }
+    fn attribute_key(word: &str) -> Value {
+        PY_ATTRIBUTE_NAMES.with(|names| {
+            if let Some(held) = names.borrow().get(word) { return held.clone(); }
+            let held = Self::shared_text(Value::text(word));
+            names.borrow_mut().insert(word.to_owned(), held.clone());
+            held
+        })
+    }
 
     pub(super) fn attribute_entries(&self, t: &Rc<Thing>) -> Vec<(Value, Value)> {
         let namespace = self.namespace_holding(&Value::Thing(t.clone())).is_some();
