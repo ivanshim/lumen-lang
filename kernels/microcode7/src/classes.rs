@@ -2591,7 +2591,8 @@ impl<'a> Machine<'a> {
                 matches!(v, Value::Thing(t) if Self::parent_kind_descended(&t.blueprint()))
             });
             if !fits {
-                let received = self.parent_tp_name(&receiver.as_ref().unwrap().settled());
+                let kind = self.class_from_type(vec![receiver.as_ref().unwrap().clone()])?;
+                let received = kind.kind_it_names().ok_or_else(|| self.class_unready())?;
                 return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{received}' object").into());
             }
         }
@@ -5926,7 +5927,8 @@ impl<'a> Machine<'a> {
         let plain: Vec<Value> = positional.into_iter().map(|value| value.settled()).collect();
         let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".to_owned().into()); };
         if !matches!(subject, Value::Thing(instance) if Self::parent_kind_descended(&instance.blueprint())) {
-            let received = self.parent_tp_name(subject);
+            let receiver_kind = self.class_from_type(vec![subject.clone()])?;
+            let received = receiver_kind.kind_it_names().ok_or_else(|| self.class_unready())?;
             return Err(format!("TypeError: descriptor '__init__' requires a 'super' object but received a '{received}'").into());
         }
         let Value::Thing(t) = subject else { unreachable!() };

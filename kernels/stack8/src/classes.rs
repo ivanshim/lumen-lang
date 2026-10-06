@@ -2571,7 +2571,8 @@ impl<'a> Engine<'a> {
             if w.0 == 132 {
                 if let Some(receiver) = subject.as_ref().map(Value::contents) {
                     if !matches!(&receiver, Value::Object(o) if Self::super_descended(&o.class_now())) {
-                        return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{}' object", self.super_tp_name(&receiver)).into());
+                        let received = self.class_type(vec![receiver])?.kind_it_names().ok_or_else(|| self.class_refusal())?;
+                        return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{received}' object").into());
                     }
                 }
             }
@@ -5867,7 +5868,10 @@ impl<'a> Engine<'a> {
         let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".into()); };
         let o = match subject {
             Value::Object(o) if Self::super_descended(&o.class_now()) => o,
-            _ => return Err(format!("TypeError: descriptor '__init__' requires a 'super' object but received a '{}'", self.super_tp_name(subject)).into()),
+            _ => {
+                let received = self.class_type(vec![subject.clone()])?.kind_it_names().ok_or_else(|| self.class_refusal())?;
+                return Err(format!("TypeError: descriptor '__init__' requires a 'super' object but received a '{received}'").into());
+            },
         };
         if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: super() takes no keyword arguments".into()); }
         if plain.len() > 3 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", plain.len() - 1).into()); }
