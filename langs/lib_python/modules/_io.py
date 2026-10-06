@@ -73,12 +73,16 @@ def _buffer(value):
 
 class _IOBase:
     _closed = False
+    # Set while the object is being finalised, so that close can say an
+    # open stream was dropped without being closed.
+    _finalizing = False
     def __del__(self):
         try:
             closed = self.closed
         except (AttributeError, ValueError):
             return
         if not closed:
+            self._finalizing = True
             self.close()
     def _checkClosed(self):
         if self.closed:
@@ -701,6 +705,12 @@ class TextIOWrapper(_TextIOBase):
         function = _TEXT.get('flush') or _text_function('flush')
         return function(self)
     def close(self):
+        if self._finalizing:
+            buffer = self._buffer
+            if buffer is not None and not buffer.closed:
+                warn = getattr(buffer, '_dealloc_warn', None)
+                if warn is not None:
+                    warn(self)
         function = _TEXT.get('close') or _text_function('close')
         return function(self)
     def detach(self):
@@ -840,9 +850,15 @@ class FileIO(_RawIOBase):
         if self._closed:
             raise ValueError('I/O operation on closed file.')
         return self._fd
+    def _dealloc_warn(self, source):
+        if self._fd >= 0 and self._closefd:
+            import warnings
+            warnings.warn('unclosed file %r' % (source,), ResourceWarning, stacklevel=2, source=source)
     def close(self):
         if not self._closed:
             import os
+            if self._finalizing:
+                self._dealloc_warn(self)
             try:
                 # The raw base's close flushes first, as the C stream's does.
                 self.flush()
@@ -1115,9 +1131,15 @@ class BufferedReader(_BufferedIOBase):
         if impl is None:
             impl = self._impl
         return impl.closed
+    def _dealloc_warn(self, source):
+        warn = getattr(self._raw, '_dealloc_warn', None)
+        if warn is not None:
+            warn(source)
     def close(self):
         if self.closed:
             return None
+        if self._finalizing:
+            self._dealloc_warn(self)
         try:
             self.flush()
         finally:
