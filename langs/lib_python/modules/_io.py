@@ -167,7 +167,12 @@ class _RawIOBase(_IOBase):
             return self.readall()
         buf = bytearray(size)
         n = self.readinto(buf)
-        return None if n is None else bytes(buf[:n])
+        if n is None:
+            return None
+        n = _index(n)
+        if n < 0 or n > size:
+            raise ValueError('readinto returned %d outside buffer size %d' % (n, size))
+        return bytes(buf[:n])
     def readall(self):
         result = b''
         while True:
@@ -574,6 +579,8 @@ class TextIOWrapper(_TextIOBase):
         except BaseException:
             self._initialized = False
             raise
+    def __getstate__(self):
+        raise TypeError("cannot pickle '" + type(self).__name__ + "' instances")
     def __repr__(self):
         if not getattr(self, '_initialized', False):
             raise ValueError('I/O operation on uninitialized object')
@@ -722,7 +729,16 @@ class FileIO(_RawIOBase):
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
-        self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb') + ('+' if '+' in mode else '')
+        # The mode as the C stream names it: created and appended streams
+        # keep their letter, and any other readable one is read-first.
+        if base[0] == 'x':
+            self.mode = 'xb+' if self._readable else 'xb'
+        elif base[0] == 'a':
+            self.mode = 'ab+' if self._readable else 'ab'
+        elif self._readable:
+            self.mode = 'rb+' if self._writable else 'rb'
+        else:
+            self.mode = 'wb'
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
         owned = False
@@ -785,6 +801,17 @@ class FileIO(_RawIOBase):
                 except OSError:
                     pass
             raise
+    def __getstate__(self):
+        raise TypeError("cannot pickle 'FileIO' instances")
+    def __repr__(self):
+        kind = '_io.FileIO' if type(self) is FileIO else type(self).__name__
+        if self._fd < 0:
+            return '<' + kind + ' [closed]>'
+        try:
+            name = self.name
+        except AttributeError:
+            return '<%s fd=%d mode=%r closefd=%s>' % (kind, self._fd, self.mode, self._closefd)
+        return '<%s name=%r mode=%r closefd=%s>' % (kind, name, self.mode, self._closefd)
     @property
     def closefd(self):
         return self._closefd
@@ -793,14 +820,18 @@ class FileIO(_RawIOBase):
             raise ValueError('I/O operation on closed file.')
         return self._fd
     def close(self):
-        if not self.closed:
+        if not self._closed:
             import os
             try:
-                if self._closefd:
-                    os.close(self._fd)
+                # The raw base's close flushes first, as the C stream's does.
+                self.flush()
             finally:
-                self._fd = -1
-                self._closed = True
+                try:
+                    if self._closefd:
+                        os.close(self._fd)
+                finally:
+                    self._fd = -1
+                    self._closed = True
     def readable(self):
         if self._closed:
             raise ValueError('I/O operation on closed file.')
@@ -1008,6 +1039,8 @@ class BufferedReader(_BufferedIOBase):
             return '<%s name=%r>' % (title, name)
         finally:
             self._repr_running = False
+    def __getstate__(self):
+        raise TypeError("cannot pickle '" + type(self).__name__ + "' instances")
     def readinto(self, buffer):
         return self._impl.readinto(buffer)
     def readinto1(self, buffer):
@@ -1103,7 +1136,9 @@ class _Open:
                     buffer = BufferedWriter(raw, size)
                 if binary:
                     return buffer
-                return TextIOWrapper(buffer, encoding, errors, newline, line_buffering=buffering == 1)
+                text = TextIOWrapper(buffer, encoding, errors, newline, line_buffering=buffering == 1)
+                text.mode = mode
+                return text
             except:
                 raw.close()
                 raise
