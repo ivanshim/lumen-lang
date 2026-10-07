@@ -4,7 +4,8 @@
     "unittest": "unittest/__init__.py",
     "urllib": "urllib/__init__.py",
     "unittest.case": "unittest/case.py",
-    "unittest.result": "unittest/result.py"
+    "unittest.result": "unittest/result.py",
+    "asyncio": "asyncio/__init__.py"
   },
   "aliases": {
     "os.path": "path",
