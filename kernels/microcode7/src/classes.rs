@@ -3404,7 +3404,6 @@ impl<'a> Machine<'a> {
         fresh
     }
     pub(super) fn routine_storage(&mut self, code: &Value) -> usize {
-        self.constructor_records.borrow_mut().clear();
         match self.routine_members.iter().position(|(candidate, _)| candidate.revive().is_some_and(|key| key.equals(code))) {
             Some(found) => found,
             None => {
@@ -3412,7 +3411,7 @@ impl<'a> Machine<'a> {
                 // Keep unrelated negative records: clearing them all makes
                 // ordinary calls rescan every function after each definition.
                 // The collector still clears the cache when it moves records.
-                if let Value::Routine(body) | Value::Bound(body, _) = code {
+                if let Value::Routine(body) | Value::Bound(body, _) | Value::Method(body, _, _) = code {
                     self.constructor_records.borrow_mut().remove(&(Rc::as_ptr(body) as usize));
                 }
                 let of = self.common_ancestor(); self.made += 1;
@@ -3843,6 +3842,19 @@ impl<'a> Machine<'a> {
         }
         match &value {
             Value::Intrinsic(working, spelling) if !working.names_a_kind() && !self.detail("name").is_empty() => {
+                if *working == Prim::UnicodeDecomposition {
+                    let detail = self.table.strings("ext.builtin.unicodedata.decomposition.metadata");
+                    if [self.detail("name"), self.detail("qualified")].contains(&key) {
+                        if let Some(title) = detail.first() { return Ok(Value::text(title)); }
+                    }
+                    if key == self.detail("module") {
+                        if let Some(home) = detail.get(1) { return Ok(Value::text(home)); }
+                    }
+                    if self.rules.specials.get(79).is_some_and(|label| label == key) {
+                        if let Some(title) = detail.first() { return Ok(Self::wrap(135, vec![Value::text(title)])); }
+                    }
+                }
+
                 if let Some((owner_word, member)) = spelling.rsplit_once('.') {
                     if let Some(kind) = self.kind_by_word(owner_word) {
                         let bound_to_type = ["fromkeys", "fromhex", "from_bytes", "from_number", "__getformat__"].contains(&member);

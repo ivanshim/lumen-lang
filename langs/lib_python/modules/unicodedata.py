@@ -38,13 +38,8 @@ def lookup(name):
             return chr(i)
     return __sre_native(5, name)
 
-def decomposition(c):
-    if not isinstance(c, str):
-        kind = 'None' if c is None else type(c).__name__
-        raise TypeError('decomposition() argument must be a unicode character, not %s' % kind)
-    if len(c) != 1:
-        raise TypeError('decomposition(): argument must be a unicode character, not a string of length %d' % len(c))
-    return __sre_native(12, ord(c))
+# The native function validates Unicode receivers and reads the full database.
+decomposition = __unicode_decomposition
 
 def normalize(form, text):
     if form not in _forms:

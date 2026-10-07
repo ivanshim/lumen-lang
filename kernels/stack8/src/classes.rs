@@ -3218,6 +3218,18 @@ impl<'a> Engine<'a> {
             if let Some(owner) = owner { return Ok(Value::ValueMethod(Rc::new((owner, String::from("float_getformat"))))); }
         }
         if let Value::Native(op, word) = &subject {
+            if *op == Builtin::UnicodeDecomposition {
+                let detail = &self.lang.decomposition_callable;
+                if [self.class_word("name"), self.class_word("qualified")].contains(&name) {
+                    if let Some(title) = detail.first() { return Ok(Value::text(title)); }
+                }
+                if name == self.class_word("module") {
+                    if let Some(home) = detail.get(1) { return Ok(Value::text(home)); }
+                }
+                if self.lang.class_special.get(79).is_some_and(|label| label == name) {
+                    if let Some(title) = detail.first() { return Ok(Self::adapter(132, vec![Value::text(title)])); }
+                }
+            }
             if !Self::kind_builtin(op) && !self.class_word("name").is_empty() {
                 if let Some((family, method)) = word.rsplit_once('.') {
                     if let Some(owner) = self.spelled_kind(family) {
@@ -4510,8 +4522,11 @@ impl<'a> Engine<'a> {
         fresh
     }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        self.constructor_indices.borrow_mut().clear();
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
+        // Only this function can turn a cached absence into a metadata slot.
+        if let Value::Routine(body) | Value::Method(_, body, _) = function {
+            self.constructor_indices.borrow_mut().remove(&(Rc::as_ptr(body) as usize));
+        }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });

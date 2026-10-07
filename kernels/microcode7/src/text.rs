@@ -79,6 +79,8 @@ pub fn fit_names(table: &Table, work: Work, values: &mut Vec<Value>, named: Vec<
             return Err(if method.is_empty() { complaint(table,"arguments") } else { format!("TypeError: '{name}' is an invalid keyword argument for {method}()") });
         };
         if position < filled || !assigned.insert(position) { return Err(complaint(table,"arguments")); }
+        // Fill an omitted encoding without replacing an explicit None argument.
+        if work == Work::ENCODE && values.len() == 1 && position == 2 { values.push(Value::text("utf-8")); }
         values.resize(values.len().max(position+1),Value::Nil);
         values[position]=value;
     }

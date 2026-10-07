@@ -488,3 +488,25 @@ fn general_category(n: u32) -> &'static str {
     let at = ranges.partition_point(|row| row.1 < n);
     ranges.get(at).filter(|row| row.0 <= n).map_or("Cn", |row| row.2)
 }
+
+// Return the database mapping for one Unicode character, including surrogate halves.
+pub fn decompose(args: &[Value]) -> Result<Value, String> {
+    let [source] = args else { return Err(format!("TypeError: decomposition() takes exactly one argument ({} given)", args.len())); };
+    let invalid = || {
+        let kind = match source.contents() { Value::Null => "None".to_owned(), other => other.core_kind() };
+        format!("TypeError: decomposition() argument must be a unicode character, not {kind}")
+    };
+    let point = match source.type_text() {
+        Value::Text(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(point), None) => point as u32,
+                _ => return Err(invalid()),
+            }
+        }
+        Value::Codepoints(points) if points.len() == 1 => points[0],
+        Value::Codepoints(_) => return Err(invalid()),
+        _ => return Err(invalid()),
+    };
+    Ok(Value::text(&crate::unicode::decomposition(point)))
+}

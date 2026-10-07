@@ -2193,7 +2193,9 @@ impl<'a> Engine<'a> {
         let mut after = self.cycle_graph(&group);
         let unreached = after.still_unreached(group);
         let count = unreached.len();
+        let previous_records = self.function_members.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
+        if self.function_members.len() != previous_records { self.constructor_indices.borrow_mut().clear(); }
 
         let grave = crate::faint::Graph::sever(&unreached);
         drop(unreached);
@@ -4076,7 +4078,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Remember the metadata slot without retaining a snapshot of its globals.
-    /// Appending a function record invalidates every previous lookup.
+    /// A new record invalidates only the absence cached for its own function.
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
         let same = |held: &crate::faint::Hold| matches!(held.revive(), Some(Value::Routine(code)) if Rc::ptr_eq(&code, program));
         let pointer = Rc::as_ptr(program) as usize;
@@ -5548,10 +5550,11 @@ impl<'a> Engine<'a> {
     }
 
     fn frame_instruction(frame: &Rc<Instance>) -> i64 {
-        frame.fields.borrow().iter().find_map(|(name, value)| match (name.as_str(), value) {
-            ("\0instruction", Value::Small(position)) => Some(*position),
-            _ => None,
-        }).unwrap_or(-1)
+        // The private position is fixed by make_frame; no namespace search is needed.
+        match frame.fields.borrow().get(8) {
+            Some((_, Value::Small(position))) => *position,
+            _ => -1,
+        }
     }
 
     fn record_trace(&mut self, raised: &Value, _program: &Routine) {
@@ -6735,6 +6738,9 @@ impl<'a> Engine<'a> {
     /// and that same module for the bytes table-maker, whose own home
     /// the reference gives back for it.
     fn callable_home(&self, op: &Builtin, word: &str) -> Value {
+        if *op == Builtin::UnicodeDecomposition {
+            if let Some(home) = self.lang.decomposition_callable.get(1) { return Value::text(home); }
+        }
         if !word.contains('.') { return Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)); }
         match op { Builtin::Bytes(40) => Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)), _ => Value::Null }
     }
@@ -7173,6 +7179,9 @@ impl<'a> Engine<'a> {
             if let Some(word) = kind { let class = self.kind_class(&word); return Ok(Some(Value::Small(self.flags_of(&class)))); }
         }
         if let Value::Native(op, word) = &held {
+            if *op == Builtin::UnicodeDecomposition && [self.class_word("name"), self.class_word("qualified")].contains(&name) {
+                if let Some(title) = self.lang.decomposition_callable.first() { return Ok(Some(Value::text(title))); }
+            }
             if !Self::kind_builtin(op) {
                 if name == self.class_word("name") { return Ok(Some(Value::text(word.rsplit('.').next().unwrap_or(word)))); }
                 if name == self.class_word("qualified") { return Ok(Some(Value::text(word))); }
@@ -7888,6 +7897,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if let Value::Native(Builtin::UnicodeDecomposition, _) = value {
+            if let Some(title) = self.lang.decomposition_callable.first() {
+                return Ok(Value::Native(Builtin::UnicodeDecomposition, Rc::from(title.as_str())).repr(&self.wording()));
+            }
+        }
         // A whole number is written out only where it holds no more
         // figures than the definition allows, whichever conversion --
         // writing, representing or quoting -- asked for the text.
@@ -18898,6 +18912,18 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::UnicodeDecomposition { return crate::sre::decompose(args); }
+        // The labelled Unicode range permits an exact integer path without
+        // building a big integer. Subclasses and unusual arguments fall through.
+        if builtin == Builtin::CharOf && !self.lang.core_words["core.chr.range"].is_empty() {
+            if let [Value::Small(point)] = args.as_slice() {
+                if !(0..=0x10ffff).contains(point) { return Err(self.core_fault("core.chr.range", "")); }
+                return Ok(match char::from_u32(*point as u32) {
+                    Some(letter) => { let mut bytes = [0; 4]; Value::text(letter.encode_utf8(&mut bytes)) },
+                    None => Value::from_codes(vec![*point as u32]),
+                });
+            }
+        }
         if matches!(builtin, Builtin::Replace | Builtin::Restore | Builtin::Erase) {
             fn proxy(value: &Value) -> bool { match value {
                 Value::View(w) => w.1 == "mapping",
@@ -19257,6 +19283,10 @@ impl<'a> Engine<'a> {
             }
             Builtin::Text(op) => {
                 let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                // Native text descriptors use the same encoder as bound string methods.
+                if op == crate::strings::TextOp::Encode && self.lang.builtin_words.iter().any(|(kind, _)| *kind == Builtin::Bytes(2)) {
+                    return self.byte_call(2, &normalized);
+                }
                 if op == crate::strings::TextOp::Join && normalized.len() == 2 && matches!(normalized[0], Value::Text(_) | Value::Codepoints(_)) {
                     let items = self.comprehension_items(&normalized[1])?;
                     if items.len() == 1 && matches!(items[0], Value::Text(_) | Value::Codepoints(_)) {
@@ -20353,6 +20383,7 @@ impl<'a> Engine<'a> {
                 }))
             }
             Builtin::Sre => return crate::sre::call(args),
+            Builtin::UnicodeDecomposition => return crate::sre::decompose(args),
             Builtin::CopyValue => {
                 arity(2)?;
                 if matches!(args[0], Value::Generator(_)) {

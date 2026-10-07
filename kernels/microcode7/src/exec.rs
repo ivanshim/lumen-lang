@@ -2944,8 +2944,9 @@ impl<'a> Machine<'a> {
         let mut checked = self.round_web(&original);
         let lost = checked.remaining(original);
         let found = lost.len();
+        let previous_records = self.routine_members.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
-        self.constructor_records.borrow_mut().clear();
+        if self.routine_members.len() != previous_records { self.constructor_records.borrow_mut().clear(); }
 
         let taken = Web::cut(&lost);
         drop(lost);
@@ -5698,10 +5699,11 @@ impl<'a> Machine<'a> {
     }
 
     fn activation_instruction(activation: &Rc<Thing>) -> i64 {
-        activation.holds.borrow().iter().find_map(|(word, value)| match (word.as_str(), value) {
-            ("\0instruction", Value::Small(at)) => Some(*at),
-            _ => None,
-        }).unwrap_or(-1)
+        // Activation layout fixes this private slot independently of Python member names.
+        match activation.holds.borrow().get(7) {
+            Some((_, Value::Small(at))) => *at,
+            _ => -1,
+        }
     }
 
     fn stand_at_instruction(&self, at: i64) {
@@ -8792,6 +8794,9 @@ impl<'a> Machine<'a> {
     /// that same module for the bytes table-maker, whose own home the
     /// reference hands back for it.
     fn intrinsic_home(&self, op: &Prim, word: &str) -> Value {
+        if *op == Prim::UnicodeDecomposition {
+            if let Some(home) = self.table.strings("ext.builtin.unicodedata.decomposition.metadata").get(1) { return Value::text(home); }
+        }
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
@@ -8858,6 +8863,9 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Intrinsic(op, word) = value {
+            if *op == Prim::UnicodeDecomposition && [self.rules.detail_name, self.rules.detail_qualified].contains(&name) {
+                if let Some(title) = self.table.strings("ext.builtin.unicodedata.decomposition.metadata").first() { return Some(Value::text(title)); }
+            }
             if !Self::names_a_kind(op) {
                 if name == self.rules.detail_name { return Some(Value::text(word.rsplit('.').next().unwrap_or(word))); }
                 if name == self.rules.detail_qualified { return Some(Value::text(word)); }
@@ -14715,6 +14723,11 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if let Value::Intrinsic(Prim::UnicodeDecomposition, _) = subject {
+            if let Some(title) = self.table.strings("ext.builtin.unicodedata.decomposition.metadata").first() {
+                return Ok(Value::Intrinsic(Prim::UnicodeDecomposition, Rc::from(title.as_str())).repr(&self.wording()));
+            }
+        }
         // A whole number is written out only where it holds no more
         // figures than the table allows, whichever way of writing it
         // -- plain, quoted or shown within a collection -- asked.
@@ -17637,6 +17650,18 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::UnicodeDecomposition { return crate::sre::decompose(v); }
+        // Exact machine integers need neither index hooks nor big-integer conversion.
+        // Other receivers keep the normal argument and numeric protocol checks.
+        if op == Prim::CharOf && self.rules.has_any_ext_builtin_core_chr_range {
+            if let [Value::Small(point)] = v {
+                if !(0..=0x10ffff).contains(point) { return Err(self.core_complaint("core.chr.range", "")); }
+                return Ok(match char::from_u32(*point as u32) {
+                    Some(letter) => { let mut bytes = [0; 4]; Value::text(letter.encode_utf8(&mut bytes)) },
+                    None => Value::characters(vec![*point as u32]),
+                });
+            }
+        }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
@@ -18632,6 +18657,10 @@ impl<'a> Machine<'a> {
             Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
+                // Keep descriptor calls on the labelled native bytes encoder.
+                if work == crate::text::Work::ENCODE && self.table.has_any("ext.builtin.bytes.encode") {
+                    return self.octet_routine(2, &values);
+                }
                 if work == crate::text::Work::JOIN && values.len() == 2 && matches!(values[0], Value::Text(_) | Value::Unpaired(_)) {
                     let items = self.gathered_members(&values[1])?;
                     if items.len() == 1 && matches!(items[0], Value::Text(_) | Value::Unpaired(_)) {
@@ -19204,6 +19233,7 @@ impl<'a> Machine<'a> {
                 Value::Blueprint(Rc::new(heir))
             }
             Prim::Regex => return crate::sre::invoke(v),
+            Prim::UnicodeDecomposition => return crate::sre::decompose(v),
             Prim::CopyWorth => {
                 n(2)?;
                 if let Value::Generator(_) = &v[0] {

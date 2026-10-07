@@ -5038,6 +5038,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.type_descriptors.clear` | - | - | `__clear_type_descriptors` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | `__uncaught` | - | `__uncaught_handler` | - | - | - | - | - |
+| `ext.builtin.unicodedata.decomposition` | - | - | `__unicode_decomposition` | - | - | - | - | - | - | - |
+| `ext.builtin.unicodedata.decomposition.metadata` | - | - | `decomposition` `unicodedata` | - | - | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
 | `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
