@@ -4850,7 +4850,8 @@ impl<'a> Machine<'a> {
             other => other.clone(),
         };
         let told=self.apply_class_member(bound,vec![given])?;
-        Ok(Some(told.is_true()))
+        let accepted = self.object_truth(&told)?;
+        Ok(Some(accepted))
     }
     /// The intrinsic words that name a kind of value rather than a piece
     /// of work. Only such a word stands for a class where `issubclass`
@@ -5046,7 +5047,8 @@ impl<'a> Machine<'a> {
         let Some(entry)=self.inherited_entry(&holder,&key) else{return Ok(None);};
         let bound=self.member_binding(entry,Some(choice.clone()),holder)?;
         let told=self.apply_class_member(bound,vec![given.clone()])?;
-        Ok(Some(told.is_true()))
+        let accepted = self.object_truth(&told)?;
+        Ok(Some(accepted))
     }
     /// The kind word a value reports, where it reports one: a class the
     /// program laid out and the native kind beneath it, a native word,

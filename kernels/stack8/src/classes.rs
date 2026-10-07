@@ -4664,7 +4664,7 @@ impl<'a> Engine<'a> {
             other => other.clone(),
         };
         let told=self.class_apply(bound,vec![given])?;
-        Ok(Some(self.truth(&told)))
+        Ok(Some(self.special_truth(&told)?))
     }
     /// The builtin words that name a kind of value rather than a piece
     /// of work. Only one of these stands as a class where `issubclass`
@@ -4820,7 +4820,7 @@ impl<'a> Engine<'a> {
         let Some(member)=self.class_value(&holder,&name) else{return Ok(None);};
         let bound=self.bind_class_value(member,Some(wanted.clone()),holder)?;
         let told=self.class_apply(bound,vec![given.clone()])?;
-        Ok(Some(self.truth(&told)))
+        Ok(Some(self.special_truth(&told)?))
     }
     /// The reference's walk along a `__bases__` line from `derived`
     /// towards the very `wanted`: a single base is stepped along and

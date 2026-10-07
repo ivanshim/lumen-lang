@@ -152,6 +152,11 @@ class EnvironmentVarGuard:
     def unset(self, envvar):
         del self[envvar]
 
+    # Delete through the guard so the context can restore every original value.
+    def clear(self):
+        for envvar in list(self._environ):
+            del self[envvar]
+
     def copy(self):
         return dict(self._environ)
 
