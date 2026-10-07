@@ -308,7 +308,7 @@ Separate runtime adapters preserve the existing private capture interface
 and use the Python warning backend during importlib bootstrap; they do not
 register an `_warnings` extension. The original importlib source files are
 unchanged. The external bootstrap adapter differs only in its warning
-backend import, besides its provenance header.
+backend import, besides its provenance docstring; source line positions are preserved.
 
 The v3.14.8 package calls `c_warnings._set_module(c_warnings)` unconditionally.
 When `import_fresh_module` returns `None` for the missing C backend, package

@@ -1,7 +1,5 @@
-# Runtime adapter derived from CPython v3.14.8 Lib/importlib/_bootstrap_external.py; PSF License.
-# Use the available Python warning backend without providing a C extension.
-"""Core implementation of path-based import.
-
+"""Runtime adapter: CPython v3.14.8 Lib/importlib/_bootstrap_external.py; PSF License.
+Use the Python warning backend while preserving original source line positions.
 This module is NOT meant to be directly imported! It has been designed such
 that it can be bootstrapped into Python as the implementation of import. As
 such it requires the injection of specific modules and attributes in order to
