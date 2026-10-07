@@ -792,3 +792,12 @@ class _Parser(_DeleteStatementParser):
                 break
             self.pop()
         return self.positioned(Delete, (first.srow, first.scol), end, targets=targets)
+
+# Inline and semicolon suites admit simple statements only.
+_InlineStatementParser = _Parser
+class _Parser(_InlineStatementParser):
+    def parse_simple_stmt(self):
+        token = self.peek()
+        if token.kind == 'name' and token.text in ('def', 'class', 'if', 'for', 'while', 'try', 'with', 'async', 'match'):
+            _syntax('invalid syntax')
+        return self.parse_stmt()

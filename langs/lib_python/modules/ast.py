@@ -1107,6 +1107,9 @@ class _Parser:
         return Module(body=body, type_ignores=[])
 
     def parse_stmt(self):
+        # A word that opens a block of its own is read here; anything
+        # else, the simple statement words included, is left to the
+        # simple-statement reader below.
         tok = self.peek()
         if tok.kind == 'name' and tok.text in _STMT_WORDS:
             _no_tree()
