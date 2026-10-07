@@ -5378,7 +5378,7 @@ impl<'a> Machine<'a> {
                             let answer=self.apply_class_member(bound,Vec::new())?;
                             let names=self.object_members(&answer)?;
                             let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
-                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                         }
                     }
                 }
@@ -5402,12 +5402,12 @@ impl<'a> Machine<'a> {
                             let answer=self.apply_class_member(method.clone(),Vec::new())?;
                             let names=self.object_members(&answer)?;
                             let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
-                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                         }
                     }
                     let keys = entries.into_iter().map(|entry| entry.0).collect();
                     let ordered = self.arranged(keys, &Value::Nil, false).map_err(Escape::from)?;
-                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                 }
             }
             // A thing with a directory method of its own answers with it,
@@ -5416,10 +5416,10 @@ impl<'a> Machine<'a> {
                 if let Some(answer)=self.ask_special(&values[0],75,&[])?{
                     let names=self.object_members(&answer)?;
                     let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
-                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                 }
             }
-            return Ok(self.ordinary_directory(&values[0]));
+            return Ok(self.ordinary_directory(&values[0]).keep(true));
         }
         if op==8 {return Err(self.wrong_count(&self.class_tool_word(8),1,values.len()));}
         // With the protocol spelled, a property is a thing of the
