@@ -4099,6 +4099,13 @@ impl<'a> Machine<'a> {
                     *returned.borrow_mut() = self.read_class_member(fault, "value", false)?;
                     *done.borrow_mut() = Value::Flag(true); Ok(None)
                 }
+                // Exhausted native slots have no exception instance or return payload.
+                Err(Escape::Error(message)) if self.rules.words_ext_stmt_class_special_stop.iter().any(|stop| {
+                    message.strip_prefix(stop).is_some_and(|tail| tail.is_empty() || tail.starts_with(':'))
+                }) => {
+                    done.replace(Value::Flag(true));
+                    Ok(None)
+                }
                 Err(away) => Err(away),
             };
         }

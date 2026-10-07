@@ -4932,6 +4932,11 @@ impl<'a> Engine<'a> {
                         *returned.borrow_mut() = self.class_get(value, "value", false)?;
                         *done.borrow_mut() = Value::Flag(true); Ok(None)
                     }
+                    // Native next slots report exhaustion without a raised value.
+                    Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|name| words == *name || words.starts_with(&format!("{}:", name))) => {
+                        *done.borrow_mut() = Value::Flag(true);
+                        Ok(None)
+                    }
                     Err(fault) => Err(fault),
                 };
             }
