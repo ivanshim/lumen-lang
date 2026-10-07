@@ -64,12 +64,78 @@ fn whole(v:&Value, bad:&dyn Fn(&str)->String)->Result<i64,String> {
     let n=match v.settled(){Value::Small(i)=>return Ok(i),Value::Flag(b)=>return Ok(b as i64),Value::Huge(i)=>i,_=>return Err(bad("arguments"))};
     Ok(n.to_i64().unwrap_or_else(||if n.is_negative(){i64::MIN}else{i64::MAX}))
 }
+// A count or a maximum split handed where a whole number belongs:
+// anything else, a bare None among them, is refused with the wording
+// the text kind's own `count` uses rather than the generic complaint.
+fn tally(v:&Value)->Result<i64,String>{
+    match v.settled(){
+        Value::Small(i)=>Ok(i),Value::Flag(b)=>Ok(b as i64),
+        Value::Huge(i)=>Ok(i.to_i64().unwrap_or_else(||if i.is_negative(){i64::MIN}else{i64::MAX})),
+        wrong=>Err(format!("TypeError: '{}' object cannot be interpreted as an integer",wrong.kind_word())),
+    }
+}
 fn letters(v:&Value,bad:&dyn Fn(&str)->String)->Result<String,String>{
     match v.settled(){Value::Text(chars)=>Ok(chars.to_string()),_=>Err(bad("arguments"))}
 }
 fn place(number:i64,size:usize)->usize {
     let positive=if number<0{number.saturating_add(size as i64).max(0)}else{number};
     (positive as usize).min(size)
+}
+
+/// Cut a run of code units on a separator run, or on runs of blank
+/// space where none was given, with at most `quota` cuts. An empty
+/// separator is refused and every piece keeps the units it held.
+pub(crate) fn cut_units(units: &[u32], separator: Option<&[u32]>, quota: usize, from_end: bool) -> Option<Vec<Vec<u32>>> {
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    if let Some(sep) = separator {
+        if sep.is_empty() { return None; }
+        let width = sep.len();
+        let mut fence = if from_end { units.len() } else { 0 };
+        while pieces.len() < quota {
+            let hit = if from_end {
+                if fence < width { None }
+                else { (0..=fence - width).rev().find(|&at| units[at..at + width] == sep[..]) }
+            } else if fence + width > units.len() { None }
+            else { (fence..=units.len() - width).find(|&at| units[at..at + width] == sep[..]) };
+            let Some(at) = hit else { break };
+            if from_end {
+                pieces.push(units[at + width..fence].to_vec());
+                fence = at;
+            } else {
+                pieces.push(units[fence..at].to_vec());
+                fence = at + width;
+            }
+        }
+        if from_end { pieces.push(units[..fence].to_vec()); pieces.reverse(); }
+        else { pieces.push(units[fence..].to_vec()); }
+    } else {
+        let gap = |n: u32| matches!(n, 0x1c..=0x1f) || char::from_u32(n).is_some_and(char::is_whitespace);
+        if from_end {
+            let mut fence = units.len();
+            loop {
+                while fence > 0 && gap(units[fence - 1]) { fence -= 1; }
+                if fence == 0 { break; }
+                if pieces.len() == quota { pieces.push(units[..fence].to_vec()); break; }
+                let mut at = fence;
+                while at > 0 && !gap(units[at - 1]) { at -= 1; }
+                pieces.push(units[at..fence].to_vec());
+                fence = at;
+            }
+            pieces.reverse();
+        } else {
+            let mut fence = 0;
+            loop {
+                while fence < units.len() && gap(units[fence]) { fence += 1; }
+                if fence >= units.len() { break; }
+                if pieces.len() == quota { pieces.push(units[fence..].to_vec()); break; }
+                let mut at = fence;
+                while at < units.len() && !gap(units[at]) { at += 1; }
+                pieces.push(units[fence..at].to_vec());
+                fence = at;
+            }
+        }
+    }
+    Some(pieces)
 }
 
 impl Request<'_> {
@@ -126,6 +192,12 @@ impl Request<'_> {
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
+            Value::Unpaired(numbers) if matches!(self.operation,"upper"|"lower") => self.case_units(&numbers),
+            Value::Unpaired(numbers) if matches!(self.operation,"find"|"rfind"|"index"|"rindex") => self.seek_units(&numbers),
+            Value::Unpaired(numbers) if self.operation=="replace" => self.swap_units(&numbers),
+            // Code units standing in for a stowed surrogate half still
+            // split, and each piece keeps the units it was cut from.
+            Value::Unpaired(numbers) if self.operation=="split" || self.operation=="rsplit" => self.split_units(&numbers),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
@@ -216,7 +288,23 @@ impl Request<'_> {
             let trimmed=if op=="lstrip"{s.trim_start_matches(removes)}else if op=="rstrip"{s.trim_end_matches(removes)}else{s.trim_matches(removes)};
             return Ok(Value::text(trimmed));
         }
-        if op=="split"||op=="rsplit"{return self.split_text(s);}
+        if op=="split"||op=="rsplit"{
+            self.takes(0, 2)?;
+            // The cut count is read first, as CPython reads it, so a
+            // supplied None or non-integer is refused before any cut.
+            if let Some(given) = self.given.get(1) {
+                match given.settled() {
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {}
+                    other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word())),
+                }
+            }
+            // A separator that stows a surrogate half cannot occur in a
+            // text that stows none, so no cut is made.
+            if matches!(self.given.first().map(|v| v.settled()), Some(Value::Unpaired(_))) {
+                return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(s)])).keep(true));
+            }
+            return self.split_text(s);
+        }
         if op=="join"{
             // Written into the one answer as the members come, rather
             // than into a row of pieces that is then thrown away.
@@ -363,41 +451,25 @@ impl Request<'_> {
         if location.is_none() && (operation == "index" || operation == "rindex") { return Err(self.fail("missing")); }
         Ok(Value::Small(location.map(|n| (left + n) as i64).unwrap_or(-1)))
     }
-    // A separator scans Python characters without requiring valid UTF-8.
     fn split_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 2)?;
-        let limit = self.given.get(1).map(|v| whole(v, self.complaint)).transpose()?.unwrap_or(-1);
-        let allowance = usize::try_from(limit).unwrap_or(usize::MAX);
-        let delimiter = self.given.first().map(Value::settled).filter(|v| !matches!(v, Value::Nil))
-            .map(|v| v.character_numbers().ok_or_else(|| self.fail("arguments"))).transpose()?;
-        if matches!(&delimiter, Some(row) if row.is_empty()) { return Err(self.fail("separator")); }
-        let reverse = self.operation == "rsplit";
-        let blank = |n: &u32| char::from_u32(*n).is_some_and(char::is_whitespace) || matches!(*n, 0x1c..=0x1f);
-        let (mut start, mut end) = (0, units.len());
-        let mut chunks = Vec::new();
-        loop {
-            if delimiter.is_none() {
-                if reverse { while end > start && blank(&units[end - 1]) { end -= 1; } }
-                else { while start < end && blank(&units[start]) { start += 1; } }
-                if start == end { break; }
-            }
-            let span = &units[start..end];
-            if chunks.len() >= allowance { chunks.push(Value::characters(span.to_vec())); break; }
-            let (position, width) = if let Some(pattern) = &delimiter {
-                let mut windows = span.windows(pattern.len());
-                (if reverse { windows.rposition(|part| part == pattern) } else { windows.position(|part| part == pattern) }, pattern.len())
-            } else { (if reverse { span.iter().rposition(blank) } else { span.iter().position(blank) }, 1) };
-            match position {
-                None => { chunks.push(Value::characters(span.to_vec())); break; }
-                Some(offset) => {
-                    let boundary = start + offset;
-                    if reverse { chunks.push(Value::characters(units[boundary + width..end].to_vec())); end = boundary; }
-                    else { chunks.push(Value::characters(units[start..boundary].to_vec())); start = boundary + width; }
-                }
-            }
-        }
-        if reverse { chunks.reverse(); }
-        Ok(Value::Vector(crate::tuples::Sequence::plain(chunks)).keep(true))
+        let separator = match self.given.first().map(|v| v.settled()) {
+            Some(Value::Nil) | None => None,
+            Some(v) => Some(v.character_numbers().ok_or_else(|| self.fail("arguments"))?),
+        };
+        let quota = match self.given.get(1) {
+            None => -1i64,
+            Some(v) => match v.settled() {
+                Value::Small(n) => n,
+                Value::Huge(n) => n.to_i64().unwrap_or_else(|| if n.is_negative() { i64::MIN } else { i64::MAX }),
+                Value::Flag(b) => i64::from(b),
+                other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.kind_word())),
+            },
+        };
+        let quota = if quota < 0 { usize::MAX } else { quota as usize };
+        let pieces = cut_units(units, separator.as_deref(), quota, self.operation == "rsplit")
+            .ok_or_else(|| self.fail("separator"))?;
+        Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect::<Vec<_>>())).keep(true))
     }
     fn trim_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 1)?;
@@ -434,6 +506,94 @@ impl Request<'_> {
         }
         Ok(Value::Flag(false))
     }
+    fn case_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 0)?;
+        // The scalars are cased through the same table `case_changed`
+        // uses, so a word-final sigma and the letters around a stowed
+        // surrogate half come out exactly as they do for a plain text;
+        // the stowed half itself is copied through untouched.
+        let shadow: Vec<char> = units.iter().map(|&code| char::from_u32(code).unwrap_or('\u{FFFE}')).collect();
+        let lowering = self.operation == "lower";
+        let mut shaped: Vec<u32> = Vec::with_capacity(units.len());
+        for (place, &code) in units.iter().enumerate() {
+            let Some(letter) = char::from_u32(code) else { shaped.push(code); continue };
+            if lowering {
+                if letter == '\u{3a3}' {
+                    let opened = shadow[..place].iter().rev().copied().find(|c| !crate::unicode::property(*c, 32));
+                    let closed = shadow[place + 1..].iter().copied().find(|c| !crate::unicode::property(*c, 32));
+                    if opened.map_or(false, |c| crate::unicode::property(c, 16)) && !closed.map_or(false, |c| crate::unicode::property(c, 16)) {
+                        shaped.push('\u{3c2}' as u32);
+                        continue;
+                    }
+                }
+                shaped.extend(crate::unicode::altered(letter, 0).chars().map(|c| c as u32));
+            } else {
+                shaped.extend(crate::unicode::altered(letter, 1).chars().map(|c| c as u32));
+            }
+        }
+        Ok(Value::characters(shaped))
+    }
+    fn seek_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(1, 3)?;
+        let sought = match self.given[0].settled().character_numbers() {
+            Some(numbers) => numbers,
+            None => return Err(self.fail("arguments")),
+        };
+        let size = units.len() as i64;
+        let mut begin = self.number(1, 0)?;
+        let mut finish = self.number(2, size)?;
+        if begin < 0 { begin = (size + begin).max(0); }
+        if finish < 0 { finish = (size + finish).max(0); }
+        let beyond = begin > size;
+        let begin = begin.clamp(0, size) as usize;
+        let finish = finish.clamp(0, size) as usize;
+        let reverse = matches!(self.operation, "rfind" | "rindex");
+        let mut answer: Option<usize> = None;
+        if begin <= finish {
+            let region = &units[begin..finish];
+            if sought.is_empty() {
+                if !beyond { answer = Some(if reverse { finish } else { begin }); }
+            } else if sought.len() <= region.len() {
+                let last = region.len() - sought.len();
+                let mut walk: Box<dyn Iterator<Item = usize>> = if reverse { Box::new((0..=last).rev()) } else { Box::new(0..=last) };
+                answer = walk.find(|&at| region[at..at + sought.len()] == sought[..]).map(|at| begin + at);
+            }
+        }
+        if answer.is_none() && matches!(self.operation, "index" | "rindex") { return Err(self.fail("substring")); }
+        Ok(Value::Small(answer.map_or(-1, |at| at as i64)))
+    }
+    fn swap_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(2, 3)?;
+        let sought = match self.given[0].settled().character_numbers() {
+            Some(numbers) => numbers,
+            None => return Err(self.fail("arguments")),
+        };
+        let replacement = match self.given[1].settled().character_numbers() {
+            Some(numbers) => numbers,
+            None => return Err(self.fail("arguments")),
+        };
+        let bound = match self.given.get(2) { None => -1, Some(value) => tally(value)? };
+        let maximum = if bound < 0 { usize::MAX } else { bound as usize };
+        let mut made: Vec<u32> = Vec::new();
+        if sought.is_empty() {
+            let mut used = 0usize;
+            if used < maximum { made.extend_from_slice(&replacement); used += 1; }
+            for &unit in units {
+                made.push(unit);
+                if used < maximum { made.extend_from_slice(&replacement); used += 1; }
+            }
+        } else {
+            let mut cursor = 0usize;
+            let mut used = 0usize;
+            while cursor < units.len() {
+                let fits = used < maximum && cursor + sought.len() <= units.len() && units[cursor..cursor + sought.len()] == sought[..];
+                if fits { made.extend_from_slice(&replacement); cursor += sought.len(); used += 1; }
+                else { made.push(units[cursor]); cursor += 1; }
+            }
+        }
+        Ok(Value::characters(made))
+    }
+
     fn search_text(&self,s:&str)->ResultValue{
         self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;
         let lo=place(raw,length);let hi=place(self.number(2,length as i64)?,length);

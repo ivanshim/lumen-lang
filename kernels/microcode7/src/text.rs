@@ -79,6 +79,8 @@ pub fn fit_names(table: &Table, work: Work, values: &mut Vec<Value>, named: Vec<
             return Err(if method.is_empty() { complaint(table,"arguments") } else { format!("TypeError: '{name}' is an invalid keyword argument for {method}()") });
         };
         if position < filled || !assigned.insert(position) { return Err(complaint(table,"arguments")); }
+        // Fill an omitted encoding without replacing an explicit None argument.
+        if work == Work::ENCODE && values.len() == 1 && position == 2 { values.push(Value::text("utf-8")); }
         values.resize(values.len().max(position+1),Value::Nil);
         values[position]=value;
     }
@@ -233,6 +235,28 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
     Ok(Value::Dict(Rc::new(entries.into())))
 }
 
+/// Split a text or a row of stowed code units on a separator of
+/// either kind, validating the cut count the way CPython does.
+fn split_unpaired(input: &[Value], from_end: bool, table: &Table) -> Result<Value, String> {
+    if input.len() > 3 { return Err(complaint(table, "arguments")); }
+    let units = input[0].character_numbers().ok_or_else(|| complaint(table, "receiver"))?;
+    let separator = match input.get(1) {
+        None => None,
+        Some(v) => match v.settled() {
+            Value::Nil => None,
+            other => Some(other.character_numbers().ok_or_else(|| complaint(table, "arguments"))?),
+        },
+    };
+    let quota = match input.get(2) {
+        None => -1i64,
+        Some(v) => count(v, table)?,
+    };
+    let quota = if quota < 0 { usize::MAX } else { quota as usize };
+    let pieces = crate::members::cut_units(&units, separator.as_deref(), quota, from_end)
+        .ok_or_else(|| complaint(table, "separator"))?;
+    Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect::<Vec<_>>())).keep(true))
+}
+
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
     let settled: Vec<Value> = input.iter().map(Value::settled).collect();
     let input = settled.as_slice();
@@ -263,7 +287,89 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
-    if let Some(Value::Unpaired(numbers)) = input.first() {
+    if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
+        let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
+        let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
+        let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
+        if matches!(work, STRIP | LSTRIP | RSTRIP) {
+            let method = if work == STRIP { "strip" } else if work == LSTRIP { "lstrip" } else { "rstrip" };
+            if input.len() >= 3 { return Err(format!("TypeError: {method} expected at most 1 argument, got {}", input.len() - 1)); }
+            let selected = match input.get(1) { None | Some(Value::Nil) => None, Some(item) => Some(unpack(item).map_err(|_| format!("TypeError: {method} arg must be None or str"))?) };
+            let ignores = |point: &u32| match &selected { Some(points) => points.contains(point), None => char::from_u32(*point).map_or(false, blank) };
+            let left = if work == RSTRIP { 0 } else { numbers.iter().take_while(|point| ignores(point)).count() };
+            let tail = &numbers[left..];
+            let right = if work == LSTRIP { tail.len() } else { tail.len() - tail.iter().rev().take_while(|point| ignores(point)).count() };
+            return Ok(Value::characters(tail[..right].to_vec()));
+        }
+        if matches!(work, STARTSWITH | ENDSWITH | COUNT | INDEX | RINDEX | FIND | RFIND) {
+            if input.len() < 2 || input.len() > 4 { return Err(complaint(table, "arguments")); }
+            let limits = [0, numbers.len() as i64];
+            let mut bounds = [0usize; 2];
+            for (place, fallback) in limits.into_iter().enumerate() {
+                let index = match input.get(place + 2) { None | Some(Value::Nil) => fallback, Some(item) => count(item)? };
+                bounds[place] = if index >= 0 { index as usize } else { (index.saturating_add(numbers.len() as i64)).max(0) as usize };
+            }
+            bounds[1] = bounds[1].min(numbers.len());
+            let usable = bounds[0] <= bounds[1];
+            let span = if usable { &numbers[bounds[0]..bounds[1]] } else { &[] };
+            if work == STARTSWITH || work == ENDSWITH {
+                let options = match &input[1] {
+                    Value::Tuple(items) => items.to_vec(),
+                    Value::TextRow(items, true) => items.iter().map(|word| Value::text(word)).collect(),
+                    Value::Text(_) | Value::Unpaired(_) => vec![input[1].clone()],
+                    item => return Err(format!("TypeError: {} first arg must be str or a tuple of str, not {}", if work == STARTSWITH { "startswith" } else { "endswith" }, item.kind_word())),
+                };
+                for option in options {
+                    let candidate = unpack(&option).map_err(|_| format!("TypeError: tuple for {} must only contain str, not {}", if work == STARTSWITH { "startswith" } else { "endswith" }, option.kind_word()))?;
+                    if usable && match work { STARTSWITH => span.starts_with(&candidate), _ => span.ends_with(&candidate) } { return Ok(Value::Flag(true)); }
+                }
+                return Ok(Value::Flag(false));
+            }
+            let method = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", _ => "count" };
+            let pattern = unpack(&input[1]).map_err(|_| format!("TypeError: {method}() argument 1 must be str, not {}", input[1].kind_word()))?;
+            let matches = |offset: usize| usable && pattern.len() <= span.len().saturating_sub(offset) && span[offset..].starts_with(&pattern);
+            if work == COUNT {
+                let mut cursor = 0; let mut total = 0;
+                while cursor <= span.len() { if matches(cursor) { total += 1; cursor += pattern.len().max(1); } else { cursor += 1; } }
+                return Ok(Value::Small(total));
+            }
+            let offsets = 0..=span.len();
+            let position = if work == RINDEX || work == RFIND { offsets.rev().find(|at| matches(*at)) } else { offsets.into_iter().find(|at| matches(*at)) };
+            if let Some(position) = position { return Ok(Value::Small((bounds[0] + position) as i64)); }
+            return if work == INDEX || work == RINDEX { Err(complaint(table, "missing")) } else { Ok(Value::Small(-1)) };
+        }
+        if work==LENGTH && input.len()==1 {return Ok(Value::Small(numbers.len() as i64))}
+        if work==REPLACE {
+            if input.len()<3||input.len()>4{return Err(complaint(table,"arguments"))}
+            let pattern=unpack(&input[1])?;let replacement=unpack(&input[2])?;
+            let maximum=input.get(3).map_or(Ok(-1),count)?;
+            let mut result=Vec::new();let mut matches=0;let mut offset=0;
+            while offset<=numbers.len(){
+                let found=(maximum<0||matches<maximum)&&numbers[offset..].starts_with(&pattern);
+                if found {result.extend(replacement.iter().copied());matches+=1;if pattern.len()>0 {offset+=pattern.len();continue}}
+                match numbers.get(offset){Some(number)=>{result.push(*number);offset+=1},None=>break}
+            }
+            return Ok(Value::characters(result));
+        }
+        if matches!(work,SPLIT|RSPLIT) && input.len()<4 {
+            let delimiter=match input.get(1){Some(item) if !matches!(item,Value::Nil)=>Some(unpack(item)?),_=>None};
+            if matches!(&delimiter,Some(row) if row.len()==0){return Err(String::from("ValueError: empty separator"))}
+            let maximum=input.get(2).map_or(Ok(-1),count)?;
+            let from_right=work==RSPLIT;let mut subject=numbers.to_vec();let mut delimiter=delimiter;
+            if from_right {subject.reverse();delimiter.iter_mut().for_each(|row|row.reverse());}
+            let blank=|n:u32|char::from_u32(n).map_or(false,char::is_whitespace);
+            let mut cursor=0;
+            if delimiter.is_none(){while subject.get(cursor).is_some_and(|n|blank(*n)){cursor+=1;}}
+            let mut beginning=cursor;let mut pieces=Vec::new();let mut splits=0;
+            while cursor<subject.len(){
+                if maximum>=0 && splits>=maximum {break}
+                let width=delimiter.as_ref().map_or_else(||usize::from(blank(subject[cursor])),|row|if subject[cursor..].starts_with(row){row.len()}else{0});
+                if width>0 {pieces.push(subject[beginning..cursor].to_vec());splits+=1;cursor+=width;if delimiter.is_none(){while subject.get(cursor).is_some_and(|n|blank(*n)){cursor+=1;}}beginning=cursor;}else{cursor+=1;}
+            }
+            if delimiter.is_some()||beginning<subject.len(){pieces.push(subject[beginning..].to_vec());}
+            if from_right {pieces.iter_mut().for_each(|row|row.reverse());pieces.reverse();}
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect())));
+        }
         if work == NEWARGS {
             if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
             return Ok(Value::tuple(vec![Value::characters(numbers.to_vec())]));
@@ -273,6 +379,9 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let mut operands = input.to_vec(); operands[0] = Value::text(&string);
             let answer = apply(table, work, _name, &operands, names)?;
             return Ok(if work == ISASCII { Value::Flag(false) } else { answer });
+        }
+        if matches!(work, SPLIT | RSPLIT) {
+            return split_unpaired(input, work == RSPLIT, table);
         }
     }
     let Some(Value::Text(subject))=input.first() else {return Err(complaint(table,"receiver"));};
@@ -395,6 +504,9 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         SPLIT|RSPLIT=>{
             let maximum=g.whole(1,-1)?;
             let quota=if maximum<0 {usize::MAX} else {maximum as usize};
+            if matches!(g.tail.first(), Some(Value::Unpaired(_))) {
+                return split_unpaired(input, work == RSPLIT, table);
+            }
             let on=match g.tail.first() {None|Some(Value::Nil)=>None,Some(v)=>Some(letters(v,table)?)};
             let mut divided=Vec::new();let mut remaining=source;
             if on==Some("") {return Err(g.bad("separator"));}

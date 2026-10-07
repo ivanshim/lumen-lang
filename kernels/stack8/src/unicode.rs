@@ -6501,3 +6501,23 @@ pub fn normalized(text: &str) -> String {
     }
     out.into_iter().map(|point| char::from_u32(point).unwrap_or('\u{FFFD}')).collect()
 }
+
+/// The decomposition mapping UnicodeData.txt writes for a code point,
+/// the compatibility tag included exactly as it is spelled there. A
+/// Hangul syllable has no mapping here; its algorithmic decomposition
+/// belongs to normalization. Unlisted characters return an empty mapping.
+pub fn decomposition(point: u32) -> String {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static MAPPINGS: OnceLock<HashMap<u32, String>> = OnceLock::new();
+    let mappings = MAPPINGS.get_or_init(|| {
+        let mut table = HashMap::new();
+        for line in include_str!("../../../unicode-data/UnicodeData.txt").lines() {
+            let cells: Vec<&str> = line.split(';').collect();
+            if cells.len() < 6 || cells[5].is_empty() { continue; }
+            if let Ok(code) = u32::from_str_radix(cells[0], 16) { table.insert(code, cells[5].to_owned()); }
+        }
+        table
+    });
+    mappings.get(&point).cloned().unwrap_or_default()
+}

@@ -3720,3 +3720,21 @@ pub fn collated(text: &str) -> String {
     }
     joined.iter().map(|point| char::from_u32(*point).unwrap_or('\u{FFFD}')).collect()
 }
+
+/// The decomposition UnicodeData.txt writes for a code point, tag and
+/// all. Unlisted points, including Hangul syllables, have no database mapping.
+pub fn decomposition(point: u32) -> String {
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+    static WRITTEN: OnceLock<BTreeMap<u32, String>> = OnceLock::new();
+    let written = WRITTEN.get_or_init(|| {
+        let mut table = BTreeMap::new();
+        for record in include_str!("../../../unicode-data/UnicodeData.txt").lines() {
+            let columns: Vec<&str> = record.split(';').collect();
+            if columns.len() < 6 || columns[5].is_empty() { continue; }
+            if let Ok(code) = u32::from_str_radix(columns[0], 16) { table.insert(code, columns[5].to_string()); }
+        }
+        table
+    });
+    written.get(&point).cloned().unwrap_or_default()
+}

@@ -285,6 +285,20 @@ class BytesIO(_BufferedIOBase):
         self._pos += len(data)
         return data
     def write(self, b):
+        # Immutable exact bytes need no temporary export or snapshot.
+        if type(b) is bytes:
+            self._checkClosed()
+            self._check_exports()
+            n = len(b)
+            if not n:
+                return 0
+            if self._pos > sys.maxsize - n:
+                raise OverflowError('new position too large')
+            if self._pos > len(self._data):
+                self._data.extend(b'\0' * (self._pos - len(self._data)))
+            self._data[self._pos:self._pos + n] = b
+            self._pos += n
+            return n
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
