@@ -7722,3 +7722,26 @@
 {"t":"2026-10-07T19:19:44Z","event":"review-queued","job":"dsflash-yieldfrom","review":"review-auto-dsflash-yieldfrom-1919"}
 {"t":"2026-10-07T19:19:48Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-07T19:20:34Z","event":"review-started","job":"dsflash-yieldfrom","review":"review-auto-dsflash-yieldfrom-1919"}
+{"t":"2026-10-07T19:22:01Z","event":"exited","job":"dsflash-type-aliases","code":0}
+{"t":"2026-10-07T19:24:53Z","event":"finished","job":"dsflash-type-aliases","exit_time":"2026-10-07T19:22:01Z"}
+{"t":"2026-10-07T19:24:53Z","event":"review-queued","job":"dsflash-type-aliases","review":"review-auto-dsflash-type-aliases-1924"}
+{"t":"2026-10-07T19:24:56Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T19:26:01Z","event":"exited","job":"review-auto-dsflash-yieldfrom-1919","code":0}
+{"t":"2026-10-07T19:26:22Z","event":"exited","job":"dsflash-rlcompleter-sol","code":0}
+{"t":"2026-10-07T19:27:36Z","event":"resumed","job":"stdlib-typing-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T19:28:31Z","event":"exited","job":"dsflash-ucn","code":0}
+{"t":"2026-10-07T19:30:01Z","event":"finished","job":"dsflash-rlcompleter-sol","exit_time":"2026-10-07T19:26:22Z"}
+{"t":"2026-10-07T19:30:01Z","event":"review-queued","job":"dsflash-rlcompleter-sol","review":"review-auto-dsflash-rlcompleter-sol-1929"}
+{"t":"2026-10-07T19:30:03Z","event":"finished","job":"dsflash-ucn","exit_time":"2026-10-07T19:28:31Z"}
+{"t":"2026-10-07T19:30:03Z","event":"review-queued","job":"dsflash-ucn","review":"review-auto-dsflash-ucn-1930"}
+{"t":"2026-10-07T19:30:07Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T19:32:37Z","event":"review-started","job":"dsflash-type-aliases","review":"review-auto-dsflash-type-aliases-1924"}
+{"t":"2026-10-07T19:33:22Z","event":"handed-over","job":"dsflash-yieldfrom","review":"review-auto-dsflash-yieldfrom-1919","commit":"9df89129f","round":3,"note":"(3rd; new yield-from delegation wrapper lets native iterator exhaustion escape as 'generator raised StopIteration': calendar test_itermonthdays/itermonthdays2 dot->E both kernels; yield_from 34->43/43 both kept; overlaps 21d patma) -> GPT-6.1 Sol (brief-dsflash-yieldfrom-sol.md, queued sol-new dsflash-yieldfrom-sol)"}
+{"t":"2026-10-07T19:33:22Z","event":"queued","job":"dsflash-yieldfrom-sol","model":"gpt-6.1-sol","line":"sol-new dsflash-yieldfrom-sol"}
+{"t":"2026-10-07T19:35:21Z","event":"exited","job":"review-auto-dsflash-type-aliases-1924","code":0}
+{"t":"2026-10-07T19:37:39Z","event":"review-started","job":"dsflash-rlcompleter-sol","review":"review-auto-dsflash-rlcompleter-sol-1929"}
+{"t":"2026-10-07T19:37:41Z","event":"queued","job":"dsflash-stringprep","model":"deepseek-flash","line":"ds-new dsflash-stringprep deepseek-flash","note":"DS Flash slot fed (9/12 running): test_stringprep (library, not-yet, small), fresh worktree on main 589a950a9"}
+{"t":"2026-10-07T19:37:41Z","event":"queued","job":"dsflash-genericalias","model":"deepseek-flash","line":"ds-new dsflash-genericalias deepseek-flash","note":"DS Flash slot fed (9/12 running): test_genericalias (language, not-yet, medium), fresh worktree on main 589a950a9"}
+{"t":"2026-10-07T19:37:41Z","event":"queued","job":"dsflash-code-module","model":"deepseek-flash","line":"ds-new dsflash-code-module deepseek-flash","note":"DS Flash slot fed (9/12 running): test_code_module (library, not-yet, medium), fresh worktree on main 589a950a9"}
+{"t":"2026-10-07T19:38:01Z","event":"quota","codex_week_used":39,"codex_credits":0,"claude_week_used":2,"claude_5h_used":8,"kimi_5h_used":0,"kimi_month_used":0.9285,"kimi_code_used":0,"deepseek_usd":327.45}
+{"t":"2026-10-07T19:38:05Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":39,"expected":38.9,"gap":"+0.1","status":"ok"}
