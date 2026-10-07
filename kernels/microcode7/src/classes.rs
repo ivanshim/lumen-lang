@@ -3231,6 +3231,8 @@ impl<'a> Machine<'a> {
                 for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
                     if passed {
                         if key == self.detail("allocate") {
+                            let declared_allocator = Self::own_entry(base, key);
+                            if declared_allocator.is_some() { return Ok(declared_allocator.unwrap()); }
                             if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                                 return Ok(Self::wrap(14, vec![Value::text(&native)]));
                             }
@@ -4136,6 +4138,34 @@ impl<'a> Machine<'a> {
         if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
     }
+    fn reclassification_storage_matches(&self, old: &Rc<Blueprint>, new: &Rc<Blueprint>) -> bool {
+        if Rc::ptr_eq(old, new) { return true; }
+        if !(self.slots_named(old) || self.slots_named(new)) { return true; }
+        let parents_identical = old.under.as_ref().zip(new.under.as_ref()).is_some_and(|(a, b)| Rc::ptr_eq(a, b));
+        if !parents_identical { return false; }
+        if self.admits_weak(old) != self.admits_weak(new) { return false; }
+        let dictionary = self.detail("namespace");
+        if self.allowed_slot(old, dictionary) != self.allowed_slot(new, dictionary) { return false; }
+        let normalized = |blueprint: &Blueprint| -> Vec<String> {
+            let mut slots = Vec::new();
+            if let Some(value) = Self::own_entry(blueprint, self.detail("slots")) {
+                let entries = match value.settled() {
+                    Value::Dict(map) => map.pairs().iter().map(|(key, _)| key.clone()).collect(),
+                    Value::Vector(items) | Value::Tuple(items) => items.as_ref().clone(),
+                    item => vec![item],
+                };
+                for entry in entries {
+                    if let Value::Text(word) = entry {
+                        if !matches!(word.as_ref(), "__weakref__" | "__dict__") {
+                            slots.push(crate::build::member_spelling(&blueprint.name, &word));
+                        }
+                    }
+                }
+            }
+            slots.sort_unstable(); slots
+        };
+        normalized(old) == normalized(new)
+    }
     /// A weak-reference slot is inherited even when a child declares no
     /// new storage. Variable-sized integer, tuple and byte layouts cannot add it.
     pub(super) fn admits_weak(&self, b: &Blueprint) -> bool {
@@ -4437,8 +4467,15 @@ impl<'a> Machine<'a> {
                             let compatible = Self::own_entry(&previous, self.detail("module")).is_some()
                                 && Self::own_entry(&next, self.detail("module")).is_some()
                                 && Self::native_beneath(&previous) == Self::native_beneath(&next)
-                                && !self.slots_named(&previous) && !self.slots_named(&next);
+                                && self.reclassification_storage_matches(&previous, &next);
                             if !compatible { return Err("TypeError: __class__ assignment: object layout differs".to_owned().into()); }
+                            let old_tag = format!(":{:p}", Rc::as_ptr(&previous));
+                            let new_tag = format!(":{:p}", Rc::as_ptr(&next));
+                            for entry in t.holds.borrow_mut().iter_mut() {
+                                if let Some(prefix) = entry.0.strip_suffix(&old_tag).filter(|name| name.starts_with("\0slot:")) {
+                                    entry.0 = format!("{prefix}{new_tag}");
+                                }
+                            }
                             t.reclassified.replace(Some(next));
                             return Ok(Value::Nil);
                         }
@@ -5478,7 +5515,10 @@ impl<'a> Machine<'a> {
             // its constructing in silence, and answers the kind's methods
             // through the worth the thing keeps.
             if let Some(word)=Self::native_word(b) {
-                if key==self.detail("allocate"){return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);}
+                if key==self.detail("allocate") {
+                    if let Some(entry) = Self::own_entry(b, key) { return self.apply_class_member(entry, args); }
+                    return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);
+                }
                 if word == "module" && self.rules.specials.get(1).is_some_and(|name| name == key) { return self.describe_module(receiver); }
                 if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key){
                     if word == "module" { return self.fill_module(receiver, args); }

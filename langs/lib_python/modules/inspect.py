@@ -385,7 +385,11 @@ class Signature:
             parts.append('**' + names[cursor])
         result = cls()
         result._text = '(' + ', '.join(parts) + ')'
-        annotations = getattr(obj, '__annotations__', None) or {}
+        import annotationlib
+        annotations = annotationlib.get_annotations(
+            obj, globals=globals, locals=locals, eval_str=eval_str,
+            format=annotation_format,
+        )
         ordered = []
         keyword = {}
         for i in range(1 if bound else 0, count):

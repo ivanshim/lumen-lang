@@ -31,7 +31,9 @@ def get_annotate_from_class_namespace(obj):
             _check_format(format)
             result = {}
             for index in range(0, len(rows), 2):
-                result[rows[index]] = rows[index + 1]()
+                thunk = rows[index + 1]
+                result[rows[index]] = (_forward_annotation(thunk)
+                                       if format == Format.FORWARDREF else thunk())
             return result
         return annotate
 
@@ -42,9 +44,8 @@ def call_annotate_function(annotate, format, owner=None):
     except NotImplementedError:
         if format != Format.FORWARDREF:
             raise
-        # Native annotation functions support VALUE; resolved expressions
-        # have the same result in FORWARDREF format.
-        return annotate(Format.VALUE)
+        # Retry VALUE with symbolic bindings for names that cannot be resolved.
+        return _forward_annotation(annotate, (Format.VALUE,), owner)
 
 def call_evaluate_function(evaluate, format, owner=None):
     _check_format(format)
@@ -52,18 +53,31 @@ def call_evaluate_function(evaluate, format, owner=None):
 
 def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1):
     _check_format(format)
+    if eval_str and format != Format.VALUE:
+        raise ValueError('eval_str=True is only supported with format=Format.VALUE')
+    stored = None
+    if format == Format.VALUE:
+        stored = getattr(obj, '__annotations__', None)
+    else:
+        try:
+            stored = getattr(obj, '__annotations__', None)
+        except Exception:
+            pass
+    if stored is not None:
+        if not isinstance(stored, dict):
+            raise ValueError(f'{obj!r}.__annotations__ is neither a dict nor None')
+        if not eval_str:
+            return dict(stored)
+        raise NotImplementedError('annotationlib cannot evaluate string annotations here')
     annotate = getattr(obj, '__annotate__', None)
     if annotate is not None:
         result = call_annotate_function(annotate, format, owner=obj)
-        if result is None:
-            return {}
+        if not isinstance(result, dict):
+            raise ValueError(f'{obj!r}.__annotate__ returned a non-dict')
         return dict(result)
-    stored = getattr(obj, '__annotations__', None)
-    if stored is None:
+    if isinstance(obj, type) or callable(obj) or isinstance(obj, types.ModuleType):
         return {}
-    if eval_str:
-        raise 'NotImplementedError: annotationlib cannot evaluate string annotations here'
-    return dict(stored)
+    raise TypeError(f'{obj!r} does not have annotations')
 
 # Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/annotationlib.py; PSF License.
 # ForwardRef uses conditionals for formats; symbolic AST transformation is unavailable.
@@ -354,3 +368,95 @@ def _rewrite_star_unpack(arg):
         return f"({arg},)[0]"  # E.g. (*Ts,)[0] or (*tuple[int, int],)[0]
     else:
         return arg
+
+
+# Deferred annotation readers evaluate unresolved names as symbolic expressions.
+# Restore the original namespace after each read, including exceptional exits.
+def _annotation_operand(value):
+    if isinstance(value, _AnnotationExpression):
+        return value.expression
+    if isinstance(value, ForwardRef):
+        return value.__forward_arg__
+    if isinstance(value, type):
+        prefix = '' if value.__module__ == 'builtins' else value.__module__ + '.'
+        return prefix + value.__qualname__
+    return repr(value)
+
+
+_annotation_symbols = None
+
+
+class _AnnotationExpression:
+    __slots__ = _SLOTS
+
+    def __init__(self, expression):
+        ForwardRef.__init__(self, expression)
+        if _annotation_symbols is not None:
+            _annotation_symbols.append(self)
+
+    @property
+    def expression(self):
+        return self.__arg__
+
+    def __iter__(self):
+        return iter((_AnnotationExpression('*' + self.expression),))
+
+    def __getitem__(self, arguments):
+        if not isinstance(arguments, tuple):
+            arguments = (arguments,)
+        return _AnnotationExpression(self.expression + '[' +
+                                     ', '.join(_annotation_operand(x) for x in arguments) + ']')
+
+    def __getattr__(self, name):
+        return _AnnotationExpression(self.expression + '.' + name)
+
+    def __or__(self, other):
+        return _AnnotationExpression(self.expression + ' | ' + _annotation_operand(other))
+
+    def __ror__(self, other):
+        return _AnnotationExpression(_annotation_operand(other) + ' | ' + self.expression)
+
+    def __call__(self, *args, **kwargs):
+        parts = [_annotation_operand(x) for x in args]
+        parts.extend(k + '=' + _annotation_operand(v) for k, v in kwargs.items())
+        return _AnnotationExpression(self.expression + '(' + ', '.join(parts) + ')')
+
+
+def _forward_annotation(thunk, arguments=(), owner=None):
+    namespace = getattr(thunk, '__globals__', None)
+    module = getattr(thunk, '__module__', None)
+    if namespace is None and owner is not None:
+        module = getattr(owner, '__module__', None)
+        namespace = vars(sys.modules[module]) if module in sys.modules else None
+    if namespace is None:
+        return thunk(*arguments)
+    readers = [thunk]
+    if isinstance(owner, type):
+        readers.extend(getattr(owner, '\0annotate', ())[1::2])
+    names = []
+    for reader in readers:
+        code = getattr(reader, '__code__', None)
+        if code is not None:
+            names.extend(code.co_names)
+    inserted = []
+    global _annotation_symbols
+    previous = _annotation_symbols
+    symbols = []
+    _annotation_symbols = symbols
+    try:
+        for name in names:
+            if name not in namespace and not hasattr(builtins, name):
+                namespace[name] = _AnnotationExpression(name)
+                inserted.append(name)
+        result = thunk(*arguments)
+        for value in symbols:
+            value.__forward_module__ = module
+            value.__owner__ = owner
+            value.__globals__ = namespace
+            value.__forward_is_class__ = isinstance(owner, type)
+            value.__class__ = ForwardRef
+        return result
+    finally:
+        _annotation_symbols = previous
+        for name in inserted:
+            del namespace[name]
