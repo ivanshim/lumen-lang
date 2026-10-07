@@ -9405,8 +9405,19 @@ impl<'a> Engine<'a> {
                 Value::array(items).held(true)
             }
             Builtin::List if args.len() == 1 => {
-                self.length_hint_probe(&args[0])?;
-                let row = Value::array(self.special_items(&args[0])?);
+                // The reference takes the walk before it asks for the
+                // guess, so a state the walk lays down is there to be
+                // read, and then draws out that very walk.
+                let row = {
+                    let source = args[0].contents();
+                    if matches!(source, Value::Object(_)) {
+                        let walk = self.core_iterator(&source)?;
+                        self.length_hint_probe(&source)?;
+                        Value::array(self.special_items(&walk)?)
+                    } else {
+                        Value::array(self.special_items(&args[0])?)
+                    }
+                };
                 // What a cursor hands out is quoted as a window's members are.
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { row.held(true) } else { row }
             },
@@ -16318,8 +16329,10 @@ impl<'a> Engine<'a> {
         let mut args = args;
         if operation == "extend" && args.len() == 1 && matches!(receiver.contents(), Value::Array(_))
             && !matches!(args[0].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
-            self.length_hint_probe(&args[0])?;
-            args[0] = Value::array(self.comprehension_items(&args[0])?);
+            let source = args[0].contents();
+            let walk = self.core_iterator(&source)?;
+            self.length_hint_probe(&source)?;
+            args[0] = Value::array(self.comprehension_items(&walk)?);
         }
         // A mapping subclass whose subscript member was read off the
         // thing itself reaches its `__missing__` through the subscript
@@ -17365,8 +17378,8 @@ impl<'a> Engine<'a> {
             Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
             other => {
-                self.length_hint_probe(other)?;
                 let walk = self.core_iterator(other)?;
+                self.length_hint_probe(other)?;
                 let mut bytes = Vec::new();
                 while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_number(&item, false)?); }
                 Ok(bytes)
@@ -17397,33 +17410,77 @@ impl<'a> Engine<'a> {
     }
 
     /// The guess at how many members an iterable holds, asked of an
-    /// object the way the reference asks it before gathering: its
-    /// length where it has one, else its own `__length_hint__`. What
-    /// the length raises stops the gathering, save a TypeError, which
-    /// is forgotten and the hint asked instead; a hint of
-    /// NotImplemented is no hint, and a hint that is no whole number
-    /// or lies below nought is refused in the reference's words. Only
-    /// what asking the guess does matters, never the guess itself.
+    /// object the way the reference asks it before gathering. Its
+    /// length is asked first, where its kind has one, and what that
+    /// length raises stops the gathering -- save a TypeError, which the
+    /// reference forgets and then asks the object's own
+    /// `__length_hint__` instead. A length that is no whole number
+    /// becomes that same TypeError, a length below nought is a
+    /// ValueError, and one past the largest index is an OverflowError.
+    /// The hint is read the same way: a TypeError raised by the hint is
+    /// forgotten, NotImplemented is no hint, a hint that is no whole
+    /// number is a TypeError, one below nought a ValueError, and one
+    /// outside the index range an OverflowError. Only what asking the
+    /// guess does matters, never the guess itself.
     fn length_hint_probe(&mut self, value: &Value) -> Res<()> {
         match self.special_call(value, 10, Vec::new()) {
-            Ok(Some(_)) => return Ok(()),
+            Ok(Some(length)) => {
+                let whole = if matches!(length, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    Some(length)
+                } else {
+                    match self.special_index(&length) {
+                        Ok(found) => found,
+                        Err(fault) => {
+                            if !self.forget_type_error() { return Err(fault); }
+                            None
+                        }
+                    }
+                };
+                if let Some(number) = whole {
+                    let number = number.as_big()?;
+                    if number.is_negative() {
+                        return Err("ValueError: __len__() should return >= 0".to_string());
+                    }
+                    if number > BigInt::from(i64::MAX) {
+                        return Err("OverflowError: cannot fit 'int' into an index-sized integer".to_string());
+                    }
+                    return Ok(());
+                }
+            }
             Ok(None) => {}
             Err(fault) => {
-                let forgotten = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false));
-                if !forgotten { return Err(fault); }
-                self.carried = None;
+                if !self.forget_type_error() { return Err(fault); }
             }
         }
-        if let Some(hint) = self.special_call(value, 78, Vec::new())? {
-            if matches!(hint, Value::Declined(_)) { return Ok(()); }
-            if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
-                return Err(format!("TypeError: __length_hint__ must be integer, not {}", hint.core_kind()));
+        match self.special_call(value, 78, Vec::new()) {
+            Ok(Some(hint)) => {
+                if matches!(hint, Value::Declined(_)) { return Ok(()); }
+                if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return Err(format!("TypeError: __length_hint__ must be an integer, not {}", hint.core_kind()));
+                }
+                let number = hint.as_big()?;
+                if number < BigInt::from(i64::MIN) || number > BigInt::from(i64::MAX) {
+                    return Err("OverflowError: Python int too large to convert to C ssize_t".to_string());
+                }
+                if number.is_negative() {
+                    return Err("ValueError: __length_hint__() should return >= 0".to_string());
+                }
+                Ok(())
             }
-            if hint.as_big()?.is_negative() {
-                return Err("ValueError: __length_hint__() should return >= 0".to_string());
+            Ok(None) => Ok(()),
+            Err(fault) => {
+                if !self.forget_type_error() { return Err(fault); }
+                Ok(())
             }
         }
-        Ok(())
+    }
+
+    /// Forget a pending TypeError, the one fault the reference swallows
+    /// when it asks for a length. Any other fault is left standing.
+    fn forget_type_error(&mut self) -> bool {
+        let type_error = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false));
+        if type_error { self.carried = None; }
+        type_error
     }
 
     /// A whole number a row of bytes is handed as a place. CPython
@@ -20459,8 +20516,16 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                self.length_hint_probe(&args[0])?;
-                let result = Value::array(self.comprehension_items(&args[0])?);
+                let result = {
+                    let source = args[0].contents();
+                    if matches!(source, Value::Object(_)) {
+                        let walk = self.core_iterator(&source)?;
+                        self.length_hint_probe(&source)?;
+                        Value::array(self.comprehension_items(&walk)?)
+                    } else {
+                        Value::array(self.comprehension_items(&args[0])?)
+                    }
+                };
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { result.held(true) } else { result }
             }
             Builtin::Any => {

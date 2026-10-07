@@ -9729,7 +9729,7 @@ impl<'a> Machine<'a> {
         let mut arguments = arguments;
         if name == "extend" && arguments.len() == 1 && matches!(receiver.settled(), Value::Vector(_)) {
             let plain = matches!(arguments[0].settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Set(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_));
-            if !plain { self.length_hint_probe(&arguments[0])?; let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
+            if !plain { let source = arguments[0].settled(); let walk = self.iterated_value(&source)?; self.length_hint_probe(&source)?; let drawn = self.gathered_members(&walk)?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
         }
         // A mapping subclass whose subscript member was read off the
         // thing itself reaches its `__missing__` through the subscript
@@ -12428,8 +12428,8 @@ impl<'a> Machine<'a> {
                 items.iter().map(|item| self.octet_item(item, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
             other => {
-                self.length_hint_probe(other)?;
                 let source = self.iterated_value(other)?;
+                self.length_hint_probe(other)?;
                 let mut collected = Vec::new();
                 loop {
                     let Some(next) = self.next_value(&source)? else { return Ok(collected); };
@@ -12456,35 +12456,80 @@ impl<'a> Machine<'a> {
     }
 
     /// The guess at how many members an iterable holds, asked of an
-    /// object the way the reference asks it before gathering: its
-    /// length where it has one, else its own `__length_hint__`. What
-    /// the length raises stops the gathering, save a TypeError, which
-    /// is forgotten and the hint asked instead; a hint of
-    /// NotImplemented is no hint, and a hint that is no whole number
-    /// or lies below nought is refused in the reference's words. Only
-    /// what asking the guess does matters, never the guess itself.
+    /// object the way the reference asks it before gathering. Its length
+    /// is asked first, where its kind has one, and what that length
+    /// raises stops the gathering -- save a TypeError, which the
+    /// reference forgets and then asks the object's own
+    /// `__length_hint__` instead. A length that is no whole number
+    /// becomes that same TypeError, a length below nought is a
+    /// ValueError, and one past the largest index an OverflowError. The
+    /// hint is read the same way: a TypeError raised by the hint is
+    /// forgotten, NotImplemented is no hint, a hint that is no whole
+    /// number is a TypeError, one below nought a ValueError, and one
+    /// outside the index range an OverflowError. Only what asking the
+    /// guess does matters, never the guess itself.
     fn length_hint_probe(&mut self, value: &Value) -> Result<(), String> {
         if self.appointment(value, 10).is_some() {
             match self.ask_special(value, 10, &[]) {
-                Ok(_) => return Ok(()),
+                Ok(Some(length)) => {
+                    let whole = if matches!(length.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                        Some(length.settled())
+                    } else {
+                        match self.stood_for_whole(&length) {
+                            Ok(found) => found,
+                            Err(complaint) => {
+                                if !self.forget_type_error() { return Err(complaint); }
+                                None
+                            }
+                        }
+                    };
+                    if let Some(number) = whole {
+                        let number = number.as_big()?;
+                        if number < BigInt::from(0) {
+                            return Err("ValueError: __len__() should return >= 0".to_owned());
+                        }
+                        if number > BigInt::from(i64::MAX) {
+                            return Err("OverflowError: cannot fit 'int' into an index-sized integer".to_owned());
+                        }
+                        return Ok(());
+                    }
+                }
+                Ok(None) => {}
                 Err(complaint) => {
-                    let forgotten = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thing))) if thing.blueprint().goes_by("TypeError", false));
-                    if !forgotten { return Err(complaint); }
-                    self.got_away = None;
+                    if !self.forget_type_error() { return Err(complaint); }
                 }
             }
         }
-        if let Some(hint) = self.ask_special(value, 78, &[])? {
-            let hint = hint.settled();
-            if matches!(hint, Value::Refusal(_)) { return Ok(()); }
-            if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
-                return Err(format!("TypeError: __length_hint__ must be integer, not {}", hint.kind_word()));
+        match self.ask_special(value, 78, &[]) {
+            Ok(Some(hint)) => {
+                let hint = hint.settled();
+                if matches!(hint, Value::Refusal(_)) { return Ok(()); }
+                if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return Err(format!("TypeError: __length_hint__ must be an integer, not {}", hint.kind_word()));
+                }
+                let number = hint.as_big()?;
+                if number < BigInt::from(i64::MIN) || number > BigInt::from(i64::MAX) {
+                    return Err("OverflowError: Python int too large to convert to C ssize_t".to_owned());
+                }
+                if number < BigInt::from(0) {
+                    return Err("ValueError: __length_hint__() should return >= 0".to_owned());
+                }
+                Ok(())
             }
-            if hint.as_big()? < BigInt::from(0) {
-                return Err("ValueError: __length_hint__() should return >= 0".to_owned());
+            Ok(None) => Ok(()),
+            Err(complaint) => {
+                if !self.forget_type_error() { return Err(complaint); }
+                Ok(())
             }
         }
-        Ok(())
+    }
+
+    /// Forget a pending TypeError, the one fault the reference swallows
+    /// when it asks for a length. Any other fault is left standing.
+    fn forget_type_error(&mut self) -> bool {
+        let type_error = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thing))) if thing.blueprint().goes_by("TypeError", false));
+        if type_error { self.got_away = None; }
+        type_error
     }
 
     fn octet_gathered(&self, source: &Value, iterable: bool, whole_row: bool) -> Result<Vec<u8>, String> {
@@ -15952,8 +15997,19 @@ impl<'a> Machine<'a> {
             }
             (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
-                self.length_hint_probe(one)?;
-                let result = Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?));
+                // The reference takes the walk before it asks for the
+                // guess, so a state the walk lays down is there to be
+                // read, and then draws out that very walk.
+                let result = {
+                    let source = one.settled();
+                    if matches!(source, Value::Thing(_)) {
+                        let walk = self.iterated_value(&source)?;
+                        self.length_hint_probe(&source)?;
+                        Value::Vector(crate::tuples::Sequence::plain(self.object_members(&walk)?))
+                    } else {
+                        Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?))
+                    }
+                };
                 // Members an iterator hands out are kept quoted, as a window's are.
                 if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_) | Value::Generator(_)) { result.keep(true) } else { result }
             },
