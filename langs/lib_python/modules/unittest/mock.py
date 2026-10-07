@@ -17,11 +17,25 @@ class _Sentinel:
 DEFAULT = _Sentinel('DEFAULT')
 
 
+def _spec_names(spec):
+    # A spec narrows the names a stand-in answers. A list or tuple
+    # gives those names as it stands; anything else gives them as the
+    # names it answers to, read off it without reaching for any of
+    # their values, so naming a property never runs it. A stand-in's
+    # own child is an ordinary stand-in, not narrowed again: the
+    # recursive reading of a spec is autospeccing, which is separate.
+    if spec is None:
+        return None
+    if isinstance(spec, (list, tuple)):
+        return list(spec)
+    return dir(spec)
+
+
 class Mock:
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
         self._mock_name = name
         self._mock_wraps = wraps
-        self._mock_spec = spec
+        self._mock_methods = _spec_names(spec)
         self.return_value = return_value
         self._side_effect = None
         self.side_effect = side_effect
@@ -130,9 +144,9 @@ class Mock:
         # for, so what looks inside a mock sees what is really there.
         if name[:1] == '_':
             raise AttributeError(name)
-        if self._mock_spec is not None and not hasattr(self._mock_spec, name):
+        if self._mock_methods is not None and name not in self._mock_methods:
             raise AttributeError(name)
-        child = Mock(name=name, spec=getattr(self._mock_spec, name, None))
+        child = Mock(name=name)
         setattr(self, name, child)
         return child
 
