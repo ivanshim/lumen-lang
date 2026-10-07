@@ -928,6 +928,9 @@ impl Builtin {
 pub struct Routine {
     pub postponed_annotation: bool,
     pub checks_annotation_format: bool,
+    /// Whether the routine is one whose own name reads, while annotations are
+    /// being read in the forward-reference format, may stand for a reference.
+    pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,

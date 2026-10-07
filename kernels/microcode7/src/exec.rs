@@ -51,6 +51,12 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
+thread_local! {
+    // What tuples holding instances were given for a hash, found by the
+    // tuple's own spot and checked against a weak hold on it.
+    static ROW_HASHES: RefCell<HashMap<usize, (Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
+}
+
 use num_traits::{One, ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
@@ -725,6 +731,10 @@ pub struct Machine<'a> {
     /// The names of the frame each call is running in, innermost last,
     /// so that text read while the run goes can be built knowing them.
     frames_named: Vec<Rc<Routine>>,
+    /// The stand-in maker an annotation routine about to run is to read by,
+    /// and which of its name reads it is for, and the frames now read so.
+    armed_names: Option<(Value, bool)>,
+    annotation_scopes: Vec<(usize, Value, bool, usize)>,
     /// The names and the frame set aside for a reading of text that
     /// stands inside a routine and was handed no dictionaries of its
     /// own. The text is read as a piece of that routine, so the
@@ -2047,6 +2057,8 @@ impl<'a> Machine<'a> {
             would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
+            armed_names: None,
+            annotation_scopes: Vec::new(),
             text_within: None,
             text_caller_book: None,
             hearer: RefCell::new(None),
@@ -3796,8 +3808,24 @@ impl<'a> Machine<'a> {
             key.starts_with("\0import/") && key.rsplit('/').next() == Some(slot.ident.as_ref())
         });
         let f = if imported_global { self.outermost.clone() } else { ascend(frame, slot.up).clone() };
+        // For the second format every name of the globals the annotation
+        // reads is a stand-in, whatever it is bound to.
+        if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
+            if let Some((names, true)) = self.annotation_scope(frame) {
+                let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
+                if copied {
+                    if let Some(value) = self.world_book.as_ref().and_then(|book| looked_up(book, &slot.ident)) { return Ok(value); }
+                }
+                return self.unresolved_annotation_name(&names, &slot.ident);
+            }
+        }
         if Rc::ptr_eq(&f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+                if let Err(message) = &found {
+                    if message.starts_with("Undefined variable:") {
+                        if let Some((names, _)) = self.annotation_scope(frame) { return self.unresolved_annotation_name(&names, &slot.ident); }
+                    }
+                }
                 return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
             }
         }
@@ -3807,6 +3835,23 @@ impl<'a> Machine<'a> {
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
+        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
+            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+            if let Some((names, all)) = self.annotation_scope(frame) {
+                let content = v.settled();
+                if all || matches!(content, Value::Unset) {
+                    let symbolic = self.unresolved_annotation_name(&names, &slot.ident)?;
+                    let cell = match &v {
+                        Value::Shared(binding) => Value::Wrapped(35, Rc::new(vec![Value::Shared(binding.clone())]).into()),
+                        _ => Value::Wrapped(35, Rc::new(vec![Value::Bound(self.frames_named.last().unwrap().clone(), f.clone()), Value::Small(slot.at as i64), Value::Flag(true)]).into()),
+                    };
+                    self.alter_class_member(symbolic.clone(), "__cell__", Some(cell), true).map_err(|escape| {
+                        self.got_away = Some(escape); String::new()
+                    })?;
+                    return Ok(symbolic);
+                }
+            }
+        }
         if f.capture_slots.borrow().contains(&slot.at) {
             let Value::Shared(cell) = &v else { unreachable!() };
             let captured = cell.borrow().clone();
@@ -3850,7 +3895,28 @@ impl<'a> Machine<'a> {
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
         if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
+        // A name an annotation reads that is nowhere defined is a stand-in
+        // while the annotation is read that way. Only the annotation's own
+        // reads are so answered.
+        if let Some((names, _)) = self.annotation_scope(frame) { return self.unresolved_annotation_name(&names, &slot.ident); }
         Err(format!("Undefined variable: {}", slot.ident))
+    }
+
+    /// The maker of stand-ins the annotation read in this frame is by, and
+    /// whether every name of the globals is to be one.
+    fn annotation_scope(&self, frame: &Rc<Env>) -> Option<(Value, bool)> {
+        self.annotation_scopes.last().filter(|(at, _, _, _)| *at == Rc::as_ptr(frame) as usize).map(|(_, names, all, _)| (names.clone(), *all))
+    }
+    /// The stand-in the maker gives for a name.
+    fn unresolved_annotation_name(&mut self, names: &Value, name: &str) -> Result<Value, String> {
+        let outcome = match self.read_class_member(names.clone(), "__missing__", false) {
+            Ok(maker) => self.apply_class_member(maker, vec![Value::text(name)]),
+            Err(escape) => Err(escape),
+        };
+        outcome.map_err(|escape| match escape {
+            Escape::Error(message) => message,
+            carried => { self.got_away = Some(carried); String::new() }
+        })
     }
 
     /// A language may keep a namespace whose members answer for the
@@ -3890,6 +3956,15 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        // A copied annotation namespace owns its global writes.
+        if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
+            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
+            if let Some(book) = self.world_book.clone() {
+                let content = self.collection_cell(value);
+                set_down(&book, &slot.ident, Some(content));
+                return Ok(());
+            }
+        }
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
@@ -6026,7 +6101,20 @@ impl<'a> Machine<'a> {
             }
         };
         let callee = self.env_for(&p, env, args, frame)?;
-        let chosen = self.constructor_world(&p);
+        let mut chosen = self.constructor_world(&p);
+        let paused_names = if self.armed_names.is_none() && !self.annotation_scopes.is_empty() {
+            if p.globe.is_none() {
+                let names = self.annotation_scopes.last().unwrap().1.clone();
+                self.frames_named.push(p.clone());
+                let home = self.space_book_of();
+                self.frames_named.pop();
+                chosen = home.or_else(|| match self.read_class_member(names, "globals", true).ok()? {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell),
+                    _ => None,
+                }).or(chosen);
+            }
+            Some(std::mem::take(&mut self.annotation_scopes))
+        } else { None };
         let suspended_reading = self.reading_now;
         if p.globe.is_none() && chosen.is_none() { self.reading_now = None; }
         let earlier = chosen.map(|book| self.world_book.replace(book));
@@ -6034,6 +6122,7 @@ impl<'a> Machine<'a> {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
         if let Some(previous) = earlier { self.world_book = previous; }
+        if let Some(scopes) = paused_names { self.annotation_scopes = scopes; }
         self.reading_now = suspended_reading;
         outcome
     }
@@ -6260,6 +6349,13 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
+                    && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
+                    if let Some(book) = &self.world_book {
+                        set_down(book, &slot.ident, None);
+                        return Ok(Value::Nil);
+                    }
+                }
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
@@ -9657,6 +9753,13 @@ impl<'a> Machine<'a> {
                 _ => {}
             }
         }
+        // A word several kinds of value share is the method of only some
+        // of them: a plain kind that does not keep it has no such member.
+        let plain_kind = matches!(receiver.settled(), Value::Nil) || crate::members::lists_members(&receiver.settled());
+        if plain_kind && !crate::members::answers_to(&receiver.settled(), operation) {
+            let spelled = self.member_spelling(operation);
+            if self.attribute(&receiver, &spelled).is_none() { return Err(self.member_missing(&receiver, &spelled).into()); }
+        }
         Ok(Value::Member(Rc::new(receiver), operation.to_string()))
     }
 
@@ -10531,6 +10634,12 @@ impl<'a> Machine<'a> {
             }
             let spec = self.mapping_format(spec, mapping, depth + 1)?;
             let names = self.wording();
+            // A thing of the program's own is written by its own methods,
+            // the way a field of `.format` is.
+            if let Some(laid) = crate::formatting::Elsewhere::field_laid(self, &value, &spec, conversion)? {
+                out.push_str(&laid);
+                continue;
+            }
             let shown = if conversion == "r" || conversion == "a" {
                 let mut shown = crate::text::expression(&value, names);
                 if conversion == "a" {
@@ -12224,7 +12333,31 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let handed = self.constructor_world(&program);
+        let mut handed = match self.constructor_world(&program) {
+            Some(namespace) => Some(namespace),
+            None if self.armed_names.is_some() => match &program.globe {
+                Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
+                Some(dictionary @ Value::Dict(_)) => Some(Rc::new(RefCell::new(dictionary.clone()))),
+                _ => None,
+            },
+            None => None,
+        };
+        let caller_scope = self.annotation_scopes.last().filter(|(_, _, _, pointer)| {
+            self.frames_named.last().is_some_and(|caller| Rc::as_ptr(caller) as usize == *pointer)
+        }).map(|(_, names, _, _)| names.clone());
+        if !program.frameless && program.globe.is_none() && self.armed_names.is_none() {
+            if let Some(names) = caller_scope {
+                self.frames_named.push(program.clone());
+                let original = self.space_book_of();
+                self.frames_named.pop();
+                handed = original.or_else(|| {
+                    match self.read_class_member(names, "globals", true).ok()? {
+                        Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell),
+                        _ => None,
+                    }
+                }).or(handed);
+            }
+        }
         let resumed_reading = match (&program.globe, &handed) {
             (None, None) => self.reading_now.take(),
             _ => self.reading_now,
@@ -12315,11 +12448,28 @@ impl<'a> Machine<'a> {
     }
 
     fn drive_body(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        // The frame an annotation is being read in is noted, so that only
+        // its own name reads, and none of a routine it calls, may stand for
+        // stand-ins.
+        {
+            if let Some((names, all)) = self.armed_names.take() {
+                self.annotation_scopes.push((Rc::as_ptr(&frame) as usize, names, all, Rc::as_ptr(&program) as usize));
+                let read = self.drive_body_run(program, frame);
+                self.annotation_scopes.pop();
+                return read;
+            }
+        }
+        self.drive_body_run(program, frame)
+    }
+
+    fn drive_body_run(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         if program.annotation_protocol {
             let format = frame.cells.borrow()[program.formal_slots[0]].clone();
             let format = format.settled();
-            let exceeds = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
-            if exceeds.is_true() { return Err(String::from("NotImplementedError: ").into()); }
+            let exceeds = self.prim(Prim::Gt, "", &[format.clone(), Value::Small(2)])?;
+            if exceeds.is_true() {
+                return Err(String::from("NotImplementedError: ").into());
+            }
         }
 
         if program.generator && self.rules.suspends {
@@ -14144,7 +14294,13 @@ impl<'a> Machine<'a> {
             }
         }
         if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Thing(_) | Value::Tuple(_)) {
+            // A tuple keeps the hash it was first given, so what it holds
+            // is asked once and not at every use of the tuple as a key.
+            if let Value::Tuple(row) = value {
+                if let Some(known) = Self::row_hash_kept(row) { return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(known))); }
+            }
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
+            if let Value::Tuple(row) = value { Self::row_hash_keep(row, &hash); }
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
         } else { Ok(value.clone()) }
     }
@@ -14169,6 +14325,21 @@ impl<'a> Machine<'a> {
             (Some(Room::Slot(one_frame, one_at)), Some(Room::Slot(other_frame, other_at))) => one_frame == other_frame && one_at == other_at,
             _ => false,
         }
+    }
+
+    fn row_hash_kept(row: &crate::tuples::Sequence) -> Option<Value> {
+        let spot = Rc::as_ptr(&**row) as usize;
+        ROW_HASHES.with(|kept| kept.borrow().get(&spot).and_then(|(weak, hash)| weak.upgrade().filter(|live| live.len() == row.len()).map(|_| hash.clone())))
+    }
+
+    fn row_hash_keep(row: &crate::tuples::Sequence, hash: &Value) {
+        if !row.iter().any(|part| matches!(part.settled(), Value::Thing(_) | Value::Tuple(_))) { return; }
+        let spot = Rc::as_ptr(&**row) as usize;
+        ROW_HASHES.with(|kept| {
+            let mut kept = kept.borrow_mut();
+            if kept.len() >= 4096 { kept.retain(|_, (weak, _)| weak.strong_count() > 0); }
+            kept.insert(spot, (Rc::downgrade(&**row), hash.clone()));
+        });
     }
 
     fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
@@ -14241,6 +14412,12 @@ impl<'a> Machine<'a> {
     /// `store_write`, so a key already there is kept in its first
     /// place with its value overwritten, and a new key is added last.
     fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
+        // A namespace is spread by the pairs it gives as a map, as `dict` reads it.
+        let converted;
+        let item = if expanded && matches!(item.settled(), Value::Attributes(_) | Value::Window(..)) {
+            converted = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(item))?;
+            &converted
+        } else { item };
         let incoming = match (expanded, item.settled()) {
             (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
             (true, Value::Dict(entries)) => entries.to_vec(),
@@ -15044,7 +15221,7 @@ impl<'a> Machine<'a> {
         // its cell keeps, the very value reading the attribute itself
         // would find.
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
+            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !name.ends_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| {
                 let mut value = held.clone();
                 if namespace {
@@ -15087,7 +15264,7 @@ impl<'a> Machine<'a> {
             let mut pending = entries;
             let mut slots = t.holds.borrow_mut();
             for (key, slot) in slots.iter_mut() {
-                if key.starts_with('\0') { continue; }
+                if key.starts_with('\0') || key.ends_with('\0') { continue; }
                 let position = pending.iter().position(|(label, _)| matches!(label, Value::Text(label) if label.as_ref() == key.as_str()));
                 let next = match position { Some(at) => pending.remove(at).1, None => Value::Unset };
                 if let Value::Shared(cell) = slot {
@@ -15112,7 +15289,7 @@ impl<'a> Machine<'a> {
             return;
         }
         let mut holds = t.holds.borrow_mut();
-        let former_names = holds.iter().filter_map(|entry| (!entry.0.starts_with('\0')).then_some(entry.0.clone())).collect::<Vec<_>>();
+        let former_names = holds.iter().filter_map(|entry| (!entry.0.starts_with('\0') && !entry.0.ends_with('\0')).then_some(entry.0.clone())).collect::<Vec<_>>();
         let binding_table = holds.iter().find(|entry| entry.0 == "\0bindings").map(|entry| entry.1.clone());
         let binding = |text: &str| -> Option<Value> {
             if let Some(Value::Dict(slots)) = &binding_table {
@@ -15126,7 +15303,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
+        holds.retain(|(name, _)| (name.starts_with('\0') || name.ends_with('\0')) && name != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
             match key {
@@ -16060,6 +16237,7 @@ impl<'a> Machine<'a> {
         if self.rules.specials.is_empty() { return Ok(None); }
         if let (Prim::Hashed, [held]) = (operation, operands) {
             if let Value::Tuple(sequence) = held {
+                if let Some(cached) = Self::row_hash_kept(sequence) { return Ok(Some(cached)); }
                 let mut accumulator = 2_870_177_450_012_600_261u64;
                 for member in sequence.iter() {
                     let lane = self.prim(Prim::Hashed, "hash", &[member.clone()])?.as_big()?.to_i64().ok_or_else(|| self.bad_answer())? as u64;
@@ -16067,7 +16245,9 @@ impl<'a> Machine<'a> {
                 }
                 accumulator = accumulator.wrapping_add((sequence.len() as u64) ^ (2_870_177_450_012_600_261 ^ 3_527_539));
                 let signed = if accumulator == u64::MAX { 1_546_275_796 } else { accumulator as i64 };
-                return Ok(Some(Value::Small(signed)));
+                let answer = Value::Small(signed);
+                Self::row_hash_keep(sequence, &answer);
+                return Ok(Some(answer));
             }
             if let Some(number) = Self::constructor_hash(held) { return Ok(Some(number)); }
         }
@@ -18995,7 +19175,12 @@ impl<'a> Machine<'a> {
                     // than the one map it grows, so paying to clone it
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
-                    let incoming = match &v[1] {
+                    let spread_dict;
+                    let v1 = if expanded && matches!(v[1].settled(), Value::Attributes(_) | Value::Window(..)) {
+                        spread_dict = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(&v[1]))?;
+                        spread_dict.settled()
+                    } else { v[1].clone() };
+                    let incoming = match &v1 {
                         Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
                         Value::Dict(entries) if expanded => entries.to_vec(),
                         _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
@@ -25557,6 +25742,10 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
+        let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
+            self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
+        });
+        if scoped && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {

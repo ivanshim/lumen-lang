@@ -299,6 +299,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Shared(cell) | Value::Mutable(cell, _) => return ghost_of(&cell.borrow()),
         Value::Thing(t) => Ghost::Thing(Rc::downgrade(t)),
         Value::Intrinsic(code, _) if code.names_a_kind() => Ghost::StaticKind(value.clone()),
+        Value::OctetKind { .. } => Ghost::StaticKind(value.clone()),
         Value::Blueprint(b) => Ghost::Blueprint(Rc::downgrade(b)),
         Value::Generator(g) => Ghost::Walk(Rc::downgrade(g)),
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),

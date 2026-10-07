@@ -3095,6 +3095,8 @@
   "ext.builtin.abc.instancecheck": [
     "__abc_instancecheck"
   ],
+  "ext.builtin.annotation_call": ["__annotation_call__"],
+  "ext.builtin.partial_repr": ["__partial_repr__"],
   "ext.builtin.namespace_type": [
     "__namespace_type"
   ],
