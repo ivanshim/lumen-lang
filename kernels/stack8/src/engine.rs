@@ -4229,8 +4229,11 @@ impl<'a> Engine<'a> {
         });
         let caller_frame = self.trace_frame.take();
         self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
+        let mut hook_fault = None;
         if self.global_trace.is_some() {
-            if let Some(entered) = self.trace_frame.clone() { self.trace_enter(&entered)?; }
+            if let Some(entered) = self.trace_frame.clone() {
+                if let Err(fault) = self.trace_enter(&entered) { hook_fault = Some(fault); }
+            }
         }
         let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
             caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
@@ -4239,7 +4242,10 @@ impl<'a> Engine<'a> {
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let caller_routine = self.running_routine.replace(program.clone());
-        let outcome = self.run_instrs(program, &mut frame);
+        let outcome = match hook_fault {
+            Some(fault) => Err(fault),
+            None => self.run_instrs(program, &mut frame),
+        };
         // A signal still left pending as the outermost body's own last
         // statement is done is taken up here, while the body's frame
         // and line still stand: what it raises is the run's ending,
@@ -5309,7 +5315,11 @@ impl<'a> Engine<'a> {
         self.tracing = true;
         let answer = self.class_apply(program, vec![marker, Value::text("call"), Value::Null]);
         self.tracing = false;
-        self.keep_local_trace(frame, answer?);
+        let answer = match answer {
+            Ok(held) => held,
+            Err(fault) => { self.global_trace = None; return Err(fault); }
+        };
+        self.keep_local_trace(frame, answer);
         Ok(())
     }
 
@@ -5322,8 +5332,10 @@ impl<'a> Engine<'a> {
         self.tracing = true;
         let answer = self.class_apply(program, vec![marker, Value::text("line"), Value::Null]);
         self.tracing = false;
-        answer?;
-        Ok(())
+        match answer {
+            Ok(_) => Ok(()),
+            Err(fault) => { self.global_trace = None; Err(fault) }
+        }
     }
 
     /// Hand a routine's answer to the frame's own hook as it leaves.
@@ -5334,8 +5346,10 @@ impl<'a> Engine<'a> {
         self.tracing = true;
         let answer = self.class_apply(program, vec![marker, Value::text("return"), worth]);
         self.tracing = false;
-        answer?;
-        Ok(())
+        match answer {
+            Ok(_) => Ok(()),
+            Err(fault) => { self.global_trace = None; Err(fault) }
+        }
     }
 
     fn local_trace(&self, frame: &Rc<Instance>) -> Option<Value> {

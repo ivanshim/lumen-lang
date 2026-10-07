@@ -5394,7 +5394,11 @@ impl<'a> Machine<'a> {
         self.tracing = true;
         let answer = self.apply_class_member(hook, vec![marker, Value::text("call"), Value::Nil]);
         self.tracing = false;
-        self.keep_local_trace(frame, answer?);
+        let answer = match answer {
+            Ok(held) => held,
+            Err(fault) => { self.global_trace = None; return Err(fault); }
+        };
+        self.keep_local_trace(frame, answer);
         Ok(())
     }
 
@@ -5407,8 +5411,10 @@ impl<'a> Machine<'a> {
         self.tracing = true;
         let answer = self.apply_class_member(hook, vec![marker, Value::text("line"), Value::Nil]);
         self.tracing = false;
-        answer?;
-        Ok(())
+        match answer {
+            Ok(_) => Ok(()),
+            Err(fault) => { self.global_trace = None; Err(fault) }
+        }
     }
 
     /// Hand a routine's answer to the frame's own hook as it leaves.
@@ -5419,8 +5425,10 @@ impl<'a> Machine<'a> {
         self.tracing = true;
         let answer = self.apply_class_member(hook, vec![marker, Value::text("return"), worth]);
         self.tracing = false;
-        answer?;
-        Ok(())
+        match answer {
+            Ok(_) => Ok(()),
+            Err(fault) => { self.global_trace = None; Err(fault) }
+        }
     }
 
     fn local_trace(&self, frame: &Rc<Thing>) -> Option<Value> {
@@ -12013,16 +12021,20 @@ impl<'a> Machine<'a> {
         let parent_extent = self.extent;
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
+        let mut call_fault = None;
         if mine {
             self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) };
             if self.global_trace.is_some() {
-                if let Some(entered) = self.active_trace.clone() { self.trace_enter(&entered)?; }
+                if let Some(entered) = self.active_trace.clone() {
+                    if let Err(fault) = self.trace_enter(&entered) { call_fault = Some(fault); }
+                }
             }
         }
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
         let outcome: Res = loop {
+            if let Some(fault) = call_fault.take() { break Err(fault); }
             caught |= match program.traps {
                 Traps::Naught => 0,
                 Traps::Yields => 1,
