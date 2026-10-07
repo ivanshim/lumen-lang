@@ -95,6 +95,9 @@ impl<'a> Machine<'a> {
             if let Some(guard) = base_guard { bridges.push(("__mro_entries__", guard)); }
             for (member, handler) in bridges { protocols.push((member.into(), Self::wrap(158, vec![Value::text(handler)]))); }
         }
+        if self.table.flag("ext.stmt.type_parameters") && word == "Union" {
+            protocols.push((self.detail("allocate").to_owned(), Self::wrap(158, vec![Value::text("reject_union_new")])));
+        }
         if word == "ParamSpecArgs" || word == "ParamSpecKwargs" { protocols.push((String::from("__hash__"), Value::Nil)); }
         if word == "SimpleNamespace" {
             let init = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).unwrap_or_default();
@@ -247,7 +250,7 @@ impl<'a> Machine<'a> {
         }
         else{names.extend(self.routine_holding_names(item));}
         if let Some(class) = class.filter(|_| !matches!(item, Value::Thing(_)) || !names.iter().any(|name| name == self.detail("kind"))) {
-            for part in ["kind", "get", "set", "remove", "allocate", "subclass"] {
+            for part in ["doc", "kind", "get", "set", "remove", "allocate", "subclass"] {
                 let name = self.detail(part); if !name.is_empty() { names.push(name.to_owned()); }
             }
             if let Some(name) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) { names.push(name.to_owned()); }
@@ -494,7 +497,7 @@ impl<'a> Machine<'a> {
                 Value::Window(_, 'm') => {},
                 _ => match owner.settled() {
                 Value::Dict(_) | Value::Attributes(_) => {},
-                Value::Thing(_) if self.appointment(&owner, 11).is_some() => {},
+                Value::Thing(t) if self.inherited_entry(&t.blueprint(), "__getitem__").is_some() || Self::underlying(&owner).is_some_and(|v| matches!(v.settled(), Value::Dict(_))) => {},
                 other => return Err(format!("TypeError: mappingproxy() argument must be a mapping, not {}", other.kind_word()).into()),
                 },
             }
@@ -1491,6 +1494,10 @@ impl<'a> Machine<'a> {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
                         Ok(self.prim(Prim::Weigh, "eval", &kept)?)
                     }
+                    127 if self.table.flag("ext.stmt.type_parameters") => {
+                        let show = Self::wrap(158, vec![Value::text("union_repr")]);
+                        self.apply_class_member(show, values)
+                    }
                     127 => {
                         let first = values.first().cloned().ok_or_else(|| self.class_unready())?;
                         let row = self.read_class_member(first, "__args__", true)?;
@@ -1517,7 +1524,7 @@ impl<'a> Machine<'a> {
                         };
                         let mut folded: Option<Value> = None;
                         for member in members {
-                            folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member]) });
+                            folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member])? });
                         }
                         Ok(folded.unwrap_or(Value::Nil))
                     }
@@ -1571,7 +1578,7 @@ impl<'a> Machine<'a> {
                             checked.push(item);
                         }
                         let mut answer = checked.remove(0);
-                        for item in checked { answer = self.combined_types(&[answer, item]); }
+                        for item in checked { answer = self.combined_types(&[answer, item])?; }
                         Ok(answer)
                     }
                     77 => match values.as_slice() {
@@ -1593,7 +1600,7 @@ impl<'a> Machine<'a> {
                         }
                         let valid = values.iter().all(|value| self.union_member(value));
                         if !valid { Ok(Value::Refusal(Rc::from("NotImplemented"))) }
-                        else { Ok(self.combined_types(&values)) }
+                        else { self.combined_types(&values) }
                     }
                     156 => Err(String::from("TypeError: Substitution of bare TypeVarTuple is not supported").into()),
                     155 if values.len() == 1 => {
@@ -2220,9 +2227,12 @@ impl<'a> Machine<'a> {
             Some(Value::Text(title)) => title,
             _ => return Err(String::from("TypeError: name must be a str").into()),
         };
-        let origin = self.namespace_named().unwrap_or_else(|| String::from("__main__"));
+        let origin = match &self.world_book {
+            Some(book) => looked_up(book, "__name__").unwrap_or(Value::Nil),
+            None => self.namespace_named().map_or(Value::Nil, |name| Value::text(&name)),
+        };
         let mut attributes = vec![(String::from("__name__"), Value::Text(title.clone())),
-            (String::from("__module__"), Value::text(&origin)), (String::from("\0type-display"), Value::Text(title))];
+            (String::from("__module__"), origin), (String::from("\0type-display"), Value::Text(title))];
         if kind.name == "TypeAliasType" {
             if values.len() != 2 { return Err(String::from("TypeError: TypeAliasType requires a name and a value").into()); }
             attributes.extend([(String::from("__type_params__"), Value::tuple(Vec::new())),
@@ -2287,6 +2297,9 @@ impl<'a> Machine<'a> {
         Ok(alias)
     }
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if Self::native_word(&class).as_deref() == Some("Union") && self.table.flag("ext.stmt.type_parameters") {
+            return Err(String::from("TypeError: cannot create 'typing.Union' instances").into());
+        }
         if Self::native_word(&class).is_some_and(|word| word == "ParamSpecArgs" || word == "ParamSpecKwargs") {
             let (mut positional, named) = self.open_arguments(given)?;
             let count = positional.len() + named.len();
@@ -2508,7 +2521,7 @@ impl<'a> Machine<'a> {
             }
             let belongs=Rc::ptr_eq(&thing.blueprint(),&class)||thing.blueprint().ancestry.iter().any(|c|Rc::ptr_eq(c,&class));
             if belongs {
-                let constructor=self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|word|self.inherited_entry(&thing.blueprint(),word));
+                let constructor=self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|word|self.inherited_entry(&thing.blueprint(),word)).filter(|f| !matches!(f, Value::Wrapped(2, v) if v.is_empty()));
                 if let Some(f)=constructor {
                     let bound=self.member_binding(f,Some(created.clone()),thing.blueprint().clone())?;
                     if !matches!(self.apply_class_member(bound,given)?,Value::Nil){return Err(self.class_unready());}
@@ -2894,7 +2907,7 @@ impl<'a> Machine<'a> {
     /// where it wrote over neither.
     fn root_turns_away(&self,class:&Rc<Blueprint>,working:char)->Res<()> {
         let makes=self.inherited_entry(class,self.detail("allocate")).is_some();
-        let builds=self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).map_or(false,|word|self.inherited_entry(class,word).is_some());
+        let builds=self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).map_or(false,|word|self.inherited_entry(class,word).is_some_and(|f| !matches!(f, Value::Wrapped(2, v) if v.is_empty())));
         let (mine,theirs)=if working=='n'{(makes,builds)}else{(builds,makes)};
         let label=if working=='n'{"arguments.new"}else{"arguments.init"};
         let (label,named)=match (mine,theirs) {
@@ -2949,6 +2962,11 @@ impl<'a> Machine<'a> {
             else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}
             else if self.rules.specials.get(72).map_or(false,|word|word==key){59}
             else{return None};
+        if tag == 2 && self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key) {
+            let mut entries = self.loose_members.borrow_mut();
+            let init = entries.entry(String::from("root initialization")).or_insert_with(|| Self::wrap(2, Vec::new()));
+            return Some(init.clone());
+        }
         Some(Self::wrap(tag, if key == self.detail("subclass") { vec![Value::text(key)] } else { Vec::new() }))
     }
     /// The root's own answer for one of its members, the value it
@@ -3197,7 +3215,16 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
-        let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
+        let mut value = value;
+        if !self.rules.words_ext_stmt_class_builder.is_empty() {
+            loop {
+                let held = match &value { Value::Shared(c) | Value::Mutable(c, _) => Some(c.borrow().clone()), _ => None };
+                match held { Some(held) => value = held, None => break }
+            }
+        }
+        if matches!(&value, Value::Window(_, 'm')) && ["copy", "items", "values", "keys", "get", "__hash__", "__ior__", "__ror__", "__or__", "__reversed__", "__iter__", "__len__", "__contains__", "__getitem__"].contains(&key) {
+            return Ok(Value::Member(Rc::new(value), key.to_owned()));
+        }
         if self.names_in_calls && !key.starts_with("__") {
             let slot = match &value {
                 Value::Thing(thing) => {
@@ -3630,7 +3657,7 @@ impl<'a> Machine<'a> {
                 Value::Intrinsic(op, word) if Self::names_a_kind(op) => Some(word.to_string()),
                 _ => None,
             };
-            if base.as_deref().is_some_and(|word| ["list", "tuple", "set", "dict", "frozenset"].contains(&word)) {
+            if base.as_deref().is_some_and(|word| ["list", "tuple", "set", "dict", "frozenset", "mappingproxy"].contains(&word)) {
                 return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
             }
         }
@@ -3777,6 +3804,12 @@ impl<'a> Machine<'a> {
                 let mut cache = self.loose_members.borrow_mut();
                 return Ok(cache.entry("root:allocation".into()).or_insert_with(|| Self::wrap(1, Vec::new())).clone());
             }
+            // Read the root constructor before considering the builder's attributes.
+            if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key) && !self.builds_classes(b) {
+                let mut entries = self.loose_members.borrow_mut();
+                let init = entries.entry(String::from("root initialization")).or_insert_with(|| Self::wrap(2, Vec::new()));
+                return Ok(init.clone());
+            }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
@@ -3789,6 +3822,11 @@ impl<'a> Machine<'a> {
             {
                 let tag=if key==self.detail("allocate")&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){70}else if key==self.detail("allocate"){1}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){73}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
+                if tag == 2 && self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key) {
+                    let mut entries = self.loose_members.borrow_mut();
+                    let init = entries.entry(String::from("root initialization")).or_insert_with(|| Self::wrap(2, Vec::new()));
+                    return Ok(init.clone());
+                }
                 if tag!=255{return Ok(Self::wrap(tag, if key == self.detail("subclass") { vec![Value::text(key)] } else { Vec::new() }));}
             }
             if let Some(root)=self.from_the_root(key,false,b){return Ok(root);}
@@ -3819,6 +3857,15 @@ impl<'a> Machine<'a> {
             }
 
             if Self::native_beneath(&t.blueprint()).as_deref() == Some("GenericAlias") {
+                if key == "__parameters__" {
+                    let existing = t.holds.borrow().iter().find(|entry| entry.0 == key).map(|entry| entry.1.clone());
+                    if let Some(existing) = existing { return Ok(existing); }
+                    let arguments = t.holds.borrow().iter().find(|entry| entry.0 == "__args__").unwrap().1.clone();
+                    let discover = Self::wrap(158, vec![Value::text("alias_parameters")]);
+                    let tuple = self.apply_class_member(discover, vec![arguments])?;
+                    Self::change_entry(&mut t.holds.borrow_mut(), key, Some(tuple.clone()));
+                    return Ok(tuple);
+                }
                 let fields = t.holds.borrow();
                 let parent = fields.iter().find(|entry| entry.0 == "__origin__").unwrap().1.clone();
                 if ["__module__", "__name__", "__qualname__", "__doc__"].iter().any(|word| *word == key) {
@@ -4994,12 +5041,12 @@ impl<'a> Machine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool{
         matches!(value,Value::Nil)
             ||self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).is_some_and(|word| ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word.as_str())))
+            ||matches!(value,Value::Thing(t) if Self::native_beneath(&t.blueprint()).is_some_and(|word| ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word.as_str())))
     }
     /// A kind or union supplies the operator; Nil by itself does not.
     pub(super) fn union_anchor(&self,value:&Value)->bool{
         self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).is_some_and(|word| ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word.as_str())))
+            ||matches!(value,Value::Thing(t) if Self::native_beneath(&t.blueprint()).is_some_and(|word| ["Union", "GenericAlias", "TypeVar", "TypeAliasType"].contains(&word.as_str())))
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
@@ -5749,7 +5796,14 @@ impl<'a> Machine<'a> {
             6 => {
                 if !positional.is_empty() { return Err(String::from("TypeError: __replace__() takes no positional arguments").into()); }
                 let new = self.construct_ordered(object.blueprint().clone(), Vec::new())?;
-                if !matches!(&new, Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref() == Some("SimpleNamespace")) { return Err(self.class_unready()); }
+                if !matches!(&new, Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref() == Some("SimpleNamespace")) {
+                    let class = Value::Blueprint(object.blueprint());
+                    let module_key = self.detail("module").to_owned();
+                    let name_key = self.detail("qualified").to_owned();
+                    let module = self.read_class_member(class.clone(), &module_key, true)?.bare();
+                    let name = self.read_class_member(class, &name_key, true)?.bare();
+                    return Err(format!("TypeError: expect types.SimpleNamespace type, but {module}.{name}() returned '{}' object", new.kind_word()).into());
+                }
                 let key = self.detail("namespace").to_owned();
                 let dictionary = self.read_class_member(receiver.clone(), &key, true)?;
                 for key in self.gathered_members(&dictionary)? {
@@ -5780,22 +5834,9 @@ impl<'a> Machine<'a> {
             let Value::Blueprint(of) = subject else { return Err(self.class_unready()); };
             let tail = rest.pop().unwrap();
             let parameters = if matches!(tail.settled(), Value::Tuple(_)) { tail } else { Value::tuple(vec![tail]) };
-            let mut free: Vec<Value> = Vec::new();
-            for parameter in self.object_members(&parameters)? {
-                let variables = if matches!(parameter.settled(), Value::Thing(ref item) if matches!(Self::native_word(&item.blueprint()).as_deref(), Some("TypeVar" | "ParamSpec" | "TypeVarTuple"))) {
-                    vec![parameter]
-                } else {
-                    match self.read_class_member(parameter, "__parameters__", false) {
-                        Ok(group) => self.object_members(&group)?,
-                        Err(escape) if self.missing_member_escape(&escape) => Vec::new(),
-                        Err(escape) => return Err(escape),
-                    }
-                };
-                for variable in variables { if !free.iter().any(|prior| prior.selfsame(&variable)) { free.push(variable); } }
-            }
             self.made += 1;
             let holds = vec![("__origin__".to_owned(), rest.remove(0)), ("__args__".to_owned(), parameters),
-                ("__unpacked__".to_owned(), Value::Flag(false)), ("__parameters__".to_owned(), Value::tuple(free))];
+                ("__unpacked__".to_owned(), Value::Flag(false))];
             return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, holds: RefCell::new(holds), turn: self.made })));
         }
         let parent = self.read_class_member(subject.clone(), "__origin__", true)?;
@@ -5849,25 +5890,30 @@ impl<'a> Machine<'a> {
 }
 
 impl<'a> Machine<'a> {
-    pub(super) fn combined_types(&mut self, pair: &[Value]) -> Value {
-        let mut row: Vec<Value> = Vec::new();
+    // Build a native union while retaining the hashability of its original members.
+    pub(super) fn combined_types(&mut self, pair: &[Value]) -> Res {
+        let mut arguments = Vec::new();
         for operand in pair {
-            let mut additions = vec![operand.clone()];
-            if let Value::Thing(t) = operand {
-                if Self::native_word(&t.blueprint()).as_deref() == Some("Union") {
-                    if let Some((_, Value::Tuple(parts))) = t.holds.borrow().iter().find(|entry| entry.0 == "__args__") { additions = parts.to_vec(); }
+            match operand {
+                Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union") => {
+                    let args = t.holds.borrow().iter().find(|entry| entry.0 == "__args__").unwrap().1.clone();
+                    arguments.extend(self.object_members(&args)?);
                 }
-            } else if matches!(operand, Value::Nil) { additions = vec![Value::Blueprint(self.native_kind("NoneType"))]; }
-            for candidate in additions { if row.iter().all(|held| !held.equals(&candidate)) { row.push(candidate); } }
-        }
-        match row.len() {
-            1 => row.remove(0),
-            _ => {
-                self.made += 1;
-                let of = self.native_kind("Union");
-                Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made,
-                    holds: RefCell::new(vec![("__args__".to_owned(), Value::tuple(row))]) }))
+                Value::Nil => arguments.push(Value::Blueprint(self.native_kind("NoneType"))),
+                other => arguments.push(other.clone()),
             }
         }
+        let arrange = Self::wrap(158, vec![Value::text("union_state")]);
+        let grouped = self.apply_class_member(arrange, vec![Value::tuple(arguments)])?;
+        let mut state = self.object_members(&grouped)?.into_iter();
+        let args = state.next().unwrap();
+        let row = self.object_members(&args)?;
+        if row.len() == 1 { return Ok(row[0].clone()); }
+        let holds = vec![(String::from("__args__"), args),
+            (String::from("\0union-hashable"), state.next().unwrap()),
+            (String::from("\0union-unhashable"), state.next().unwrap())];
+        self.made += 1;
+        let of = self.native_kind("Union");
+        Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made, holds: RefCell::new(holds) })))
     }
 }
