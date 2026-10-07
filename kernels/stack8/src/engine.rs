@@ -14875,7 +14875,7 @@ impl<'a> Engine<'a> {
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
-                let ascii = text.is_ascii();
+                let ascii = if self.lang.python_numbers { Value::text_ascii(text) } else { text.is_ascii() };
                 let length = if ascii { text.len() } else { text.chars().count() };
                 let (first, last, step) = self.slice_edges(parts, length)?;
                 if step == 1 {

@@ -22532,7 +22532,7 @@ impl<'a> Machine<'a> {
         if let Value::Span(bounds) = at {
             if let Value::Text(text) = target {
                 if self.rules.indexed_text {
-                    let width_is_one = text.is_ascii();
+                    let width_is_one = if self.table.flag("ext.op.arithmetic.python_numbers") { Value::ascii_letters(text) } else { text.is_ascii() };
                     let size = if width_is_one { text.len() } else { text.chars().count() };
                     let (limits, _, contiguous) = self.span_edges(bounds, size)?;
                     if contiguous {

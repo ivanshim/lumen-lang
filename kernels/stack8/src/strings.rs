@@ -556,7 +556,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 if matches!(op,Index|Rindex) {return Err(fault(lang,"missing"));}
                 return Ok(Value::Small(-1));
             }
-            if s.is_ascii() && matches!(op, Count | Find | Rfind | Index | Rindex) {
+            if (if lang.python_numbers { Value::text_ascii(source) } else { s.is_ascii() }) && matches!(op, Count | Find | Rfind | Index | Rindex) {
                 let size = s.len();
                 let trim = |value: i64| if value < 0 { (size as i64).saturating_add(value).max(0) as usize } else { value as usize };
                 let lower = trim(match params.get(1) { None | Some(Value::Null) => 0, Some(value) => integer(value, lang)? });

@@ -427,7 +427,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     }
     let source=subject.as_ref();
     if matches!(work, COUNT|FIND|RFIND|INDEX|RINDEX|STARTSWITH|ENDSWITH) {
-        return seek(work,source,&g);
+        return seek(work,subject,&g);
     }
     let many=source.chars().count();
     let answer=match work {
@@ -616,12 +616,12 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     Ok(answer)
 }
 
-fn seek(work: Work, source: &str, g: &Given) -> Result<Value,String> {
+fn seek(work: Work, source: &std::rc::Rc<str>, g: &Given) -> Result<Value,String> {
     // A search borrows its selected bytes instead of building a row
     // of characters and a second string. Bounds still name characters;
     // a Unicode boundary is reached from whichever end is nearer.
-    let (begin,end,fitting,piece)=if g.tail.len()==1 {(0,0,true,source)} else {
-        let ascii=source.is_ascii();let size=if ascii {source.len()} else {source.chars().count()};
+    let (begin,end,fitting,piece)=if g.tail.len()==1 {(0,0,true,source.as_ref())} else {
+        let ascii=if g.table.flag("ext.op.arithmetic.python_numbers") { Value::ascii_letters(source) } else { source.is_ascii() };let size=if ascii {source.len()} else {source.chars().count()};
         let bound=|place:usize,default:usize|->Result<usize,String>{
             let number=match g.tail.get(place) {None|Some(Value::Nil)=>return Ok(default),Some(v)=>count(v,g.table)?};
             Ok(if number>=0 {number as usize} else {(size as i64).saturating_add(number).max(0) as usize})
