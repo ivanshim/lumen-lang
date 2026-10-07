@@ -1,9 +1,11 @@
 # A stand-in put in an attribute's place while a test runs, and taken
 # out again afterwards. Only the patching a test here asks for is
 # written: an attribute of a thing already in hand, replaced by a stand-in
-# that records its calls and answers what it was told to answer. The
-# wider library -- specs, autospeccing, patching by dotted name, the
-# magic methods -- refuses by name rather than standing in for itself.
+# that records its calls and answers what it was told to answer. A spec
+# narrows the names a stand-in answers; a patch over a class stands over
+# each of its test methods. The wider library -- autospeccing, patching
+# by dotted name, the magic methods -- refuses by name rather than
+# standing in for itself.
 
 class _Sentinel:
     def __init__(self, word):
@@ -16,9 +18,10 @@ DEFAULT = _Sentinel('DEFAULT')
 
 
 class Mock:
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
         self._mock_name = name
         self._mock_wraps = wraps
+        self._mock_spec = spec
         self.return_value = return_value
         self._side_effect = None
         self.side_effect = side_effect
@@ -127,7 +130,9 @@ class Mock:
         # for, so what looks inside a mock sees what is really there.
         if name[:1] == '_':
             raise AttributeError(name)
-        child = Mock(name=name)
+        if self._mock_spec is not None and not hasattr(self._mock_spec, name):
+            raise AttributeError(name)
+        child = Mock(name=name, spec=getattr(self._mock_spec, name, None))
         setattr(self, name, child)
         return child
 
@@ -262,9 +267,17 @@ class _Patch:
         self.stop()
         return False
 
+    def copy(self):
+        return _Patch(self.target, self.attribute, self.new, self.create, dict(self.made))
+
     def __call__(self, function):
         if isinstance(function, type):
-            raise 'NotImplementedError: standing over a whole class is not supported; put the patch on the test itself'
+            for name in dir(function):
+                if name[:4] == 'test':
+                    member = getattr(function, name)
+                    if callable(member):
+                        setattr(function, name, self.copy()(member))
+            return function
         patcher = self
         def patched(*args, **kwargs):
             fresh = patcher.start()
@@ -280,7 +293,7 @@ class _Patch:
         return patched
 
 
-_TAKEN = ('wraps', 'return_value', 'side_effect')
+_TAKEN = ('wraps', 'return_value', 'side_effect', 'spec')
 
 # A dotted name is split at its last dot: what comes before is a chain
 # of modules and, where a plain attribute lookup does not reach that
@@ -324,6 +337,14 @@ class _Patcher:
         raise 'NotImplementedError: patch.multiple is not supported'
 
 patch = _Patcher()
+
+
+def call(*args, **kwargs):
+    # The reference's call object stands beside the arguments a stand-in
+    # was last called with; a plain pair of the arguments and the keyword
+    # arguments is what this runtime records, so a call makes the same
+    # pair and compares equal to a recorded one.
+    return (list(args), kwargs)
 
 
 def __getattr__(name):
