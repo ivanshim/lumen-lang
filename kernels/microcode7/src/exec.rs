@@ -12649,7 +12649,7 @@ impl<'a> Machine<'a> {
             Value::Text(_) => return Err(said(0)),
             other => return Err(format!("{}{}{}", said(1), other.kind_word(), said(2))),
         };
-        self.convert_text(false, &content, values)
+        self.convert_text(false, &content, values, true)
     }
 
     /// The workings a row of bytes shares with text: looking through
@@ -12902,17 +12902,19 @@ impl<'a> Machine<'a> {
     }
 
     fn codec_function(&mut self, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
-        let namespace = self.namespace_for("codecs")?;
+        let namespace = self.namespace_for("_codec_runtime")?;
         let function = self.attribute(&namespace, name).ok_or_else(|| self.octet_error("unready"))?;
         self.apply_within(function, arguments)
     }
 
-    fn convert_text(&mut self, writing: bool, input: &[u8], values: &[Value]) -> Result<Value, String> {
+    fn convert_text(&mut self, writing: bool, input: &[u8], values: &[Value], validate_policy: bool) -> Result<Value, String> {
         if values.len() > 3 || values.is_empty() { return Err(self.octet_error("arguments")); }
-        let spellings: Vec<_> = values.iter().skip(1).map(|offered| Self::underlying(offered).unwrap_or_else(|| offered.settled())).collect();
-        for spelling in spellings {
-            if let Value::Unpaired(_) = spelling {
-                self.codec_function("_encode_surrogates", vec![spelling, Value::text("utf-8"), Value::text("strict")])?;
+        // Reject unpaired code points in either name with the UTF-8 encoding fault.
+        for candidate in values.iter().skip(1) {
+            let named = Self::underlying(candidate).unwrap_or_else(|| candidate.settled());
+            if let Value::Unpaired(_) = named {
+                let parameters = vec![named, Value::text("utf-8"), Value::text("strict")];
+                self.codec_function("_encode_surrogates", parameters)?;
             }
         }
         let handling = match values.get(2) {
@@ -12920,18 +12922,23 @@ impl<'a> Machine<'a> {
             None => String::from("strict"),
             _ => return Err(self.octet_error("arguments")),
         };
+        let named_zero = values.get(1).map_or(false, |value| match value { Value::Text(word) => word.contains('\0'), _ => false });
+        if named_zero || handling.as_bytes().contains(&0) { return Err(String::from("ValueError: embedded null character")); }
+        if validate_policy && !writing && input.is_empty() && values.get(1).map_or(true, |value| matches!(value, Value::Text(_))) {
+            if !std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|mode| mode == "1") { return Ok(Value::text("")); }
+        }
         let alphabet = self.octet_encoding(values.get(1));
         if !matches!(alphabet, Ok(0..=2)) {
-            return self.codec_function(if writing { "_encode" } else { "_decode" }, values.to_vec());
+            let function = if validate_policy { if writing { "_text_encode" } else { "_text_decode" } } else if writing { "_encode" } else { "_decode" };
+            return self.codec_function(function, values.to_vec());
+        }
+        if validate_policy && values.get(2).is_some() && std::env::var("LUMEN_PYTHON_DEV_MODE").ok().as_deref() == Some("1") {
+            let requested = Value::text(&handling);
+            let _registered = self.codec_function("lookup_error", vec![requested])?;
         }
         if writing && matches!(values[0], Value::Unpaired(_)) { return self.codec_function("_encode_surrogates", values.to_vec()); }
         let alphabet = alphabet?;
-        // An error-policy name the codecs module does not carry is
-        // refused up front, so a row that needs no fix-up still turns
-        // an unknown handler away instead of letting it slip through.
-        if handling != "strict" && handling != "ignore" && handling != "replace" {
-            self.codec_function("lookup_error", vec![Value::text(&handling)])?;
-        }
+        // A valid input does not require the requested error callback to exist.
         let encoding = self.octet_codec_name(alphabet);
         if writing {
             let Value::Text(word) = &values[0] else { return Err(self.octet_error("arguments")); };
@@ -13051,7 +13058,7 @@ impl<'a> Machine<'a> {
         }
         if !values.is_empty() && operation < 4 && (operation > 1 || values.len() > 1) {
             let input = if operation == 3 { self.octet_contents(&values[0], false)? } else { Vec::new() };
-            let answer = self.convert_text(operation != 3, &input, values)?;
+            let answer = self.convert_text(operation != 3, &input, values, true)?;
             return match (operation, answer) {
                 (1, Value::Octets { cell, .. }) => Ok(self.octets(cell.borrow().to_vec(), true)),
                 (_, answer) => Ok(answer),
@@ -17408,6 +17415,12 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        if matches!(op, Prim::Octets(2 | 3)) && matches!(name, "__codec_encode" | "__codec_decode") {
+            let Some(source) = v.first() else { return Err(self.octet_error("arguments")); };
+            let decoding = matches!(op, Prim::Octets(3));
+            let buffer = if decoding { self.octet_contents(source, false)? } else { Vec::new() };
+            return self.convert_text(!decoding, &buffer, v, false);
+        }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
         if v.len() == 2 {
             if let (Value::Octets { cell: x, changeable, .. }, Value::Octets { cell: y, .. }) = (&v[0], &v[1]) {
@@ -18282,6 +18295,7 @@ impl<'a> Machine<'a> {
                 };
                 Value::Blueprint(Rc::new(heir))
             }
+            Prim::CodecMapping => return crate::multibyte::invoke(v),
             Prim::Regex => return crate::sre::invoke(v),
             Prim::CopyWorth => {
                 n(2)?;

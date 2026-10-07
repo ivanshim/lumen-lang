@@ -638,10 +638,10 @@
     "bytes"
   ],
   "ext.builtin.bytes.decode": [
-    "decode"
+    "decode", "__codec_decode"
   ],
   "ext.builtin.bytes.encode": [
-    "encode"
+    "encode", "__codec_encode"
   ],
   "ext.builtin.bytes.find": [
     "find"
@@ -4107,5 +4107,8 @@
     "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."
   ],
   "ext.builtin.iter.stop_value": [],
-  "ext.builtin.iter.stop_exception": []
+  "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.multibyte": [
+    "__multibyte_native"
+  ]
 }

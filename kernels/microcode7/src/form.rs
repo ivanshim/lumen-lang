@@ -70,6 +70,7 @@ pub enum Prim {
     MakeHeir,
     CallResult,
     CopyWorth,
+    CodecMapping,
     Regex,
     LoadModule,
     IsInstance,
