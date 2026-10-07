@@ -134,16 +134,10 @@ class Struct:
             raw = buffer
         else:
             import builtins
-            try:
-                with builtins._buffer_view(buffer, 0) as view:
-                    if not view.c_contiguous:
-                        raise BufferError('memoryview: underlying buffer is not C-contiguous')
-                    raw = view.tobytes()
-            except TypeError as exc:
-                message = str(exc)
-                if message.startswith('memoryview: '):
-                    message = message[12:]
-                raise TypeError(message) from None
+            with builtins._buffer_view(buffer, 0, '') as view:
+                if not view.c_contiguous:
+                    raise BufferError('memoryview: underlying buffer is not C-contiguous')
+                raw = view.tobytes()
         result = _call(2, format, raw)
         if 'F' not in format and 'D' not in format:
             return result
