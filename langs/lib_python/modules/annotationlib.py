@@ -1,8 +1,6 @@
-# The formats an __annotate__ function is asked for, and the one reader of
-# annotations that works without one. This runtime records the names a class
-# or module annotates but does not evaluate the annotations themselves, so
-# VALUE and resolved FORWARDREF annotations can be served; formats requiring
-# the original annotation expression are refused.
+# Runtime annotation formats and isolated symbolic evaluation. Generated and
+# ordinary annotators keep the one-argument format protocol; fallback calls
+# use copied globals and replacement closure cells without changing helpers.
 
 class Format:
     VALUE = 1
@@ -35,13 +33,45 @@ def get_annotate_from_class_namespace(obj):
             return result
         return annotate
 
+# Preserve the annotator's protocol while isolating writes to its globals.
+def _call_with_names(annotate, names, symbolic):
+    code = getattr(annotate, '__code__', None)
+    if code is not None:
+        if names.globals is None:
+            names.globals = annotate.__globals__
+        closure = annotate.__closure__
+        if closure:
+            names.cells = dict(zip(code.co_freevars, closure))
+            copied = []
+            for name, cell in zip(code.co_freevars, closure):
+                replace_cell = symbolic
+                if not replace_cell:
+                    try:
+                        cell.cell_contents
+                    except ValueError:
+                        replace_cell = True
+                if replace_cell:
+                    reference = _Stringifier(name, cell=cell, globals=names.globals,
+                                             owner=names.owner, is_class=names.is_class,
+                                             stringifier_dict=names)
+                    names.stringifiers.append(reference)
+                    copied.append(types.CellType(reference))
+                else:
+                    copied.append(cell)
+            closure = tuple(copied)
+        namespace = {} if symbolic else dict(annotate.__globals__)
+        isolated = types.FunctionType(code, namespace,
+                                      argdefs=annotate.__defaults__, closure=closure)
+        isolated.__kwdefaults__ = annotate.__kwdefaults__
+        annotate = isolated
+    return __annotation_call__(annotate, names, symbolic)
+
 def call_annotate_function(annotate, format, owner=None):
     """Call an __annotate__ function in any of the formats.
 
-    The functions and classes the runtime makes answer the value format, and
-    given a maker of stand-ins beside it read their names by it: the value
-    format for a name nowhere defined only, the fake-globals format for every
-    name of the globals, as the reference's fake globals do.
+    Explicit supported answers are returned directly. Fallback calls use
+    format 2 in an isolated namespace: real bindings on the first FORWARDREF
+    attempt, symbolic global and closure bindings on the second and in STRING.
     """
     if format == Format.VALUE_WITH_FAKE_GLOBALS:
         raise ValueError("The VALUE_WITH_FAKE_GLOBALS format is for internal use only")
@@ -60,7 +90,7 @@ def call_annotate_function(annotate, format, owner=None):
         except Exception:
             pass
         names = _StringifierDict({}, format=format)
-        annos = annotate(Format.VALUE_WITH_FAKE_GLOBALS, names)
+        annos = _call_with_names(annotate, names, True)
         return {key: _stringify_single(val) for key, val in annos.items()}
     if format == Format.FORWARDREF:
         # First read with the real globals and builtins, a name nowhere
@@ -70,17 +100,17 @@ def call_annotate_function(annotate, format, owner=None):
         scope = getattr(annotate, '__globals__', None)
         names = _StringifierDict({}, globals=scope, owner=owner, is_class=is_class, format=format)
         try:
-            result = annotate(Format.VALUE, names)
+            result = _call_with_names(annotate, names, False)
         except NotImplementedError:
             return annotate(Format.VALUE)
         except Exception:
             pass
         else:
-            names.transmogrify(None)
+            names.transmogrify(names.cells)
             return result
         names = _StringifierDict({}, globals=scope, owner=owner, is_class=is_class, format=format)
-        result = annotate(Format.VALUE_WITH_FAKE_GLOBALS, names)
-        names.transmogrify(None)
+        result = _call_with_names(annotate, names, True)
+        names.transmogrify(names.cells)
         return {
             key: val.evaluate(format=Format.FORWARDREF) if isinstance(val, ForwardRef) else val
             for key, val in result.items()
@@ -1042,6 +1072,7 @@ class _StringifierDict(dict):
         self.owner = owner
         self.is_class = is_class
         self.stringifiers = []
+        self.cells = None
         self.next_id = 1
         self.format = format
 

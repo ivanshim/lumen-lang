@@ -1515,10 +1515,20 @@ impl<'a> Machine<'a> {
                         }
                     }
                     74 if values.len() == 3 => {
+                        let scope = self.annotation_scopes.last().filter(|(_, _, _, routine)| {
+                            self.frames_named.last().is_some_and(|running| Rc::as_ptr(running) as usize == *routine)
+                        }).map(|(_, names, all, _)| (names.clone(), *all));
+                        if let Some((names, true)) = &scope {
+                            let symbolic = self.unresolved_annotation_name(names, &values[1].bare());
+                            return symbolic.map_err(Escape::Error);
+                        }
                         if let Value::Blueprint(class) = values[0].settled() {
                             if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
                         }
-                        self.apply_class_member(values[2].clone(), Vec::new())
+                        let before = std::mem::replace(&mut self.armed_names, scope);
+                        let result = self.apply_class_member(values[2].clone(), Vec::new());
+                        self.armed_names = before;
+                        result
                     }
                     77 => match values.as_slice() {
                         [owner @ Value::Blueprint(_), _] if !self.table.strings("ext.stmt.type_params.open").is_empty() => Ok(owner.clone()),
@@ -1594,13 +1604,12 @@ impl<'a> Machine<'a> {
                         Ok(parameter)
                     }
                     44 => {
-                        if values.is_empty() || values.len() > 2 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
+                        if values.len() != 1 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
                         let format = values[0].settled();
                         let rejected = self.prim(Prim::Gt, "", &[format.clone(), Value::Small(2)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
-                        // Given a maker of stand-ins beside the format, each
-                        // annotation is read by it, as the function's are.
-                        let reading = values.get(1).map(|names| (names.clone(), matches!(format, Value::Small(2))));
+                        // Carry the isolated scope into each class evaluator.
+                        let reading = self.armed_names.take();
                         match &kept[0] {
                             Value::Blueprint(owner) => self.resolve_blueprint_annotations_by(owner, reading),
                             Value::Vector(rows) => {
@@ -3984,7 +3993,15 @@ impl<'a> Machine<'a> {
                 // handed; one the program wrote answers the outermost
                 // dictionary of the run it was written in.
                 if let Some(globe)=&code.globe { return Ok(globe.clone()); }
-                if code.written_in.is_none(){return Ok(Value::Shared(self.constructor_world(&code).unwrap_or_else(||self.book_about(true))));}
+                if code.written_in.is_none() {
+                    if let Some(book) = self.constructor_world(&code) { return Ok(Value::Shared(book)); }
+                    if let Some(Value::Thing(main)) = self.imported.get(self.detail("main")) {
+                        if let Some((_, dictionary)) = main.holds.borrow().iter().find(|(name, _)| name == "\0dictionary") {
+                            return Ok(dictionary.clone());
+                        }
+                    }
+                    return Ok(Value::Shared(self.book_about(true)));
+                }
             }
             // The builtins a routine reaches its unbound names through.
             if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key) {
@@ -5309,6 +5326,16 @@ impl<'a> Machine<'a> {
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if op == 26 && self.table.has_any("ext.builtin.annotation_call") {
+            let [function, names, symbolic] = values.as_slice() else {
+                return Err(String::from("TypeError: annotation adapter requires three arguments").into());
+            };
+            let saved = self.armed_names.take();
+            self.armed_names = Some((names.clone(), symbolic.is_true()));
+            let outcome = self.apply_class_member(function.settled(), vec![Value::Small(2)]);
+            self.armed_names = saved;
+            return outcome;
+        }
         if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op == 13 { return self.class_from_function(values); }

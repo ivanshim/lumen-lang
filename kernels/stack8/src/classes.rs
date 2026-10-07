@@ -1557,10 +1557,17 @@ impl<'a> Engine<'a> {
                     Ok(alias)
                 }
                 74 if args.len() == 3 => {
+                    let reading = self.annotation_scope();
+                    if let Some((names, true)) = &reading {
+                        return self.unresolved_annotation_name(names, &args[1].plain()).map_err(Fault::Note);
+                    }
                     if let Value::Class(owner) = args[0].contents() {
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
                     }
-                    self.class_apply(args[2].clone(), Vec::new())
+                    let previous = std::mem::replace(&mut self.armed_names, reading);
+                    let answer = self.class_apply(args[2].clone(), Vec::new());
+                    self.armed_names = previous;
+                    answer
                 }
                 77 if w.1.first().is_some_and(|v| v.plain() == "#union") && args.len() == 2 => {
                     let entries = match args[1].contents() { Value::Tuple(row) => row.to_vec(), item => vec![item] };
@@ -1653,13 +1660,12 @@ impl<'a> Engine<'a> {
                     self.class_super(w.1[0].clone(), &w.1[1].plain(), &name, args)
                 }
                 44 => {
-                    if args.is_empty() || args.len() > 2 { return Err("TypeError: __annotate__() requires one argument".into()); }
+                    if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
                     self.data.extend([args[0].clone(), Value::Small(2)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
-                    // Given a maker of stand-ins beside the format, each
-                    // annotation is read by it, as the function's are.
-                    let reading = args.get(1).map(|names| (names.clone(), matches!(args[0].contents(), Value::Small(2))));
+                    // Read class evaluators in the isolated lookup scope.
+                    let reading = self.armed_names.take();
                     match &w.1[0] {
                         Value::Class(owner) => self.evaluate_class_annotations_by(owner, reading),
                         Value::Array(row) => {
@@ -5091,6 +5097,13 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 26 && !self.lang.annotation_call.is_empty() {
+            if args.len() != 3 { return Err("TypeError: annotation adapter requires three arguments".into()); }
+            let prior = self.armed_names.replace((args[1].clone(), args[2].is_true()));
+            let answer = self.class_apply(args[0].contents(), vec![Value::Small(2)]);
+            self.armed_names = prior;
+            return answer;
+        }
         if which == 22 && args.len() == 1 { return Ok(args.remove(0)); }
 
         if (3..=6).contains(&which) && args.len() >= 2 {

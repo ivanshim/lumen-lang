@@ -723,7 +723,7 @@ pub struct Machine<'a> {
     /// The stand-in maker an annotation routine about to run is to read by,
     /// and which of its name reads it is for, and the frames now read so.
     armed_names: Option<(Value, bool)>,
-    annotation_scopes: Vec<(usize, Value, bool)>,
+    annotation_scopes: Vec<(usize, Value, bool, usize)>,
     /// The names and the frame set aside for a reading of text that
     /// stands inside a routine and was handed no dictionaries of its
     /// own. The text is read as a piece of that routine, so the
@@ -3777,10 +3777,21 @@ impl<'a> Machine<'a> {
         // For the second format every name of the globals the annotation
         // reads is a stand-in, whatever it is bound to.
         if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
-            if let Some((names, true)) = self.annotation_scope(frame) { return self.unresolved_annotation_name(&names, &slot.ident); }
+            if let Some((names, true)) = self.annotation_scope(frame) {
+                let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
+                if copied {
+                    if let Some(value) = self.world_book.as_ref().and_then(|book| looked_up(book, &slot.ident)) { return Ok(value); }
+                }
+                return self.unresolved_annotation_name(&names, &slot.ident);
+            }
         }
         if Rc::ptr_eq(&f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+                if let Err(message) = &found {
+                    if message.starts_with("Undefined variable:") {
+                        if let Some((names, _)) = self.annotation_scope(frame) { return self.unresolved_annotation_name(&names, &slot.ident); }
+                    }
+                }
                 return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
             }
         }
@@ -3790,6 +3801,23 @@ impl<'a> Machine<'a> {
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
+        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
+            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+            if let Some((names, all)) = self.annotation_scope(frame) {
+                let content = v.settled();
+                if all || matches!(content, Value::Unset) {
+                    let symbolic = self.unresolved_annotation_name(&names, &slot.ident)?;
+                    let cell = match &v {
+                        Value::Shared(binding) => Value::Wrapped(35, Rc::new(vec![Value::Shared(binding.clone())]).into()),
+                        _ => Value::Wrapped(35, Rc::new(vec![Value::Bound(self.frames_named.last().unwrap().clone(), f.clone()), Value::Small(slot.at as i64), Value::Flag(true)]).into()),
+                    };
+                    self.alter_class_member(symbolic.clone(), "__cell__", Some(cell), true).map_err(|escape| {
+                        self.got_away = Some(escape); String::new()
+                    })?;
+                    return Ok(symbolic);
+                }
+            }
+        }
         if f.capture_slots.borrow().contains(&slot.at) {
             let Value::Shared(cell) = &v else { unreachable!() };
             let captured = cell.borrow().clone();
@@ -3843,7 +3871,7 @@ impl<'a> Machine<'a> {
     /// The maker of stand-ins the annotation read in this frame is by, and
     /// whether every name of the globals is to be one.
     fn annotation_scope(&self, frame: &Rc<Env>) -> Option<(Value, bool)> {
-        self.annotation_scopes.last().filter(|(at, _, _)| *at == Rc::as_ptr(frame) as usize).map(|(_, names, all)| (names.clone(), *all))
+        self.annotation_scopes.last().filter(|(at, _, _, _)| *at == Rc::as_ptr(frame) as usize).map(|(_, names, all, _)| (names.clone(), *all))
     }
     /// The stand-in the maker gives for a name.
     fn unresolved_annotation_name(&mut self, names: &Value, name: &str) -> Result<Value, String> {
@@ -3894,6 +3922,15 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        // A copied annotation namespace owns its global writes.
+        if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
+            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
+            if let Some(book) = self.world_book.clone() {
+                let content = self.collection_cell(value);
+                set_down(&book, &slot.ident, Some(content));
+                return Ok(());
+            }
+        }
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
@@ -5871,7 +5908,20 @@ impl<'a> Machine<'a> {
             }
         };
         let callee = self.env_for(&p, env, args, frame)?;
-        let chosen = self.constructor_world(&p);
+        let mut chosen = self.constructor_world(&p);
+        let paused_names = if self.armed_names.is_none() && !self.annotation_scopes.is_empty() {
+            if p.globe.is_none() {
+                let names = self.annotation_scopes.last().unwrap().1.clone();
+                self.frames_named.push(p.clone());
+                let home = self.space_book_of();
+                self.frames_named.pop();
+                chosen = home.or_else(|| match self.read_class_member(names, "globals", true).ok()? {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell),
+                    _ => None,
+                }).or(chosen);
+            }
+            Some(std::mem::take(&mut self.annotation_scopes))
+        } else { None };
         let suspended_reading = self.reading_now;
         if p.globe.is_none() && chosen.is_none() { self.reading_now = None; }
         let earlier = chosen.map(|book| self.world_book.replace(book));
@@ -5879,6 +5929,7 @@ impl<'a> Machine<'a> {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
         if let Some(previous) = earlier { self.world_book = previous; }
+        if let Some(scopes) = paused_names { self.annotation_scopes = scopes; }
         self.reading_now = suspended_reading;
         outcome
     }
@@ -6105,6 +6156,13 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
+                    && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
+                    if let Some(book) = &self.world_book {
+                        set_down(book, &slot.ident, None);
+                        return Ok(Value::Nil);
+                    }
+                }
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
@@ -11502,13 +11560,7 @@ impl<'a> Machine<'a> {
 
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
         if let Some(manners) = &program.taking {
-            let mut values = self.value_list(args, caller)?;
-            // An annotation routine given the format and a maker of
-            // stand-ins reads by it, as it does through a call by value.
-            if program.reads_annotation && values.len() == 2 {
-                let names = values.pop().expect("the maker");
-                self.armed_names = Some((names, matches!(values[0].settled(), Value::Small(2))));
-            }
+            let values = self.value_list(args, caller)?;
             let fitted = self.fit_arguments(program, manners, values)?;
             let frame = match program.frameless { true => env, false => self.frame_for(program, &env) };
             for (slot, worth) in program.formal_slots.iter().zip(fitted) {
@@ -11811,7 +11863,30 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let handed = self.constructor_world(&program);
+        let mut handed = match self.constructor_world(&program) {
+            Some(namespace) => Some(namespace),
+            None => match &program.globe {
+                Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
+                Some(dictionary @ Value::Dict(_)) => Some(Rc::new(RefCell::new(dictionary.clone()))),
+                _ => None,
+            },
+        };
+        let caller_scope = self.annotation_scopes.last().filter(|(_, _, _, pointer)| {
+            self.frames_named.last().is_some_and(|caller| Rc::as_ptr(caller) as usize == *pointer)
+        }).map(|(_, names, _, _)| names.clone());
+        if !program.frameless && program.globe.is_none() && self.armed_names.is_none() {
+            if let Some(names) = caller_scope {
+                self.frames_named.push(program.clone());
+                let original = self.space_book_of();
+                self.frames_named.pop();
+                handed = original.or_else(|| {
+                    match self.read_class_member(names, "globals", true).ok()? {
+                        Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell),
+                        _ => None,
+                    }
+                }).or(handed);
+            }
+        }
         let resumed_reading = match (&program.globe, &handed) {
             (None, None) => self.reading_now.take(),
             _ => self.reading_now,
@@ -11824,17 +11899,6 @@ impl<'a> Machine<'a> {
     }
 
     fn invoke_body(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        // An annotation routine given the format and a maker of stand-ins reads
-        // by it: a name of its own nowhere defined, or, for the second format,
-        // every name of the globals, is a stand-in. What it calls reads as ever.
-        if program.reads_annotation && args.len() == 2 {
-            let mut args = args;
-            let names = args.pop().expect("the maker");
-            self.armed_names = Some((names, matches!(args[0].settled(), Value::Small(2))));
-            let read = self.invoke_body(program, env, args);
-            self.armed_names = None;
-            return read;
-        }
         let callable = Value::Bound(program.clone(), env.clone());
         let (program, env) = self.as_now_written(program, env);
         let titles = if program.generator {
@@ -11916,9 +11980,9 @@ impl<'a> Machine<'a> {
         // The frame an annotation is being read in is noted, so that only
         // its own name reads, and none of a routine it calls, may stand for
         // stand-ins.
-        if program.reads_annotation {
+        {
             if let Some((names, all)) = self.armed_names.take() {
-                self.annotation_scopes.push((Rc::as_ptr(&frame) as usize, names, all));
+                self.annotation_scopes.push((Rc::as_ptr(&frame) as usize, names, all, Rc::as_ptr(&program) as usize));
                 let read = self.drive_body_run(program, frame);
                 self.annotation_scopes.pop();
                 return read;
@@ -24472,6 +24536,10 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
+        let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
+            self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
+        });
+        if scoped && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {

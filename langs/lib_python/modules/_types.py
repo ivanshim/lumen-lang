@@ -1,21 +1,13 @@
 # Bindings and constructors for CPython Modules/_typesmodule.c.
 # PSF License.
-class CellType:
-    def __init__(self, *contents):
-        if len(contents) > 1:
-            raise TypeError('cell expected at most 1 argument, got ' + str(len(contents)))
-        self._contents = list(contents)
-
-    @property
-    def cell_contents(self):
-        if len(self._contents) == 0:
-            raise ValueError('Cell is empty')
-        return self._contents[0]
-
-    def __repr__(self):
-        if len(self._contents) == 0:
-            return '<cell: empty>'
-        return '<cell: ' + repr(self._contents[0]) + '>'
+# Discover the native closure-cell type used by functions and their annotations.
+def _cell_sample():
+    value = None
+    def keep():
+        return value
+    return keep.__closure__[0]
+CellType = type(_cell_sample())
+del _cell_sample
 
 
 class _MethodSample:
