@@ -614,6 +614,10 @@ class TextIOWrapper(_TextIOBase):
     # made, which is when the C stream settles it.
     _read_ok = False
     _write_ok = False
+    # Encoded text waiting to go to the buffer, and its size: the C stream
+    # collects writes until a chunk is full, or something asks for them.
+    _pending = None
+    _pending_count = 0
     _chunk_size = 8192
     @property
     def _CHUNK_SIZE(self):
@@ -703,14 +707,23 @@ class TextIOWrapper(_TextIOBase):
         if name in ('_initialized', '_repr_running', '_chunk_size'):
             raise AttributeError(name)
         return _method(self, 'TextIOWrapper', name)
+    def _unattached(self):
+        if not self._initialized:
+            raise ValueError('I/O operation on uninitialized object')
+        raise ValueError('underlying buffer has been detached')
     @property
     def buffer(self):
+        # After a detach the attribute reads None, as the C stream's does;
+        # the methods say the buffer is gone.
+        if not self._initialized:
+            raise ValueError('I/O operation on uninitialized object')
+        return self._buffer
+    @property
+    def name(self):
         buffer = self._buffer
         if buffer is None or not self._initialized:
-            if not self._initialized:
-                raise ValueError('I/O operation on uninitialized object')
-            raise ValueError('underlying buffer has been detached')
-        return buffer
+            self._unattached()
+        return buffer.name
     @property
     def line_buffering(self):
         return self._line_buffering
@@ -725,42 +738,112 @@ class TextIOWrapper(_TextIOBase):
         return self._errors
     @property
     def newlines(self):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
         return self._decoder.newlines if self._decoder and self._readuniversal else None
     @property
     def closed(self):
-        return self.buffer.closed
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            self._unattached()
+        return buffer.closed
+    def _writeflush(self):
+        pending = self._pending
+        if not pending:
+            return
+        # The count and the list are cleared before the buffer is written
+        # to, so a write made from inside that call starts a fresh one.
+        self._pending = []
+        self._pending_count = 0
+        self.buffer.write(pending[0] if len(pending) == 1 else b''.join(pending))
     def read(self, size=-1):
         if not self._read_ok and not self.readable():
             raise UnsupportedOperation('not readable')
+        if self._pending:
+            self._writeflush()
         function = _TEXT.get('read') or _text_function('read')
         return function(self, size)
     def readline(self, size=-1):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
+        if self._pending:
+            self._writeflush()
         function = _TEXT.get('readline') or _text_function('readline')
         return function(self, size)
     def write(self, text):
         if not self._write_ok and not self.writable():
             raise UnsupportedOperation('not writable')
-        function = _TEXT.get('write') or _text_function('write')
-        return function(self, text)
+        if self.closed:
+            raise ValueError('write to closed file')
+        if not isinstance(text, str):
+            raise TypeError("can't write %s to text stream" % text.__class__.__name__)
+        length = len(text)
+        haslf = (self._writetranslate or self._line_buffering) and '\n' in text
+        if haslf and self._writetranslate and self._writenl != '\n':
+            text = text.replace('\n', self._writenl)
+        encoder = self._encoder or self._get_encoder()
+        data = encoder.encode(text)
+        if not isinstance(data, bytes):
+            raise TypeError("encoder should return a bytes object, not '%s'" % type(data).__name__)
+        chunk = self._CHUNK_SIZE
+        # A write that would take the waiting data past a chunk sends what
+        # waits first, and goes again in case that call wrote something.
+        while self._pending and self._pending_count + len(data) > chunk:
+            self._writeflush()
+        if self._pending is None:
+            self._pending = []
+        self._pending.append(data)
+        self._pending_count += len(data)
+        if self._pending_count >= chunk or self._write_through:
+            self._writeflush()
+        if self._line_buffering and (haslf or '\r' in text):
+            self.flush()
+        if self._snapshot is not None:
+            self._set_decoded_chars('')
+            self._snapshot = None
+        if self._decoder:
+            self._decoder.reset()
+        return length
     def seek(self, cookie, whence=0):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
         function = _TEXT.get('seek') or _text_function('seek')
         return function(self, cookie, whence)
     def tell(self):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
         function = _TEXT.get('tell') or _text_function('tell')
         return function(self)
     def truncate(self, pos=None):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
         function = _TEXT.get('truncate') or _text_function('truncate')
         return function(self, pos)
     def readable(self):
-        return self.buffer.readable()
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            self._unattached()
+        return buffer.readable()
     def writable(self):
-        return self.buffer.writable()
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            self._unattached()
+        return buffer.writable()
     def seekable(self):
-        return self.buffer.seekable()
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            self._unattached()
+        return buffer.seekable()
     def flush(self):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
+        if self._pending:
+            self._writeflush()
         function = _TEXT.get('flush') or _text_function('flush')
         return function(self)
     def close(self):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
         if self._finalizing:
             buffer = self._buffer
             if buffer is not None and not buffer.closed:
@@ -768,15 +851,35 @@ class TextIOWrapper(_TextIOBase):
                 if warn is not None:
                     warn(self)
         function = _TEXT.get('close') or _text_function('close')
-        return function(self)
+        attached = self._buffer
+        try:
+            return function(self)
+        except Exception:
+            # A buffer that was detached from inside its own closed check
+            # leaves nothing to flush or close, which is no error.
+            if attached is not None and self._buffer is None and self._initialized:
+                return None
+            raise
     def detach(self):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
         function = _TEXT.get('detach') or _text_function('detach')
         return function(self)
     def fileno(self):
-        return self.buffer.fileno()
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            self._unattached()
+        return buffer.fileno()
     def isatty(self):
-        return self.buffer.isatty()
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
+            self._unattached()
+        return buffer.isatty()
     def __next__(self):
+        if self._buffer is None or not self._initialized:
+            self._unattached()
+        if self._pending:
+            self._writeflush()
         function = _TEXT.get('__next__') or _text_function('__next__')
         return function(self)
 
