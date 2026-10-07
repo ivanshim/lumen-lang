@@ -8319,6 +8319,13 @@ impl<'a> Machine<'a> {
                     if held.done || *at < BigInt::from(0) { return Ok(Value::Small(0)); }
                     Some((thing.clone(), at.clone()))
                 }
+                // A map or set walked as it stands guesses what is left
+                // from the size it began at against where it stands now,
+                // and guesses nothing once that size has changed.
+                IteratorKind::Watching { window, at, size } => {
+                    if held.done || Self::window_extent(window) != *size { return Ok(Value::Small(0)); }
+                    return Ok(Value::Small(size.0.saturating_sub(*at) as i64));
+                }
                 _ => None,
             }};
             // A walk taken by place from a thing's own `__getitem__`
@@ -8329,7 +8336,9 @@ impl<'a> Machine<'a> {
                 let length = self.prim(Prim::Length, "len", &[thing]).map_err(Escape::Error)?;
                 let size = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_complaint("core.integer", &length.kind_word())) }?;
                 let hint = at + BigInt::from(1);
-                return Ok(Value::from_big(if size < hint { size } else { hint }));
+                // A walk that has fallen past the end of what it reads
+                // guesses nothing whatever the sequence once measured.
+                return Ok(Value::from_big(if size < hint { BigInt::from(0) } else { hint }));
             }
             return Ok(Value::Small(0));
         }
@@ -9720,7 +9729,7 @@ impl<'a> Machine<'a> {
         let mut arguments = arguments;
         if name == "extend" && arguments.len() == 1 && matches!(receiver.settled(), Value::Vector(_)) {
             let plain = matches!(arguments[0].settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Set(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_));
-            if !plain { let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
+            if !plain { self.length_hint_probe(&arguments[0])?; let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
         }
         // A mapping subclass whose subscript member was read off the
         // thing itself reaches its `__missing__` through the subscript
@@ -12419,6 +12428,7 @@ impl<'a> Machine<'a> {
                 items.iter().map(|item| self.octet_item(item, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
             other => {
+                self.length_hint_probe(other)?;
                 let source = self.iterated_value(other)?;
                 let mut collected = Vec::new();
                 loop {
@@ -12431,6 +12441,50 @@ impl<'a> Machine<'a> {
 
     fn octet_contents(&self, source: &Value, iterable: bool) -> Result<Vec<u8>, String> {
         self.octet_gathered(source, iterable, false)
+    }
+
+    /// The member a window upon a map or a set hands over at a place,
+    /// read from the thing as it stands now rather than as it stood
+    /// when the walk began.
+    fn watched_member(window: &Value, at: usize) -> Option<Value> {
+        match window.settled() {
+            Value::Vector(items) => items.get(at).cloned(),
+            Value::Set(store) => store.try_borrow().ok().and_then(|held| held.entries.get(at)
+                .map(|(_, value)| match value { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() })),
+            _ => None,
+        }
+    }
+
+    /// The guess at how many members an iterable holds, asked of an
+    /// object the way the reference asks it before gathering: its
+    /// length where it has one, else its own `__length_hint__`. What
+    /// the length raises stops the gathering, save a TypeError, which
+    /// is forgotten and the hint asked instead; a hint of
+    /// NotImplemented is no hint, and a hint that is no whole number
+    /// or lies below nought is refused in the reference's words. Only
+    /// what asking the guess does matters, never the guess itself.
+    fn length_hint_probe(&mut self, value: &Value) -> Result<(), String> {
+        if self.appointment(value, 10).is_some() {
+            match self.ask_special(value, 10, &[]) {
+                Ok(_) => return Ok(()),
+                Err(complaint) => {
+                    let forgotten = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thing))) if thing.blueprint().goes_by("TypeError", false));
+                    if !forgotten { return Err(complaint); }
+                    self.got_away = None;
+                }
+            }
+        }
+        if let Some(hint) = self.ask_special(value, 78, &[])? {
+            let hint = hint.settled();
+            if matches!(hint, Value::Refusal(_)) { return Ok(()); }
+            if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                return Err(format!("TypeError: __length_hint__ must be integer, not {}", hint.kind_word()));
+            }
+            if hint.as_big()? < BigInt::from(0) {
+                return Err("ValueError: __length_hint__() should return >= 0".to_owned());
+            }
+        }
+        Ok(())
     }
 
     fn octet_gathered(&self, source: &Value, iterable: bool, whole_row: bool) -> Result<Vec<u8>, String> {
@@ -15898,6 +15952,7 @@ impl<'a> Machine<'a> {
             }
             (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
+                self.length_hint_probe(one)?;
                 let result = Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?));
                 // Members an iterator hands out are kept quoted, as a window's are.
                 if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_) | Value::Generator(_)) { result.keep(true) } else { result }
@@ -26571,6 +26626,15 @@ impl Machine<'_> {
                     },
                 }
             }
+            // A set is walked the very way a map is: through the
+            // members it holds now, so a change to how many it holds
+            // stops the walk rather than being passed over, and the
+            // members still to come are read from where the walk stands.
+            _ if self.table.has_any("ext.builtin.set.changed") && matches!(source.settled(), Value::Set(_)) => {
+                let members = source.settled();
+                let size = Self::window_extent(&members);
+                Ok(Self::cursor_value_walked(IteratorKind::Watching { window: members, at: 0, size }, Some(Rc::from("set_iterator"))))
+            }
             _ => {
                 let entries = self.core_collect(source)?;
                 let walk = Self::cursor_value(IteratorKind::Stored { entries: Rc::new(entries).into(), next: 0 });
@@ -26711,10 +26775,14 @@ impl Machine<'_> {
                 IteratorKind::Watching { window, at, size } => {
                     let current = Self::window_extent(window);
                     if current != *size {
-                        let index = if current.0 == size.0 { 1 } else { 0 };
-                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
+                        let complaint = if matches!(window.settled(), Value::Set(_)) {
+                            self.table.strings("ext.builtin.set.changed").first().cloned().unwrap_or_default()
+                        } else {
+                            self.table.strings("ext.builtin.core.dict.changed")[if current.0 == size.0 { 1 } else { 0 }].clone()
+                        };
+                        return Err(format!("\0{}", complaint));
                     }
-                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    let item = Self::watched_member(window, *at);
                     if item.is_some() { *at += 1; }
                     held.done = item.is_none();
                     return Ok(item);
@@ -26745,10 +26813,14 @@ impl Machine<'_> {
                 IteratorKind::Watching { window, at, size } => {
                     let current = Self::window_extent(window);
                     if current != *size {
-                        let index = if current.0 == size.0 { 1 } else { 0 };
-                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
+                        let complaint = if matches!(window.settled(), Value::Set(_)) {
+                            self.table.strings("ext.builtin.set.changed").first().cloned().unwrap_or_default()
+                        } else {
+                            self.table.strings("ext.builtin.core.dict.changed")[if current.0 == size.0 { 1 } else { 0 }].clone()
+                        };
+                        return Err(format!("\0{}", complaint));
                     }
-                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    let item = Self::watched_member(window, *at);
                     if item.is_some() { *at += 1; }
                     Ok(item)
                 }
@@ -26877,7 +26949,15 @@ impl Machine<'_> {
 
     /// How many entries the dictionary behind a window holds.
     fn window_extent(window: &Value) -> (usize, u64) {
-        match window { Value::Window(owner, _) => match owner.proxy_pairs() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) }, _ => (0, 0) }
+        match window {
+            // A set watched during iteration is measured by how many
+            // members it holds now; it keeps no serial of its own,
+            // since a change to the count is the whole of what stops
+            // a walk of it.
+            Value::Set(store) => match store.try_borrow() { Ok(held) => (held.entries.len(), 0), Err(_) => (0, 0) },
+            Value::Window(owner, _) => match owner.proxy_pairs() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) },
+            _ => (0, 0),
+        }
     }
 
     /// The cell a list lives in, or a window upon a dictionary, taken as

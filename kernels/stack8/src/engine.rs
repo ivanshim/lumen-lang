@@ -7358,6 +7358,13 @@ impl<'a> Engine<'a> {
                     if held.finished || *at < BigInt::from(0) { return Ok(Value::Small(0)); }
                     Some((thing.clone(), at.clone()))
                 }
+                // A map or set walked as it stands guesses what is left
+                // from the size it began at against where it stands now,
+                // and guesses nothing once that size has changed.
+                CursorSource::Viewed(window, place, size) => {
+                    if held.finished || Self::window_size(window) != *size { return Ok(Value::Small(0)); }
+                    return Ok(Value::Small(size.0.saturating_sub(*place) as i64));
+                }
                 _ => None,
             }};
             // A walk taken by place from a sequence's own `__getitem__`
@@ -7368,7 +7375,9 @@ impl<'a> Engine<'a> {
                 let length = self.builtin_call(Builtin::Length, "len", vec![(None, thing)])?;
                 let size = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_fault("core.integer", &length.core_kind())) }?;
                 let hint = at + BigInt::from(1);
-                return Ok(Value::of_big(if size < hint { size } else { hint }));
+                // A walk that has fallen past the end of what it reads
+                // guesses nothing whatever the sequence once measured.
+                return Ok(Value::of_big(if size < hint { BigInt::from(0) } else { hint }));
             }
             return Ok(Value::Small(0));
         }
@@ -9396,6 +9405,7 @@ impl<'a> Engine<'a> {
                 Value::array(items).held(true)
             }
             Builtin::List if args.len() == 1 => {
+                self.length_hint_probe(&args[0])?;
                 let row = Value::array(self.special_items(&args[0])?);
                 // What a cursor hands out is quoted as a window's members are.
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { row.held(true) } else { row }
@@ -16308,6 +16318,7 @@ impl<'a> Engine<'a> {
         let mut args = args;
         if operation == "extend" && args.len() == 1 && matches!(receiver.contents(), Value::Array(_))
             && !matches!(args[0].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
+            self.length_hint_probe(&args[0])?;
             args[0] = Value::array(self.comprehension_items(&args[0])?);
         }
         // A mapping subclass whose subscript member was read off the
@@ -17354,12 +17365,65 @@ impl<'a> Engine<'a> {
             Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
             other => {
+                self.length_hint_probe(other)?;
                 let walk = self.core_iterator(other)?;
                 let mut bytes = Vec::new();
                 while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_number(&item, false)?); }
                 Ok(bytes)
             },
         }
+    }
+
+    /// The member a window upon a map or a set hands over at a place,
+    /// read from the thing as it stands now rather than as it stood
+    /// when the walk began.
+    fn viewed_member(window: &Value, place: usize) -> Option<Value> {
+        match window.contents() {
+            Value::Array(items) => items.get(place).cloned(),
+            Value::Set(members) => members.try_borrow().ok().and_then(|held| held.row.get(place)
+                .and_then(|key| held.held.get(key).map(|value| match value { Value::Hashed(pair) => pair.0.clone(), value => value.clone() }))),
+            _ => None,
+        }
+    }
+
+    /// How a window that has changed under a walk complains. A set has
+    /// one complaint whatever changed; a map names whether it was the
+    /// size or the keys.
+    fn viewed_changed(&self, window: &Value, now: (usize, u64), began: (usize, u64)) -> String {
+        match window.contents() {
+            Value::Set(_) => self.lang.set_words["ext.builtin.set.changed"].first().cloned().unwrap_or_default(),
+            _ => self.lang.core_words["core.dict.changed"][usize::from(now.0 == began.0)].clone(),
+        }
+    }
+
+    /// The guess at how many members an iterable holds, asked of an
+    /// object the way the reference asks it before gathering: its
+    /// length where it has one, else its own `__length_hint__`. What
+    /// the length raises stops the gathering, save a TypeError, which
+    /// is forgotten and the hint asked instead; a hint of
+    /// NotImplemented is no hint, and a hint that is no whole number
+    /// or lies below nought is refused in the reference's words. Only
+    /// what asking the guess does matters, never the guess itself.
+    fn length_hint_probe(&mut self, value: &Value) -> Res<()> {
+        match self.special_call(value, 10, Vec::new()) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(fault) => {
+                let forgotten = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false));
+                if !forgotten { return Err(fault); }
+                self.carried = None;
+            }
+        }
+        if let Some(hint) = self.special_call(value, 78, Vec::new())? {
+            if matches!(hint, Value::Declined(_)) { return Ok(()); }
+            if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                return Err(format!("TypeError: __length_hint__ must be integer, not {}", hint.core_kind()));
+            }
+            if hint.as_big()?.is_negative() {
+                return Err("ValueError: __length_hint__() should return >= 0".to_string());
+            }
+        }
+        Ok(())
     }
 
     /// A whole number a row of bytes is handed as a place. CPython
@@ -20395,6 +20459,7 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
+                self.length_hint_probe(&args[0])?;
                 let result = Value::array(self.comprehension_items(&args[0])?);
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { result.held(true) } else { result }
             }
@@ -22037,6 +22102,17 @@ impl Engine<'_> {
             if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
             return Ok(walk);
         }
+        // A set is walked the very way a map is: through the members it
+        // holds now, so a change to how many it holds stops the walk
+        // rather than being passed over, and the members still to come
+        // are read from where the walk stands.
+        if !self.lang.set_words["ext.builtin.set.changed"].is_empty() && matches!(source.contents(), Value::Set(_)) {
+            let members = source.contents();
+            let size = Self::window_size(&members);
+            let walk = Self::core_cursor(CursorSource::Viewed(members, 0, size));
+            if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
+            return Ok(walk);
+        }
         let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?).into(), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         if let (Value::Cursor(state), Value::Object(_)) = (&walk, source) { state.borrow_mut().origin = Some(source.clone()); }
@@ -22141,8 +22217,8 @@ impl Engine<'_> {
                 }
                 CursorSource::Viewed(window, place, size) => {
                     let now = Self::window_size(window);
-                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
-                    let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if now != *size { return Err(format!("\0{}", self.viewed_changed(window, now, *size))); }
+                    let found = Self::viewed_member(window, *place);
                     if found.is_some() { *place += 1; } else { state.finished = true; }
                     return Ok(found);
                 }
@@ -22169,8 +22245,8 @@ impl Engine<'_> {
             }
             CursorSource::Viewed(window, place, size) => {
                 let now = Self::window_size(window);
-                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
-                let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if now != *size { return Err(format!("\0{}", self.viewed_changed(window, now, *size))); }
+                let found = Self::viewed_member(window, *place);
                 if found.is_some() { *place += 1; }
                 Ok(found)
             }
@@ -22299,17 +22375,25 @@ impl Engine<'_> {
 
     /// The size of the map a window looks upon.
     fn window_size(window: &Value) -> (usize, u64) {
-        match window { Value::View(view) => match view.0.proxy_dictionary() {
-            Value::Map(pairs) => {
-                if matches!(view.0.contents(), Value::Class(_)) {
-                    use std::hash::{Hash, Hasher};
-                    let mut keys = std::collections::hash_map::DefaultHasher::new();
-                    for (key, _) in pairs.iter() { key.plain().hash(&mut keys); }
-                    (pairs.len(), keys.finish())
-                } else { (pairs.len(), pairs.revision) }
+        match window {
+            // A set watched during iteration is measured by how many
+            // members it holds now; it keeps no revision of its own,
+            // since a change to the count is the whole of what stops
+            // a walk of it.
+            Value::Set(members) => match members.try_borrow() { Ok(held) => (held.held.len(), 0), Err(_) => (0, 0) },
+            Value::View(view) => match view.0.proxy_dictionary() {
+                Value::Map(pairs) => {
+                    if matches!(view.0.contents(), Value::Class(_)) {
+                        use std::hash::{Hash, Hasher};
+                        let mut keys = std::collections::hash_map::DefaultHasher::new();
+                        for (key, _) in pairs.iter() { key.plain().hash(&mut keys); }
+                        (pairs.len(), keys.finish())
+                    } else { (pairs.len(), pairs.revision) }
+                },
+                _ => (0, 0)
             },
-            _ => (0, 0)
-        }, _ => (0, 0) }
+            _ => (0, 0),
+        }
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,
