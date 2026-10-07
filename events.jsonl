@@ -6921,3 +6921,19 @@
 {"t":"2026-10-07T05:44:35Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-07T05:45:45Z","event":"queued","job":"dsflash-structseq","model":"deepseek-flash","line":"ds-new dsflash-structseq deepseek-flash"}
 {"t":"2026-10-07T05:48:10Z","event":"started","job":"stdlib-unittest","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T05:52:41Z","event":"note","text":"sandbox-home: ssh/scp wrappers, .ssh/config, .bash_profile repointed from /tmp/ds-home to var/sandbox-home (tested inside sandbox); /tmp/ds-home link to be removed once older workers finish"}
+{"t":"2026-10-07T05:52:44Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-07T05:53:10Z","event":"review-started","job":"claude-functools-sol","review":"review-auto-claude-functools-sol-0529"}
+{"t":"2026-10-07T05:54:24Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-07T05:54:36Z","event":"queued","job":"dsflash-yieldfrom","model":"deepseek-flash","line":"ds-new dsflash-yieldfrom deepseek-flash"}
+{"t":"2026-10-07T05:54:36Z","event":"queued","job":"dsflash-dynamic","model":"deepseek-flash","line":"ds-new dsflash-dynamic deepseek-flash"}
+{"t":"2026-10-07T05:54:57Z","event":"quota","codex_week_used":5,"codex_credits":0,"claude_week_used":27,"claude_5h_used":8,"kimi_5h_used":0,"kimi_month_used":0.9,"kimi_code_used":0,"deepseek_usd":345.09}
+{"t":"2026-10-07T05:54:58Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":5,"expected":4.4,"gap":"+0.6","status":"ok"}
+{"t":"2026-10-07T05:55:12Z","event":"checkin","status":"done","actions":"no verdicts pending; prune-merged freed 0MB (disk 77%); DS Flash slots 11-12 filled: dsflash-yieldfrom (test_yield_from+test_generator_stop) and dsflash-dynamic (test_dynamic+test_longexp) briefs + worktrees at 589a950a9, queued","notes":"box load 11.3, 5.4 GB available: 4 DS Flash + 1 Sol subject + 1 review wait in queue for the load gate; one-offs (/Users on box, /tmp/ds-home) still blocked by older lverify/opencode processes; luna-meter gap +0.6 ok, no new alerts"}
+{"t":"2026-10-07T05:55:59Z","event":"note","text":"Removed /tmp/ds-home on the Mac (running workers already used var/sandbox-home; sandbox ssh tested) and the stray /Users tree on lumenlang2 (171 MB, unused leftovers; old-version checks were past packaging). No worker paused or restarted. Nothing of lumen-lang left in Mac /tmp.","by":"Ivan"}
+{"t":"2026-10-07T05:56:03Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-07T05:57:00Z","event":"exited","job":"review-auto-claude-functools-sol-0529","code":0}
+{"t":"2026-10-07T05:58:12Z","event":"review-started","job":"dsflash-dataclasses","review":"review-auto-dsflash-dataclasses-0544"}
+{"t":"2026-10-07T06:01:14Z","event":"exited","job":"review-auto-dsflash-dataclasses-0544","code":0}
+{"t":"2026-10-07T06:02:18Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-07T06:02:22Z","event":"queued","job":"dsflash-builtin","model":"deepseek-flash","line":"or-resume dsflash-builtin deepseek-flash ses_eed605a88ffeMOz7pUzJh809wK"}
