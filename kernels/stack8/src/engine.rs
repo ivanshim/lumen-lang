@@ -21059,6 +21059,7 @@ fn as_index(v: &Value) -> Res<usize> {
     match v {
         Value::Small(n) => usize::try_from(*n).map_err(|_| "Array index out of bounds".to_string()),
         Value::Huge(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
+        Value::Flag(flag) => Ok(usize::from(*flag)),
         _ => Err("Array index must be a number".to_string()),
     }
 }

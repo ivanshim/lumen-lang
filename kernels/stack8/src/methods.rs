@@ -89,6 +89,74 @@ fn bound(n: i64, length: usize) -> usize {
     if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length) }
 }
 
+/// Where a run of code units first or last stands inside a longer run.
+fn codes_search(hay: &[u32], needle: &[u32], from: usize, backwards: bool) -> Option<usize> {
+    if needle.is_empty() { return Some(if backwards { hay.len() } else { from.min(hay.len()) }); }
+    if needle.len() > hay.len() { return None; }
+    let places = 0..=hay.len() - needle.len();
+    if backwards {
+        places.rev().find(|&i| hay[i..i + needle.len()] == *needle)
+    } else {
+        places.filter(|&i| i >= from).find(|&i| hay[i..i + needle.len()] == *needle)
+    }
+}
+
+/// How many runs of the sought code units stand in the longer run.
+fn codes_tally(hay: &[u32], needle: &[u32]) -> usize {
+    if needle.is_empty() { return hay.len() + 1; }
+    let mut tally = 0;
+    let mut at = 0;
+    while let Some(found) = codes_search(hay, needle, at, false) {
+        tally += 1;
+        at = found + needle.len();
+    }
+    tally
+}
+
+/// The pieces a run of code units is cut into by a divider or by white
+/// space, at most a given number of cuts, asking for white space cuts
+/// where no divider is named.
+fn codes_split(row: &[u32], divider: Option<&[u32]>, cap: usize, backwards: bool, fault: &dyn Fn(&str) -> String) -> Result<Vec<Vec<u32>>, String> {
+    let blank = |n: u32| char::from_u32(n).is_some_and(char::is_whitespace) || (0x1c..=0x1f).contains(&n);
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    match divider {
+        Some(sep) => {
+            if sep.is_empty() { return Err(fault("separator")); }
+            let mut edge = if backwards { row.len() } else { 0 };
+            loop {
+                if pieces.len() == cap { pieces.push(if backwards { row[..edge].to_vec() } else { row[edge..].to_vec() }); break; }
+                let found = if backwards { codes_search(&row[..edge], sep, 0, true) } else { codes_search(&row[edge..], sep, 0, false) };
+                match found {
+                    Some(at) if backwards => { pieces.push(row[at + sep.len()..edge].to_vec()); edge = at; }
+                    Some(at) => { pieces.push(row[edge..edge + at].to_vec()); edge += at + sep.len(); }
+                    None => { pieces.push(if backwards { row[..edge].to_vec() } else { row[edge..].to_vec() }); break; }
+                }
+            }
+        }
+        None => {
+            let mut edge = if backwards { row.len() } else { 0 };
+            loop {
+                if backwards {
+                    while edge > 0 && blank(row[edge - 1]) { edge -= 1; }
+                    if edge == 0 { break; }
+                } else {
+                    while edge < row.len() && blank(row[edge]) { edge += 1; }
+                    if edge >= row.len() { break; }
+                }
+                if pieces.len() == cap { pieces.push(row[..edge].to_vec()); break; }
+                let found = if backwards { (0..edge).rev().find(|&i| blank(row[i])) } else { (edge..row.len()).find(|&i| blank(row[i])) };
+                match found {
+                    Some(at) if backwards => { pieces.push(row[at + 1..edge].to_vec()); edge = at; }
+                    Some(at) => { pieces.push(row[edge..at].to_vec()); edge = at; }
+                    None => { pieces.push(row[..edge].to_vec()); break; }
+                }
+            }
+        }
+    }
+    if backwards { pieces.reverse(); }
+    Ok(pieces)
+}
+
 /// The names a value of a builtin kind answers to, by the working
 /// each stands for. A kind answers its own alone: a list appends, a
 /// tuple does not.
@@ -196,6 +264,34 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
             };
             return Ok(Value::Flag(valid));
+        }
+        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex" | "count") => {
+            arity(1, 3)?;
+            let span = row.len();
+            let raw = a.get(1).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(0);
+            let low = bound(raw, span);
+            let high = a.get(2).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.map_or(span, |n| bound(n, span));
+            let ordered = raw <= span as i64 && low <= high;
+            let part = &row[low..high.max(low)];
+            let needle = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if op == "count" {
+                let total = if !ordered { 0 } else { codes_tally(part, &needle) };
+                return Ok(Value::Small(total as i64));
+            }
+            let at = if !ordered { None } else { codes_search(part, &needle, 0, matches!(op, "rfind" | "rindex")) };
+            if matches!(op, "index" | "rindex") && at.is_none() { return Err(fault("substring")); }
+            return Ok(Value::Small(at.map_or(-1, |i| (low + i) as i64)));
+        }
+        Value::Codepoints(row) if op == "split" || op == "rsplit" => {
+            arity(0, 2)?;
+            let cap = a.get(1).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(-1);
+            let cap = if cap < 0 { usize::MAX } else { cap as usize };
+            let divider = match a.first().filter(|v| !matches!(v.contents(), Value::Null)) {
+                None => None,
+                Some(v) => Some(v.contents().text_codes().ok_or_else(|| fault("arguments"))?),
+            };
+            let pieces = codes_split(row, divider.as_deref(), cap, op == "rsplit", fault)?;
+            return Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true));
         }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;

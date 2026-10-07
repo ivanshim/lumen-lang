@@ -72,6 +72,84 @@ fn place(number:i64,size:usize)->usize {
     (positive as usize).min(size)
 }
 
+fn unit_where(hay: &[u32], wanted: &[u32], after: usize, from_tail: bool) -> Option<usize> {
+    if wanted.is_empty() { return Some(if from_tail { hay.len() } else { after.min(hay.len()) }); }
+    let mut last = None;
+    let mut at = after;
+    while at + wanted.len() <= hay.len() {
+        if hay[at..at + wanted.len()] == *wanted {
+            if !from_tail { return Some(at); }
+            last = Some(at);
+        }
+        at += 1;
+    }
+    last
+}
+
+fn unit_tally(hay: &[u32], wanted: &[u32]) -> usize {
+    if wanted.is_empty() { return hay.len() + 1; }
+    let mut seen = 0;
+    let mut at = 0;
+    loop {
+        match unit_where(hay, wanted, at, false) {
+            Some(spot) => { seen += 1; at = spot + wanted.len(); }
+            None => return seen,
+        }
+    }
+}
+
+fn unit_cut(row: &[u32], divider: Option<&[u32]>, cap: usize, from_tail: bool, fault: &dyn Fn(&str) -> String) -> Result<Vec<Vec<u32>>, String> {
+    let gap = |n: u32| matches!(n, 0x1c..=0x1f) || char::from_u32(n).is_some_and(char::is_whitespace);
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    if let Some(sep) = divider {
+        if sep.is_empty() { return Err(fault("separator")); }
+        if from_tail {
+            let mut tail = row.len();
+            loop {
+                if pieces.len() == cap { pieces.push(row[..tail].to_vec()); break; }
+                match unit_where(&row[..tail], sep, 0, true) {
+                    Some(spot) => { pieces.push(row[spot + sep.len()..tail].to_vec()); tail = spot; }
+                    None => { pieces.push(row[..tail].to_vec()); break; }
+                }
+            }
+            pieces.reverse();
+        } else {
+            let mut head = 0;
+            loop {
+                if pieces.len() == cap { pieces.push(row[head..].to_vec()); break; }
+                match unit_where(&row[head..], sep, 0, false) {
+                    Some(spot) => { pieces.push(row[head..head + spot].to_vec()); head += spot + sep.len(); }
+                    None => { pieces.push(row[head..].to_vec()); break; }
+                }
+            }
+        }
+    } else if from_tail {
+        let mut tail = row.len();
+        loop {
+            while tail > 0 && gap(row[tail - 1]) { tail -= 1; }
+            if tail == 0 { break; }
+            if pieces.len() == cap { pieces.push(row[..tail].to_vec()); break; }
+            match (0..tail).rev().find(|&i| gap(row[i])) {
+                Some(spot) => { pieces.push(row[spot + 1..tail].to_vec()); tail = spot; }
+                None => { pieces.push(row[..tail].to_vec()); break; }
+            }
+        }
+        pieces.reverse();
+    } else {
+        let mut head = 0;
+        loop {
+            while head < row.len() && gap(row[head]) { head += 1; }
+            if head == row.len() { break; }
+            if pieces.len() == cap { pieces.push(row[head..].to_vec()); break; }
+            match (head..row.len()).find(|&i| gap(row[i])) {
+                Some(spot) => { pieces.push(row[head..spot].to_vec()); head = spot; }
+                None => { pieces.push(row[head..].to_vec()); break; }
+            }
+        }
+    }
+    Ok(pieces)
+}
+
 impl Request<'_> {
     fn fail(&self,key:&str)->String{(self.complaint)(key)}
     fn unknown(&self)->String{(self.unanswered)(self.target,self.operation)}
@@ -124,6 +202,8 @@ impl Request<'_> {
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
+            Value::Unpaired(numbers) if matches!(self.operation, "find"|"rfind"|"index"|"rindex"|"count")=>self.search_units(&numbers),
+            Value::Unpaired(numbers) if matches!(self.operation, "split"|"rsplit")=>self.split_units(&numbers),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
@@ -333,6 +413,37 @@ impl Request<'_> {
         }
         Ok(Value::Flag(false))
     }
+    fn search_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(1, 3)?;
+        let size = units.len();
+        let raw = self.number(1, 0)?;
+        let low = place(raw, size);
+        let high = place(self.number(2, size as i64)?, size);
+        let ordered = raw <= size as i64 && low <= high;
+        let part = &units[low..high.max(low)];
+        let wanted = self.given[0].settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+        if self.operation == "count" {
+            let seen = if !ordered { 0 } else { unit_tally(part, &wanted) };
+            return Ok(Value::Small(seen as i64));
+        }
+        let spot = if !ordered { None } else { unit_where(part, &wanted, 0, self.operation == "rfind" || self.operation == "rindex") };
+        if (self.operation == "index" || self.operation == "rindex") && spot.is_none() { return Err(self.fail("substring")); }
+        Ok(Value::Small(spot.map_or(-1, |i| (low + i) as i64)))
+    }
+
+    fn split_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(0, 2)?;
+        let reverse = self.operation == "rsplit";
+        let bound = self.number(1, -1)?;
+        let cap = if bound < 0 { usize::MAX } else { bound as usize };
+        let divider = match self.given.first().map(Value::settled) {
+            Some(Value::Nil) | None => None,
+            Some(v) => Some(v.character_numbers().ok_or_else(|| self.fail("arguments"))?),
+        };
+        let pieces = unit_cut(units, divider.as_deref(), cap, reverse, self.complaint)?;
+        Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(Value::characters).collect::<Vec<_>>())).keep(true))
+    }
+
     fn search_text(&self,s:&str)->ResultValue{
         self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;
         let lo=place(raw,length);let hi=place(self.number(2,length as i64)?,length);
