@@ -3794,20 +3794,41 @@ impl<'a> Builder<'a> {
                 if self.table.has_any("ext.stmt.class.special") && self.table.has_any("ext.op.index.slice") {
                     let end = self.table.single("op.index.close").unwrap().to_owned();
                     let separator = self.table.single("syntax.call.separator").map(str::to_owned);
-                    let key = if self.index_expands(&end, separator.as_deref()) {
-                        // A starred place makes the whole row a tuple,
-                        // as it does when the row is only read.
-                        let mut row = prim_call(Prim::MakeArray, vec![]);
-                        loop {
-                            let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
-                            row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                    let key = if self.table.has_any("ext.syntax.array.spread") {
+                        // A row with a starred place becomes a tuple, as
+                        // it does when the row is only read; the
+                        // expression reader itself steps over a
+                        // lambda's parameter commas.
+                        if self.on_any("ext.syntax.array.spread") {
+                            let mut row = prim_call(Prim::MakeArray, vec![]);
+                            loop {
+                                let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
+                                row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                                if separator.as_ref().map_or(false, |word| self.sign(word)) {
+                                    self.advance();
+                                    if self.sign(&end) { break; }
+                                } else { break; }
+                            }
+                            self.need_sign(&end, "after the index")?;
+                            prim_call(Prim::Tupling, vec![row])
+                        } else {
+                            let first = self.bracket_part(&end, separator.as_deref())?;
                             if separator.as_ref().map_or(false, |word| self.sign(word)) {
-                                self.advance();
-                                if self.sign(&end) { break; }
-                            } else { break; }
+                                let mut row = prim_call(Prim::MakeArray, vec![first]);
+                                loop {
+                                    self.advance();
+                                    if self.sign(&end) { break; }
+                                    let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
+                                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                                    if !separator.as_ref().map_or(false, |word| self.sign(word)) { break; }
+                                }
+                                self.need_sign(&end, "after the index")?;
+                                prim_call(Prim::Tupling, vec![row])
+                            } else {
+                                self.need_sign(&end, "after the index")?;
+                                first
+                            }
                         }
-                        self.need_sign(&end, "after the index")?;
-                        prim_call(Prim::Tupling, vec![row])
                     } else {
                         let mut keys = vec![self.bracket_part(&end, separator.as_deref())?];
                         let mut several = false;
@@ -10664,34 +10685,6 @@ impl<'a> Builder<'a> {
         Ok(node)
     }
 
-    /// Whether some place in the row still to be read begins with a
-    /// spread. The reference reads such a row as a tuple however few
-    /// places it holds, so the brackets must gather rather than count.
-    fn index_expands(&self, close: &str, comma: Option<&str>) -> bool {
-        let spread = self.table.strings("ext.syntax.array.spread");
-        let mut depth = 0usize;
-        let mut fresh = true;
-        for word in &self.tokens[self.pos..] {
-            if depth == 0 && word.lexeme == close { break; }
-            if word.shape == Shape::Sign {
-                match word.lexeme.as_str() {
-                    "(" | "[" | "{" => { depth += 1; fresh = false; }
-                    ")" | "]" | "}" => { depth = depth.saturating_sub(1); fresh = false; }
-                    _ if depth == 0 => {
-                        if comma.is_some_and(|mark| word.lexeme == mark) { fresh = true; continue; }
-                        if fresh && spread.iter().any(|mark| *mark == word.lexeme) { return true; }
-                        fresh = false;
-                    }
-                    _ => {}
-                }
-            } else if depth == 0 {
-                if fresh && spread.iter().any(|mark| *mark == word.lexeme) { return true; }
-                fresh = false;
-            }
-        }
-        false
-    }
-
     /// One place in a subscript row, with whether it began with a
     /// spread: a starred expression is answered as the array of what
     /// it yields, every other place as a slice or expression.
@@ -10776,20 +10769,37 @@ impl<'a> Builder<'a> {
                 if incomplete || slice_in_group { return Err(String::from("SyntaxError: Invalid star expression")); }
             }
             let separator = self.table.single("syntax.call.separator");
-            let key = if self.index_expands(close, separator) {
-                // A starred place makes the whole row a tuple, however
-                // few places stand in it. Each place joins the row by
-                // being appended, or by its yields being spliced in.
-                let mut row = prim_call(Prim::MakeArray, vec![]);
-                loop {
-                    let (part, spread) = self.bracket_item(close, separator)?;
-                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+            let key = if self.table.has_any("ext.syntax.array.spread") {
+                // A row with a starred place becomes a tuple; one place
+                // and no star stays that place. Each place is read by
+                // the expression reader itself, so a comma within a
+                // lambda's parameter list is no separator and a star
+                // within one is no starred place.
+                if self.on_any("ext.syntax.array.spread") {
+                    let mut row = prim_call(Prim::MakeArray, vec![]);
+                    loop {
+                        let (part, spread) = self.bracket_item(close, separator)?;
+                        row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                        if separator.map_or(false, |word| self.sign(word)) {
+                            self.advance();
+                            if self.sign(close) { break; }
+                        } else { break; }
+                    }
+                    prim_call(Prim::Tupling, vec![row])
+                } else {
+                    let first = self.bracket_part(close, separator)?;
                     if separator.map_or(false, |word| self.sign(word)) {
-                        self.advance();
-                        if self.sign(close) { break; }
-                    } else { break; }
+                        let mut row = prim_call(Prim::MakeArray, vec![first]);
+                        loop {
+                            self.advance();
+                            if self.sign(close) { break; }
+                            let (part, spread) = self.bracket_item(close, separator)?;
+                            row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                            if !separator.map_or(false, |word| self.sign(word)) { break; }
+                        }
+                        prim_call(Prim::Tupling, vec![row])
+                    } else { first }
                 }
-                prim_call(Prim::Tupling, vec![row])
             } else {
                 let mut keys = vec![self.bracket_part(close, separator)?];
                 let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));

@@ -3384,19 +3384,36 @@ impl<'a> Compiler<'a> {
                 let at = self.mark();
                 if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
                     let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
-                    if self.index_spreads(&pair.close, comma.as_deref()) {
-                        // A starred place makes the whole row a tuple,
-                        // as it does when the row is only read.
-                        self.act(Action::MakeArray, 0);
-                        loop {
-                            let spread = self.index_part(&pair.close, comma.as_deref())?;
-                            self.act(Action::GatherItem { map: false, spread }, 2);
+                    if !self.lang.array_spread.is_empty() {
+                        // A row with a starred place becomes a tuple, as
+                        // it does when the row is only read; the
+                        // expression reader itself steps over a
+                        // lambda's parameter commas.
+                        if self.on_any(&self.lang.array_spread) {
+                            self.act(Action::MakeArray, 0);
+                            loop {
+                                let spread = self.index_part(&pair.close, comma.as_deref())?;
+                                self.act(Action::GatherItem { map: false, spread }, 2);
+                                if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
+                                    self.take();
+                                    if self.at_symbol(&pair.close) { break; }
+                                } else { break; }
+                            }
+                            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+                        } else {
+                            self.slice_part(&pair.close, comma.as_deref())?;
                             if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
-                                self.take();
-                                if self.at_symbol(&pair.close) { break; }
-                            } else { break; }
+                                self.act(Action::MakeArray, 1);
+                                loop {
+                                    self.take();
+                                    if self.at_symbol(&pair.close) { break; }
+                                    let spread = self.index_part(&pair.close, comma.as_deref())?;
+                                    self.act(Action::GatherItem { map: false, spread }, 2);
+                                    if !comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) { break; }
+                                }
+                                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+                            }
                         }
-                        self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
                     } else {
                         self.slice_part(&pair.close, comma.as_deref())?;
                         let mut parts = 1;
@@ -11111,33 +11128,6 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// Whether some place in the row still to be read begins with a
-    /// spread. The reference reads such a row as a tuple however few
-    /// places it holds, so the brackets must gather rather than count.
-    fn index_spreads(&self, close: &str, separator: Option<&str>) -> bool {
-        let mut depth = 0usize;
-        let mut fresh = true;
-        for word in &self.tokens[self.pos..] {
-            if depth == 0 && word.lexeme == close { break; }
-            if word.shape == Shape::Sign {
-                match word.lexeme.as_str() {
-                    "(" | "[" | "{" => { depth += 1; fresh = false; }
-                    ")" | "]" | "}" => { depth = depth.saturating_sub(1); fresh = false; }
-                    _ if depth == 0 => {
-                        if separator.is_some_and(|sep| word.lexeme == sep) { fresh = true; continue; }
-                        if fresh && self.lang.array_spread.iter().any(|mark| *mark == word.lexeme) { return true; }
-                        fresh = false;
-                    }
-                    _ => {}
-                }
-            } else if depth == 0 {
-                if fresh && self.lang.array_spread.iter().any(|mark| *mark == word.lexeme) { return true; }
-                fresh = false;
-            }
-        }
-        false
-    }
-
     /// One place in a subscript row. A place beginning with a spread is
     /// a starred expression, answered as the array of what it yields;
     /// every other place is a slice or an expression as before.
@@ -11450,20 +11440,37 @@ impl<'a> Compiler<'a> {
             }
             let began = self.mark();
             let separator = self.lang.calling.as_ref().and_then(|b| b.between.clone());
-            if self.index_spreads(&index.close, separator.as_deref()) {
-                // A starred place makes the whole row a tuple, however
-                // few places stand in it. Each place joins the row by
-                // being appended, or by its yields being spliced in.
-                self.act(Action::MakeArray, 0);
-                loop {
-                    let spread = self.index_part(&index.close, separator.as_deref())?;
-                    self.act(Action::GatherItem { map: false, spread }, 2);
+            if !self.lang.array_spread.is_empty() {
+                // A row with a starred place becomes a tuple; one place
+                // and no star stays that place. Each place is read by
+                // the expression reader itself, so a comma within a
+                // lambda's parameter list is no separator and a star
+                // within one is no starred place.
+                if self.on_any(&self.lang.array_spread) {
+                    self.act(Action::MakeArray, 0);
+                    loop {
+                        let spread = self.index_part(&index.close, separator.as_deref())?;
+                        self.act(Action::GatherItem { map: false, spread }, 2);
+                        if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                            self.take();
+                            if self.at_symbol(&index.close) { break; }
+                        } else { break; }
+                    }
+                    self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+                } else {
+                    self.slice_part(&index.close, separator.as_deref())?;
                     if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                        self.take();
-                        if self.at_symbol(&index.close) { break; }
-                    } else { break; }
+                        self.act(Action::MakeArray, 1);
+                        loop {
+                            self.take();
+                            if self.at_symbol(&index.close) { break; }
+                            let spread = self.index_part(&index.close, separator.as_deref())?;
+                            self.act(Action::GatherItem { map: false, spread }, 2);
+                            if !separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) { break; }
+                        }
+                        self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+                    }
                 }
-                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
             } else {
                 self.slice_part(&index.close, separator.as_deref())?;
                 if !self.lang.slice_marks.is_empty() && separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
