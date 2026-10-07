@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import unittest
 
 from test import support
 
@@ -42,6 +43,11 @@ def _to_file_args(args):
             file = a
             rest = args[i + 1:]
             break
+    # With no file and no `-c` the request is interactive mode (the
+    # options were all dropped above), which this host has no reading
+    # loop for: such a test is skipped rather than run as a bare `None`.
+    if file is None:
+        raise unittest.SkipTest("interactive subprocess mode is not supported")
     return file, rest
 
 

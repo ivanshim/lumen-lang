@@ -9995,13 +9995,18 @@ impl<'a> Compiler<'a> {
             }
             Shape::Bytes | Shape::Quote | Shape::Codepoints | Shape::StringBegin | Shape::StringFault => {
                 let bytes = tok.shape == Shape::Bytes;
+                let template = tok.shape == Shape::StringBegin && tok.lexeme.chars().next().map_or(false, |c| self.lang.template_prefixes.contains(&c));
                 self.string_piece()?;
                 while lang.adjacent_strings && matches!(self.look().shape, Shape::Bytes | Shape::Quote | Shape::Codepoints | Shape::StringBegin | Shape::StringFault) {
+                    let also_template = self.look().shape == Shape::StringBegin && self.look().lexeme.chars().next().map_or(false, |c| self.lang.template_prefixes.contains(&c));
+                    if template != also_template {
+                        return Err(lang.byte_words["ext.lexical.string.template.mixed"][0].clone());
+                    }
                     if bytes != (self.look().shape == Shape::Bytes) {
                         return Err(lang.byte_words["ext.lexical.string.bytes.mixed"][0].clone());
                     }
                     self.string_piece()?;
-                    self.act(if bytes { Action::Add } else { Action::Join }, 2);
+                    self.act(if bytes || template { Action::Add } else { Action::Join }, 2);
                 }
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.spelling()) => {

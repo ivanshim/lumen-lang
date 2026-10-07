@@ -2309,11 +2309,20 @@
   "ext.lexical.string.prefix.format.unterminated.triple": [
     "SyntaxError: unterminated triple-quoted f-string literal"
   ],
+  "ext.lexical.string.prefix.template.unterminated": [
+    "SyntaxError: unterminated t-string literal"
+  ],
+  "ext.lexical.string.prefix.template.unterminated.triple": [
+    "SyntaxError: unterminated triple-quoted t-string literal"
+  ],
   "ext.lexical.string.bytes.ascii": [
     "SyntaxError: bytes can only contain ASCII literal characters"
   ],
   "ext.lexical.string.bytes.mixed": [
     "SyntaxError: cannot mix bytes and nonbytes literals"
+  ],
+  "ext.lexical.string.template.mixed": [
+    "SyntaxError: cannot mix t-string literals with string or bytes literals"
   ],
   "ext.lexical.string.bytes.unavailable": [
     "bytes literals are not supported"
@@ -2340,7 +2349,30 @@
     "SyntaxError: invalid non-printable character U+00A0",
     "SyntaxError: can't use starred expression here",
     "SyntaxError: f-string: newlines are not allowed in format specifiers",
-    "SyntaxError: f-string: expressions nested too deeply"
+    "SyntaxError: f-string: expressions nested too deeply",
+    "SyntaxError: f-string: expecting '}', or format specs"
+  ],
+  "ext.lexical.string.template.errors": [
+    "SyntaxError: t-string: expecting '}'",
+    "SyntaxError: t-string: single '}' is not allowed",
+    "SyntaxError: t-string: valid expression required before '{}'",
+    "SyntaxError: t-string: expecting a valid expression after '{'",
+    "SyntaxError: t-string: lambda expressions are not allowed without parentheses",
+    "SyntaxError: t-string: missing conversion character",
+    "SyntaxError: t-string: invalid conversion character",
+    "SyntaxError: t-string: conversion type must come right after the exclamation mark",
+    "SyntaxError: t-string: expecting '=', or '!', or ':', or '}'",
+    "SyntaxError: t-string: expecting '!', or ':', or '}'",
+    "SyntaxError: t-string: expecting ':' or '}'",
+    "SyntaxError: t-string: invalid conversion character '{}': expected 's', 'r', or 'a'",
+    "SyntaxError: t-string: unmatched '{}'",
+    "SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'",
+    "SyntaxError: '{' was never closed",
+    "SyntaxError: invalid non-printable character U+00A0",
+    "SyntaxError: can't use starred expression here",
+    "SyntaxError: t-string: newlines are not allowed in format specifiers",
+    "SyntaxError: t-string: expressions nested too deeply",
+    "SyntaxError: t-string: expecting '}', or format specs"
   ],
   "ext.lexical.string.format.unavailable": [
     "this formatted value is not supported"

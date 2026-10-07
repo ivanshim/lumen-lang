@@ -633,11 +633,13 @@ impl<'a> Cursor<'a> {
                 }
                 let Some(c) = self.look(0) else {
                     let triple = mark.chars().count() > 1;
-                    let named = match (triple, format) {
-                        (false, false) => &self.lang.string_unterminated,
-                        (true, false) => &self.lang.string_unterminated_triple,
-                        (false, true) => &self.lang.fstring_unterminated,
-                        (true, true) => &self.lang.fstring_unterminated_triple,
+                    let named = match (triple, format, self.template.is_some()) {
+                        (false, false, _) => &self.lang.string_unterminated,
+                        (true, false, _) => &self.lang.string_unterminated_triple,
+                        (false, true, false) => &self.lang.fstring_unterminated,
+                        (true, true, false) => &self.lang.fstring_unterminated_triple,
+                        (false, true, true) => &self.lang.tstring_unterminated,
+                        (true, true, true) => &self.lang.tstring_unterminated_triple,
                     };
                     return Err(match named {
                         Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.clone(),
@@ -803,6 +805,14 @@ impl<'a> Cursor<'a> {
         let mut kept = String::new();
         loop {
             if self.look(0).map_or(false, |c| c.is_whitespace()) { kept.push(self.step()); }
+            else if self.look(0) == Some('\\') && matches!(self.look(1), Some('\n') | Some('\r')) {
+                self.step();
+                let joined = self.look(0);
+                self.step();
+                if joined == Some('\r') && self.look(0) == Some('\n') { self.step(); }
+                kept.push('\\');
+                kept.push('\n');
+            }
             else if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
             } else { break; }
@@ -811,7 +821,8 @@ impl<'a> Cursor<'a> {
     }
 
     fn field_error(&self, number: usize) -> String {
-        self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
+        let words = if self.template.is_some() { &self.lang.template_field_errors } else { &self.lang.field_errors };
+        words.get(number).cloned().unwrap_or_else(|| self.string_words())
     }
 
     fn string_field(&mut self, body_start: usize, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
@@ -822,7 +833,7 @@ impl<'a> Cursor<'a> {
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
-            let Some(c) = self.look(0) else { return Err(self.field_error(0)); };
+            let Some(c) = self.look(0) else { return Err(self.field_error(14)); };
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -834,8 +845,11 @@ impl<'a> Cursor<'a> {
             if let Some((prefix, mark, is_raw, format)) = self.string_open() {
                 let saved = self.out.len();
                 let began = self.at;
+                let saved_template = self.template;
                 let closes_outer = prefix == 0 && mark == outer && brackets.is_empty();
-                if let Err(error) = self.rich_string(prefix, &mark, is_raw, format, depth + 1) {
+                let outcome = self.rich_string(prefix, &mark, is_raw, format, depth + 1);
+                self.template = saved_template;
+                if let Err(error) = outcome {
                     if closes_outer && (self.lang.string_unterminated.as_ref() == Some(&error)
                         || self.lang.string_unterminated_triple.as_ref() == Some(&error)) {
                         return Err(self.field_error(0));
@@ -943,7 +957,7 @@ impl<'a> Cursor<'a> {
         if self.look(0) == Some(':') {
             self.step();
             loop {
-                if at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+                if at_word(&self.text, self.at, outer) { return Err(self.field_error(19)); }
                 match self.look(0) {
                     Some('}') => break,
                     Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
