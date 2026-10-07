@@ -1021,6 +1021,20 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[2..];
                 break;
             }
+            // Preserve Python warning options in command-line order.
+            Some(flag) if file.is_none() && (flag == "-W" || flag.starts_with("-W"))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                let (option, used) = if flag == "-W" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let mut options: Vec<String> = env::var("LUMEN_PYTHON_WARNOPTIONS").ok()
+                    .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                options.push(option);
+                env::set_var("LUMEN_PYTHON_WARNOPTIONS", serde_json::to_string(&options).unwrap());
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[used..];
+            }
             // Apply Python's debug-range switch before compiling any code.
             Some(flag) if file.is_none() && (flag == "-X" || flag.starts_with("-X"))
                 && language.as_ref().is_none_or(|lang| lang.name() == "python") => {

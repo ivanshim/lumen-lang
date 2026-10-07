@@ -53,6 +53,7 @@ pub struct Registry {
     pub interactive: bool,
     pub allow_top_level_await: bool,
     pub allow_flufl: bool,
+    pub optimize: i64,
     pub top_level_coroutine: bool,
     /// The future flags in force for the text being read: those the
     /// caller handed `compile` (or that the running text carries) ahead
@@ -467,6 +468,7 @@ pub fn compile_within(
         let mut survey = Registry::default();
         survey.allow_top_level_await = table.allow_top_level_await;
         survey.future_bits = future_bits;
+        survey.optimize = table.optimize;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -1194,6 +1196,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        if self.registry.optimize > 0 && name == "__debug__" && !self.writing_place {
+            self.constant(Value::Flag(false));
+            return;
+        }
         if let Some((owner, members)) = &self.annotation_namespace {
             if self.reading_annotation && members.contains(name) {
                 let owner = owner.clone();
@@ -1733,7 +1739,7 @@ impl<'a> Compiler<'a> {
             quoted = true;
             literal.push_str(&leading.next().unwrap().lexeme);
         }
-        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
+        let doc = (self.registry.optimize < 2 && !expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -3052,6 +3058,7 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
+                let emitted_from = self.mark();
                 if !lang.syntax_members.is_empty() {
                     let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
                     if !named.is_empty() {
@@ -3071,6 +3078,14 @@ impl<'a> Compiler<'a> {
                 }
                 let tested_at = self.pos;
                 self.expr(0)?;
+                if self.registry.optimize > 0 {
+                    if lang.calling.as_ref().and_then(|b| b.between.as_ref()).is_some_and(|m| self.at_symbol(m)) {
+                        self.take();
+                        self.expr(0)?;
+                    }
+                    self.piece().instrs.truncate(emitted_from);
+                    return Ok(());
+                }
                 let tested_span = self.expression_location(tested_at);
                 self.act(Action::Not, 1);
                 let passed = self.skip();
@@ -3187,7 +3202,6 @@ impl<'a> Compiler<'a> {
                     self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::AsyncContext(false), 1);
-                    self.act(Action::Awaited, 1);
                     leaving
                 } else {
                     self.read(&manager);

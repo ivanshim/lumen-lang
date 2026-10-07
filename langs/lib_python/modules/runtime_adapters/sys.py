@@ -17,6 +17,16 @@ while _options_cursor < len(_options_text) and _options_text[_options_cursor] !=
     if _options_text[_options_cursor:_options_cursor + 1] == ',':
         _options_cursor += 1
 
+# Expose the warning options supplied to this process.
+warnoptions = []
+_warning_text = _options_environment.get(b'LUMEN_PYTHON_WARNOPTIONS', b'[]').decode('utf-8')
+_warning_cursor = 1
+while _warning_cursor < len(_warning_text) and _warning_text[_warning_cursor] != ']':
+    _warning_option, _warning_cursor = __json_string_scan(_warning_text, _warning_cursor + 1)
+    warnoptions.append(_warning_option)
+    if _warning_text[_warning_cursor:_warning_cursor + 1] == ',':
+        _warning_cursor += 1
+
 del _options_environment
 
 # Native standard text streams use the Rust host's UTF-8 byte representation.

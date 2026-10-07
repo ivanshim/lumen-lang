@@ -801,3 +801,103 @@ class _Parser(_InlineStatementParser):
         if token.kind == 'name' and token.text in ('def', 'class', 'if', 'for', 'while', 'try', 'with', 'async', 'match'):
             _syntax('invalid syntax')
         return self.parse_stmt()
+
+# The optimized syntax-tree flag folds the compile-time debugging name.
+def _fold_debug_names(node, enabled):
+    if isinstance(node, Name) and node.id == '__debug__' and isinstance(node.ctx, Load):
+        return copy_location(Constant(value=enabled, kind=None), node)
+    if isinstance(node, AST):
+        for field in node._fields:
+            value = getattr(node, field, None)
+            if isinstance(value, AST):
+                setattr(node, field, _fold_debug_names(value, enabled))
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    if isinstance(item, AST):
+                        value[index] = _fold_debug_names(item, enabled)
+    return node
+
+def _parse_for_compile(source, filename, mode, type_comments, optimize, optimized=False):
+    tree = parse(source, filename, mode, type_comments=bool(type_comments), optimize=optimize)
+    if optimized:
+        tree = _fold_debug_names(tree, optimize < 1)
+    return tree
+
+# Retain the source coordinates supported by both syntax nodes.
+def copy_location(new_node, old_node):
+    for attribute in ('lineno', 'col_offset', 'end_lineno', 'end_col_offset'):
+        if attribute in old_node._attributes and attribute in new_node._attributes:
+            value = getattr(old_node, attribute, None)
+            if value is not None or attribute in ('end_lineno', 'end_col_offset'):
+                setattr(new_node, attribute, value)
+    return new_node
+
+# Compound exception statements retain each handler and its own extent.
+class Try(stmt):
+    _fields = ('body', 'handlers', 'orelse', 'finalbody')
+class TryStar(stmt):
+    _fields = Try._fields
+class ExceptHandler(AST):
+    _fields = ('type', 'name', 'body')
+    _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
+
+_ExceptionStatementParser = _Parser
+class _Parser(_ExceptionStatementParser):
+    def parse_stmt(self):
+        if not self.at_name('try'):
+            return _ExceptionStatementParser.parse_stmt(self)
+        opening = self.pop()
+        body = self.suite(opening)
+        handlers = []
+        otherwise = []
+        finalbody = []
+        grouped = None
+        while True:
+            boundary = self.at
+            while self.peek().kind == 'newline':
+                self.pop()
+            marker = self.peek()
+            if marker.scol != opening.scol or marker.text not in ('except', 'else', 'finally'):
+                self.at = boundary
+                break
+            self.pop()
+            if marker.text == 'except':
+                starred = self.at_op('*')
+                if starred:
+                    self.pop()
+                if grouped is not None and grouped != starred:
+                    _syntax("cannot have both 'except' and 'except*' on the same 'try'")
+                grouped = starred
+                if otherwise or finalbody or (handlers and handlers[-1].type is None):
+                    _syntax('invalid syntax')
+                exception_type = None
+                name = None
+                if not self.at_op(':'):
+                    exception_type, unused, end = self.parse_expr(False)
+                    if self.at_name('as'):
+                        self.pop()
+                        bound = self.pop()
+                        if bound.kind != 'name':
+                            _syntax('invalid syntax')
+                        name = bound.text
+                elif starred:
+                    _syntax('expected one or more exception types')
+                handler_body = self.suite(marker)
+                last = handler_body[-1]
+                handlers.append(self.positioned(ExceptHandler, (marker.srow, marker.scol),
+                                (last.end_lineno, last.end_col_offset), type=exception_type,
+                                name=name, body=handler_body))
+            elif marker.text == 'else':
+                if not handlers or otherwise or finalbody:
+                    _syntax('invalid syntax')
+                otherwise = self.suite(marker)
+            else:
+                if finalbody:
+                    _syntax('invalid syntax')
+                finalbody = self.suite(marker)
+        if not handlers and not finalbody:
+            _syntax("expected 'except' or 'finally' block")
+        last = (finalbody or otherwise or (handlers[-1].body if handlers else body))[-1]
+        return self.positioned(TryStar if grouped else Try, (opening.srow, opening.scol),
+                               (last.end_lineno, last.end_col_offset), body=body,
+                               handlers=handlers, orelse=otherwise, finalbody=finalbody)
