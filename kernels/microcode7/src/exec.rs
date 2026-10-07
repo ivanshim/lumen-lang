@@ -1622,9 +1622,8 @@ impl<'a> Machine<'a> {
             let key = self.table.strings("ext.builtin.exceptions.notes").first().map(String::as_str).unwrap_or_default().to_string();
             let mut holds = thing.holds.borrow_mut();
             match holds.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, Value::Vector(items))) => Rc::make_mut(items).push(given[0].clone()),
-                Some(_) => return Err(String::from("TypeError: __notes__ is not a list").into()),
-                None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(given.to_vec())))),
+                Some((_, target)) => if !Self::extend_notes(target, given[0].clone()) { return Err(String::from("TypeError: __notes__ is not a list").into()); },
+                None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(given.to_vec())).keep(false))),
             }
             return Ok(Value::Nil);
         }
@@ -12880,12 +12879,7 @@ impl<'a> Machine<'a> {
         }
         if writing && matches!(values[0], Value::Unpaired(_)) { return self.codec_function("_encode_surrogates", values.to_vec()); }
         let alphabet = alphabet?;
-        // An error-policy name the codecs module does not carry is
-        // refused up front, so a row that needs no fix-up still turns
-        // an unknown handler away instead of letting it slip through.
-        if handling != "strict" && handling != "ignore" && handling != "replace" {
-            self.codec_function("lookup_error", vec![Value::text(&handling)])?;
-        }
+        // A valid input does not require the requested error callback to exist.
         let encoding = self.octet_codec_name(alphabet);
         if writing {
             let Value::Text(word) = &values[0] else { return Err(self.octet_error("arguments")); };
@@ -13654,6 +13648,17 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn extend_notes(destination: &mut Value, item: Value) -> bool {
+        *destination = destination.clone().keep(false);
+        match destination {
+            Value::Mutable(storage, _) => match &mut *storage.borrow_mut() {
+                Value::Vector(row) => { Rc::make_mut(row).push(item); true }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// A note written onto a fault's own object, so `__notes__` keeps
     /// the reading the element's place asked for.
     fn attach_note(&self, value: &Value, note: &str) {
@@ -13661,9 +13666,8 @@ impl<'a> Machine<'a> {
         let Some(key) = self.table.strings("ext.builtin.exceptions.notes").first().map(String::as_str).map(str::to_string) else { return };
         let mut holds = thing.holds.borrow_mut();
         match holds.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, Value::Vector(items))) => Rc::make_mut(items).push(Value::text(note)),
-            Some(_) => return,
-            None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(note)])))),
+            Some((_, list)) => { Self::extend_notes(list, Value::text(note)); }
+            None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(note)])).keep(false))),
         }
     }
 

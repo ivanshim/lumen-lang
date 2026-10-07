@@ -420,3 +420,5 @@ honestly when those extensions are unavailable.
 | `encodings/uu_codec.py` | `45ba92000718abf85f158563c755205e100356ce1b4ab9444b4d0a3d21f061a3` |
 | `encodings/zlib_codec.py` | `6ef01e8d3a5fe1cc52f7b5ae008df12f1dbce7304111bf8d4758f1bfc0115759` |
 | `stringprep.py` | `52618dbafb21fac84147d4241a364b08d1f0d803806cb86e4fcb921c200c754d` |
+| `encodings/cp273.py` | `6c6aec3b213ea3aebc2c526dd4d121c95d4a25a2fc928a87cd80f8448988185f` |
+| `encodings/mbcs.py` | `f6ed445ed537c9f856d8defe8b56505727737d0dc9348d0a877abedab4bdd864` |

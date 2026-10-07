@@ -47,13 +47,23 @@ def strict_errors(exc):
         raise TypeError('codec must pass exception instance')
     raise exc
 
+# Validate that a handler received a supported Unicode error instance.
+def _check_error(exc, kinds):
+    if not isinstance(exc, kinds):
+        raise TypeError("don't know how to handle " + type(exc).__name__ + " in error callback")
+
+# Ignore the failing Unicode span, retaining the documented resume position.
 def ignore_errors(exc):
+    _check_error(exc, (UnicodeEncodeError, UnicodeDecodeError, UnicodeTranslateError))
     return ('', exc.end)
 
+# Select the replacement alphabet for decoding, encoding, or translation.
 def replace_errors(exc):
+    _check_error(exc, (UnicodeEncodeError, UnicodeDecodeError, UnicodeTranslateError))
     if isinstance(exc, UnicodeDecodeError):
         return ('\ufffd', exc.end)
-    return ('?' * (exc.end - exc.start), exc.end)
+    replacement = '\ufffd' if isinstance(exc, UnicodeTranslateError) else '?'
+    return (replacement * (exc.end - exc.start), exc.end)
 
 def _escape(c):
     n = ord(c)
@@ -63,30 +73,32 @@ def _escape(c):
         return '\\u%04x' % n
     return '\\U%08x' % n
 
+# Escape each failing code point or byte in its appropriate alphabet.
 def backslashreplace_errors(exc):
+    _check_error(exc, (UnicodeEncodeError, UnicodeDecodeError, UnicodeTranslateError))
     if isinstance(exc, UnicodeDecodeError):
         return (''.join('\\x%02x' % n for n in exc.object[exc.start:exc.end]), exc.end)
     return (''.join(_escape(c) for c in exc.object[exc.start:exc.end]), exc.end)
 
 def xmlcharrefreplace_errors(exc):
-    if not isinstance(exc, UnicodeEncodeError):
-        raise TypeError("don't know how to handle UnicodeDecodeError in error callback")
+    _check_error(exc, (UnicodeEncodeError,))
     return (''.join('&#%d;' % ord(c) for c in exc.object[exc.start:exc.end]), exc.end)
 
 def namereplace_errors(exc):
     import _codec_names
-    if not isinstance(exc, UnicodeEncodeError):
-        raise TypeError("don't know how to handle UnicodeDecodeError in error callback")
+    _check_error(exc, (UnicodeEncodeError,))
     result = ''
     for c in exc.object[exc.start:exc.end]:
         name = _codec_names.name(ord(c))
         result += '\\N{' + name + '}' if name else _escape(c)
     return (result, exc.end)
 
+# Round-trip surrogateescaped bytes under the public callback span rules.
 def _surrogateescape(exc):
+    _check_error(exc, (UnicodeEncodeError, UnicodeDecodeError))
     if isinstance(exc, UnicodeDecodeError):
         chars = ''
-        for n in exc.object[exc.start:exc.end]:
+        for n in exc.object[exc.start:min(exc.end, exc.start + 4)]:
             if n < 128:
                 break
             chars += chr(0xdc00 + n)
@@ -102,20 +114,61 @@ def _surrogateescape(exc):
         return (bytes(row), exc.end)
     raise exc
 
+# Recognize the spellings supported by the surrogatepass callback itself.
+def _surrogate_encoding(encoding):
+    if encoding == 'cp65001':
+        return 3, True
+    name = encoding.lower()
+    if not name.startswith('utf'):
+        return 0, False
+    suffix = name[3:]
+    if suffix.startswith(('-', '_')):
+        suffix = suffix[1:]
+    if suffix == '8':
+        return 3, True
+    for digits, width in (('16', 2), ('32', 4)):
+        if suffix.startswith(digits):
+            order = suffix[len(digits):]
+            if order.startswith(('-', '_')):
+                order = order[1:]
+            if not order:
+                return width, sys.byteorder == 'little'
+            if order in ('le', 'be'):
+                return width, order == 'le'
+    return 0, False
+
+# Encode or decode a single surrogate unit without treating it as a scalar.
 def _surrogatepass(exc):
-    if exc.encoding in ('utf-8', 'utf8'):
-        if isinstance(exc, UnicodeEncodeError):
-            row = []
-            for c in exc.object[exc.start:exc.end]:
-                n = ord(c)
-                if not 0xd800 <= n <= 0xdfff:
-                    raise exc
-                row.extend([0xe0 | (n >> 12), 0x80 | ((n >> 6) & 63), 0x80 | (n & 63)])
-            return (bytes(row), exc.end)
-        row = exc.object[exc.start:exc.start + 3]
-        if len(row) == 3 and row[0] == 0xed and 0xa0 <= row[1] <= 0xbf and 0x80 <= row[2] <= 0xbf:
-            return (chr(((row[0] & 15) << 12) | ((row[1] & 63) << 6) | (row[2] & 63)), exc.start + 3)
-    raise exc
+    _check_error(exc, (UnicodeEncodeError, UnicodeDecodeError))
+    width, little = _surrogate_encoding(exc.encoding)
+    if not width:
+        raise exc
+    if isinstance(exc, UnicodeEncodeError):
+        output = []
+        for character in exc.object[exc.start:exc.end]:
+            unit = ord(character)
+            if not 0xd800 <= unit <= 0xdfff:
+                raise exc
+            if width == 3:
+                output.extend((0xe0 | (unit >> 12), 0x80 | ((unit >> 6) & 63), 0x80 | (unit & 63)))
+            else:
+                shifts = range(0, width * 8, 8) if little else range((width - 1) * 8, -1, -8)
+                output.extend((unit >> shift) & 255 for shift in shifts)
+        return bytes(output), exc.end
+    data = exc.object[exc.start:exc.start + width]
+    if len(data) != width:
+        raise exc
+    if width == 3:
+        if data[0] & 0xf0 != 0xe0 or data[1] & 0xc0 != 0x80 or data[2] & 0xc0 != 0x80:
+            raise exc
+        unit = ((data[0] & 15) << 12) | ((data[1] & 63) << 6) | (data[2] & 63)
+    else:
+        unit = 0
+        for byte in (reversed(data) if little else data):
+            unit = (unit << 8) | byte
+    if not 0xd800 <= unit <= 0xdfff:
+        raise exc
+    return chr(unit), exc.start + width
 
 _errors = {'strict': strict_errors, 'ignore': ignore_errors,
            'replace': replace_errors, 'backslashreplace': backslashreplace_errors,
@@ -236,11 +289,35 @@ def lookup(encoding):
             return found
     raise LookupError('unknown encoding: ' + encoding)
 
-def encode(obj, encoding='utf-8', errors='strict'):
-    return lookup(encoding)[0](obj, errors)[0]
+_default_errors = object()
 
-def decode(obj, encoding='utf-8', errors='strict'):
-    return lookup(encoding)[1](obj, errors)[0]
+# Annotate a codec failure while preserving the exception that was raised.
+def _codec_call(function, obj, errors, encoding, operation):
+    try:
+        result = function(obj) if errors is _default_errors else function(obj, errors)
+    except BaseException as exc:
+        try:
+            exc.add_note("%s with %r codec failed" % (operation, encoding))
+        except Exception:
+            pass
+        raise
+    if not isinstance(result, tuple) or len(result) != 2:
+        raise TypeError('encoder must return a tuple (object, integer)' if operation == 'encoding' else 'decoder must return a tuple (object,integer)')
+    return result[0]
+
+# Encode arbitrary objects through the codec registry's stateless interface.
+def encode(obj, encoding='utf-8', errors=_default_errors):
+    if errors is not _default_errors and not isinstance(errors, str):
+        raise TypeError('encode() argument 3 must be str, not ' + type(errors).__name__)
+    entry = lookup(encoding)
+    return _codec_call(entry[0], obj, errors, encoding, 'encoding')
+
+# Decode arbitrary objects without imposing the text methods' result contract.
+def decode(obj, encoding='utf-8', errors=_default_errors):
+    if errors is not _default_errors and not isinstance(errors, str):
+        raise TypeError('decode() argument 3 must be str, not ' + type(errors).__name__)
+    entry = lookup(encoding)
+    return _codec_call(entry[1], obj, errors, encoding, 'decoding')
 
 # UTF-16/32 operate on code units; error spans always refer to the
 # original byte string, including its byte order mark.
@@ -250,6 +327,11 @@ def _wide_encode(text, name, errors):
     row = []
     if name in ('utf_16', 'utf_32'):
         row = [255, 254] if width == 2 else [255, 254, 0, 0]
+    if str.isascii(text):
+        ascii_bytes = text.encode('ascii')
+        units = bytearray(len(ascii_bytes) * width)
+        units[0 if little else width - 1::width] = ascii_bytes
+        return bytes(row) + bytes(units)
     i = 0
     while i < len(text):
         n = ord(text[i])
@@ -279,6 +361,14 @@ def _wide_decode(data, name, errors, final=True, start=0):
             i = width
     encoding = ('utf-16-' if width == 2 else 'utf-32-') + ('le' if little else 'be')
     result = ''
+    # Decode complete ASCII units in bulk; trailing bytes keep their error span.
+    end = len(data) - (len(data) - i) % width
+    payload = data[i:end]
+    low = payload[0 if little else width - 1::width]
+    offsets = range(1, width) if little else range(width - 1)
+    if low.isascii() and all(not payload[offset::width].strip(b'\x00') for offset in offsets):
+        result = low.decode('ascii')
+        i = end
     while i < len(data):
         start = i
         reason = None
@@ -329,7 +419,7 @@ def _utf7_encode(text):
         if c == '+':
             result += '+-'
             i += 1
-        elif c in '\t\r\n' or 32 <= ord(c) < 127 and c != '\\':
+        elif c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\~':
             result += c
             i += 1
         else:
@@ -338,7 +428,7 @@ def _utf7_encode(text):
             result += '+'
             while i < len(text):
                 c = text[i]
-                if c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\+':
+                if c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\+~':
                     break
                 n = ord(c)
                 units = [n] if n < 65536 else [0xd800 + ((n - 65536) >> 10), 0xdc00 + ((n - 65536) & 1023)]
@@ -356,59 +446,82 @@ def _utf7_encode(text):
                 result += '-'
     return result.encode('ascii')
 
-def _utf7_decode(data, errors):
+def _utf7_decode(data, errors, final=True):
     result = ''
     i = 0
-    while i < len(data):
-        start = i
+    shifted = False
+    start = 0
+    output_start = 0
+    bits = 0
+    count = 0
+    surrogate = 0
+    while True:
+        if i == len(data):
+            if shifted and not final:
+                return result[:output_start], start
+            if shifted and (surrogate or count >= 6 or count and bits):
+                shifted = False
+                replacement, i = _decode_error('utf7', data, start, i, 'unterminated shift sequence', errors)
+                result += replacement
+                if i < len(data):
+                    continue
+            return result, i
         n = data[i]
-        if n == 43:
-            i += 1
-            if i < len(data) and data[i] == 45:
-                result += '+'
-                i += 1
-                continue
-            bits = 0
-            count = 0
-            units = []
-            while i < len(data) and chr(data[i]) in _b64:
-                bits = (bits << 6) | _b64.index(chr(data[i]))
+        if shifted:
+            if chr(n) in _b64:
+                bits = (bits << 6) | _b64.index(chr(n))
                 count += 6
                 i += 1
                 if count >= 16:
                     count -= 16
-                    units.append((bits >> count) & 65535)
+                    unit = bits >> count
                     bits &= (1 << count) - 1
-            reason = None
-            if i == start + 1:
-                if i == len(data):
-                    continue
-                reason = 'ill-formed sequence'
-            elif count >= 6:
-                reason = 'partial character in shift sequence'
-            elif bits:
-                reason = 'non-zero padding bits in shift sequence'
-            if reason:
-                repl, i = _decode_error('utf7', data, start, min(i + 1, len(data)), reason, errors)
-                result += repl
+                    if surrogate:
+                        if 0xdc00 <= unit <= 0xdfff:
+                            result += chr(0x10000 + ((surrogate - 0xd800) << 10) + unit - 0xdc00)
+                            surrogate = 0
+                            continue
+                        result += chr(surrogate)
+                        surrogate = 0
+                    if 0xd800 <= unit <= 0xdbff:
+                        surrogate = unit
+                    else:
+                        result += chr(unit)
                 continue
-            j = 0
-            while j < len(units):
-                n = units[j]
-                if 0xd800 <= n <= 0xdbff and j + 1 < len(units) and 0xdc00 <= units[j + 1] <= 0xdfff:
-                    j += 1
-                    n = 65536 + ((n - 0xd800) << 10) + units[j] - 0xdc00
-                result += chr(n)
-                j += 1
-            if i < len(data) and data[i] == 45:
+            shifted = False
+            reason = 'partial character in shift sequence' if count >= 6 else 'non-zero padding bits in shift sequence' if count and bits else None
+            if reason:
+                replacement, i = _decode_error('utf7', data, start, i + 1, reason, errors)
+                result += replacement
+                surrogate = 0
+                continue
+            if surrogate and n < 128 and n != 43:
+                result += chr(surrogate)
+            surrogate = 0
+            if n == 45:
                 i += 1
+            continue
+        if n == 43:
+            start = i
+            i += 1
+            if i < len(data) and data[i] == 45:
+                result += '+'
+                i += 1
+            elif i < len(data) and chr(data[i]) not in _b64:
+                replacement, i = _decode_error('utf7', data, start, i + 1, 'ill-formed sequence', errors)
+                result += replacement
+            else:
+                shifted = True
+                surrogate = 0
+                bits = 0
+                count = 0
+                output_start = len(result)
         elif n < 128:
             result += chr(n)
             i += 1
         else:
-            repl, i = _decode_error('utf7', data, i, i + 1, 'unexpected special character', errors)
-            result += repl
-    return result
+            replacement, i = _decode_error('utf7', data, i, i + 1, 'unexpected special character', errors)
+            result += replacement
 
 _escape_decode = {'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v', '\\': '\\', "'": "'", '"': '"'}
 
@@ -429,6 +542,7 @@ def _escaped_decode(data, raw, errors):
     out = ''
     i = 0
     encoding = 'rawunicodeescape' if raw else 'unicodeescape'
+    warning = None
     while i < len(text):
         start = i
         c = text[i]
@@ -493,13 +607,25 @@ def _escaped_decode(data, raw, errors):
             end = i
             while end < len(text) and end - i < 2 and text[end] in '01234567':
                 end += 1
-            out += chr(int(text[i - 1:end], 8))
+            n = int(text[i - 1:end], 8)
+            if n > 255 and warning is None:
+                warning = '"\\%s" is an invalid octal escape sequence. Such sequences will not work in the future.' % text[i - 1:end]
+            out += chr(n)
             i = end
         else:
+            if warning is None:
+                warning = '"\\%s" is an invalid escape sequence. Such sequences will not work in the future.' % c
             out += '\\' + c
+    if warning is not None:
+        import warnings
+        warnings.warn(warning, DeprecationWarning, stacklevel=2)
     return out
 
+# Decode indexed character mappings and validate mapping result types.
 def charmap_decode(data, errors='strict', mapping=None):
+    from _codecs import _buffer, _error_argument
+    errors = _error_argument(errors, 'charmap_decode')
+    data = _buffer(data)
     if mapping is None:
         return (data.decode('latin-1', errors), len(data))
     result = ''
@@ -510,7 +636,11 @@ def charmap_decode(data, errors='strict', mapping=None):
         except (KeyError, IndexError):
             c = None
         if isinstance(c, int):
+            if not 0 <= c <= 0x10ffff:
+                raise TypeError('character mapping must be in range(0x110000)')
             c = chr(c)
+        elif c is not None and not isinstance(c, str):
+            raise TypeError('character mapping must return integer, None or str')
         if c is None or c == '\ufffe':
             repl, i = _decode_error('charmap', data, i, i + 1, 'character maps to <undefined>', errors)
             result += repl
@@ -522,21 +652,40 @@ def charmap_decode(data, errors='strict', mapping=None):
 def charmap_build(mapping):
     return {ord(c): i for i, c in enumerate(mapping) if c != '\ufffe'}
 
+# Read an encoding map through indexing and preserve undefined entries.
+def _mapped(mapping, code):
+    try:
+        return mapping[code]
+    except (KeyError, IndexError):
+        return None
+
+# Encode arbitrary indexed character maps, including multi-byte replacements.
 def charmap_encode(text, errors='strict', mapping=None):
+    from _codecs import _error_argument
+    errors = _error_argument(errors, 'charmap_encode')
+    from _codecs import _text
+    text = _text(text)
     if mapping is None:
         return (text.encode('latin-1', errors), len(text))
     row = []
     i = 0
     while i < len(text):
-        c = mapping.get(ord(text[i]))
+        c = _mapped(mapping, ord(text[i]))
         if c is None:
             end = i + 1
-            while end < len(text) and mapping.get(ord(text[end])) is None:
+            while end < len(text) and _mapped(mapping, ord(text[end])) is None:
                 end += 1
             repl, i = _encode_error('charmap', text, i, end, 'character maps to <undefined>', errors)
             row.extend(list(repl if isinstance(repl, bytes) else charmap_encode(repl, 'strict', mapping)[0]))
         else:
-            row.extend([c] if isinstance(c, int) else list(c))
+            if isinstance(c, int):
+                if not 0 <= c < 256:
+                    raise TypeError('character mapping must be in range(256)')
+                row.append(c)
+            elif isinstance(c, bytes):
+                row.extend(list(c))
+            else:
+                raise TypeError('character mapping must return integer, bytes or None, not ' + type(c).__name__)
             i += 1
     return (bytes(row), len(text))
 
@@ -559,11 +708,22 @@ def _encode_surrogates(text, encoding='utf-8', errors='strict'):
                 break
             end += 1
         reason = 'surrogates not allowed' if name == 'utf_8' else 'ordinal not in range(%d)' % limit
+        # The native UTF-8/ASCII/Latin-1 policy consumes a valid leading prefix.
+        # Its public callback instead rejects an entire mixed error span.
+        if errors == 'surrogateescape':
+            while i < end and 0xdc80 <= ord(text[i]) <= 0xdcff:
+                row.append(ord(text[i]) - 0xdc00)
+                i += 1
+            if i == end:
+                continue
         repl, i = _encode_error(name.replace('_', '-'), text, i, end, reason, errors)
         row.extend(list(repl if isinstance(repl, bytes) else repl.encode(name, errors)))
     return bytes(row)
 
-def _encode(obj, encoding='utf-8', errors='strict'):
+def _encode(obj, encoding='utf-8', errors=_default_errors):
+    supplied_errors = errors
+    if errors is _default_errors:
+        errors = 'strict'
     name = _normalize(encoding)
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
@@ -583,12 +743,18 @@ def _encode(obj, encoding='utf-8', errors='strict'):
         if errors != 'strict':
             raise UnicodeError("unsupported error handling " + errors)
         return _idna_encode(obj)
-    value = lookup(encoding)[0](obj, errors)[0]
+    entry = lookup(encoding)
+    if not getattr(entry, '_is_text_encoding', True):
+        raise LookupError("'%s' is not a text encoding; use codecs.encode() to handle arbitrary codecs" % encoding)
+    value = _codec_call(entry[0], obj, supplied_errors, encoding, 'encoding')
     if not isinstance(value, bytes):
         raise TypeError("'%s' encoder returned '%s' instead of 'bytes'; use codecs.encode() to encode to arbitrary types" % (encoding, type(value).__name__))
     return value
 
-def _decode(obj, encoding='utf-8', errors='strict'):
+def _decode(obj, encoding='utf-8', errors=_default_errors):
+    supplied_errors = errors
+    if errors is _default_errors:
+        errors = 'strict'
     name = _normalize(encoding)
     obj = bytes(obj)
     if not isinstance(errors, str):
@@ -600,7 +766,7 @@ def _decode(obj, encoding='utf-8', errors='strict'):
     if name.startswith('utf_16') or name.startswith('utf_32'):
         return _wide_decode(obj, name, errors)[0]
     if name == 'utf_7':
-        return _utf7_decode(obj, errors)
+        return _utf7_decode(obj, errors)[0]
     if name in ('unicode_escape', 'raw_unicode_escape'):
         return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
     if name in _charmaps:
@@ -613,7 +779,10 @@ def _decode(obj, encoding='utf-8', errors='strict'):
             return text
         import _codec_idna
         return '.'.join(_codec_idna.to_unicode(label) for label in text.split('.'))
-    value = lookup(encoding)[1](obj, errors)[0]
+    entry = lookup(encoding)
+    if not getattr(entry, '_is_text_encoding', True):
+        raise LookupError("'%s' is not a text encoding; use codecs.decode() to handle arbitrary codecs" % encoding)
+    value = _codec_call(entry[1], obj, supplied_errors, encoding, 'decoding')
     if not isinstance(value, str):
         raise TypeError("'%s' decoder returned '%s' instead of 'str'; use codecs.decode() to decode to arbitrary types" % (encoding, type(value).__name__))
     return value
