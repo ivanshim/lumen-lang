@@ -6087,3 +6087,16 @@ class descriptor cycles are candidates for the existing cycle collector.
 Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
+
+The Python codec search registry also supplies Shift-JIS through `_codec_sjis`.
+Its forward mapping is the committed hexadecimal table in the PHP mbstring
+adapter, embedded once as data rather than copied into a second table. Reverse
+lookups are cached per character; ASCII, half-width katakana, yen, and overline
+follow the codec's single-byte rules. Stateless, incremental, and stream codecs
+share the error-handler registry. The stream base class bodies come unchanged
+from CPython 3.14.8 in `runtime_adapters/codecs.py`.
+
+The `_py_abc` runtime adapter keeps protocol instance and registration searches
+on the underlying ABC path. Runtime protocols can then inspect data attributes
+through typing's unchanged static instance checks, while explicit subclass
+checks retain the restriction on protocols with data members.

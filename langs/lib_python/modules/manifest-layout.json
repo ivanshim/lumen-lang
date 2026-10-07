@@ -18,6 +18,13 @@
     "inspect": "runtime_adapters/inspect.py",
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
-    "importlib": "runtime_adapters/importlib.py"
+    "importlib": "runtime_adapters/importlib.py",
+    "_py_abc": "runtime_adapters/_py_abc.py",
+    "codecs": "runtime_adapters/codecs.py"
+  },
+  "data": {
+    "_codec_sjis": {
+      "_mapping_source": "../../lib_php/native/mbstring.php"
+    }
   }
 }
