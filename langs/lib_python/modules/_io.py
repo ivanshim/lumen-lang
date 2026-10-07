@@ -606,6 +606,10 @@ class TextIOWrapper(_TextIOBase):
     # Read without a trip through __getattr__ before the stream is made.
     _initialized = False
     _buffer = None
+    # Whether the buffer could be read and written when the stream was
+    # made, which is when the C stream settles it.
+    _read_ok = False
+    _write_ok = False
     _chunk_size = 8192
     @property
     def _CHUNK_SIZE(self):
@@ -636,6 +640,11 @@ class TextIOWrapper(_TextIOBase):
         except BaseException:
             self._initialized = False
             raise
+        try:
+            self._read_ok = bool(buffer.readable())
+            self._write_ok = bool(buffer.writable())
+        except Exception:
+            self._read_ok = self._write_ok = False
     def __getstate__(self):
         raise TypeError("cannot pickle '" + type(self).__name__ + "' instances")
     def __repr__(self):
@@ -717,7 +726,7 @@ class TextIOWrapper(_TextIOBase):
     def closed(self):
         return self.buffer.closed
     def read(self, size=-1):
-        if not self.readable():
+        if not self._read_ok and not self.readable():
             raise UnsupportedOperation('not readable')
         function = _TEXT.get('read') or _text_function('read')
         return function(self, size)
@@ -725,7 +734,7 @@ class TextIOWrapper(_TextIOBase):
         function = _TEXT.get('readline') or _text_function('readline')
         return function(self, size)
     def write(self, text):
-        if not self.writable():
+        if not self._write_ok and not self.writable():
             raise UnsupportedOperation('not writable')
         function = _TEXT.get('write') or _text_function('write')
         return function(self, text)
