@@ -749,7 +749,19 @@ impl<'a> Engine<'a> {
             let declared = c.shared.borrow().clone();
             for (member, held) in declared {
                 let Some(told) = self.descriptor_hook(&held, "descriptor.name") else { continue };
-                self.call_descriptor(&held, told, vec![Value::Class(c.clone()), Value::text(&member)])?;
+                if let Err(raised) = self.call_descriptor(&held, told, vec![Value::Class(c.clone()), Value::text(&member)]) {
+                    let note = format!("Error calling __set_name__ on '{}' instance '{}' in '{}'", Self::type_argument_kind(&held), member, c.name);
+                    let faltered = match self.carried.take().unwrap_or(raised) {
+                        Fault::Thrown(value) => { self.attach_note(&value, &note); Fault::Thrown(value) }
+                        Fault::Note(words) => match self.as_fault(&words) {
+                            Some(value) => { self.attach_note(&value, &note); Fault::Thrown(value) }
+                            None => Fault::Note(words),
+                        },
+                        other => other,
+                    };
+                    self.carried = Some(faltered);
+                    return Err(self.special_fault().into());
+                }
             }
         }
         if let Some(hook) = c.lineage.iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
