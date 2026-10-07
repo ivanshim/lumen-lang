@@ -24,6 +24,8 @@ pub mod form;
 pub mod data;
 pub mod ghost;
 mod core;
+mod cache;
+mod multibyte;
 mod posix;
 mod complex;
 mod byteformat;
@@ -387,7 +389,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if table.single("ext.system.args.list").is_some() || table.single("ext.system.args.count").is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        let file = request.iter().find(|(scope, key, ..)| scope == "SELF" && key == "argv0")
+            .or_else(|| request.iter().find(|(scope, key, ..)| scope == "SELF" && key == "file"))
+            .map(|(_, _, text, _)| text.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(n) = table.single("ext.system.args.count") {

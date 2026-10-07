@@ -1,6 +1,7 @@
 # Shift-JIS uses the existing multibyte mapping embedded from mbstring.php.
 # The hex rows are shared data; no PHP code is evaluated here.
 import codecs
+import _codec_runtime as _handlers
 from builtins import _buffer_view
 
 _rows = None
@@ -76,7 +77,7 @@ def encode(text, errors='strict'):
                         backward[number] = encoded
                         break
         if encoded is None:
-            replacement, position = codecs._encode_error('shift_jis', original, position, position + 1, 'illegal multibyte sequence', errors)
+            replacement, position = _handlers._encode_error('shift_jis', original, position, position + 1, 'illegal multibyte sequence', errors)
             encoded = replacement if isinstance(replacement, bytes) else encode(replacement, 'strict')[0]
         else:
             position += 1
@@ -117,7 +118,7 @@ def _decode(data, errors, final):
             result.append(chr(number))
             position += 2
         else:
-            replacement, position = codecs._decode_error('shift_jis', data, position, position + 1, reason, errors)
+            replacement, position = _handlers._decode_error('shift_jis', data, position, position + 1, reason, errors)
             result.append(replacement)
     return ''.join(result), position
 

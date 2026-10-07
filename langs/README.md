@@ -4520,8 +4520,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |
@@ -4551,6 +4551,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.code.cache` | - | - | `_code_pack` `_code_unpack` `_code_abi` `_code_filename` | - | - | - | - | - | - | - |
 | `ext.builtin.compile` | - | - | `compile` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.kind` | - | - | `code` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.modes` | - | - | `exec` `eval` `single` | - | - | - | - | - | - | - |
@@ -4819,6 +4820,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.multibyte` | - | - | `__multibyte_native` | - | - | - | - | - | - | - |
 | `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
@@ -6113,3 +6115,10 @@ directory. File runs retain their isolated import path.
 with `struct_time`'s two named fields preserved. The unittest runtime supports
 class cleanup stacks and class context managers, drains cleanups after failed
 setup as well as normal teardown, and records cleanup exceptions as errors.
+
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.code.cache` exposes the Python compiled-code cache writer, reader,
+and ABI identity. Cache payloads preserve stack8 instructions or microcode7
+forms and their binding metadata, with distinct format tags for each kernel.
+They are native Lumen caches and do not claim CPython bytecode compatibility.

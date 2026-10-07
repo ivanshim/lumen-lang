@@ -39,8 +39,18 @@ thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
 }
 
+thread_local! { static OPTIMIZATION: std::cell::Cell<u8> = const { std::cell::Cell::new(0) }; }
+fn optimization() -> u8 { OPTIMIZATION.with(std::cell::Cell::get) }
+pub fn with_optimization<T>(level: u8, read: impl FnOnce() -> T) -> T {
+    struct Restore(u8);
+    impl Drop for Restore { fn drop(&mut self) { OPTIMIZATION.with(|slot| slot.set(self.0)); } }
+    let previous = OPTIMIZATION.with(|slot| slot.replace(level));
+    let _restore = Restore(previous);
+    read()
+}
+
 /// The global names, each with a slot.
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
     index: HashMap<String, usize>,
     module_index: HashMap<String, HashMap<String, usize>>,
@@ -253,6 +263,7 @@ pub struct Compiler<'a> {
     /// How many values a case's pattern has read ahead of the subject.
     pattern_values: usize,
     reading_annotation: bool,
+    starred_annotation_sites: HashSet<usize>,
     annotation_namespace: Option<(String, std::collections::HashSet<String>)>,
     reading_generic_class: bool,
     generic_class_parameters: Vec<String>,
@@ -623,7 +634,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, starred_annotation_sites: HashSet::new(), annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -698,7 +709,7 @@ fn compile_pass(
             // Text alone as the first statement of a program is the
             // program's own documentation, kept under the name the
             // language gives it (ext.system.module.doc).
-            if opening && own_line && alone && !lang.module_doc.is_empty() {
+            if opening && own_line && alone && !lang.module_doc.is_empty() && optimization() < 2 {
                 let said: Vec<&Instr> = a.piece().instrs[from..].iter().filter(|i| !matches!(i, Instr::Emptied(_) | Instr::Line(_) | Instr::Nothing)).collect();
                 let words = match said.as_slice() {
                     [Instr::Const(Value::Text(words)), Instr::Write(cell)] if cell.ident.as_ref() == RESULT_CELL => Some(words.to_string()),
@@ -792,7 +803,7 @@ fn compile_pass(
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
     let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[]);
-    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: if a.registry.top_level_coroutine { 128 } else { 0 }, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1706,7 +1717,7 @@ impl<'a> Compiler<'a> {
             quoted = true;
             literal.push_str(&leading.next().unwrap().lexeme);
         }
-        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
+        let doc = (optimization() < 2 && !expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -1843,7 +1854,8 @@ impl<'a> Compiler<'a> {
                 format!("'{text}'")
             } else { token.lexeme.clone() };
             let touching = matches!(word.as_str(), "." | "," | ":" | ")" | "]" | "}") || matches!(previous.as_str(), "." | "(" | "[" | "{")
-                || matches!(word.as_str(), "(" | "[") && !previous.is_empty();
+                || matches!(word.as_str(), "(" | "[") && !previous.is_empty()
+                || output == previous && Lang::spells(&self.lang.unpack_rest, &previous);
             if !output.is_empty() && !touching { output.push(' '); }
             output.push_str(&word);
             previous = word;
@@ -1884,7 +1896,14 @@ impl<'a> Compiler<'a> {
                 c.pos = *start;
                 let expression = c.mark();
                 let previous = std::mem::replace(&mut c.reading_annotation, true);
+                let unpacked = c.starred_annotation_sites.contains(start);
+                if unpacked { c.take(); }
                 c.expr_at(0, false)?;
+                if unpacked {
+                    c.act(Action::Unpack(1, None), 1);
+                    c.constant(Value::Small(0));
+                    c.act(Action::Apart, 2);
+                }
                 c.reading_annotation = previous;
                 if c.future_annotations {
                     let text = c.annotation_text(*start, c.pos);
@@ -3004,6 +3023,7 @@ impl<'a> Compiler<'a> {
                         if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
                     }
                 }
+                let assertion_begin = self.mark();
                 self.expr(0)?;
                 self.act(Action::Not, 1);
                 let passed = self.skip();
@@ -3017,6 +3037,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
+                if optimization() > 0 { self.piece().instrs.truncate(assertion_begin); }
                 return Ok(());
             }
             if Lang::spells(&lang.foreach_words, &w) {
@@ -5953,7 +5974,7 @@ impl<'a> Compiler<'a> {
             // Text alone at the head of the body is what the class
             // says about itself; text anywhere else is discarded.
             let words = self.take().lexeme;
-            if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
+            if let (true, Some(slot)) = (heads_the_body && optimization() < 2, self.gathering().documentation.clone()) {
                 self.constant(Value::text(&words));
                 self.write(&slot);
                 if !lang.class_builder.is_empty() {
@@ -7108,6 +7129,7 @@ impl<'a> Compiler<'a> {
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
                     ends.extend(call.between.iter().cloned());
+                    if rule == 3 && self.on_any(&lang.unpack_rest) { self.starred_annotation_sites.insert(self.pos); }
                     self.pending_annotations.push((formals.last().unwrap().clone(), self.pos));
                     self.annotation_expression(&ends)?;
                 } else if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().spelling()) {
@@ -10126,7 +10148,7 @@ impl<'a> Compiler<'a> {
             }
             // A dotted builtin spelling still reads the program's binding
             // of its owner when that owner has been shadowed.
-            Shape::Instr if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::ValueMethod))
+            Shape::Instr if lang.builtins.contains_key(&tok.lexeme)
                 && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)) => {
                 self.take();
                 let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");
@@ -10144,7 +10166,9 @@ impl<'a> Compiler<'a> {
             }
             Shape::Instr => {
                 self.take();
-                if Lang::spells(&lang.true_words, &tok.spelling()) {
+                if lang.debug_binding.as_deref() == Some(tok.spelling()) && !self.writing_place {
+                    self.constant(Value::Flag(optimization() == 0));
+                } else if Lang::spells(&lang.true_words, &tok.spelling()) {
                     self.constant(Value::Flag(true));
                 } else if Lang::spells(&lang.false_words, &tok.spelling()) {
                     self.constant(Value::Flag(false));

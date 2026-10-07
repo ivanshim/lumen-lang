@@ -20,7 +20,8 @@
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
     "_py_abc": "runtime_adapters/_py_abc.py",
-    "codecs": "runtime_adapters/codecs.py"
+    "codecs": "runtime_adapters/codecs.py",
+    "marshal": "runtime_adapters/marshal.py"
   },
   "data": {
     "_codec_sjis": {

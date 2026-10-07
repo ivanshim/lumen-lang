@@ -22,6 +22,7 @@
 
 use std::collections::HashSet;
 use std::env;
+use std::io::Read;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -186,6 +187,7 @@ struct Invocation {
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
     module_name: Option<String>,
+    python_development: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -553,13 +555,20 @@ fn run_all() {
     // to a file to say this: the words travel with the run.
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
+    if inv.language.name() == "python" {
+        if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
+        else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+    }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
     if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
     else { std::env::remove_var("LUMEN_RUN_MODULE"); }
     if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
 
-    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
+    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" {
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).map(|_| input)
+    } else { fs::read(&inv.file) }).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
     }));
@@ -607,19 +616,18 @@ fn run_all() {
     // read the labels that name it.
     let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
     // Resolve the optional library location before the program can change directory.
-    if let Some(root) = std::env::var_os("LUMEN_ROOT") {
-        let root = std::path::PathBuf::from(root);
-        let root = std::fs::canonicalize(&root).unwrap_or_else(|_| {
-            std::env::current_dir().unwrap_or_default().join(root)
-        });
-        let modules = root.join("langs/lib_python/modules");
-        request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
-    }
     let overlay = inv.python.map_or(&[][..], |v| v.modules);
     for (name, source, file) in overlay.iter().chain(embedded_modules::MODULES.iter().filter(|(name, ..)| !overlay.iter().any(|(overlaid, ..)| overlaid == name))) {
         let source = inv.python.map_or_else(|| source.to_string(), |v| v.module_source(name, source));
         request.push(("MODULE".to_string(), name.to_string(), source, false));
         request.push(("MODULE_FILE".to_string(), name.to_string(), file.to_string(), false));
+    }
+    if inv.language.name() == "python" && FULL_KERNELS.contains(&inv.kernel.as_str()) {
+        let root = python_library_sources(&request).unwrap_or_else(|error| {
+            eprintln!("Error: cannot provide Python library sources: {error}");
+            process::exit(1);
+        });
+        request.push(("SELF".to_string(), "library_root".to_string(), root.to_string_lossy().into_owned(), false));
     }
     let aliases = inv.python.map_or(&[][..], |v| v.aliases);
     for (name, member) in aliases.iter().chain(embedded_modules::MODULE_ALIASES.iter().filter(|(name, ..)| !aliases.iter().any(|(overlaid, ..)| overlaid == name))) {
@@ -627,7 +635,9 @@ fn run_all() {
     }
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.
-    let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));
+    let whole = if inv.file == "-" { std::path::PathBuf::from("<stdin>") } else {
+        std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file))
+    };
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
@@ -635,6 +645,9 @@ fn run_all() {
     // complaint about reading the program names it the way its reader
     // named it, which is how the reference names it too.
     request.push(("SELF".to_string(), "given".to_string(), inv.file.clone(), false));
+    if inv.file == "-" {
+        request.push(("SELF".to_string(), "argv0".to_string(), "-".to_string(), false));
+    }
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
     // A full Python kernel names the binary itself, so a program that
@@ -873,6 +886,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut file: Option<String> = None;
     let mut module_source = None;
     let mut module_name = None;
+    let mut python_development = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -884,6 +898,19 @@ fn parse_args(args: &[OsString]) -> Invocation {
     // Options may precede the file; `--lang` may also follow it directly.
     loop {
         match rest.first().and_then(|a| a.to_str()) {
+            Some("-X") if file.is_none() => {
+                if rest.len() < 2 { usage(program); }
+                if said(&rest[1]) != "dev" {
+                    eprintln!("Error: unsupported Python -X option '{}'", said(&rest[1]));
+                    process::exit(2);
+                }
+                python_development = true;
+                rest = &rest[2..];
+            }
+            Some("-Xdev") if file.is_none() => {
+                python_development = true;
+                rest = &rest[1..];
+            }
             Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
@@ -972,6 +999,17 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[used..];
                 break;
             }
+            Some("-E") if file.is_none() => {
+                env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1");
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[1..];
+            }
+            Some("-") if file.is_none() => {
+                file = Some("-".to_string());
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[1..];
+                break;
+            }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
                     eprintln!("Error: -d requires a setting");
@@ -1048,6 +1086,10 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     });
 
+    if python_development && language.name() != "python" {
+        eprintln!("Error: -X dev requires the Python language");
+        process::exit(2);
+    }
     let mut language = language;
     let python = if language.name() == "python" {
         let version = python_versions::select(python.as_deref(), &file).unwrap_or_else(|e| { eprintln!("{e}"); process::exit(1) });
@@ -1060,7 +1102,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
@@ -1102,4 +1144,66 @@ fn expand_includes(source: &str) -> Result<String, String> {
     let mut out = String::new();
     walk(source, &mut HashSet::new(), &mut out)?;
     Ok(out)
+}
+
+
+// Installed binaries expose the same source that their embedded loader runs.
+// A read-only distribution gets a writable source cache for compilation tools.
+fn python_library_sources(request: &[(String, String, String, bool)]) -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let original = env::var_os("LUMEN_ROOT").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("langs/lib_python/modules");
+    let filenames: std::collections::HashMap<&str, &str> = request.iter()
+        .filter(|row| row.0 == "MODULE_FILE").map(|row| (row.1.as_str(), row.2.as_str())).collect();
+    let sources: Vec<_> = request.iter().filter(|row| row.0 == "MODULE").collect();
+    if let Some(first) = sources.first().and_then(|row| filenames.get(row.1.as_str())) {
+        if fs::OpenOptions::new().write(true).open(original.join(first)).is_ok() { return Ok(original); }
+    }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    for row in &sources { row.1.hash(&mut hash); row.2.hash(&mut hash); filenames.get(row.1.as_str()).hash(&mut hash); }
+    let cache = env::temp_dir().join(format!("lumen-library-layout-{:016x}", hash.finish()));
+    let library = cache.join("langs/lib_python/modules");
+    if cache.join(".complete").is_file() { return Ok(library); }
+    let staging = cache.with_extension(format!("building-{}", process::id()));
+    let source_tree = staging.join("langs/lib_python/modules");
+    fs::create_dir_all(&source_tree)?;
+    for row in sources {
+        let filename = filenames.get(row.1.as_str()).ok_or_else(|| std::io::Error::other("embedded module has no filename"))?;
+        let path = source_tree.join(filename);
+        if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+        fs::write(path, &row.2)?;
+    }
+    fn resources(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+        if !from.is_dir() { return Ok(()); }
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let path = entry.path();
+            let destination = to.join(entry.file_name());
+            if path.is_dir() {
+                if entry.file_name() == "__pycache__" { continue; }
+                fs::create_dir_all(&destination)?;
+                resources(&path, &destination)?;
+            } else if path.extension().is_none_or(|extension| extension != "pyc") && !destination.exists() {
+                fs::copy(path, destination)?;
+            }
+        }
+        Ok(())
+    }
+    resources(&original, &source_tree)?;
+    if let Some(project) = original.ancestors().nth(3).filter(|project| project.is_dir()) {
+        for entry in fs::read_dir(project)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == "langs" || name == "target" || name == "probe" || name.to_string_lossy().starts_with('.') { continue; }
+            std::os::unix::fs::symlink(fs::canonicalize(entry.path())?, staging.join(name))?;
+        }
+    }
+    fs::write(staging.join(".complete"), b"embedded library sources\n")?;
+    match fs::rename(&staging, &cache) {
+        Ok(()) => {},
+        Err(_) if cache.join(".complete").is_file() => { fs::remove_dir_all(staging)?; },
+        Err(error) => { let _ = fs::remove_dir_all(staging); return Err(error); },
+    }
+    Ok(library)
 }
