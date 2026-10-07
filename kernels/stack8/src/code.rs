@@ -941,6 +941,9 @@ pub struct Routine {
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
+    /// The future flags in force where the text was read, as the
+    /// reference's code objects carry them in co_flags.
+    pub future_bits: i64,
     pub lineless: bool,
     pub generator: bool,
     pub doc: Option<String>,

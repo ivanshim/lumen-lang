@@ -3089,7 +3089,42 @@ impl<'a> Machine<'a> {
             taken.doc=code.doc.clone();
             let in_order=self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect();
             let by_name=self.spare_worths(&code,&room,'n').into_iter().map(|(at,v)|(code.formals[at].clone(),v)).collect();
-            self.respared(&taken,&source_room,under,Some(in_order),Some(by_name))
+            let mut closure_frame = under;
+            if !source_code.reaching.is_empty() {
+                // Preserve the recipient's closure cells in the new code's sorted free-variable order.
+                let mut old_order: Vec<usize> = (0..code.reaching.len()).collect();
+                old_order.sort_by_key(|index| Self::capture_title(&code.reaching[*index].ident));
+                let mut new_order: Vec<_> = source_code.reaching.iter().collect();
+                new_order.sort_by_key(|address| Self::capture_title(&address.ident));
+                let mut retained = Vec::new();
+                for index in old_order {
+                    let parts = [Value::Bound(code.clone(), room.clone()), Value::Small(index as i64)];
+                    let Some((place, slot)) = self.cell_place(&parts) else { return Err(self.class_unready()); };
+                    let current = place.cells.borrow().get(slot).cloned().ok_or_else(|| self.class_unready())?;
+                    let shared = match current {
+                        Value::Shared(_) => current,
+                        value => Value::Shared(Rc::new(RefCell::new(value))),
+                    };
+                    place.cells.borrow_mut()[slot] = shared.clone();
+                    place.capture_slots.borrow_mut().insert(slot);
+                    retained.push(shared);
+                }
+                let depth = source_code.reaching.iter().map(|address| address.up).max().unwrap_or(0);
+                if depth == 0 { return Err(self.class_unready()); }
+                let mut levels = vec![self.outermost.clone(); depth + 1];
+                closure_frame = self.outermost.clone();
+                for distance in (1..=depth).rev() {
+                    let size = source_code.reaching.iter().filter(|address| address.up == distance)
+                        .map(|address| address.at + 1).max().unwrap_or(0);
+                    closure_frame = Env::make(size, Some(closure_frame));
+                    levels[distance] = closure_frame.clone();
+                }
+                for (address, cell) in new_order.into_iter().zip(retained) {
+                    levels[address.up].cells.borrow_mut()[address.at] = cell;
+                    levels[address.up].capture_slots.borrow_mut().insert(address.at);
+                }
+            }
+            self.respared(&taken,&source_room,closure_frame,Some(in_order),Some(by_name))
         } else if key==self.detail("keywords") {
             let pairs=match replacement.as_ref().map(Value::settled) {
                 None|Some(Value::Nil)=>Vec::new(),
