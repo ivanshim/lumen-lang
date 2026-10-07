@@ -7611,13 +7611,31 @@ impl<'a> Engine<'a> {
             _ => None,
         };
         let same = match (left, right) {
-            (Some(left), Some(right)) => {
-                let answer = self.special_dyad(&Action::Eq, &left, &right)?;
-                self.special_truth(&answer)?
-            }
+            (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
             _ => false,
         };
         Ok(Some(Value::Flag(same != (word == "__ne__"))))
+    }
+
+    /// Two unions are one where they hold the same members, however
+    /// each row was ordered, as the reference compares them.
+    fn unions_alike(&mut self, left: &Value, right: &Value) -> Res<bool> {
+        let (left, right) = (left.contents(), right.contents());
+        let (Value::Tuple(one), Value::Tuple(two)) = (&left, &right) else { return Ok(false); };
+        if one.len() != two.len() { return Ok(false); }
+        let mut remaining: Vec<Value> = two.iter().cloned().collect();
+        for member in one.iter() {
+            let mut matched = None;
+            for (at, other) in remaining.iter().enumerate() {
+                let equal = self.special_dyad(&Action::Eq, member, other)?;
+                if self.special_truth(&equal)? { matched = Some(at); break; }
+            }
+            match matched {
+                Some(at) => { remaining.remove(at); }
+                None => return Ok(false),
+            }
+        }
+        Ok(true)
     }
 
     fn holds_object(value: &Value) -> bool {
@@ -15516,7 +15534,9 @@ impl<'a> Engine<'a> {
         // A thing of the program's own that says how it is walked, by a
         // walk method or by reading its places, has the members that
         // walk hands over, the same ones a loop over it would see.
-        if matches!(value, Value::Object(_)) && (self.special_value(value, 15).is_some() || self.indexed_walk(value).is_some()) {
+        if matches!(value, Value::Object(_)) && (self.special_value(value, 15).is_some()
+            || matches!(value, Value::Object(o) if matches!(Self::own_kind(&o.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple")))
+            || self.indexed_walk(value).is_some()) {
             return self.special_items(value);
         }
         if let Value::Class(class) = value {

@@ -170,16 +170,44 @@ def _state(value):
     return namespace
 
 
+_NATIVE_TYPING_REDUCTIONS = None
+
+
+def _native_reduction(value):
+    # The runtime's own typing parameters and generic alias reduce by
+    # name or by origin-and-arguments. They are told apart from any
+    # class a program writes by the actual native type objects, not by
+    # a name or the attributes a value carries, so a program's own kind
+    # that happens to be called GenericAlias keeps its own reduction.
+    global _NATIVE_TYPING_REDUCTIONS
+    if _NATIVE_TYPING_REDUCTIONS is None:
+        parameters = ()
+        try:
+            import _typing
+            parameters = tuple(getattr(_typing, name, None) for name in
+                               ('TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'))
+        except ImportError:
+            pass
+        try:
+            import types as _types
+            generic = getattr(_types, 'GenericAlias', None)
+        except ImportError:
+            generic = None
+        _NATIVE_TYPING_REDUCTIONS = (parameters, generic)
+    parameters, generic = _NATIVE_TYPING_REDUCTIONS
+    kind = type(value)
+    for native in parameters:
+        if native is not None and kind is native:
+            return value.__name__
+    if generic is not None and kind is generic:
+        return (kind, (value.__origin__, value.__args__))
+    return None
+
+
 def _reduce(value, protocol):
-    # A native typing parameter pickles by the name it was written
-    # under, and a native generic alias by the origin and arguments
-    # it was built from, as CPython's own kinds do.
-    native_kind = type(value)
-    if getattr(native_kind, '__module__', None) == 'typing' and native_kind.__name__ in (
-            'TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'):
-        return value.__name__
-    if native_kind.__name__ == 'GenericAlias' and hasattr(value, '__origin__') and hasattr(value, '__args__'):
-        return (native_kind, (value.__origin__, value.__args__))
+    named = _native_reduction(value)
+    if named is not None:
+        return named
     if type(value) is slice:
         return (slice, (value.start, value.stop, value.step))
     if type(value) is bytearray:

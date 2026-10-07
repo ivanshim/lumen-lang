@@ -9474,10 +9474,30 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         let same = match (left, right) {
-            (Some(left), Some(right)) => { let answer = self.prim_values(Prim::Eq, "", &[left, right])?; self.object_truth(&answer)? }
+            (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
             _ => false,
         };
         Ok(Some(Value::Flag(same != (name == "__ne__"))))
+    }
+
+    /// Two unions are one where they hold the same members, however
+    /// each row was ordered.
+    fn unions_alike(&mut self, left: &Value, right: &Value) -> Res<bool> {
+        let (Value::Tuple(one), Value::Tuple(two)) = (left.settled(), right.settled()) else { return Ok(false); };
+        if one.len() != two.len() { return Ok(false); }
+        let mut remaining: Vec<Value> = two.iter().cloned().collect();
+        for member in one.iter() {
+            let mut matched = None;
+            for (at, other) in remaining.iter().enumerate() {
+                let equal = self.prim_values(Prim::Eq, "", &[member.clone(), other.clone()])?;
+                if self.object_truth(&equal)? { matched = Some(at); break; }
+            }
+            match matched {
+                Some(at) => { remaining.remove(at); }
+                None => return Ok(false),
+            }
+        }
+        Ok(true)
     }
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if let Value::Window(owner, 'm') = receiver {
@@ -22983,7 +23003,8 @@ impl<'a> Machine<'a> {
         // A thing of the program's own that says how it is walked, by a
         // walk method or by reading its places, has the members that
         // walk hands over, the same ones a loop over it would see.
-        if matches!(source, Value::Thing(_)) && (self.appointment(source, 15).is_some() || self.placed_walk(source).is_some()) {
+        if matches!(source, Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(), Some("TypeAliasType" | "TypeVarTuple")))
+            || (matches!(source, Value::Thing(_)) && (self.appointment(source, 15).is_some() || self.placed_walk(source).is_some())) {
             return self.object_members(source);
         }
         if let Value::Blueprint(kind) = source {
