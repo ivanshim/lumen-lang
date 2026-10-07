@@ -6733,3 +6733,12 @@
 {"t":"2026-10-07T02:13:20Z","event":"quota","codex_week_used":85,"codex_credits":0,"claude_week_used":25,"claude_5h_used":0,"kimi_5h_used":0,"kimi_month_used":0.8974,"kimi_code_used":0,"deepseek_usd":351.66}
 {"t":"2026-10-07T02:13:26Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":85,"expected":87.3,"gap":-2.3,"status":"ok"}
 {"t":"2026-10-07T02:13:32Z","event":"checkin","status":"done","actions":"no verdicts or merges (none pending; no open PRs); prune-merged: 0 MB (no idle accepted worktree with build output); slots full (Sol 7+review slot, DS Flash 8, DS Pro 1, Kimi 1, Sonnet 1)","notes":"box load 0.7, 11.2 GB available, disk 83% (26G free) - nothing idle to prune; Codex week 85%; luna gap -2.3 ok, no new alerts"}
+{"t":"2026-10-07T02:33:39Z","event":"quota","codex_week_used":85,"codex_credits":0,"claude_week_used":25,"claude_5h_used":0,"kimi_5h_used":0,"kimi_month_used":0.8975,"kimi_code_used":0,"deepseek_usd":350.86}
+{"t":"2026-10-07T02:33:45Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":85,"expected":87.7,"gap":-2.7,"status":"ok"}
+{"t":"2026-10-07T02:34:01Z","event":"checkin","status":"done","actions":"no verdicts or merges (none pending; no open PRs); prune-merged: 0 MB (no idle accepted worktree with build output); slots full (Sol 7+review slot, DS Flash 8 + 2 queue-after resumes, DS Pro 1, Kimi 1, Sonnet 1)","notes":"box disk 83% (26G free) - already raised with Ivan, nothing idle to prune; box load 1.4, 12.3 GB avail; Codex week 85%; luna gap -2.7 ok, no new alerts; claude-io (Sonnet) running 5h32m, still active"}
+{"t":"2026-10-07T02:34:25Z","event":"exited","job":"dspro-leftovers-sol","code":0}
+{"t":"2026-10-07T02:36:57Z","event":"finished","job":"dspro-leftovers-sol","exit_time":"2026-10-07T02:34:25Z"}
+{"t":"2026-10-07T02:36:57Z","event":"review-queued","job":"dspro-leftovers-sol","review":"review-auto-dspro-leftovers-sol-0236"}
+{"t":"2026-10-07T02:36:59Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T02:37:29Z","event":"review-started","job":"dspro-leftovers-sol","review":"review-auto-dspro-leftovers-sol-0236"}
+{"t":"2026-10-07T02:40:01Z","event":"exited","job":"review-auto-dspro-leftovers-sol-0236","code":0}
