@@ -7771,3 +7771,20 @@
 {"t":"2026-10-07T20:00:40Z","event":"finished","job":"dsflash-osx-support","exit_time":"2026-10-07T19:57:39Z"}
 {"t":"2026-10-07T20:00:40Z","event":"review-queued","job":"dsflash-osx-support","review":"review-auto-dsflash-osx-support-2000"}
 {"t":"2026-10-07T20:00:44Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T20:02:49Z","event":"review-started","job":"dsflash-osx-support","review":"review-auto-dsflash-osx-support-2000"}
+{"t":"2026-10-07T20:05:54Z","event":"exited","job":"review-auto-dsflash-osx-support-2000","code":0}
+{"t":"2026-10-07T20:11:20Z","event":"exited","job":"stdlib-codecs-sol","code":0}
+{"t":"2026-10-07T20:11:52Z","event":"started","job":"dsflash-shelve-dbm-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T20:13:03Z","event":"returned","job":"dsflash-osx-support","closed":"yes","review":"review-auto-dsflash-osx-support-2000","commit":"fdbbda3a6","round":1,"note":"not integrity: zero reference-test gain; test__osx_support 16/16 genuine Darwin-only skips both kernels, test_stat 18/22 unchanged; clean final check (1194/0); real os.system/_read_output probe gain only; closed as platform-gated, no integration, not re-queued"}
+{"t":"2026-10-07T20:13:46Z","event":"queued","job":"dsflash-ucn","model":"deepseek-flash","line":"or-resume dsflash-ucn deepseek-flash ses_ee90380bdffeO0OuLcY2tzI32S","note":"released from held-resumes (DS Flash 11/12)"}
+{"t":"2026-10-07T20:14:18Z","event":"quota","codex_week_used":40,"codex_credits":0,"claude_week_used":2,"claude_5h_used":11,"kimi_5h_used":0,"kimi_month_used":0.9318,"kimi_code_used":0,"deepseek_usd":326.04}
+{"t":"2026-10-07T20:14:23Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":40,"expected":40.6,"gap":-0.6,"status":"ok"}
+{"t":"2026-10-07T20:14:28Z","event":"checkin","status":"done","actions":"returned+closed dsflash-osx-support (zero reference-test gain: test__osx_support 16/16 genuine Darwin skips both kernels; clean check; not re-queued); held-resume dsflash-ucn released to queue (DS Flash 11/12); prune-merged freed 0MB","notes":"box load 8.6/8 (json-speed rebuild), 10.3 GB available, disk 86%; Mac disk 81%; Sol 11/11 feature + review slot (stdlib-codecs-sol finished 20:11Z, review to be queued); queued zipfile resume, yieldfrom-sol; DS Pro tstring, Kimi module, Sonnet pstats running; json-speed recert2 still waiting for the 7019875e build (compiling 40 min); no open PRs; luna: no new alerts, meter gap -0.6 ok (Codex week 40%); Claude 5h 11% week 2%"}
+{"t":"2026-10-07T20:16:02Z","event":"finished","job":"stdlib-codecs-sol","exit_time":"2026-10-07T20:11:20Z"}
+{"t":"2026-10-07T20:16:02Z","event":"review-queued","job":"stdlib-codecs-sol","review":"review-auto-stdlib-codecs-sol-2015"}
+{"t":"2026-10-07T20:16:05Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T20:16:54Z","event":"resumed","job":"dsflash-ucn","model":"deepseek-flash","session":"ses_ee90380bdffeO0OuLcY2tzI32S"}
+{"t":"2026-10-07T20:19:58Z","event":"exited","job":"dsflash-pep646","code":0}
+{"t":"2026-10-07T20:21:10Z","event":"finished","job":"dsflash-pep646","exit_time":"2026-10-07T20:19:58Z"}
+{"t":"2026-10-07T20:21:10Z","event":"review-queued","job":"dsflash-pep646","review":"review-auto-dsflash-pep646-2021"}
+{"t":"2026-10-07T20:21:14Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
