@@ -45,40 +45,29 @@ pub struct FxHasher {
 
 impl FxHasher {
     const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
-    #[inline]
-    fn add(&mut self, word: usize) {
-        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    #[inline(always)]
+    fn mix(&mut self, byte: u8) {
+        self.hash = (self.hash.rotate_left(5) ^ byte as usize).wrapping_mul(Self::SEED);
     }
     /// Fold a key. A short one takes every byte; the long label names
     /// the roster writes are sampled at both ends and the middle, which
-    /// parts them just as well and costs a settled handful of words.
+    /// parts them just as well and costs a settled handful of bytes.
     #[inline]
     fn fold(&mut self, bytes: &[u8]) {
-        if bytes.len() > 16 {
-            let len = bytes.len();
-            self.add(len);
-            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
-            self.add(usize::from_ne_bytes(bytes[len - 8..].try_into().unwrap()));
-            let middle = len / 2;
-            self.add(u32::from_ne_bytes(bytes[middle - 2..middle + 2].try_into().unwrap()) as usize);
+        let length = bytes.len();
+        self.mix(length as u8);
+        if length <= 8 {
+            let mut at = 0;
+            while at < length { self.mix(bytes[at]); at += 1; }
             return;
         }
-        let mut rest = bytes;
-        while rest.len() >= 8 {
-            self.add(usize::from_ne_bytes(rest[..8].try_into().unwrap()));
-            rest = &rest[8..];
-        }
-        if rest.len() >= 4 {
-            self.add(u32::from_ne_bytes(rest[..4].try_into().unwrap()) as usize);
-            rest = &rest[4..];
-        }
-        if rest.len() >= 2 {
-            self.add(u16::from_ne_bytes(rest[..2].try_into().unwrap()) as usize);
-            rest = &rest[2..];
-        }
-        if let Some(&last) = rest.first() {
-            self.add(last as usize);
-        }
+        let middle = length / 2;
+        self.mix(bytes[0]);
+        self.mix(bytes[1]);
+        self.mix(bytes[middle - 1]);
+        self.mix(bytes[middle]);
+        self.mix(bytes[length - 2]);
+        self.mix(bytes[length - 1]);
     }
 }
 
@@ -100,6 +89,9 @@ pub struct Table {
     pub blocks: Blocks,
     /// Reverse Polish: words over one stack, no expressions.
     pub rpn: bool,
+    /// Whether the roster gave the syntax-fault labels words, read at
+    /// every statement: a constant, so it is answered without a lookup.
+    pub syntax_exceptions: bool,
     cells: HashMap<&'static str, Entry, FxBuildHasher>,
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
@@ -513,6 +505,7 @@ impl Table {
             ident: String::new(),
             blocks: Blocks::Indented,
             rpn: false,
+            syntax_exceptions: matches!(cells.get("ext.builtin.exceptions.syntax"), Some(Entry::Strings(words)) if !words.is_empty()),
             cells,
             dyadic: HashMap::new(),
             monadic: HashMap::new(),
@@ -728,7 +721,7 @@ impl Table {
     }
 
     pub fn begins_name(&self, c: char) -> bool {
-        if self.has_any("ext.builtin.exceptions.syntax") { return c == '_' || crate::unicode::property(c, 4); }
+        if self.syntax_exceptions { return c == '_' || crate::unicode::property(c, 4); }
         // A language keeping text as bytes spells its names in bytes as
         // well, so any byte above the plain seven-bit ones may stand in
         // one, whatever letter it would otherwise be part of.
@@ -741,7 +734,7 @@ impl Table {
     }
 
     pub fn extends_name(&self, c: char) -> bool {
-        if self.has_any("ext.builtin.exceptions.syntax") { return crate::unicode::property(c, 8); }
+        if self.syntax_exceptions { return crate::unicode::property(c, 8); }
         let a_byte = self.flag("ext.system.text.bytes");
         let far = a_byte && self.flag("identifier.unicode") && c >= '\u{80}';
         if a_byte {

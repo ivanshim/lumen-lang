@@ -49,7 +49,7 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
 }
 
 pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token>, (String, u32, usize)> {
-    if table.has_any("ext.builtin.exceptions.syntax") { return column_blocks(&tokens); }
+    if table.syntax_exceptions { return column_blocks(&tokens); }
     let by_indent = table.blocks == Blocks::Indented;
     let unit = table.count("block.indent_size").unwrap_or(4);
     let mut opens: Vec<&str> = ["syntax.group.open", "syntax.call.open", "syntax.array.open"].iter().filter_map(|k| table.single(k)).collect();

@@ -465,7 +465,7 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
     // says what it noticed about a string already read, so the notices
     // are gathered by walking the strings in turn, keeping only those
     // whose string finished rather than faulted short.
-    let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
+    let input = if table.syntax_exceptions && source.contains('\r') {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
     } else { std::borrow::Cow::Borrowed(source) };
     let src: Vec<char> = input.chars().collect();
@@ -729,7 +729,7 @@ impl Quotation<'_> {
             }
             match ch {
                 '\n' if end.len() == 1 => {
-                    let complaint = if !fields && depth == 0 && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    let complaint = if !fields && depth == 0 && self.table.syntax_exceptions {
                         self.table.single("ext.lexical.string.unterminated").map(str::to_owned)
                     } else { None };
                     return Err(complaint.unwrap_or_else(|| self.bad()));
@@ -1110,7 +1110,7 @@ fn continued_past_end(tokens: &[Token], position: &mut (u32, usize)) -> String {
 
 fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usize)) -> Result<Vec<Token>, String> {
     let paired_ending = source.as_bytes().ends_with(b"\r\n");
-    let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
+    let input = if table.syntax_exceptions && source.contains('\r') {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
     } else { std::borrow::Cow::Borrowed(source) };
     let source = input.as_ref();
@@ -1181,13 +1181,13 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             let mut k = pos;
             while k < src.len() && (src[k] == ' ' || src[k] == '\t') {
                 width += match src[k] {
-                    '\t' if table.has_any("ext.builtin.exceptions.syntax") => 8 - width % 8,
+                    '\t' if table.syntax_exceptions => 8 - width % 8,
                     '\t' => unit, _ => 1,
                 };
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
-            if src[k..line_end].iter().all(|c| c.is_ascii_whitespace() || !table.has_any("ext.builtin.exceptions.syntax") && c.is_whitespace())
+            if src[k..line_end].iter().all(|c| c.is_ascii_whitespace() || !table.syntax_exceptions && c.is_whitespace())
                 || table.strings("lexical.comment_line").iter().any(|mark| src[k..].starts_with(&mark.chars().collect::<Vec<_>>())) {
                 if line_end < src.len() {
                     row += 1;
@@ -1209,7 +1209,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
                 let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
                 if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
-                    if !fields && table.has_any("ext.builtin.exceptions.syntax") && words.starts_with("SyntaxError: unterminated ") {
+                    if !fields && table.syntax_exceptions && words.starts_with("SyntaxError: unterminated ") {
                         let mut detected = quote.row;
                         if !paired_ending && quote.next >= src.len() && src.last() == Some(&'\n') { detected = detected.saturating_sub(1); }
                         words.push_str(&format!(" (detected at line {detected})"));
@@ -1241,7 +1241,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             }
             if let Some(said) = prefix_conflict(&src, pos, table) { return Err(said); }
             if table.flag("ext.lexical.string.adjacent") && src[pos] == '\\' && src.get(pos + 1) == Some(&'\n') {
-                if pos + 2 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 += 1; return Err(continued_past_end(&tokens, ended)); }
+                if pos + 2 == src.len() && table.syntax_exceptions { ended.1 += 1; return Err(continued_past_end(&tokens, ended)); }
                 pos += 2;
                 row += 1;
                 continue;
@@ -1256,7 +1256,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                     end += 1;
                 }
                 if src.get(end) == Some(&'\n') {
-                    if end + 1 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 = at_column(end); return Err(continued_past_end(&tokens, ended)); }
+                    if end + 1 == src.len() && table.syntax_exceptions { ended.1 = at_column(end); return Err(continued_past_end(&tokens, ended)); }
                     pos = end + 1;
                     row += 1;
                     carried = true;
@@ -1286,7 +1286,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             if src.get(pos) == Some(&'\r') { pos += 1; }
             if src.get(pos) != Some(&'\n') {
                 ended.1 = at_column(pos);
-                if pos == src.len() && table.has_any("ext.builtin.exceptions.syntax") { return Err(continued_past_end(&tokens, ended)); }
+                if pos == src.len() && table.syntax_exceptions { return Err(continued_past_end(&tokens, ended)); }
                 return Err(table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_string());
             }
             row += 1;
@@ -1410,7 +1410,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
             }
             let mut spelling: String = src[pos..k].iter().collect();
-            if strict && check_numeral(&spelling, table).is_err() && table.has_any("ext.builtin.exceptions.syntax") {
+            if strict && check_numeral(&spelling, table).is_err() && table.syntax_exceptions {
                 for word in ["else", "for", "not", "and", "or", "in", "if", "is"] {
                     if let Some(beginning) = spelling.strip_suffix(word) {
                         if !beginning.is_empty() && check_numeral(beginning, table).is_ok()
@@ -1426,7 +1426,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             }
             if strict {
                 if let Err(mut words) = check_numeral(&spelling, table) {
-                    if table.has_any("ext.builtin.exceptions.syntax") {
+                    if table.syntax_exceptions {
                         ended.1 = column.get() + failed_digit(&spelling, &words);
                         if table.single("ext.lexical.number.amiss") == Some(words.as_str()) { words = "SyntaxError: invalid decimal literal".to_string(); }
                     }
@@ -1568,7 +1568,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     // Brackets may stand open two hundred deep and no deeper, as the
     // reference's reader has it; the one past that is refused, for a
     // table with syntax words of its own.
-    if table.has_any("ext.builtin.exceptions.syntax") {
+    if table.syntax_exceptions {
         let mut standing = 0usize;
         for item in tokens.iter().filter(|item| item.shape == Shape::Sign) {
             let text = item.lexeme.as_str();
@@ -1718,8 +1718,8 @@ fn told_of_key(table: &Table) -> Option<String> {
 /// A language naming such characters by their number names it that
 /// way, a character no one can show being no use in a complaint.
 fn told_of_character(table: &Table, c: char, row: u32) -> String {
-    if c.is_control() && table.has_any("ext.builtin.exceptions.syntax") { return format!("SyntaxError: invalid non-printable character U+{:04X}", u32::from(c)); }
-    if table.has_any("ext.builtin.exceptions.syntax") && c as u32 > 127 { return format!("SyntaxError: invalid character '{}' (U+{:04X})", c, u32::from(c)); }
+    if c.is_control() && table.syntax_exceptions { return format!("SyntaxError: invalid non-printable character U+{:04X}", u32::from(c)); }
+    if table.syntax_exceptions && c as u32 > 127 { return format!("SyntaxError: invalid character '{}' (U+{:04X})", c, u32::from(c)); }
     match (table.single("ext.system.reading.unexpected"), table.single("ext.system.reading.unexpected.character")) {
         (Some(opening), Some(named)) => format!("{opening} {named}{:02X}", c as u32),
         _ => format!("Unexpected character '{c}' at row {row}"),
@@ -1839,7 +1839,7 @@ pub fn check_numeral(word: &str, table: &Table) -> Result<(), String> {
 
 /// Keep the scanner cursor when a text operation cannot produce tokens.
 pub fn scan_position(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32, usize)> {
-    if source.contains('\0') && table.has_any("ext.builtin.exceptions.syntax") { return Err(("SyntaxError: source code string cannot contain null bytes".to_owned(), 0, 0)); }
+    if source.contains('\0') && table.syntax_exceptions { return Err(("SyntaxError: source code string cannot contain null bytes".to_owned(), 0, 0)); }
     if table.flag("ext.lexical.template") {
         return scan_at(source, table).map_err(|(message, row)| (message, row, 1));
     }
