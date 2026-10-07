@@ -50,6 +50,18 @@ def call_evaluate_function(evaluate, format, owner=None):
 
 def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1):
     _check_format(format)
+    try:
+        stored = getattr(obj, '__annotations__', None)
+    except Exception:
+        if format != Format.FORWARDREF:
+            raise
+    else:
+        if stored is not None:
+            if not isinstance(stored, dict):
+                raise ValueError(f"{obj!r}.__annotations__ is neither a dict nor None")
+            if eval_str:
+                raise NotImplementedError("annotationlib cannot evaluate string annotations here")
+            return dict(stored)
     annotate = getattr(obj, '__annotate__', None)
     if annotate is not None:
         result = call_annotate_function(annotate, format, owner=obj)

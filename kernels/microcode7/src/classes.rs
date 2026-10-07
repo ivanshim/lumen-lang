@@ -2190,7 +2190,7 @@ impl<'a> Machine<'a> {
                             return self.describe_module(subject);
                         }
                         let receiver=match &subject {
-                            Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref()==Some(word.as_str()) =>
+                            Value::Thing(t) if Self::native_among(&t.blueprint(), &word) =>
                                 Self::underlying(&subject).unwrap_or_else(||subject.clone()),
                             _=>subject.clone(),
                         };
@@ -2241,7 +2241,7 @@ impl<'a> Machine<'a> {
                             let mut inputs = vec![subject]; inputs.extend(values);
                             return self.apply_class_member(Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{word}.{entry}"))), inputs);
                         }
-                        if of_own_kind && entry == self.detail("get") {
+                        if entry == self.detail("get") && (!matches!(word.as_str(), "module" | "type") || of_own_kind) {
                             let (inputs, keywords) = self.open_arguments(values)?;
                             if !keywords.is_empty() {
                                 return Err(format!("TypeError: wrapper {entry}() takes no keyword arguments").into());

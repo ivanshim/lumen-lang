@@ -19416,7 +19416,10 @@ impl<'a> Engine<'a> {
                 return self.byte_call(task, args);
             }
             Builtin::Text(op) => {
-                let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ (Value::Text(_) | Value::Codepoints(_))) => text, _ => v.contents() }).collect();
+                if op == crate::strings::TextOp::Encode && self.lang.bind_names {
+                    return self.byte_call(2, &normalized);
+                }
                 if op == crate::strings::TextOp::Join && normalized.len() == 2 && matches!(normalized[0], Value::Text(_) | Value::Codepoints(_)) {
                     let items = self.comprehension_items(&normalized[1])?;
                     if items.len() == 1 && matches!(items[0], Value::Text(_) | Value::Codepoints(_)) {
@@ -26922,6 +26925,17 @@ impl Engine<'_> {
         let outer = as_book(args.get(1))?;
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
+            (None, None) if mode != 2 && self.running_routine.as_ref().is_some_and(|body| body.class_namespace.is_some()) && within.is_some() => {
+                let body = self.running_routine.clone().expect("the class body");
+                let locals = self.names_about(&body, &within.as_ref().expect("the caller frame").1, Builtin::NearNames)
+                    .map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                let near = match locals {
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
+                    other => Rc::new(RefCell::new(other)),
+                };
+                let outer = caller_book.unwrap_or_else(|| self.running_outer());
+                return self.run_text_booked(&source, file, mode, outer, Some(near), top_await, replacements);
+            }
             (None, None) => return match within.filter(|_| mode != 2) {
                 Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements),
                 None => self.run_text_here_about(&source, file, mode, top_await, replacements),

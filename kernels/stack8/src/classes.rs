@@ -2061,7 +2061,7 @@ impl<'a> Engine<'a> {
                         // row or a map, behind a cell of its own): the
                         // writing must reach the very thing the subclass
                         // instance keeps, not a copy taken out of it.
-                        Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some(word.as_ref()) => {
+                        Value::Object(o) if Self::kind_among(&o.class_now(), &word) => {
                             Self::worth_of(&subject).unwrap_or_else(|| subject.clone())
                         }
                         _ => subject.clone(),
@@ -2107,7 +2107,7 @@ impl<'a> Engine<'a> {
                         let mut inputs = vec![subject]; inputs.extend(args);
                         return self.class_apply(Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.{member}"))), inputs);
                     }
-                    if of_own_kind && member == self.class_word("get") {
+                    if member == self.class_word("get") && (of_own_kind || !matches!(word.as_str(), "type" | "module")) {
                         let inputs = self.call_items(args)?;
                         if inputs.iter().any(|(key, _)| key.is_some()) {
                             return Err(format!("TypeError: wrapper {member}() takes no keyword arguments").into());

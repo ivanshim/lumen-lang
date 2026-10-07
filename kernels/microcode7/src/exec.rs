@@ -18834,7 +18834,10 @@ impl<'a> Machine<'a> {
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
-                let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
+                let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ (Value::Text(_) | Value::Unpaired(_))) => word, _ => x.settled() }).collect();
+                if self.table.flag("ext.syntax.call.bind_names") && work == crate::text::Work::ENCODE {
+                    return self.octet_routine(2, &values);
+                }
                 if work == crate::text::Work::JOIN && values.len() == 2 && matches!(values[0], Value::Text(_) | Value::Unpaired(_)) {
                     let items = self.gathered_members(&values[1])?;
                     if items.len() == 1 && matches!(items[0], Value::Text(_) | Value::Unpaired(_)) {
@@ -27292,6 +27295,16 @@ impl<'a> Machine<'a> {
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
+            (None, None) if mode != 2 && within.is_some() && self.frames_named.last().is_some_and(|code| code.class_namespace.is_some()) => {
+                let frame = &within.as_ref().expect("the copied class environment").1;
+                let namespace = self.names_here(frame, Prim::HereBook)?;
+                let local = match namespace {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => cell,
+                    other => Rc::new(RefCell::new(other)),
+                };
+                let global = caller_book.unwrap_or_else(|| self.standing_world());
+                return self.perform_booked(&source, file, mode, global, Some(local), top_await, literals);
+            }
             (None, None) => return match within.filter(|_| mode != 2) {
                 Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals),
                 None => self.perform_here(&source, file, mode, top_await, literals),
