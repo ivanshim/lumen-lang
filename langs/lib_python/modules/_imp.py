@@ -10,7 +10,7 @@ def _override_multi_interp_extensions_check(override):
 def is_builtin(name):
     if name in ('sys', 'builtins'):
         return -1
-    return 1 if name in ('_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal') else 0
+    return 1 if name in ('_imp', '_thread', '_weakref', '_io', 'posix', 'marshal') else 0
 
 def is_frozen(name):
     return False

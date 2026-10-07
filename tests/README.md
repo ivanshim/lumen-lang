@@ -21,6 +21,9 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | Directory | Source | Release / tag | Commit / release date | License |
 |---|---|---|---|---|
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/{warnings,_py_warnings}.py` | `Lib/warnings.py` and `Lib/_py_warnings.py`, unchanged beneath a PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/test_warnings/` | `Lib/test/test_warnings/__init__.py` and `data/{import_warning,package_helper,stacklevel}.py`, embedded unchanged beneath PSF provenance headers | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_warnings/` | `Lib/test/test_warnings/{__init__,__main__}.py` and `data/{import_warning,package_helper,stacklevel}.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -293,3 +296,22 @@ cannot be met by an integrity-only restoration while those runtime features
 are absent. Scratch `reader-tail/3` and `reader-tail/7` therefore keep their
 previous records; replacing them with import errors would hide the missing
 test executions. No scratch record was moved.
+
+## Warnings library coverage
+
+`test_warnings/` is a library suite (profile 1.0), not part of the core
+language score. Its five upstream files are preserved byte for byte. The
+embedded test package and its helper files retain upstream bodies beneath
+PSF provenance headers so `test.test_warnings` imports through the runtime.
+`warnings.py` and `_py_warnings.py` also retain complete upstream bodies.
+Separate runtime adapters preserve the existing private capture interface
+and use the Python warning backend during importlib bootstrap; they do not
+register an `_warnings` extension. The original importlib source files are
+unchanged. The external bootstrap adapter differs only in its warning
+backend import, besides its provenance header.
+
+The v3.14.8 package calls `c_warnings._set_module(c_warnings)` unconditionally.
+When `import_fresh_module` returns `None` for the missing C backend, package
+collection raises `AttributeError` before any classes run. This also occurs
+on CPython with that backend unavailable. The suite is left unchanged and
+the collection error remains visible rather than supplying a C facade.
