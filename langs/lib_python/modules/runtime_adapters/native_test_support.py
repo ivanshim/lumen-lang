@@ -11,8 +11,9 @@ from io import StringIO
 
 MISSING_C_DOCSTRINGS = True
 verbose = False
-is_wasi = False
-is_emscripten = False
+is_wasi = sys.platform == "wasi"
+is_emscripten = sys.platform == "emscripten"
+is_wasm32 = is_emscripten or is_wasi
 Py_DEBUG = False
 Py_GIL_DISABLED = False
 MS_WINDOWS = False

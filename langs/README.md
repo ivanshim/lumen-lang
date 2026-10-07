@@ -4845,8 +4845,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
-| `ext.builtin.pickle_buffer` | - | - | `__pickle_buffer_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.partial_repr` | - | - | `__partial_repr__` | - | - | - | - | - | - | - |
+| `ext.builtin.pickle_buffer` | - | - | `__pickle_buffer_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
