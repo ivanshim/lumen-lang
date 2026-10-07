@@ -503,3 +503,7 @@ def _rmtree(path):
                 _force_run(path, os.unlink, fullname)
     _rmtree_inner(path)
     os.rmdir(path)
+
+
+def _longpath(path):
+    return path
