@@ -2768,6 +2768,9 @@ impl<'a> Engine<'a> {
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
         let raw = subject.contents();
+        if matches!(raw, Value::Codepoints(_)) && self.surrogate_case_operation(name).is_some() {
+            return Ok(Value::ValueMethod(Rc::new((raw, name.to_owned()))));
+        }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &raw {
                 let owner = instance.class_now();

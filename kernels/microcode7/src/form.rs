@@ -71,6 +71,7 @@ pub enum Prim {
     CallResult,
     CopyWorth,
     Regex,
+    CodecMapping,
     LoadModule,
     IsInstance,
     WriteMember,

@@ -506,6 +506,7 @@ pub enum Builtin {
     CallOutcome,
     CopyValue,
     Sre,
+    Multibyte,
     ModuleLoad,
     MemberSet,
     MemberGet,

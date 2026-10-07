@@ -245,6 +245,23 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
     if let Some(Value::Unpaired(numbers)) = input.first() {
+        if matches!(work, LOWER|UPPER|CASEFOLD|SWAPCASE) {
+            if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)",_name,input.len()-1)); }
+            let mut converted = Vec::new(); let mut position = 0;
+            while position < numbers.len() {
+                match char::from_u32(numbers[position]) {
+                    None => {converted.push(numbers[position]); position+=1;}
+                    Some(_) => {
+                        let beginning = position;
+                        while position < numbers.len() && char::from_u32(numbers[position]).is_some() {position+=1;}
+                        let part: String = numbers[beginning..position].iter().filter_map(|n| char::from_u32(*n)).collect();
+                        let result = apply(table,work,_name,&[Value::text(&part)],names)?;
+                        if let Value::Text(word) = result {converted.extend(word.chars().map(u32::from));}
+                    }
+                }
+            }
+            return Ok(Value::characters(converted));
+        }
         if work == NEWARGS {
             if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
             return Ok(Value::tuple(vec![Value::characters(numbers.to_vec())]));

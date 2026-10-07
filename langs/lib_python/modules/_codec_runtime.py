@@ -758,10 +758,6 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
         return _escaped_encode(obj, name == 'raw_unicode_escape')
     if name in _charmaps:
         return charmap_encode(obj, errors, charmap_build(_charmaps[name]))[0]
-    if name == 'idna':
-        if errors != 'strict':
-            raise UnicodeError("unsupported error handling " + errors)
-        return _idna_encode(obj)
     entry = lookup(encoding)
     if not getattr(entry, '_is_text_encoding', True):
         raise LookupError("'%s' is not a text encoding; use codecs.encode() to handle arbitrary codecs" % encoding)
@@ -790,14 +786,6 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
         return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
     if name in _charmaps:
         return charmap_decode(obj, errors, _charmaps[name])[0]
-    if name == 'idna':
-        if errors != 'strict':
-            raise UnicodeError('unsupported error handling ' + errors)
-        text = obj.decode('ascii')
-        if 'xn--' not in text.lower():
-            return text
-        import _codec_idna
-        return '.'.join(_codec_idna.to_unicode(label) for label in text.split('.'))
     entry = lookup(encoding)
     if not getattr(entry, '_is_text_encoding', True):
         raise LookupError("'%s' is not a text encoding; use codecs.decode() to handle arbitrary codecs" % encoding)
@@ -806,24 +794,6 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
         raise TypeError("'%s' decoder returned '%s' instead of 'str'; use codecs.decode() to decode to arbitrary types" % (encoding, type(value).__name__))
     return value
 
-def _idna_encode(text):
-    if not text:
-        return b''
-    labels = text.replace('\u3002', '.').replace('\uff0e', '.').replace('\uff61', '.').split('.')
-    trailing = labels[-1] == ''
-    if trailing:
-        labels = labels[:-1]
-    result = []
-    for label in labels:
-        try:
-            encoded = label.encode('ascii')
-        except UnicodeEncodeError:
-            import _codec_idna
-            encoded = _codec_idna.to_ascii(label)
-        if not 0 < len(encoded) < 64:
-            raise UnicodeError('label empty or too long')
-        result.append(encoded)
-    return b'.'.join(result) + (b'.' if trailing else b'')
 
 # Single-byte mapping tables from the standard codec definitions.
 _charmaps = {
