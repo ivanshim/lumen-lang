@@ -210,6 +210,14 @@ impl<'a> Machine<'a> {
             for part in ["kind", "get", "set", "remove", "allocate", "subclass"] {
                 let name = self.detail(part); if !name.is_empty() { names.push(name.to_owned()); }
             }
+            // A metaclass answers besides for the order and the names of
+            // a class it makes, as the reference lists them among its own.
+            if self.builder_kind.as_ref().is_some_and(|k| Rc::ptr_eq(k, class)) {
+                for part in ["order", "name", "qualified"] {
+                    let word = self.detail(part);
+                    if !word.is_empty() { names.push(word.to_owned()); }
+                }
+            }
             if let Some(name) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) { names.push(name.to_owned()); }
             if self.allowed_slot(class, self.detail("namespace")) { names.push(self.detail("namespace").to_owned()); }
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) { names.push("__weakref__".to_owned()); }
@@ -224,9 +232,9 @@ impl<'a> Machine<'a> {
     /// it is one of a native kind. Nothing for a blueprint of a class's
     /// own or a thing of one, which list their own members instead.
     fn directory_stand_in(&self,value:&Value)->Option<Value> {
-        if let Value::Intrinsic(_,word)=value { return self.kind_stand_in(word); }
-        if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word); }
-        if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)); }
+        if let Value::Intrinsic(_,word)=value { return self.kind_stand_in(word).filter(|sample| !self.native_directory(sample).is_empty()); }
+        if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word).filter(|sample| !self.native_directory(sample).is_empty()); }
+        if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)).filter(|sample| !self.native_directory(sample).is_empty()); }
         if matches!(value,Value::Thing(_)) { return None; }
         if self.native_directory(value).is_empty() { return None; }
         Some(value.clone())
@@ -3636,7 +3644,10 @@ impl<'a> Machine<'a> {
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
             if key==self.detail("mro")||key==self.detail("order"){
                 let mut all=Vec::new();all.push(self.visible_blueprint(b.clone()));all.extend(b.ancestry.iter().map(|p|self.visible_blueprint(p.clone())));
-                let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
+                let result=Value::tuple(all);
+                // The order method is bound to the class it walks, the
+                // way the reference binds a method read off a class.
+                return Ok(if key==self.detail("order"){Self::wrap(3,vec![Self::wrap(0,vec![result]),Value::Blueprint(b.clone())])}else{result});
             }
             if self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == key) {
                 if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) { return Ok(own.settled()); }
@@ -4115,6 +4126,26 @@ impl<'a> Machine<'a> {
             let owner = self.kind_named_after(&value);
             return self.read_class_member(owner, key, direct);
         }
+        // A lone singleton carries the members of the kind it is the one
+        // value of, read upon it as a thing of that kind reads them.
+        if matches!(value, Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
+            let owner = self.kind_named_after(&value);
+            if let Value::Blueprint(class) = owner.settled() {
+                let class = class.clone();
+                // Only the members a value of the kind answers to are read
+                // here; the class's own names stay the class's own.
+                let directory = self.ordinary_directory(&Value::Blueprint(class.clone()));
+                let answers = matches!(&directory, Value::Vector(items) if items.iter().any(|entry| entry.bare() == key));
+                if answers {
+                    if let Ok(member) = self.read_class_member(Value::Blueprint(class.clone()), key, true) {
+                        // The initialiser told to subclasses binds the class
+                        // and not the value, as a class method does.
+                        let receiver = if key == self.detail("subclass") { Value::Blueprint(class.clone()) } else { value.clone() };
+                        return self.member_binding(member, Some(receiver), class);
+                    }
+                }
+            }
+        }
         // Whatever is no thing is of the kind the kind primitive names
         // for it, where it names one.
         if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
@@ -4149,6 +4180,9 @@ impl<'a> Machine<'a> {
         has_slot || b.parents.iter().any(|parent| self.admits_weak(parent))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
+        // The shared ancestor lays out no dictionary; a class written
+        // beneath it takes one by default, the ancestor itself does not.
+        if self.ancestor.as_ref().is_some_and(|root| std::ptr::eq(Rc::as_ptr(root), b)) { return false; }
         if matches!(Self::native_word(b).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
         let slots=declared.settled();
@@ -5418,6 +5452,18 @@ impl<'a> Machine<'a> {
                     let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
                     return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                 }
+            }
+            // The kind primitive stands for the class of the kind it
+            // names, and answers that class's own directory.
+            if let Value::Intrinsic(Prim::SortOf, _) = &values[0] {
+                let kind = self.builder_blueprint();
+                return Ok(self.ordinary_directory(&Value::Blueprint(kind)));
+            }
+            // A lone singleton answers with the directory of the kind
+            // it is the one value of, the list the reference gives both.
+            if matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
+                let kind = self.kind_named_after(&values[0]);
+                return Ok(self.ordinary_directory(&kind));
             }
             return Ok(self.ordinary_directory(&values[0]));
         }

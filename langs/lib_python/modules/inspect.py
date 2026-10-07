@@ -323,16 +323,42 @@ class Parameter:
         return '<Parameter "%s">' % (self.name,)
 
 
+def _render_parameters(parameters):
+    # The separators CPython writes between parameters are decided by
+    # their kinds, not carried alongside the text: a run of positional
+    # only parameters closes with '/', and keyword only parameters that
+    # no '*name' already introduced open with a bare '*'.
+    result = []
+    positional_only_pending = False
+    keyword_only_pending = True
+    for parameter in parameters:
+        kind = parameter.kind
+        if kind == Parameter.POSITIONAL_ONLY:
+            positional_only_pending = True
+        elif positional_only_pending:
+            result.append('/')
+            positional_only_pending = False
+        if kind == Parameter.VAR_POSITIONAL:
+            keyword_only_pending = False
+        elif kind == Parameter.KEYWORD_ONLY and keyword_only_pending:
+            result.append('*')
+            keyword_only_pending = False
+        result.append(str(parameter))
+    if positional_only_pending:
+        result.append('/')
+    return '(' + ', '.join(result) + ')'
+
+
 class Signature:
     def __init__(self, parameters=None):
         self._parameters = {}
-        parts = []
+        ordered = []
         if parameters is None:
             parameters = ()
         for parameter in parameters:
             self._parameters[parameter.name] = parameter
-            parts.append(str(parameter))
-        self._text = '(' + ', '.join(parts) + ')'
+            ordered.append(parameter)
+        self._text = _render_parameters(ordered)
 
     @property
     def parameters(self):
@@ -353,7 +379,8 @@ class Signature:
             if not isinstance(given, cls):
                 raise TypeError('unexpected object in __signature__ attribute')
             return given
-        bound = getattr(obj, '__self__', None) is not None
+        self_object = getattr(obj, '__self__', None)
+        bound = self_object is not None
         if hasattr(obj, '__func__'):
             obj = obj.__func__
         if isinstance(obj, type):
@@ -365,6 +392,11 @@ class Signature:
         elif not hasattr(obj, '__code__'):
             if not callable(obj):
                 raise TypeError(repr(obj) + ' is not a callable object')
+            # A builtin method bound to a class answers with the class
+            # alone, so the class method takes no parameter the reference
+            # would show; that is the shape of type.mro and the like.
+            if isinstance(self_object, type):
+                return cls()
             # A builtin without a body the runtime keeps has no signature,
             # the same verdict the reference reaches for one it cannot read.
             call = getattr(obj, '__call__', None)
@@ -381,41 +413,23 @@ class Signature:
         kwonly = code.co_kwonlyargcount
         defaults = getattr(obj, '__defaults__', None) or ()
         kwdefaults = getattr(obj, '__kwdefaults__', None) or {}
-        parts = []
         parameters = []
         for i in range(1 if bound else 0, count):
-            part = names[i]
             default = _empty
             if i >= count - len(defaults):
                 default = defaults[i - count + len(defaults)]
-                part += '=' + repr(default)
-            parts.append(part)
             kind = Parameter.POSITIONAL_ONLY if i + 1 <= posonly else Parameter.POSITIONAL_OR_KEYWORD
             parameters.append(Parameter(names[i], kind, default=default))
-            if i + 1 == posonly:
-                parts.append('/')
         cursor = count + kwonly
         if code.co_flags & CO_VARARGS:
-            parts.append('*' + names[cursor])
             parameters.append(Parameter(names[cursor], Parameter.VAR_POSITIONAL))
             cursor += 1
-        elif kwonly:
-            parts.append('*')
         for i in range(count, count + kwonly):
-            part = names[i]
-            default = _empty
-            if part in kwdefaults:
-                default = kwdefaults[part]
-                part += '=' + repr(default)
-            parts.append(part)
+            default = kwdefaults[names[i]] if names[i] in kwdefaults else _empty
             parameters.append(Parameter(names[i], Parameter.KEYWORD_ONLY, default=default))
         if code.co_flags & CO_VARKEYWORDS:
-            parts.append('**' + names[cursor])
             parameters.append(Parameter(names[cursor], Parameter.VAR_KEYWORD))
-        result = cls()
-        result._text = '(' + ', '.join(parts) + ')'
-        result._parameters = {parameter.name: parameter for parameter in parameters}
-        return result
+        return cls(parameters)
 
     def __str__(self):
         return self._text

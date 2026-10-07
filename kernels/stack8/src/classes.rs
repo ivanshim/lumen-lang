@@ -3123,7 +3123,9 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![self.public_class(c.clone())]; order.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));
                     let tuple=Value::tuple(order);
-                    return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
+                    // The order method is bound to the class it walks, as
+                    // the reference binds a method read off a class.
+                    return Ok(if name==self.class_word("order") {Self::adapter(3, vec![Self::adapter(0, vec![tuple]), Value::Class(c.clone())])} else {tuple});
                 }
                 let annotate_word = self.lang.class_details.get("code.fields").and_then(|row| row.get(10));
                 if annotate_word.is_some_and(|word| word == name) {
@@ -3597,6 +3599,30 @@ impl<'a> Engine<'a> {
         // for it, where it names one.
         if name==self.class_word("kind") && !matches!(subject,Value::Object(_)) {
             if let Ok(kind)=self.class_type(vec![subject.clone()]) {return Ok(kind);}
+        }
+        // A lone singleton carries the members of the kind it is the one
+        // value of, read upon it as a thing of that kind reads them.
+        if matches!(subject.contents(), Value::Null | Value::Ellipsis | Value::Declined(_)) {
+            let kind = self.named_kind(&subject.contents());
+            if let Value::Class(class) = &kind {
+                let class = class.clone();
+                // Only the members a value of the kind answers to are read
+                // here; the class's own names stay the class's own.
+                let directory = self.default_directory(&Value::Class(class.clone()));
+                let answers = matches!(&directory, Value::Array(items) if items.iter().any(|entry| entry.plain() == name));
+                if answers {
+                    match self.class_get(Value::Class(class.clone()), name, true) {
+                        Ok(member) => {
+                            // The initialiser told to subclasses binds the
+                            // class and not the value, as a class method does.
+                            let receiver = if name == self.class_word("subclass") { Value::Class(class.clone()) } else { subject.clone() };
+                            return self.bind_class_value(member, Some(receiver), class);
+                        }
+                        Err(fault) if self.attribute_fault(&fault) => {}
+                        Err(fault) => return Err(fault),
+                    }
+                }
+            }
         }
         self.absent_member = Some((name.to_string(), subject.clone()));
         Err(self.missing_member(&subject,name))
@@ -4522,6 +4548,9 @@ impl<'a> Engine<'a> {
         }
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
+        // The common ancestor lays out no dictionary of its own; only a
+        // class written beneath it takes one by default.
+        if self.class_root.as_ref().is_some_and(|root| std::ptr::eq(Rc::as_ptr(root), c)) { return false; }
         if matches!(Self::own_kind(c).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let own=Self::own_class_value(c,self.class_word("slots"));
         let Some(own)=own else{return Self::own_kind(c).map_or(true, |word| word == "module");};
@@ -5213,6 +5242,19 @@ impl<'a> Engine<'a> {
                         return Ok(Value::array(ordered));
                     }
                 }
+                // The kind primitive stands for the class of the kind
+                // it names, and answers that class's own directory.
+                if let Value::Native(Builtin::SortOf, _) = &one {
+                    let class = self.metaclass_root();
+                    return Ok(self.default_directory(&Value::Class(class)));
+                }
+                // A lone singleton answers with the directory of the
+                // kind it is the one value of, which is the list the
+                // reference gives both the singleton and its type.
+                if matches!(one.contents(), Value::Null | Value::Ellipsis | Value::Declined(_)) {
+                    let kind = self.named_kind(&one.contents());
+                    if matches!(kind, Value::Class(_)) { return Ok(self.default_directory(&kind)); }
+                }
                 Ok(self.default_directory(&one))
             }
             8=>Err(self.arity_told(&self.class_tool_word(8),1,args.len())),
@@ -5292,6 +5334,15 @@ impl<'a> Engine<'a> {
             for part in ["kind", "get", "set", "remove", "allocate", "subclass"] {
                 let name = self.class_word(part); if !name.is_empty() { names.push(name.to_string()); }
             }
+            // A metaclass answers besides for the order and the names of
+            // a class it makes, the way the reference lists them among
+            // its own.
+            if self.is_metaclass_root(class) {
+                for part in ["order", "name", "qualified"] {
+                    let word = self.class_word(part);
+                    if !word.is_empty() { names.push(word.to_string()); }
+                }
+            }
             if let Some(name) = &self.lang.constructor { names.push(name.clone()); }
             if self.slots_allow(class, self.class_word("namespace")) { names.push(self.class_word("namespace").to_string()); }
             if !self.lang.weak_refused.is_empty() && self.weak_layout(class) { names.push("__weakref__".into()); }
@@ -5306,9 +5357,9 @@ impl<'a> Engine<'a> {
     /// it is one of a builtin kind. Nothing for a class or a thing of
     /// one, which answer with their own members instead.
     fn dir_sample(&self,value:&Value)->Option<Value> {
-        if let Value::Native(_,word)=value { return self.kind_sample(word); }
-        if let Value::ByteKind(mutable,_)=value { let word=self.byte_kind_word(*mutable).to_string(); return self.kind_sample(&word); }
-        if let Value::Class(c)=value { return Self::own_kind(c).and_then(|word|self.kind_sample(&word)); }
+        if let Value::Native(_,word)=value { return self.kind_sample(word).filter(|sample| !self.kind_member_names(sample).is_empty()); }
+        if let Value::ByteKind(mutable,_)=value { let word=self.byte_kind_word(*mutable).to_string(); return self.kind_sample(&word).filter(|sample| !self.kind_member_names(sample).is_empty()); }
+        if let Value::Class(c)=value { return Self::own_kind(c).and_then(|word|self.kind_sample(&word)).filter(|sample| !self.kind_member_names(sample).is_empty()); }
         if matches!(value,Value::Object(_)) { return None; }
         if self.kind_member_names(value).is_empty() { return None; }
         Some(value.clone())
