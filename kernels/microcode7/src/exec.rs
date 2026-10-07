@@ -7238,6 +7238,13 @@ impl<'a> Machine<'a> {
                                 let beneath = cell.borrow().settled();
                                 if matches!(beneath, Value::Vector(_)) { return Err(self.key_refused(&beneath, index).into()); }
                             }
+                            if self.works_sequences() && matches!(index, Value::Span(_))
+                                && matches!(cell.borrow().settled(), Value::Vector(_)) {
+                                let row = cell.borrow().clone();
+                                let updated = self.prim(Prim::Placed, "", &[row, index.clone(), value])?;
+                                cell.replace(updated);
+                                return Ok(Value::Nil);
+                            }
                             let letter = self.letter_places.then(|| value.render(self.wording()));
                             drop(target);
                             written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
@@ -18665,6 +18672,14 @@ impl<'a> Machine<'a> {
                 // as readily as from the start, and holds no place at
                 // all beyond itself: writing there is told of in the
                 // words for a place written into.
+                if self.works_sequences() && matches!(standing, Value::Vector(_)) {
+                    if let Value::Span(bounds) = &v[1] {
+                        let settled_bounds = self.span_settled(bounds)?;
+                        let mut row = standing;
+                        self.span_written(&mut row, &settled_bounds, &v[2])?;
+                        return Ok(row);
+                    }
+                }
                 if let (true, Value::Vector(items)) = (self.works_sequences(), &standing) {
                     let offset = match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None };
                     // A key of some other kind names no place in a row.
