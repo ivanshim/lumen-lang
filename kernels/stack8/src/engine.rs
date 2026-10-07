@@ -17537,7 +17537,7 @@ impl<'a> Engine<'a> {
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
-        self.byte_transcode(false, &row, args)
+        self.byte_transcode(false, &row, args, true)
     }
 
     fn codec_library(&mut self, member: &str, args: Vec<Value>) -> Res<Value> {
@@ -17546,17 +17546,27 @@ impl<'a> Engine<'a> {
         self.call_held(routine, args)
     }
 
-    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value]) -> Res<Value> {
+    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value], text_method: bool) -> Res<Value> {
         if args.is_empty() || args.len() > 3 { return Err(self.byte_fault("arguments")); }
         let policy = match args.get(2) {
             None => "strict".to_owned(),
             Some(Value::Text(s)) => s.to_string(),
             _ => return Err(self.byte_fault("arguments")),
         };
+        if policy.contains('\0') || args.get(1).is_some_and(|v| matches!(v, Value::Text(word) if word.contains('\0'))) {
+            return Err("ValueError: embedded null character".into());
+        }
+        if text_method && !encode && row.is_empty() && args.get(1).map_or(true, |v| matches!(v, Value::Text(_)))
+            && std::env::var("LUMEN_PYTHON_DEV_MODE").ok().as_deref() != Some("1") {
+            return Ok(Value::text(""));
+        }
         let codec = match self.byte_codec(args.get(1)) {
             Ok(n) if n < 3 => n,
-            _ => return self.codec_library(if encode { "_encode" } else { "_decode" }, args.to_vec()),
+            _ => return self.codec_library(match (encode, text_method) { (true, true) => "_text_encode", (false, true) => "_text_decode", (true, false) => "_encode", (false, false) => "_decode" }, args.to_vec()),
         };
+        if text_method && args.len() == 3 && std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|flag| flag == "1") {
+            self.codec_library("lookup_error", vec![Value::text(&policy)])?;
+        }
         // Resolve custom error handlers only when a conversion actually fails.
         if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
         let name = self.byte_codec_name(codec);
@@ -17659,7 +17669,7 @@ impl<'a> Engine<'a> {
         if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
             let decode = task == 3;
             let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
-            let result = self.byte_transcode(!decode, &row, args)?;
+            let result = self.byte_transcode(!decode, &row, args, true)?;
             if task == 1 {
                 if let Value::Bytes(cell, ..) = result { return Ok(self.byte_make(cell.borrow().clone(), true)); }
             }
@@ -18255,6 +18265,11 @@ impl<'a> Engine<'a> {
             // stands for its numbers as plainly as a list does. Gather
             // the walk into a row first so that a walk backwards over a
             // byte string can be built straight back into one.
+            Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
+                if args.is_empty() { return Err(self.byte_fault("arguments")); }
+                let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+                self.byte_transcode(task == 2, &data, &args, false)?
+            }
             Builtin::Bytes(task) => {
                 if task == 0 && args.len() == 1 {
                     if let Value::Object(object) = &args[0] {

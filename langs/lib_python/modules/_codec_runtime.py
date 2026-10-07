@@ -1,6 +1,8 @@
 # The byte order marks, which are byte strings and nothing more, so
 # they stand here whether or not the encoders below can run.
 import sys
+_raw_text_encode = __codec_encode
+_raw_text_decode = __codec_decode
 
 BOM_UTF8 = b'\xef\xbb\xbf'
 BOM_LE = BOM_UTF16_LE = b'\xff\xfe'
@@ -199,7 +201,11 @@ def _decode_error(encoding, obj, start, end, reason, errors):
     return _handle(UnicodeDecodeError(encoding, obj, start, end, reason), errors, True)
 
 def _encode_error(encoding, obj, start, end, reason, errors):
-    return _handle(UnicodeEncodeError(encoding, obj, start, end, reason), errors, False)
+    error = UnicodeEncodeError(encoding, obj, start, end, reason)
+    # Single-byte encoders retain their native strict-policy fast path.
+    if errors == 'strict' and encoding in ('ascii', 'latin-1', 'charmap'):
+        raise error
+    return _handle(error, errors, False)
 
 def _normalize(encoding):
     if not isinstance(encoding, str):
@@ -698,7 +704,7 @@ def _encode_surrogates(text, encoding='utf-8', errors='strict'):
         n = ord(text[i])
         bad = 0xd800 <= n <= 0xdfff if name == 'utf_8' else n >= limit
         if not bad:
-            row.extend(list(chr(n).encode(name, errors)))
+            row.extend(list(_raw_text_encode(chr(n), name, errors)))
             i += 1
             continue
         end = i + 1
@@ -717,8 +723,21 @@ def _encode_surrogates(text, encoding='utf-8', errors='strict'):
             if i == end:
                 continue
         repl, i = _encode_error(name.replace('_', '-'), text, i, end, reason, errors)
-        row.extend(list(repl if isinstance(repl, bytes) else repl.encode(name, errors)))
+        row.extend(list(repl if isinstance(repl, bytes) else _raw_text_encode(repl, name, errors)))
     return bytes(row)
+
+# Text methods check named policies eagerly only in development mode.
+def _text_encode(obj, encoding='utf-8', errors=_default_errors):
+    if sys.flags.dev_mode and errors is not _default_errors:
+        lookup(encoding)
+        lookup_error(errors)
+    return _encode(obj, encoding, errors)
+
+def _text_decode(obj, encoding='utf-8', errors=_default_errors):
+    if sys.flags.dev_mode and errors is not _default_errors:
+        lookup(encoding)
+        lookup_error(errors)
+    return _decode(obj, encoding, errors)
 
 def _encode(obj, encoding='utf-8', errors=_default_errors):
     supplied_errors = errors
@@ -728,9 +747,9 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
     if name in ('utf_8', 'ascii', 'latin_1'):
-        return obj.encode(name, errors)
+        return _raw_text_encode(obj, name, errors)
     if name == 'utf_8_sig':
-        return BOM_UTF8 + obj.encode('utf-8', errors)
+        return BOM_UTF8 + _raw_text_encode(obj, 'utf-8', errors)
     if name.startswith('utf_16') or name.startswith('utf_32'):
         return _wide_encode(obj, name, errors)
     if name == 'utf_7':
@@ -760,9 +779,9 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
     if name in ('utf_8', 'ascii', 'latin_1'):
-        return obj.decode(name, errors)
+        return _raw_text_decode(obj, name, errors)
     if name == 'utf_8_sig':
-        return (obj[3:] if obj.startswith(BOM_UTF8) else obj).decode('utf-8', errors)
+        return _raw_text_decode(obj[3:] if obj.startswith(BOM_UTF8) else obj, 'utf-8', errors)
     if name.startswith('utf_16') or name.startswith('utf_32'):
         return _wide_decode(obj, name, errors)[0]
     if name == 'utf_7':

@@ -638,10 +638,10 @@
     "bytes"
   ],
   "ext.builtin.bytes.decode": [
-    "decode"
+    "decode", "__codec_decode"
   ],
   "ext.builtin.bytes.encode": [
-    "encode"
+    "encode", "__codec_encode"
   ],
   "ext.builtin.bytes.find": [
     "find"
