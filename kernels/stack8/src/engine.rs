@@ -9132,6 +9132,7 @@ impl<'a> Engine<'a> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         if op == Builtin::Hash && args.len() == 1 {
             if let Value::Tuple(items) = &args[0] {
+                if let Some(hash) = Self::tuple_hash_remembered(items) { return Ok(Some(hash)); }
                 let mut folded = 2870177450012600261u64;
                 for item in items.iter() {
                     let hash = self.builtin(Builtin::Hash, "hash", &mut vec![item.clone()])?.as_big()?.to_i64().ok_or_else(|| self.special_fault())?;
@@ -9139,7 +9140,9 @@ impl<'a> Engine<'a> {
                     folded = folded.rotate_left(31).wrapping_mul(11400714785074694791);
                 }
                 folded = folded.wrapping_add(items.len() as u64 ^ (2870177450012600261 ^ 3527539));
-                return Ok(Some(Value::Small(if folded == u64::MAX { 1546275796 } else { folded as i64 })));
+                let hash = Value::Small(if folded == u64::MAX { 1546275796 } else { folded as i64 });
+                Self::tuple_hash_remember(items, &hash);
+                return Ok(Some(hash));
             }
             if let Some(hash) = Self::python_constructor_hash(&args[0]) { return Ok(Some(hash)); }
         }

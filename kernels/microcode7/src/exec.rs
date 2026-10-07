@@ -15131,6 +15131,7 @@ impl<'a> Machine<'a> {
         if self.rules.specials.is_empty() { return Ok(None); }
         if let (Prim::Hashed, [held]) = (operation, operands) {
             if let Value::Tuple(sequence) = held {
+                if let Some(cached) = Self::row_hash_kept(sequence) { return Ok(Some(cached)); }
                 let mut accumulator = 2_870_177_450_012_600_261u64;
                 for member in sequence.iter() {
                     let lane = self.prim(Prim::Hashed, "hash", &[member.clone()])?.as_big()?.to_i64().ok_or_else(|| self.bad_answer())? as u64;
@@ -15138,7 +15139,9 @@ impl<'a> Machine<'a> {
                 }
                 accumulator = accumulator.wrapping_add((sequence.len() as u64) ^ (2_870_177_450_012_600_261 ^ 3_527_539));
                 let signed = if accumulator == u64::MAX { 1_546_275_796 } else { accumulator as i64 };
-                return Ok(Some(Value::Small(signed)));
+                let answer = Value::Small(signed);
+                Self::row_hash_keep(sequence, &answer);
+                return Ok(Some(answer));
             }
             if let Some(number) = Self::constructor_hash(held) { return Ok(Some(number)); }
         }
