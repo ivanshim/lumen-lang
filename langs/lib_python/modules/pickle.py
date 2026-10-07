@@ -253,14 +253,28 @@ class _Writer(marshal._Writer):
             return
         reduction = _reduce(value, self.protocol)
         if isinstance(reduction, str):
+            module = getattr(value, '__module__', None)
+            if module is None:
+                for candidate in list(sys.modules):
+                    if candidate in ('__main__', '__mp_main__') or sys.modules.get(candidate) is None:
+                        continue
+                    try:
+                        published = _global(candidate, reduction)
+                    except AttributeError:
+                        continue
+                    if published is value:
+                        module = candidate
+                        break
+            if module is None:
+                module = '__main__'
             try:
-                existing = _global('__main__', reduction)
-            except (KeyError, AttributeError):
+                existing = _global(module, reduction)
+            except (ImportError, KeyError, AttributeError):
                 raise PicklingError('global name does not refer to the object being pickled')
             if existing is not value:
                 raise PicklingError('global name does not refer to the object being pickled')
             self.pieces.append('G')
-            self.put('__main__')
+            self.put(module)
             self.put(reduction)
             return
         if not isinstance(reduction, tuple) or not 2 <= len(reduction) <= 6:

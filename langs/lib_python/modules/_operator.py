@@ -68,5 +68,11 @@ class _Addition:
     def __call__(self, a, b, /):
         return a + b
 
+    def __reduce__(self):
+        return self.__name__
+
+    def __reduce_ex__(self, protocol):
+        return self.__reduce__()
+
 
 add = _Addition()
