@@ -18,6 +18,11 @@
     "inspect": "runtime_adapters/inspect.py",
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
-    "importlib": "runtime_adapters/importlib.py"
+    "importlib": "runtime_adapters/importlib.py",
+    "_py_warnings": "runtime_adapters/warnings.py",
+    "importlib._bootstrap": "runtime_adapters/importlib_bootstrap.py"
+  },
+  "replacements": {
+    "importlib._bootstrap_external": "runtime_adapters/importlib_external.py"
   }
 }
