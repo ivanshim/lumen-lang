@@ -3320,6 +3320,20 @@ impl<'a> Machine<'a> {
         let bound=self.member_binding(fallback,Some(value.clone()),t.blueprint().clone())?;
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
+    /// The text signature a builtin accessor announces, where the
+    /// runtime knows one: the reference reads the same word to learn
+    /// which parameters a builtin takes. Nothing where it knows none,
+    /// which reads as a builtin whose signature cannot be recovered.
+    fn builtin_text_signature(&self, subject: &Value) -> Option<&'static str> {
+        match subject.settled() {
+            // The walk of a class's own line, and the initialiser told
+            // to subclasses, both take nothing the caller supplies.
+            Value::Wrapped(0, parts) if matches!(parts.first(), Some(Value::Tuple(_))) => Some("()"),
+            Value::Wrapped(2, parts) if parts.first().is_some_and(|entry| entry.bare() == self.detail("subclass")) => Some("()"),
+            _ => None,
+        }
+    }
+
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         if self.names_in_calls && !key.starts_with("__") {
             if let Value::Thing(instance) = &value {
@@ -4150,6 +4164,11 @@ impl<'a> Machine<'a> {
         // for it, where it names one.
         if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
             if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
+        }
+        // A builtin accessor answers for the text signature it announces,
+        // the word the reference reads to recover its parameters.
+        if key == "__text_signature__" {
+            if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
         self.sought_in_vain = Some((key.to_owned(), value.clone()));
         Err(self.absent_attribute(&value,key))

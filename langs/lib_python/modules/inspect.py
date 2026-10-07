@@ -392,10 +392,11 @@ class Signature:
         elif not hasattr(obj, '__code__'):
             if not callable(obj):
                 raise TypeError(repr(obj) + ' is not a callable object')
-            # A builtin method bound to a class answers with the class
-            # alone, so the class method takes no parameter the reference
-            # would show; that is the shape of type.mro and the like.
-            if isinstance(self_object, type):
+            # A builtin accessor announces its parameters with a text
+            # signature where the runtime knows one; an empty signature is
+            # the only shape this reader can establish, and a builtin with
+            # no announced signature has none to recover.
+            if getattr(obj, '__text_signature__', None) == '()':
                 return cls()
             # A builtin without a body the runtime keeps has no signature,
             # the same verdict the reference reaches for one it cannot read.

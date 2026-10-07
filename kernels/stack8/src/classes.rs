@@ -2357,7 +2357,7 @@ impl<'a> Engine<'a> {
             else if name==self.class_word("remove") {12}
             else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
             else {return None};
-        Some(Self::adapter(hook,vec![]))
+        Some(Self::adapter(hook, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] }))
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
@@ -2758,6 +2758,20 @@ impl<'a> Engine<'a> {
         let bound = self.bind_class_value(reader, Some(subject.clone()), o.class_now().clone())?;
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
+    /// The text signature a builtin accessor announces, where the
+    /// runtime knows one: the reference reads the same word to learn
+    /// which parameters a builtin takes. Nothing where it knows none,
+    /// which reads as a builtin whose signature cannot be recovered.
+    fn builtin_text_signature(&self, subject: &Value) -> Option<&'static str> {
+        match subject.contents() {
+            // The walk of a class's own line, and the initialiser told
+            // to subclasses, both take nothing the caller supplies.
+            Value::Adapter(w) if w.0 == 0 && matches!(w.1.first(), Some(Value::Tuple(_))) => Some("()"),
+            Value::Adapter(w) if w.0 == 2 && w.1.first().is_some_and(|entry| entry.plain() == self.class_word("subclass")) => Some("()"),
+            _ => None,
+        }
+    }
+
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
         if let Value::Native(Builtin::SortOf, word) = &subject {
             if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(Value::text(word)); }
@@ -3623,6 +3637,11 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+        }
+        // A builtin accessor answers for the text signature it announces,
+        // the word the reference reads to recover its parameters.
+        if name == "__text_signature__" {
+            if let Some(text) = self.builtin_text_signature(&subject) { return Ok(Value::text(text)); }
         }
         self.absent_member = Some((name.to_string(), subject.clone()));
         Err(self.missing_member(&subject,name))
