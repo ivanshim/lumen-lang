@@ -5081,6 +5081,21 @@ impl<'a> Engine<'a> {
     pub(super) fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = value { let held = cell.borrow().clone(); return self.beneath(&held, wanted, subclass); }
         if let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = wanted { let held = cell.borrow().clone(); return self.beneath(value, &held, subclass); }
+        // Tuple alternatives must see the same operand as a direct hook.
+        // Native kind-word conversion belongs only to the ordinary check.
+        if self.lang.bind_names {
+            if let Value::Tuple(alternatives) = wanted {
+                self.reaching_further()?;
+                let answer: Flow<bool> = (|| {
+                    for alternative in alternatives.iter() {
+                        if self.beneath(value, alternative, subclass)? { return Ok(true); }
+                    }
+                    Ok(false)
+                })();
+                self.answered();
+                return answer;
+            }
+        }
         // Python answers an exact runtime type match before asking the
         // metaclass or reading an instance's reported __class__.
         if !subclass && self.lang.bind_names {

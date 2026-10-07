@@ -5320,6 +5320,25 @@ impl<'a> Machine<'a> {
     pub(super) fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let Value::Mutable(cell, _) | Value::Shared(cell) = subject { let held = cell.borrow().clone(); return self.is_beneath(&held, choice, class_only); }
         if let Value::Mutable(cell, _) | Value::Shared(cell) = choice { let held = cell.borrow().clone(); return self.is_beneath(subject, &held, class_only); }
+        // Walk Python class alternatives before replacing a native subject
+        // with the internal spelling used by the non-hook membership road.
+        if self.names_in_calls {
+            match choice {
+                Value::Tuple(options) => {
+                    self.deeper()?;
+                    let mut result = Ok(false);
+                    for option in options.iter() {
+                        match self.is_beneath(subject, option, class_only) {
+                            Ok(false) => (),
+                            answer => { result = answer; break; }
+                        }
+                    }
+                    self.standing -= 1;
+                    return result;
+                }
+                _ => (),
+            }
+        }
         // An instance of precisely the requested Python type needs no
         // hook call; subtype and reported-class questions still do.
         if self.names_in_calls && !class_only {
