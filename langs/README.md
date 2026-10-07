@@ -3607,8 +3607,10 @@ only. The extension labels so far, all from PHP:
   how many it found. A value's finaliser and the routines waiting on its
   weak holds run between two statements, never in the middle of one.
 - `ext.stmt.class.detail.code.replace` names the code-copy method and the
-  line-table keyword it accepts; a replacement leaves the original code
-  value intact.
+  line-table keyword it accepts, followed by the source-position iterator
+  method. Each position is a start/end line and start/end UTF-8 column;
+  traceback instruction offsets select these records in two-byte units.
+  A replacement leaves the original code value intact.
 - `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
   have under way at once, the outermost body not counted, and the words
   said by the call that would pass it. The words name a class among the
@@ -4654,7 +4656,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.setstate` | - | - | `__setstate__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `__unused_python314_generator_state__` `tb_lasti` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `__unused_python314_generator_state__` `tb_lasti` `f_builtins` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -5348,7 +5350,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
-| `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` `co_positions` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |

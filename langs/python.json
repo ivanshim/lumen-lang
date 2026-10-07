@@ -1117,7 +1117,8 @@
     "cr_running",
     "gi_yieldfrom",
     "__unused_python314_generator_state__",
-    "tb_lasti"
+    "tb_lasti",
+    "f_builtins"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -2880,7 +2881,8 @@
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
-    "co_linetable"
+    "co_linetable",
+    "co_positions"
   ],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"

@@ -2806,6 +2806,11 @@ impl<'a> Engine<'a> {
             return Ok(self.named_kind(&raw));
         }
         if let Value::Object(object) = &subject {
+            if self.lang.trace_fields.get(27).is_some_and(|word| word == name)
+                && self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
+                let routine = match object.fields.borrow()[6].1.clone() { Value::Routine(body) => body, _ => unreachable!() };
+                return self.routine_builtins(&routine);
+            }
             if let Some(value) = self.frame_member(object, name) { return Ok(value); }
         }
         if let Value::Generator(generator) = &subject {
@@ -3489,6 +3494,9 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
+                    if self.lang.class_details.get("code.replace").and_then(|words| words.get(2)).is_some_and(|word| word == name) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_positions".to_owned()))));
+                    }
                     if self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
                     }

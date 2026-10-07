@@ -3351,6 +3351,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        if self.rules.trace_words.get(27).is_some_and(|word| word == key) {
+            if let Value::Thing(activation) = &value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &activation.blueprint())) {
+                    let body = activation.holds.borrow()[5].1.clone();
+                    if let Value::Bound(code, _) = body {
+                        let chosen = self.routine_builtins(&code)?;
+                        return self.builtin_dictionary(chosen);
+                    }
+                }
+            }
+        }
         if let Some(member) = self.activation_member(&value, key) { return Ok(member); }
         if matches!(&value, Value::Backtrace(_)) {
             if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
@@ -4065,6 +4076,9 @@ impl<'a> Machine<'a> {
             }
             if *tag==7 {
                 if let Value::Routine(p)|Value::Bound(p,_)=&items[0] {
+                    if self.table.strings("ext.stmt.class.detail.code.replace").get(2).is_some_and(|word| word == key) {
+                        return Ok(Value::Member(Rc::new(value.clone()), String::from("code_position_rows")));
+                    }
                     if self.table.strings("ext.stmt.class.detail.code.replace").first().map_or(false, |word| word == key) {
                         return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
                     }

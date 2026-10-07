@@ -2963,6 +2963,7 @@ impl<'a> Compiler<'a> {
                 return self.attempt();
             }
             if Lang::spells(&lang.throw_words, &w) {
+                let raised_at = self.pos;
                 self.take();
                 if !lang.syntax_members.is_empty() && self.on_keyword(&lang.throw_from) {
                     return Err("SyntaxError: invalid syntax".into());
@@ -2981,6 +2982,7 @@ impl<'a> Compiler<'a> {
                         self.expr(0)?;
                         if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
                     }
+                    if !lang.trace_fields.is_empty() { self.put(self.expression_location(raised_at)); }
                     self.act(Action::Hurl, count);
                 }
                 return Ok(());
@@ -3004,7 +3006,9 @@ impl<'a> Compiler<'a> {
                         if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
                     }
                 }
+                let tested_at = self.pos;
                 self.expr(0)?;
+                let tested_span = self.expression_location(tested_at);
                 self.act(Action::Not, 1);
                 let passed = self.skip();
                 if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
@@ -3015,6 +3019,7 @@ impl<'a> Compiler<'a> {
                     // tell it from a message that is empty text.
                     self.constant(Value::Blank);
                 }
+                if !lang.trace_fields.is_empty() { self.put(tested_span); }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
                 return Ok(());
@@ -5013,10 +5018,16 @@ impl<'a> Compiler<'a> {
 
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
     fn expression_location(&self, start: usize) -> Instr {
-        let first = &self.tokens[start];
-        let last = &self.tokens[self.pos.saturating_sub(1).max(start)];
-        Instr::Location((first.row as u32).saturating_sub(self.before), first.column.saturating_sub(1) as u32,
-            (last.end_row as u32).saturating_sub(self.before), last.end_column.saturating_sub(1) as u32)
+        let mut left = start;
+        let mut right = self.pos.saturating_sub(1).max(start);
+        while left + 1 < right && self.tokens[left].lexeme == "(" && self.bracket_close(left, right + 1) == Some(right) {
+            left += 1;
+            right -= 1;
+        }
+        let first = &self.tokens[left];
+        let last = &self.tokens[right];
+        Instr::Location((first.row as u32).saturating_sub(self.before), first.byte_column.max(first.column).saturating_sub(1) as u32,
+            (last.end_row as u32).saturating_sub(self.before), last.byte_end_column.max(last.end_column).saturating_sub(1) as u32)
     }
 
     fn for_stmt(&mut self) -> Res<()> {
@@ -9290,6 +9301,31 @@ impl<'a> Compiler<'a> {
     /// whose value is what was written — but not where the assignment
     /// is the whole statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
+        // The reference's invalid_expression string-tail rule reads an
+        // expression without invalid productions. A failure within that
+        // tail identifies the unexpected comprehension keyword instead
+        // of the diagnostic range supplied by invalid_arguments.
+        let mut after_string = self.pos;
+        while self.tokens[after_string].shape == Shape::Quote { after_string += 1; }
+        let string_tail = after_string > self.pos && matches!(self.tokens[after_string].lexeme.as_str(), "+" | "-" | "~" | "(" | "[");
+        let answer = self.expr_main(floor, may_write);
+        if string_tail && answer.as_ref().is_err_and(|fault| fault == "SyntaxError: Generator expression must be parenthesized") {
+            let mut depth = 0usize;
+            for index in self.pos..self.tokens.len() {
+                let token = &self.tokens[index];
+                if depth == 0 && Lang::spells(&self.lang.comprehension_for, &token.spelling()) {
+                    self.pos = index;
+                    self.registry.stopped_end = token.end_column;
+                    self.registry.stopped_end_row = token.end_row;
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+                match token.lexeme.as_str() { "(" | "[" | "{" => depth += 1, ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {} }
+            }
+        }
+        answer
+    }
+
+    fn expr_main(&mut self, floor: u32, may_write: bool) -> Res<()> {
         let lang = self.lang;
         let begins = self.pos;
         let from = self.mark();
@@ -9544,8 +9580,27 @@ impl<'a> Compiler<'a> {
                         }
                         None => {}
                     }
+                    // Attribute an operator fault to its complete expression.
+                    if !lang.trace_fields.is_empty() { self.put(self.expression_location(begins)); }
                     self.act(op, 2);
                 }
+            }
+        }
+        // Position calls and lookups without changing the shape of assignment targets.
+        if !lang.trace_fields.is_empty() && !self.writing_place {
+            let at = self.mark().saturating_sub(1);
+            if matches!(self.piece().instrs.get(at), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Grab(_) | Action::At, _))) {
+                let location = self.expression_location(begins);
+                for instruction in &mut self.piece().instrs[from..] {
+                    let shift = |target: &mut usize| { if *target >= at { *target += 1; } };
+                    match instruction {
+                        Instr::Skip(target) | Instr::Guard(target) => shift(target),
+                        Instr::Depart { to, cycle } => { shift(to); if let Some(target) = cycle { shift(target); } }
+                        Instr::Attempt(plan) => plan.move_marks(|target| target + usize::from(target >= at)),
+                        _ => {}
+                    }
+                }
+                self.piece().instrs.insert(at, location);
             }
         }
         Ok(())
@@ -10126,7 +10181,7 @@ impl<'a> Compiler<'a> {
             }
             // A dotted builtin spelling still reads the program's binding
             // of its owner when that owner has been shadowed.
-            Shape::Instr if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::ValueMethod))
+            Shape::Instr if lang.builtins.contains_key(&tok.lexeme)
                 && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)) => {
                 self.take();
                 let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");

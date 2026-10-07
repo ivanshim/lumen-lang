@@ -4466,9 +4466,14 @@ impl<'a> Engine<'a> {
             if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
             let body_line = self.line;
             let body_location = self.location;
+            let body_instruction = self.trace_frame.as_ref().map(Self::frame_instruction).unwrap_or(-1);
             if !self.lang.trace_fields.is_empty() {
                 self.line = context_line;
                 self.location = context_location;
+                // The implicit exit call belongs to the with instruction, not its body.
+                if let Some(frame) = &self.trace_frame {
+                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(at as i64); }
+                }
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
             let left = self.invoke(&method, given).and_then(|()| {
@@ -4483,6 +4488,9 @@ impl<'a> Engine<'a> {
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;
                 self.location = body_location;
+                if let Some(frame) = &self.trace_frame {
+                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(body_instruction); }
+                }
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
             self.caught.truncate(active);
@@ -5319,7 +5327,8 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            return Some(Value::Bond(self.book_here(true)));
+            let routine = match object.fields.borrow()[6].1.clone() { Value::Routine(body) => body, _ => return None };
+            return Some(routine.globe.clone().unwrap_or_else(|| Value::Bond(self.constructor_book(&routine).unwrap_or_else(|| self.outer_book_made()))));
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);
@@ -5392,7 +5401,7 @@ impl<'a> Engine<'a> {
         if matches!(prior, Value::Null) {
             crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
         }
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line as i64, frame, next: RefCell::new(prior) }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame).saturating_mul(2), location: self.location, line: self.line as i64, frame, next: RefCell::new(prior) }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -9123,7 +9132,7 @@ impl<'a> Engine<'a> {
                 None => settled.push(value.clone()),
             }
         }
-        if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
+        if changed && (op == Builtin::Length || !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_)))) {
             // A thing over a real that is not a number hashes as itself,
             // the way CPython's own hash of a NaN does, and not as the
             // worth that stood in for it here.
@@ -9348,6 +9357,11 @@ impl<'a> Engine<'a> {
                     Value::Small(_) | Value::Huge(_) if self.lang.bool_result.is_some() => return Err("ValueError: __len__() should return >= 0".into()),
                     _ => return Err(self.special_fault()),
                 }
+            }
+            // Native container subclasses retain their underlying size unless overridden.
+            Builtin::Length if args.len() == 1 && Self::worth_of(&args[0]).is_some() => {
+                let mut base = vec![Self::worth_of(&args[0]).unwrap().contents()];
+                self.builtin(Builtin::Length, "len", &mut base)?
             }
             Builtin::Hash if args.len() == 1 => {
                 // A loose member descriptor hashes by what it is kept as,
@@ -12163,7 +12177,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line as i64, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame).saturating_mul(2), location: self.location, line: self.line as i64, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }
@@ -16028,6 +16042,28 @@ impl<'a> Engine<'a> {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return Ok(self.default_directory(receiver));
         }
+        // Return the recorded source span for each native instruction.
+        if operation == "code_positions" {
+            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
+            let Some(Value::Routine(body)) = handle.1.first() else { return Err(self.special_fault()) };
+            let mut row = body.declared_on;
+            let mut extent = None;
+            let mut positions = Vec::with_capacity(body.instrs.len());
+            for instruction in body.instrs.iter() {
+                match instruction {
+                    Instr::Line(line) => { row = *line; extent = None; }
+                    Instr::Location(start, column, end, stop) => { row = *start; extent = Some((*end, *column, *stop)); }
+                    _ => {}
+                }
+                let span = if body.lineless || row == 0 { vec![Value::Null; 4] }
+                    else if let Some((end, column, stop)) = extent {
+                        vec![Value::Small(i64::from(row)), Value::Small(i64::from(end)), Value::Small(i64::from(column)), Value::Small(i64::from(stop))]
+                    } else { vec![Value::Small(i64::from(row)), Value::Small(i64::from(row)), Value::Null, Value::Null] };
+                positions.push(Value::tuple(span));
+            }
+            return self.iterator(Value::tuple(positions)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+        }
         if operation == "code_replace" {
             if let Value::Object(object) = receiver.contents() {
                 if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
@@ -16071,6 +16107,11 @@ impl<'a> Engine<'a> {
             if let Value::Object(frame) = receiver.contents() {
                 if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
                     if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    let mut running = self.trace_frame.clone();
+                    while let Some(active) = running {
+                        if Rc::ptr_eq(&active, &frame) { return Err("RuntimeError: cannot clear an executing frame".into()); }
+                        running = match active.fields.borrow()[2].1.clone() { Value::Object(parent) => Some(parent), _ => None };
+                    }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&frame) as usize)).and_then(Weak::upgrade) {
                         let outcome = self.close_generator(&walk);
                         if let Err(fault) = outcome {
@@ -18277,6 +18318,8 @@ impl<'a> Engine<'a> {
             }
             Builtin::Text(op) => {
                 let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                // Bound and unbound text encoding share the native codec bridge.
+                if op == crate::strings::TextOp::Encode { return self.byte_call(2, &normalized); }
                 if op == crate::strings::TextOp::Maketrans && normalized.len() == 1 {
                     if matches!(&normalized[0], Value::Object(o) if o.class_now().name == "frozendict") {
                         if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }

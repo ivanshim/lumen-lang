@@ -9,6 +9,10 @@ import sys
 import unittest
 from io import StringIO
 
+# Provide the reference helpers their shared exception base.
+class Error(Exception):
+    """Base class for regression test exceptions."""
+
 MISSING_C_DOCSTRINGS = True
 verbose = False
 is_wasi = False
@@ -1641,3 +1645,20 @@ def open_urlresource(url, *args, **kwargs):
     if not is_resource_enabled('urlfetch'):
         raise unittest.SkipTest('resource urlfetch is not enabled')
     raise NotImplementedError('HTTP resource retrieval is not supported')
+
+
+# Query the optional reference configuration through its own helper.
+def has_no_debug_ranges():
+    try:
+        import _testcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    return not _testcapi.config_get('code_debug_ranges')
+
+def requires_debug_ranges(reason='requires co_positions / debug_ranges'):
+    try:
+        skip = has_no_debug_ranges()
+    except unittest.SkipTest as e:
+        skip = True
+        reason = e.args[0] if e.args else reason
+    return unittest.skipIf(skip, reason)

@@ -4947,12 +4947,12 @@ impl<'a> Machine<'a> {
                 }
                 Owed::Select(yes, no) => {
                     let test = state.found.pop().unwrap_or(Value::Nil);
-                    state.owed.push(Owed::Find(unwrapped_arm(if self.stands_true(&test) { yes } else { no })));
+                    state.owed.push(Owed::Find(unwrapped_arm(if self.object_truth(&test)? { yes } else { no })));
                 }
                 Owed::Truth(op, right) => {
                     let whole = self.rules.logical_value;
                     let left = state.found.pop().unwrap_or(Value::Nil);
-                    let holds = self.stands_true(&left);
+                    let holds = self.object_truth(&left)?;
                     if (op == Prim::Both && !holds) || (op == Prim::Either && holds) {
                         state.found.push(if whole { left } else { Value::Flag(holds) });
                     } else {
@@ -4989,7 +4989,7 @@ impl<'a> Machine<'a> {
                 Owed::Decide(cycle) => {
                     let test = state.found.pop().unwrap_or(Value::Nil);
                     let Form::Cycle { body, otherwise, .. } = cycle.as_ref() else { unreachable!() };
-                    if self.stands_true(&test) {
+                    if self.object_truth(&test)? {
                         state.owed.push(Owed::Turn(cycle.clone(), state.found.len()));
                         state.owed.push(Owed::Find(*body.clone()));
                     } else if let Some(arm) = otherwise { state.owed.push(Owed::Find(*arm.clone())); }
@@ -5430,7 +5430,13 @@ impl<'a> Machine<'a> {
                     }
                     return Some(current);
                 }
-                if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 13 {
+                    if let Value::Bound(program, _) = item.holds.borrow()[5].1.clone() {
+                        let globals = program.globe.clone().unwrap_or_else(|| Value::Shared(self.constructor_world(&program).unwrap_or_else(|| self.book_about(true))));
+                        return Some(globals);
+                    }
+                    return None;
+                }
                 if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
                     return Some(Value::Nil);
                 }
@@ -5544,7 +5550,7 @@ impl<'a> Machine<'a> {
         if matches!(following, Value::Nil) {
             crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(raised)));
         }
-        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation), extent: self.extent, location: self.row as i64, activation, following: RefCell::new(following) };
+        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation).saturating_mul(2), extent: self.extent, location: self.row as i64, activation, following: RefCell::new(following) };
         let mut fields = raised.holds.borrow_mut();
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
@@ -6374,6 +6380,7 @@ impl<'a> Machine<'a> {
             Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
                 let context_line = self.row;
                 let context_extent = self.extent;
+                let exit_site = self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1);
                 if self.rules.has_any_ext_stmt_catch_group_unsupported && clauses.iter().any(|part| part.grouped) {
                     return Err(self.table.strings("ext.stmt.catch.group.unsupported").first().map(String::as_str).unwrap_or_default().to_string().into());
                 }
@@ -6424,15 +6431,19 @@ impl<'a> Machine<'a> {
                     self.got_away = None;
                     let body_line = self.row;
                     let body_extent = self.extent;
+                    let body_site = self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1);
                     if self.rules.has_any_ext_builtin_exceptions_traceback {
                         self.row = context_line;
                         self.extent = context_extent;
+                        // An exit method runs at the saved manager expression address.
+                        self.stand_at_instruction(exit_site);
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
                     }
                     let asked = self.ask_leaving(&manager, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
                     if asked.is_ok() && self.rules.has_any_ext_builtin_exceptions_traceback {
                         self.row = body_line;
                         self.extent = body_extent;
+                        self.stand_at_instruction(body_site);
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
                     }
                     let asked = self.raised_if_error(asked);
@@ -9452,6 +9463,19 @@ impl<'a> Machine<'a> {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
             return Ok(self.ordinary_directory(receiver));
         }
+        // Expose source coordinates in the same address space as traceback offsets.
+        if name == "code_position_rows" {
+            if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
+            let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready().into()) };
+            let Some(Value::Routine(program) | Value::Bound(program, _)) = parts.first() else { return Err(self.class_unready().into()) };
+            let mut rows = vec![[None; 4]];
+            let beginning = (program.declared_on != 0).then_some(program.declared_on);
+            program.body.position_rows(&mut rows, [beginning, beginning, None, None]);
+            let values = rows.into_iter().map(|coordinates| Value::tuple(coordinates.into_iter().map(|coordinate|
+                if program.lineless { Value::Nil } else { coordinate.map_or(Value::Nil, |number| Value::Small(i64::from(number))) }
+            ).collect())).collect();
+            return self.make_iterator(Value::tuple(values));
+        }
         if name == "code_replace" {
             if let Value::Thing(item) = receiver.settled() {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
@@ -9498,6 +9522,12 @@ impl<'a> Machine<'a> {
             if let Value::Thing(item) = receiver.settled() {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                    let mut ancestor = self.active_trace.clone();
+                    loop {
+                        let Some(current) = ancestor.take() else { break };
+                        if Rc::ptr_eq(&current, &item) { return Err(Escape::Error(String::from("RuntimeError: cannot clear an executing frame"))); }
+                        if let Value::Thing(parent) = current.holds.borrow()[2].1.clone() { ancestor = Some(parent); };
+                    }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&item) as usize)).and_then(Weak::upgrade) {
                         self.shut_generator(&walk)?;
                         return Ok(Value::Nil);
@@ -15848,6 +15878,11 @@ impl<'a> Machine<'a> {
                 }
                 length
             }
+            // Inherited length reads the payload of a native subclass.
+            (Prim::Length, [one]) if Self::underlying(one).is_some() => {
+                let payload = Self::underlying(one).unwrap().settled();
+                self.prim(Prim::Length, "len", &[payload])?
+            }
             (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
                 // Equality without a hash method, or the hash method set to
                 // nothing: such a thing cannot be a key.
@@ -17636,6 +17671,8 @@ impl<'a> Machine<'a> {
             Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
+                // Route string encoding through the byte conversion implementation.
+                if work == crate::text::Work::ENCODE { return self.octet_routine(2, &values); }
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {
                     if let Value::Thing(instance) = &values[0] {
                         if instance.blueprint().name == "frozendict" {

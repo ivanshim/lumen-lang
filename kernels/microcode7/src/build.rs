@@ -3149,6 +3149,7 @@ impl<'a> Builder<'a> {
                 return self.attempt_stmt();
             }
             if self.key("ext.stmt.throw") {
+                let raised_origin = self.pos;
                 self.advance();
                 if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
                     return Err("SyntaxError: invalid syntax".to_owned());
@@ -3167,7 +3168,8 @@ impl<'a> Builder<'a> {
                     let cause = self.expr(0)?;
                     if self.table.has_any("ext.builtin.exceptions") { values.push(cause); }
                 }
-                return Ok(prim_call(Prim::Hurl, values));
+                let raised = prim_call(Prim::Hurl, values);
+                return Ok(self.located(self.span_since(raised_origin), raised));
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
@@ -3187,13 +3189,16 @@ impl<'a> Builder<'a> {
                         if let Some(name) = named { return Err(format!("SyntaxError: cannot assign to {name} here. Maybe you meant '==' instead of '='?")); }
                     }
                 }
+                let assertion_origin = self.pos;
                 let condition = Box::new(self.expr(0)?);
+                let assertion_extent = self.span_since(assertion_origin);
                 let message = if self.on_any("syntax.call.separator") {
                     self.advance();
                     self.expr(0)?
                 // No message given is told apart from empty text.
                 } else { constant(Value::Unset) };
-                return Ok(Form::Assert { condition, message: Box::new(message) });
+                let assertion = Form::Assert { condition, message: Box::new(message) };
+                return Ok(self.located(assertion_extent, assertion));
             }
             if self.key("stmt.foreach") {
                 return self.foreach_stmt();
@@ -6729,10 +6734,15 @@ impl<'a> Builder<'a> {
     }
 
     fn span_since(&self, beginning: usize) -> (u32, u32, u32, u32) {
-        let left = &self.tokens[beginning];
-        let right = &self.tokens[self.pos.max(beginning + 1) - 1];
-        (left.row.saturating_sub(self.before), left.column.saturating_sub(1) as u32, if right.end_row == 0 { right.row.saturating_sub(self.before) } else { right.end_row.saturating_sub(self.before) },
-            if right.end_column == 0 { (right.column + right.lexeme.len()).saturating_sub(1) as u32 } else { right.end_column.saturating_sub(1) as u32 })
+        let mut bounds = (beginning, self.pos.max(beginning + 1) - 1);
+        loop {
+            if bounds.1 <= bounds.0 + 1 || self.tokens[bounds.0].lexeme != "(" || self.pair_close(bounds.0, bounds.1 + 1) != Some(bounds.1) { break; }
+            bounds = (bounds.0 + 1, bounds.1 - 1);
+        }
+        let left = &self.tokens[bounds.0];
+        let right = &self.tokens[bounds.1];
+        (left.row.saturating_sub(self.before), left.utf8_column.max(left.column).saturating_sub(1) as u32, if right.end_row == 0 { right.row.saturating_sub(self.before) } else { right.end_row.saturating_sub(self.before) },
+            if right.end_column == 0 { (right.utf8_column.max(right.column) + right.lexeme.len()).saturating_sub(1) as u32 } else { right.utf8_end.max(right.end_column).saturating_sub(1) as u32 })
     }
 
     fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
@@ -8988,6 +8998,30 @@ impl<'a> Builder<'a> {
     /// what was written — but not where the write is the whole
     /// statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
+        let opening = self.pos;
+        let quote_end = (opening..self.tokens.len()).find(|at| self.tokens[*at].shape != Shape::Quote).unwrap_or(opening);
+        let recovery_tail = quote_end != opening && ["+", "-", "~", "(", "["].contains(&self.tokens[quote_end].lexeme.as_str());
+        let outcome = self.expression_body(floor, may_write);
+        // STRING followed by expression_without_invalid in the grammar
+        // suppresses the call's invalid-argument range during recovery.
+        if recovery_tail && matches!(&outcome, Err(message) if message == "SyntaxError: Generator expression must be parenthesized") {
+            let mut brackets = Vec::new();
+            let mut cursor = self.pos;
+            while cursor < self.tokens.len() {
+                let word = &self.tokens[cursor];
+                if brackets.is_empty() && self.table.spells("ext.op.comprehension.for", &word.spelling()) {
+                    self.range_end = Some((word.column + word.lexeme.chars().count(), word.row));
+                    self.pos = cursor;
+                    return Err(String::from("SyntaxError: invalid syntax"));
+                }
+                match word.lexeme.as_str() { "(" | "[" | "{" => brackets.push(cursor), ")" | "]" | "}" => { brackets.pop(); }, _ => {} }
+                cursor += 1;
+            }
+        }
+        outcome
+    }
+
+    fn expression_body(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let origin = self.pos;
         let blocked = std::mem::take(&mut self.named_blocked);
@@ -9235,6 +9269,14 @@ impl<'a> Builder<'a> {
                     }
                 }
             };
+            // Preserve an operator's span around its independently evaluated operands.
+            if !matches!(op.prim, Prim::Both | Prim::Either) {
+                left = self.located(self.span_since(origin), left);
+            }
+        }
+        // A function call carries its source span while subscription targets keep their form.
+        if self.place_depth == 0 && matches!(&left, Form::Apply(Callee::Code(_), _)) {
+            left = self.located(self.span_since(origin), left);
         }
         Ok(left)
     }
@@ -9693,7 +9735,7 @@ impl<'a> Builder<'a> {
             }
             // Resolve a shadowed owner before calling an entry whose full
             // dotted spelling would otherwise select a native primitive.
-            Shape::Bare if table.prims.get(&t.lexeme) == Some(&Prim::ValueMethod)
+            Shape::Bare if table.prims.contains_key(&t.lexeme)
                 && t.lexeme.split_once('.').is_some_and(|(kind, _)| self.uses_bound_callable(kind)) => {
                 self.advance();
                 let (kind, entry) = t.lexeme.split_once('.').expect("native entry spelling");
