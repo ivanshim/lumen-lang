@@ -421,10 +421,10 @@ pub fn build_within_at(
     within: Option<(String, Option<String>)>,
     value_only: bool,
     origin: Option<Rc<str>>,
-    settle: i64,
     aliasing: &[(String, String)],
     future_bits: i64,
-, settle: i64) -> Result<Built, (String, u32, (usize, usize, u32))> {
+    settle: i64,
+) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, None, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only, aliasing, future_bits, settle).map_err(|said| (said, at.get(), column.get()))
@@ -3440,7 +3440,9 @@ impl<'a> Builder<'a> {
                 (true, Some(mark)) => said.split(mark).collect::<Vec<_>>(),
                 _ => vec![said.as_str()],
             };
-            if pieces.iter().any(|part| !self.table.name_like(part) || self.table.keywords.contains(*part)) {
+            let reserved = |part: &&str| self.table.keywords.contains(*part)
+                && !["ext.stmt.match", "ext.stmt.match.case", "ext.stmt.type_alias"].iter().any(|label| self.table.spells(label, part));
+            if pieces.iter().any(|part| !self.table.name_like(part) || reserved(part)) {
                 return Err(format!("Expected identifier among imported names, got '{}'", said));
             }
             path.extend(pieces.iter().map(|s| s.to_string()));

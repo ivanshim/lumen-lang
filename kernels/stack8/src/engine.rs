@@ -100,6 +100,11 @@ fn watch_host_signals() {
 
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
+    warning_revision: i64,
+    warning_lock_depth: usize,
+    warning_module: Option<Value>,
+    warning_bound: Option<Value>,
+    finder_active: std::collections::HashSet<String>,
     trace_frame: Option<Rc<Instance>>,
     trace_hook: Value,
     in_trace_hook: bool,
@@ -1535,6 +1540,7 @@ impl<'a> Engine<'a> {
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
+            warning_revision: 0, warning_lock_depth: 0, warning_module: None, warning_bound: None, finder_active: std::collections::HashSet::new(),
             constructor_indices: RefCell::new(HashMap::new()),
             member_words: [
                 lang.class_details.get("name").and_then(|list| list.first()).map_or("", String::as_str),
@@ -6521,6 +6527,7 @@ impl<'a> Engine<'a> {
         let new_value = Value::Map(Rc::new(pairs.into()));
         if self.lang.class_builder.is_empty() && crate::methods::reaches(&new_value, cell, 0) { return Err(self.lang.method_errors["unready"].clone()); }
         *cell.borrow_mut() = new_value;
+        if !self.lang.module_cache.is_empty() { self.globals_sync_written(cell); }
         Ok(())
     }
 
@@ -6870,6 +6877,7 @@ impl<'a> Engine<'a> {
         if *op == Builtin::UnicodeDecomposition {
             if let Some(home) = self.lang.decomposition_callable.get(1) { return Value::text(home); }
         }
+        if matches!(op, Builtin::WarningBackend(_)) { return self.lang.warning_backend.first().map_or(Value::Null, |name| Value::text(name)); }
         if !word.contains('.') { return Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)); }
         match op { Builtin::Bytes(40) => Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)), _ => Value::Null }
     }
@@ -12214,7 +12222,13 @@ impl<'a> Engine<'a> {
                 let receiver = self.drop_top()?;
                 self.class_get(receiver.contents(), name, false)?
             }
-            Action::Grab(name) => match { let top = self.drop_top()?; if let (Value::Bond(cell), false) = (&top, self.native_special(&top, name)) { cell.borrow().clone() } else { top } } {
+            Action::Grab(name) => match {
+                let top = self.drop_top()?;
+                if matches!(&top, Value::Bond(_)) && matches!(top.contents(), Value::Map(_) | Value::Array(_) | Value::Set(_)) {
+                    if let Some(bound) = self.builtin_member(&top, name)? { self.data.push(bound); return Ok(()); }
+                }
+                if let (Value::Bond(cell), false) = (&top, self.native_special(&top, name)) { cell.borrow().clone() } else { top }
+            } {
                 Value::Slice(bounds) if self.slice_bound_named(name).is_some() => bounds[self.slice_bound_named(name).expect("the bound")].clone(),
                 // A counted row keeps its bounds rather than its places,
                 // and hands each of them over by name.
@@ -16588,6 +16602,7 @@ impl<'a> Engine<'a> {
                 }
             });
         }
+        if let Builtin::WarningBackend(operation) = builtin { return self.warning_call(operation, items); }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
         for (key, value) in items {
@@ -17286,6 +17301,21 @@ impl<'a> Engine<'a> {
         let underlying = Self::worth_of(receiver).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
         if let Some(place) = self.native_place(underlying.as_ref().unwrap_or(receiver), operation) {
             return self.native_member_call(receiver, operation, place, args, named);
+        }
+        if let Value::Codepoints(points) = receiver.contents() {
+            let casing = match operation { "lower" => Some(crate::strings::TextOp::Lower), "upper" => Some(crate::strings::TextOp::Upper), "casefold" => Some(crate::strings::TextOp::Casefold), _ => None };
+            if let Some(casing) = casing {
+                if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                let mut output = Vec::new();
+                let mut text = String::new();
+                for point in points.iter().copied().chain(std::iter::once(u32::MAX)) {
+                    if let Some(letter) = char::from_u32(point) { text.push(letter); continue; }
+                    output.extend(crate::strings::recase(&text, casing).chars().map(|letter| letter as u32));
+                    text.clear();
+                    if point != u32::MAX { output.push(point); }
+                }
+                return Ok(Value::Codepoints(Rc::new(output)));
+            }
         }
         let newargs_owner = (operation == "__getnewargs__").then(|| receiver.core_kind());
         let native_receiver = Self::worth_of(receiver);
@@ -20073,8 +20103,14 @@ impl<'a> Engine<'a> {
             }
             Builtin::LoaderSource => {
                 arity(1)?;
-                let raw = std::fs::read(self.root_source.as_ref())
-                    .map_err(|_| "ImportError: source not available through get_data()".to_string())?;
+                let Value::Text(name) = args[0].contents() else { return Err("TypeError: module name must be a string".into()); };
+                let raw = if name.as_ref() == "__main__" {
+                    std::fs::read(self.root_source.as_ref()).ok()
+                } else {
+                    self.sys_path_source(&name).map(|(_, bytes)| bytes)
+                        .or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(file).ok()))
+                        .or_else(|| self.module_sources.get(name.as_ref()).map(|source| source.as_bytes().to_vec()))
+                }.ok_or_else(|| "ImportError: source not available through get_data()".to_string())?;
                 let module = self.route_module("_tokenize")?;
                 let decoder = self.member_of(module, "_decode_source")?
                     .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
@@ -20619,7 +20655,7 @@ impl<'a> Engine<'a> {
             Builtin::ModuleLoad => {
                 if args.len() == 2 {
                     let path = args[0].display(&sp);
-                    if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
+                    if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.lang.warning_backend.first().is_some_and(|word| word == &path) || self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
                     if matches!(args[1], Value::Flag(true)) { return Ok(self.sys_path_source(&path).map(|(file, _)| file).or_else(|| self.library_module_file(&path)).map_or(Value::Null, |file| Value::text(&file))); }
                 }
                 arity(1)?;
@@ -22334,7 +22370,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::WarningBackend(_) | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -24818,6 +24854,12 @@ impl Engine<'_> {
         if let Some(held) = self.modules.get(path) {
             if self.importing.contains(path) || self.module_cache_names(path) { return Ok(held.clone()); }
         }
+        if self.lang.module_path.is_some() && !self.finder_active.contains(path) {
+            if let Some(module) = self.finder_import(path)? { return Ok(module); }
+        }
+        if self.lang.warning_backend.first().is_some_and(|word| word == path) {
+            return self.make_warning_backend().map_err(|words| self.carried.take().unwrap_or(Fault::Note(words)));
+        }
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
@@ -24868,7 +24910,10 @@ impl Engine<'_> {
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
-        let filename = own_file.as_deref().unwrap_or(path);
+        let namespace_roots = own_file.as_deref().filter(|file| file.starts_with('\0'))
+            .map(|file| file[1..].split('\0').collect::<Vec<_>>());
+        let namespace_origin = format!("<namespace {path}>");
+        let filename = if namespace_roots.is_some() { namespace_origin.as_str() } else { own_file.as_deref().unwrap_or(path) };
         let tokens = match self.text_tokens(&source, 0) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => {
@@ -24904,9 +24949,10 @@ impl Engine<'_> {
         let file_word = self.lang.source_bindings.iter().find(|(part, _)| part == "file").map(|(_, w)| w.clone());
         let package_dir = own_file.as_deref().filter(|file| file.ends_with("/__init__.py"))
             .and_then(|file| std::path::Path::new(file).parent()).map(|dir| dir.to_string_lossy().into_owned());
-        let package_owner = if package_dir.is_some() { path } else { path.rsplit_once('.').map_or("", |(owner, _)| owner) };
-        let package_path = package_dir.as_deref().map(|dir| Value::array(vec![Value::text(dir)]).held(false));
-        let package_name = if package_dir.is_some() { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
+        let package_owner = if package_dir.is_some() || namespace_roots.is_some() { path } else { path.rsplit_once('.').map_or("", |(owner, _)| owner) };
+        let package_path = namespace_roots.as_ref().map(|roots| Value::array(roots.iter().map(|dir| Value::text(dir)).collect()).held(false))
+            .or_else(|| package_dir.as_deref().map(|dir| Value::array(vec![Value::text(dir)]).held(false)));
+        let package_name = package_owner;
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
             let initial = if self.lang.module_path.as_ref() == Some(name) && package_path.is_some() { package_path.clone().unwrap() }
@@ -24937,7 +24983,7 @@ impl Engine<'_> {
         // the same unconditional way, whether or not the module's own
         // text ever names it: a module that never spells `__file__`
         // still answers one to a caller that asks by attribute.
-        if let Some(word) = &file_word {
+        if let Some(word) = file_word.as_ref().filter(|_| namespace_roots.is_none()) {
             if !fields.iter().any(|(key, _)| key == word) {
                 fields.push((word.clone(), own_file.as_deref().map_or(Value::Null, Value::text)));
             }
@@ -24979,6 +25025,7 @@ impl Engine<'_> {
         self.module_slots.insert(Rc::from(filename), (offset, path.to_string()));
         self.importing.insert(path.to_string());
         self.refresh_module_cache(path);
+        self.source_loader_metadata(path, &module)?;
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
@@ -25073,6 +25120,7 @@ impl Engine<'_> {
                 }
             }
         }
+        let mut namespace_roots = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.lang.module_path.is_none() { continue; }
@@ -25095,8 +25143,17 @@ impl Engine<'_> {
                     return Some((made_absolute(&file), source));
                 }
             }
+            if self.lang.module_path.is_some() {
+                let folder = std::path::Path::new(directory).join(leaf);
+                if folder.is_dir() || directories.contains(&folder) {
+                    namespace_roots.push(made_absolute(&folder.to_string_lossy()));
+                }
+            }
         }
-        None
+        // Namespace portions only win after all regular packages and modules
+        // have been considered. Keep every contributing search directory.
+        if namespace_roots.is_empty() { None }
+        else { Some((format!("\0{}", namespace_roots.join("\0")), Vec::new())) }
     }
 
     /// An embedded source has a manifest location even without a disk file.
@@ -25876,7 +25933,7 @@ impl Engine<'_> {
             };
             return cell;
         }
-        self.module_book_of(program).unwrap_or_else(|| self.book_here(true))
+        self.module_book_of(program).unwrap_or_else(|| self.outer_book_made())
     }
 
     /// The same, asked from wherever a run now stands: the routine
@@ -26700,9 +26757,10 @@ impl Engine<'_> {
         let Some(category) = self.native_exceptions.get(&route[2]).cloned() else { return Err(self.source_unready()) };
         // The module the warning belongs to is the one the text runs
         // under where that is named, else the one its file spells.
-        let named = match module_hint { Some(named) => Value::text(named), None => Value::Null };
         for (message, line) in warnings {
-            if let Err(words) = self.call_held(handler.clone(), vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64), named.clone()]) {
+            let mut arguments = vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64)];
+            if let Some(owner) = module_hint { arguments.push(Value::text(owner)); }
+            if let Err(words) = self.call_held(handler.clone(), arguments) {
                 if matches!(&self.carried, Some(Fault::Thrown(Value::Object(error))) if error.class_now().name == route[2]) {
                     self.carried = None;
                     let short = message.replace("Such sequences will not work in the future. ", "");
@@ -27250,7 +27308,7 @@ impl Engine<'_> {
         // The module the warning belongs to is the one the text runs
         // under where that is named, else the one its file spells.
         let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
-        handed.push(match module_hint { Some(named) => Value::text(named), None => Value::Null });
+        if let Some(named) = module_hint { handed.push(Value::text(named)); }
         match self.class_apply(teller, handed) {
             Ok(_) => Ok(()),
             Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if o.class_now().named(&kind_name, false)) => {
@@ -27456,7 +27514,7 @@ impl Engine<'_> {
                     self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 }
             }
-            return self.run_text_booked(source, file, mode, globals, None, top_await, None);
+            return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization);
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
@@ -27740,3 +27798,5 @@ mod heap;
 
 #[path = "binascii.rs"]
 mod binascii;
+
+include!("warnings.rs");

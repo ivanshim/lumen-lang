@@ -3763,7 +3763,8 @@ impl<'a> Compiler<'a> {
         for part in &parts {
             let mut letters = part.chars();
             if !letters.next().map_or(false, |c| self.lang.begins_name(c))
-                || !letters.all(|c| self.lang.extends_name(c)) || self.lang.keywords.contains(*part) {
+                || !letters.all(|c| self.lang.extends_name(c))
+                || (self.lang.keywords.contains(*part) && ![&self.lang.match_words, &self.lang.match_cases, &self.lang.type_alias_words].iter().any(|family| Lang::spells(family, part))) {
                 return Err(format!("Expected identifier in an import, got '{}'", word));
             }
         }

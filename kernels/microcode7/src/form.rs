@@ -397,6 +397,7 @@ pub enum Prim {
     TraceBridge,
     HeapNative,
     ContextStore,
+    WarningOperation(u8),
     ReduceNative,
     ProductStep,
     RebuildNative,

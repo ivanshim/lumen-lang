@@ -4,6 +4,15 @@ _host_stream_write = __stream_write
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
+# Startup options are consumed by the warnings module when first imported.
+warnoptions = []
+_startup_options = __posix('environ')[1].get(b'LUMEN_WARNOPTIONS', b'').decode('utf-8')
+while _startup_options:
+    _size, _tail = _startup_options.split(':', 1)
+    _size = int(_size)
+    warnoptions.append(_tail[:_size])
+    _startup_options = _tail[_size:]
+del _startup_options
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
 # The isolated default contains the library's own source location.
@@ -494,7 +503,7 @@ def _getframemodulename(depth=0):
     return __frame_module(max(depth, 0) + 1)
 
 # Names supplied by the native importer and its source-backed adapters.
-builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings')
 
 
 def getfilesystemencoding():
@@ -512,3 +521,5 @@ def gettrace():
 
 def settrace(trace):
     __trace_native__(1, trace)
+# Source and native modules participate in the same finder protocol.
+meta_path = []

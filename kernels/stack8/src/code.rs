@@ -778,6 +778,7 @@ pub enum Builtin {
     TraceNative,
     HeapNative,
     ContextNative,
+    WarningBackend(u8),
     ReduceNative,
     RebuildNative,
     CharAtIndex,

@@ -47,7 +47,9 @@
   "ext.builtin.posix": [
     "__posix"
   ],
-  "ext.builtin.loader.source": ["__loader_source"],
+  "ext.builtin.loader.source": [
+    "__loader_source"
+  ],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -4137,5 +4139,15 @@
   ],
   "ext.builtin.text.intern": [
     "__intern_native__"
+  ],
+  "ext.system.warnings": [
+    "_warnings",
+    "warn",
+    "warn_explicit",
+    "_filters_mutated",
+    "_filters_mutated_lock_held",
+    "_acquire_lock",
+    "_release_lock",
+    "_set_module"
   ]
 }

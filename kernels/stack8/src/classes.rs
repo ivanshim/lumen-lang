@@ -3781,6 +3781,9 @@ impl<'a> Engine<'a> {
                         else if name==self.class_word("get") {Some(10)} else if name==self.class_word("set") {Some(11)}
                         else if name==self.class_word("remove") {Some(12)} else {None};
                     if let Some(i)=index {
+                        if i == 2 && !self.lang.warning_backend.is_empty() && self.lang.constructor.as_deref() == Some(name) {
+                            return Ok(self.loose_members.borrow_mut().entry("root:initializer".into()).or_insert_with(|| Self::adapter(2, Vec::new())).clone());
+                        }
                         let state = if (10..=12).contains(&i) && !self.lang.class_builder.is_empty() { vec![Value::text(self.class_word("root"))] }
                             else if name == self.class_word("subclass") { vec![Value::text(name)] } else { Vec::new() };
                         return Ok(Self::adapter(i,state));
@@ -4814,8 +4817,17 @@ impl<'a> Engine<'a> {
                     let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
                     let old = o.class_now();
                     if Self::own_class_value(&old, self.class_word("module")).is_none() || Self::own_class_value(&next, self.class_word("module")).is_none()
-                        || Self::kind_beneath(&old) != Self::kind_beneath(&next) || self.slots_named(&old) || self.slots_named(&next) {
+                        || Self::kind_beneath(&old) != Self::kind_beneath(&next)
+                        || !self.assignment_layouts_agree(&old, &next) {
                         return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
+                    }
+                    let from = format!(":{:p}", Rc::as_ptr(&old));
+                    let to = format!(":{:p}", Rc::as_ptr(&next));
+                    for (place, _) in o.fields.borrow_mut().iter_mut() {
+                        if place.starts_with("\0slot:") && place.ends_with(&from) {
+                            place.truncate(place.len() - from.len());
+                            place.push_str(&to);
+                        }
                     }
                     *o.replacement_class.borrow_mut() = Some(next);
                     return Ok(Value::Null);
@@ -5141,6 +5153,29 @@ impl<'a> Engine<'a> {
     fn slots_named(&self,c:&Class)->bool {
         Self::own_class_value(c,self.class_word("slots")).is_some()
             || c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
+    }
+    fn assignment_layouts_agree(&self, first: &Rc<Class>, second: &Rc<Class>) -> bool {
+        if Rc::ptr_eq(first, second) { return true; }
+        if !self.slots_named(first) && !self.slots_named(second) { return true; }
+        let common_parent = match (&first.base, &second.base) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b), _ => false,
+        };
+        if !common_parent || self.weak_layout(first) != self.weak_layout(second)
+            || self.slots_allow(first, self.class_word("namespace")) != self.slots_allow(second, self.class_word("namespace")) { return false; }
+        let names = |class: &Class| {
+            let declared = Self::own_class_value(class, self.class_word("slots")).map(|v| v.contents());
+            let fields = match declared {
+                Some(Value::Tuple(row) | Value::Array(row)) => row.to_vec(),
+                Some(Value::Map(row)) => row.iter().map(|(name, _)| name.clone()).collect(),
+                Some(value) => vec![value], None => Vec::new(),
+            };
+            let mut keys = fields.into_iter().filter_map(|field| match field {
+                Value::Text(word) if word.as_ref() != "__dict__" && word.as_ref() != "__weakref__" => Some(crate::compile::private_name(&class.name, &word)),
+                _ => None,
+            }).collect::<Vec<_>>();
+            keys.sort(); keys
+        };
+        names(first) == names(second)
     }
     /// Weak storage belongs to the instance layout, independently of its
     /// dictionary and of the native value kept in its fields.
@@ -6040,7 +6075,10 @@ impl<'a> Engine<'a> {
             // constructing in silence, and answers its kind's methods
             // through the worth the thing keeps.
             if let Some(word)=Self::own_kind(c) {
-                if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
+                if name==self.class_word("allocate") {
+                    let maker = Self::own_class_value(c, name).unwrap_or_else(|| Self::adapter(14, vec![Value::text(&word)]));
+                    return self.class_apply(maker, args);
+                }
                 if word == "module" && self.lang.class_special.get(1).is_some_and(|key| key == name) { return self.module_repr_value(subject); }
                 if self.lang.constructor.as_deref()==Some(name){
                     if word == "module" { return self.initialise_module(subject, args); }
