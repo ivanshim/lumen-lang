@@ -1046,7 +1046,8 @@ class _CheckedRaw:
         return self.raw.fileno()
     def readinto(self, buffer):
         raw = self.raw
-        count = raw.readinto(buffer if self._plain and type(buffer) is bytearray else memoryview(buffer))
+        plain = self._plain and 'readinto' not in raw.__dict__
+        count = raw.readinto(buffer if plain and type(buffer) is bytearray else memoryview(buffer))
         if count is None:
             return None
         try:
@@ -1059,8 +1060,9 @@ class _CheckedRaw:
             raise OSError('raw readinto() returned invalid length %d (should have been between 0 and %d)' % (count, len(buffer)))
         return count
     def read(self, size=-1):
-        if self._plain:
-            # Our own streams answer a read with bytes or None already.
+        if self._plain and 'readinto' not in self.raw.__dict__:
+            # Our own streams answer a read with bytes or None already,
+            # unless a program put a readinto of its own on this one.
             return self.raw.read(-1 if size is None else size)
         if size is None or size < 0:
             chunk = self.raw.read()
