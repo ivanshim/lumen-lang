@@ -710,35 +710,13 @@ class DocTestRunner:
 # ---------------------------------------------------------------- unittest
 
 class _NamedCase(unittest.TestCase):
-    """A test the runner names by hand rather than by method name.
-
-    The runner of this library reports a test under its `_method`, and the
-    name wanted here is the name of a docstring, which is no method name, so
-    the test is run from here instead of being looked up by name."""
+    """Preserve docstring identifiers while using the standard TestCase lifecycle."""
 
     _label = 'runTest'
 
     def id(self):
         return self._label
 
-    def run(self, result=None):
-        if result is None:
-            result = unittest.TestResult()
-        self._result = result
-        result.testsRun += 1
-        outcome = _host_call_outcome(self.runTest)
-        self.doCleanups()
-        if outcome[0]:
-            return result
-        error = outcome[1]
-        entry = [self._label, getattr(error, 'message', outcome[2]), self.id()]
-        if isinstance(error, unittest.SkipTest):
-            result.skipped = [*result.skipped, entry]
-        elif isinstance(error, self.failureException):
-            result.failures = [*result.failures, entry]
-        else:
-            result.errors = [*result.errors, entry]
-        return result
 
 
 class DocTestCase(_NamedCase):
@@ -877,56 +855,3 @@ def testsource(module, name):
                 source = source + example.source + example.want
             return source
     return ''
-
-
-# The loader of this library gathers the test cases a module declares but not
-# the `load_tests` it offers, and a module whose tests are all examples would
-# then run none of them. Completing the loader the way CPython's does, once,
-# when this module is first imported, is what lets a file's examples run.
-
-def _module_load_tests(module):
-    outcome = __call_outcome(lambda: _namespace_of(module))
-    if not outcome[0]:
-        return None
-    names = outcome[1]
-    if not isinstance(names, dict):
-        return None
-    return names.get('load_tests')
-
-
-def _complete_loader():
-    original = unittest.TestLoader.loadTestsFromModule
-    if getattr(original, '_honours_load_tests', False):
-        return None
-
-    def loadTestsFromModule(self, module=None, pattern=None):
-        tests = original(self, module, pattern)
-        hook = _module_load_tests(module)
-        if hook is None:
-            return tests
-        outcome = __call_outcome(lambda: hook(self, tests, pattern))
-        if outcome[0]:
-            if outcome[1] is None:
-                return tests
-            return outcome[1]
-        return unittest.TestSuite([_FailedLoad(str(outcome[2]))])
-
-    loadTestsFromModule._honours_load_tests = True
-    unittest.TestLoader.loadTestsFromModule = loadTestsFromModule
-    return None
-
-
-class _FailedLoad(_NamedCase):
-    """Stands for a `load_tests` that stopped, so the run reports it."""
-
-    def __init__(self, message):
-        unittest.TestCase.__init__(self, 'runTest')
-        self._message = message
-        self._label = 'load_tests'
-        self._method = 'load_tests'
-
-    def runTest(self):
-        raise Exception('load_tests failed: ' + self._message)
-
-
-_complete_loader()

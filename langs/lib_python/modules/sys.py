@@ -4,6 +4,8 @@ _host_stream_write = __stream_write
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
+# Startup has no warning-option switches in the isolated Python environment.
+warnoptions = []
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
 # The isolated default contains the library's own source location.

@@ -1060,7 +1060,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
+    // Preserve the suite harness's requested selections as ordinary Python arguments.
+    let mut program_args: Vec<String> = rest.iter().map(said).collect();
+    if python.is_some() {
+        if let Ok(selection) = env::var("LUMEN_UNITTEST_ONLY") {
+            program_args.extend(selection.split(',').filter(|name| !name.is_empty()).map(str::to_owned));
+        }
+    }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args }
 }
 
 /// The language whose embedded definition claims the file's extension.

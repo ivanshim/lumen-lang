@@ -261,10 +261,17 @@ def format_stack(f=None, limit=None):
 
 
 class TracebackException:
-    def __init__(self, exc_type, exc_value, exc_traceback):
+    # Capture traceback frames with the standard constructor options.
+    def __init__(self, exc_type, exc_value, exc_traceback, *, limit=None,
+                 lookup_lines=True, capture_locals=False, compact=False):
+        if capture_locals:
+            raise NotImplementedError('TracebackException local-variable capture is unavailable')
         self.exc_type = exc_type
-        self._limit = None
+        self._limit = limit
         self.stack = extract_tb(exc_traceback, self._limit)
+        if lookup_lines:
+            for frame in self.stack:
+                frame.line
         self._exception = exc_value
         self._traceback = exc_traceback
 
@@ -272,7 +279,10 @@ class TracebackException:
     def from_exception(cls, exc, *args, **kwargs):
         return cls(type(exc), exc, exc.__traceback__, *args, **kwargs)
 
-    def format(self, *, chain=True):
+    # Format a plain traceback; refuse unsupported terminal color rendering.
+    def format(self, *, chain=True, colorize=False):
+        if colorize:
+            raise NotImplementedError('TracebackException color rendering is unavailable')
         return iter(format_exception(self.exc_type, self._exception, self._traceback,
                                      limit=self._limit, chain=chain))
 
@@ -284,3 +294,15 @@ class TracebackException:
         if file is None:
             file = sys.stderr
         file.write(''.join(self.format(chain=chain)))
+
+
+# Release traceback locals; CPython v3.14.8 Lib/traceback.py, PSF License.
+def clear_frames(tb):
+    "Clear all references to local variables in the frames of a traceback."
+    while tb is not None:
+        try:
+            tb.tb_frame.clear()
+        except RuntimeError:
+            # Ignore the exception raised if the frame is still executing.
+            pass
+        tb = tb.tb_next

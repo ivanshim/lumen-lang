@@ -3193,7 +3193,7 @@
     "TypeError: __code__ must be set to a code object"
   ],
   "ext.stmt.class.detail.code.mismatch": [
-    "code object of non-matching type"
+    "Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)"
   ],
   "ext.stmt.class.detail.code.free": [
     "ValueError: ",
