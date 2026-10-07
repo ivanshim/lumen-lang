@@ -1099,12 +1099,12 @@ impl<'a> Engine<'a> {
             let Some((_, held)) = source.iter().find(|(n, _)| n == key) else { continue };
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
-            let held = match held {
-                Value::Array(row) => Value::array(row.to_vec()),
-                Value::Tuple(row) if self.lang.notes_member.as_deref() == Some(key) => Value::array(row.to_vec()),
-                _ if self.lang.notes_member.as_deref() == Some(key) => continue,
-                other => other.clone(),
-            };
+            let held = if self.lang.notes_member.as_deref() == Some(key) {
+                match held.contents() {
+                    Value::Array(row) | Value::Tuple(row) => Value::array(row.to_vec()).held(false),
+                    _ => continue,
+                }
+            } else { held.clone() };
             match target.iter_mut().find(|(n, _)| n == key) {
                 Some(place) => place.1 = held,
                 None => target.push((key.clone(), held)),

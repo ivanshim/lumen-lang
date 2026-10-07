@@ -1473,11 +1473,15 @@ impl<'a> Machine<'a> {
             let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
-            let held = match held {
-                Value::Vector(items) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())),
-                Value::Tuple(items) if notes == Some(key) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())),
-                _ if notes == Some(key) => continue,
-                other => other.clone(),
+            let held = match notes == Some(key) {
+                false => held.clone(),
+                true => {
+                    let entries = match held.settled() {
+                        Value::Vector(items) | Value::Tuple(items) => items.to_vec(),
+                        _ => continue,
+                    };
+                    Value::Vector(crate::tuples::Sequence::plain(entries)).keep(false)
+                }
             };
             match target.iter_mut().find(|(k, _)| k == key) {
                 Some(entry) => entry.1 = held,
