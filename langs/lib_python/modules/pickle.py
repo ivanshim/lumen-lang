@@ -175,7 +175,7 @@ def _reduce(value, protocol):
     # under, and a native generic alias by the origin and arguments
     # it was built from, as CPython's own kinds do.
     native_kind = type(value)
-    if native_kind.__module__ == 'typing' and native_kind.__name__ in (
+    if getattr(native_kind, '__module__', None) == 'typing' and native_kind.__name__ in (
             'TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'):
         return value.__name__
     if native_kind.__name__ == 'GenericAlias' and hasattr(value, '__origin__') and hasattr(value, '__args__'):
