@@ -6982,3 +6982,26 @@
 {"t":"2026-10-07T06:56:31Z","event":"review-started","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-0625"}
 {"t":"2026-10-07T07:00:33Z","event":"exited","job":"review-auto-dsflash-tomllib-0625","code":0}
 {"t":"2026-10-07T07:03:34Z","event":"started","job":"dsflash-dynamic","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T07:12:53Z","event":"integrity","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-0625","commit":"8209cde0b","model":"deepseek-v4.1-flash","note":"test-path special case: runtime recognises the reference-suite dir and forces test.<pkg>.__main__ identity (main.rs:866-874) for package __main__ runs"}
+{"t":"2026-10-07T07:12:53Z","event":"returned","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-0625","commit":"8209cde0b","note":"(1st; integrity mark: suite-dir recognition + forced test.* module identity; must use general package invocation; tomllib 0->18/18 both, set 630/630 kept) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T07:13:47Z","event":"quota","codex_week_used":9,"codex_credits":0,"claude_week_used":27,"claude_5h_used":0,"kimi_5h_used":0,"kimi_month_used":0.9002,"kimi_code_used":0,"deepseek_usd":343.65}
+{"t":"2026-10-07T07:13:50Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":9,"expected":8.1,"gap":"+0.9","status":"ok"}
+{"t":"2026-10-07T07:13:56Z","event":"checkin","status":"done","actions":"returned dsflash-tomllib (1st, integrity mark: suite-dir recognition + forced test.* module identity; tomllib 0->18/18 kept) -> returns/dsflash-tomllib.md + or-resume queued; prune-merged freed 0MB","notes":"box load 10.5, 4.9 GB available, disk 77%; Mac disk 80%; Sol 10 running + 2 resumes queued; DS Flash 10 running + 3 queued (load gate); DS Pro/Kimi/Sonnet busy; integrate-21d stack8 rustc build 2h10m and still running; no open PRs; luna-meter gap +0.9 ok, no new alerts"}
+{"t":"2026-10-07T07:18:41Z","event":"resumed","job":"dsflash-builtin","model":"deepseek-flash","session":"ses_eed605a88ffeMOz7pUzJh809wK"}
+{"t":"2026-10-07T07:18:44Z","event":"exited","job":"dsflash-builtin","code":1}
+{"t":"2026-10-07T07:20:52Z","event":"finished","job":"dsflash-builtin","exit_time":"2026-10-07T07:18:44Z"}
+{"t":"2026-10-07T07:20:52Z","event":"review-queued","job":"dsflash-builtin","review":"review-auto-dsflash-builtin-0720"}
+{"t":"2026-10-07T07:20:55Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T07:22:58Z","event":"exited","job":"dspro-argparse","code":0}
+{"t":"2026-10-07T07:23:42Z","event":"resumed","job":"claude-functools-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T07:25:02Z","event":"exited","job":"kimi-filecmp","code":0}
+{"t":"2026-10-07T07:25:59Z","event":"finished","job":"dspro-argparse","exit_time":"2026-10-07T07:22:58Z"}
+{"t":"2026-10-07T07:26:00Z","event":"review-queued","job":"dspro-argparse","review":"review-auto-dspro-argparse-0725"}
+{"t":"2026-10-07T07:26:02Z","event":"finished","job":"kimi-filecmp","exit_time":"2026-10-07T07:25:02Z"}
+{"t":"2026-10-07T07:26:02Z","event":"review-queued","job":"kimi-filecmp","review":"review-auto-kimi-filecmp-0726"}
+{"t":"2026-10-07T07:26:04Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T07:27:14Z","event":"exited","job":"dsflash-rlcompleter","code":0}
+{"t":"2026-10-07T07:28:44Z","event":"started","job":"dsflash-exceptstar","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T07:31:09Z","event":"finished","job":"dsflash-rlcompleter","exit_time":"2026-10-07T07:27:14Z"}
+{"t":"2026-10-07T07:31:09Z","event":"review-queued","job":"dsflash-rlcompleter","review":"review-auto-dsflash-rlcompleter-0731"}
+{"t":"2026-10-07T07:31:12Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
