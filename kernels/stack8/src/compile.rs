@@ -258,6 +258,10 @@ pub struct Compiler<'a> {
     generic_class_parameters: Vec<String>,
     future_annotations: bool,
     pending_annotations: Vec<(String, usize)>,
+    /// Where a var-positional parameter's annotation begins with a
+    /// spread: the reference takes such an annotation apart into one
+    /// value rather than reading it as an ordinary expression.
+    starred_annotations: Vec<usize>,
     module_annotation_marks: HashMap<usize, String>,
     module_annotations: Vec<(String, usize)>,
     syntax_try_nesting: usize,
@@ -623,7 +627,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1884,7 +1888,19 @@ impl<'a> Compiler<'a> {
                 c.pos = *start;
                 let expression = c.mark();
                 let previous = std::mem::replace(&mut c.reading_annotation, true);
-                c.expr_at(0, false)?;
+                if c.starred_annotations.contains(start) {
+                    // `*args: *Ts`: the reference reads the operand and
+                    // takes exactly one value out of it.
+                    c.take();
+                    c.expr_at(0, false)?;
+                    if !c.future_annotations {
+                        c.act(Action::Unpack(1, None), 1);
+                        c.constant(Value::Small(0));
+                        c.act(Action::Apart, 2);
+                    }
+                } else {
+                    c.expr_at(0, false)?;
+                }
                 c.reading_annotation = previous;
                 if c.future_annotations {
                     let text = c.annotation_text(*start, c.pos);
@@ -3368,27 +3384,42 @@ impl<'a> Compiler<'a> {
                 let at = self.mark();
                 if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
                     let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
-                    self.slice_part(&pair.close, comma.as_deref())?;
-                    let mut parts = 1;
-                    let mut several = false;
-                    while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
-                        self.take();
-                        several = true;
-                        if self.at_symbol(&pair.close) { break; }
+                    if self.index_spreads(&pair.close, comma.as_deref()) {
+                        // A starred place makes the whole row a tuple,
+                        // as it does when the row is only read.
+                        self.act(Action::MakeArray, 0);
+                        loop {
+                            let spread = self.index_part(&pair.close, comma.as_deref())?;
+                            self.act(Action::GatherItem { map: false, spread }, 2);
+                            if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
+                                self.take();
+                                if self.at_symbol(&pair.close) { break; }
+                            } else { break; }
+                        }
+                        self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+                    } else {
                         self.slice_part(&pair.close, comma.as_deref())?;
-                        parts += 1;
+                        let mut parts = 1;
+                        let mut several = false;
+                        while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
+                            self.take();
+                            several = true;
+                            if self.at_symbol(&pair.close) { break; }
+                            self.slice_part(&pair.close, comma.as_deref())?;
+                            parts += 1;
+                        }
+                        // Several places in one bracket are one key made
+                        // of them all, where the language has slice
+                        // values; a trailing comma makes a key of one.
+                        if several && self.lang.slice_values() {
+                            self.act(Action::MakeTuple, parts);
+                        } else if several {
+                            self.awkward_place = true;
+                            self.piece().instrs.truncate(at);
+                            self.constant(Value::Small(0));
+                        }
                     }
                     self.want_sign(&pair.close, "after the index")?;
-                    // Several places in one bracket are one key made of
-                    // them all, where the language has slice values;
-                    // a trailing comma makes a key of one.
-                    if several && self.lang.slice_values() {
-                        self.act(Action::MakeTuple, parts);
-                    } else if several {
-                        self.awkward_place = true;
-                        self.piece().instrs.truncate(at);
-                        self.constant(Value::Small(0));
-                    }
                     keyed.push(at);
                     self.act(Action::At, 2);
                     if !self.lang.class_special.is_empty() { on_call = false; }
@@ -7020,6 +7051,7 @@ impl<'a> Compiler<'a> {
         let mut kinded: Vec<Option<Rc<str>>> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
             let mut rule = if named_only { 2 } else { 0 };
+            let mut starred_annotation = false;
             if lang.bind_names {
                 if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: arguments cannot follow var-keyword argument".into() }); }
                 let sign = self.look().lexeme.clone();
@@ -7108,6 +7140,8 @@ impl<'a> Compiler<'a> {
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
                     ends.extend(call.between.iter().cloned());
+                    starred_annotation = rule == 3 && self.on_any(&lang.array_spread);
+                    if starred_annotation { self.starred_annotations.push(self.pos); }
                     self.pending_annotations.push((formals.last().unwrap().clone(), self.pos));
                     self.annotation_expression(&ends)?;
                 } else if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().spelling()) {
@@ -7130,6 +7164,7 @@ impl<'a> Compiler<'a> {
                 }
                 if self.on_assign() {
                     if rule >= 3 {
+                        if starred_annotation { return Err("SyntaxError: invalid syntax".into()); }
                         let phrase = if rule == 3 { "var-positional argument cannot have default value" } else { "var-keyword argument cannot have default value" };
                         return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
                     }
@@ -11076,6 +11111,46 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Whether some place in the row still to be read begins with a
+    /// spread. The reference reads such a row as a tuple however few
+    /// places it holds, so the brackets must gather rather than count.
+    fn index_spreads(&self, close: &str, separator: Option<&str>) -> bool {
+        let mut depth = 0usize;
+        let mut fresh = true;
+        for word in &self.tokens[self.pos..] {
+            if depth == 0 && word.lexeme == close { break; }
+            if word.shape == Shape::Sign {
+                match word.lexeme.as_str() {
+                    "(" | "[" | "{" => { depth += 1; fresh = false; }
+                    ")" | "]" | "}" => { depth = depth.saturating_sub(1); fresh = false; }
+                    _ if depth == 0 => {
+                        if separator.is_some_and(|sep| word.lexeme == sep) { fresh = true; continue; }
+                        if fresh && self.lang.array_spread.iter().any(|mark| *mark == word.lexeme) { return true; }
+                        fresh = false;
+                    }
+                    _ => {}
+                }
+            } else if depth == 0 {
+                if fresh && self.lang.array_spread.iter().any(|mark| *mark == word.lexeme) { return true; }
+                fresh = false;
+            }
+        }
+        false
+    }
+
+    /// One place in a subscript row. A place beginning with a spread is
+    /// a starred expression, answered as the array of what it yields;
+    /// every other place is a slice or an expression as before.
+    fn index_part(&mut self, close: &str, separator: Option<&str>) -> Res<bool> {
+        if self.on_any(&self.lang.array_spread) {
+            self.take();
+            self.expr(0)?;
+            return Ok(true);
+        }
+        self.slice_part(close, separator)?;
+        Ok(false)
+    }
+
     /// One place or span within brackets. Commas belong to the row
     /// of places, and are left for the brackets themselves to gather.
     fn slice_part(&mut self, close: &str, separator: Option<&str>) -> Res<()> {
@@ -11375,16 +11450,32 @@ impl<'a> Compiler<'a> {
             }
             let began = self.mark();
             let separator = self.lang.calling.as_ref().and_then(|b| b.between.clone());
-            self.slice_part(&index.close, separator.as_deref())?;
-            if !self.lang.slice_marks.is_empty() && separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                let mut many = 1;
-                while separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                    self.take();
-                    if self.at_symbol(&index.close) { break; }
-                    self.slice_part(&index.close, separator.as_deref())?;
-                    many += 1;
+            if self.index_spreads(&index.close, separator.as_deref()) {
+                // A starred place makes the whole row a tuple, however
+                // few places stand in it. Each place joins the row by
+                // being appended, or by its yields being spliced in.
+                self.act(Action::MakeArray, 0);
+                loop {
+                    let spread = self.index_part(&index.close, separator.as_deref())?;
+                    self.act(Action::GatherItem { map: false, spread }, 2);
+                    if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                        self.take();
+                        if self.at_symbol(&index.close) { break; }
+                    } else { break; }
                 }
-                self.act(if self.lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, many);
+                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+            } else {
+                self.slice_part(&index.close, separator.as_deref())?;
+                if !self.lang.slice_marks.is_empty() && separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                    let mut many = 1;
+                    while separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                        self.take();
+                        if self.at_symbol(&index.close) { break; }
+                        self.slice_part(&index.close, separator.as_deref())?;
+                        many += 1;
+                    }
+                    self.act(if self.lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, many);
+                }
             }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
