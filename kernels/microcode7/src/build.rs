@@ -9184,6 +9184,14 @@ impl<'a> Builder<'a> {
                     return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
                 }
             }
+            if table.has_any("ext.builtin.exceptions.syntax") && text == "<>" && !(self.future_bits & 0x400000 != 0) {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && text == "!=" && (self.future_bits & 0x400000 != 0) {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
+            }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {
                 if self.place_depth == 0 && matches!(&left, Form::Apply(Callee::Code(_), _)) {

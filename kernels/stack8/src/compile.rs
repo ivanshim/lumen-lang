@@ -52,6 +52,7 @@ pub struct Registry {
     /// Whether bare statements at this text's top level use the display hook.
     pub interactive: bool,
     pub allow_top_level_await: bool,
+    pub allow_flufl: bool,
     pub top_level_coroutine: bool,
     /// The future flags in force for the text being read: those the
     /// caller handed `compile` (or that the running text carries) ahead
@@ -9519,6 +9520,18 @@ impl<'a> Compiler<'a> {
                 self.registry.stopped_end_row = row;
                 let word = if text == "&" { "and" } else { "or" };
                 return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
+            }
+            if !lang.syntax_members.is_empty() && text == "<>" && !(self.future_bits & 0x400000 != 0) {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?".into());
+            }
+            if !lang.syntax_members.is_empty() && text == "!=" && (self.future_bits & 0x400000 != 0) {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
             }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
                 branched_value = true;
