@@ -11355,6 +11355,10 @@ impl<'a> Engine<'a> {
                             self.registry.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix))
                                 .unwrap_or_else(|| self.registry.slot(&format!("{prefix}{}:{name}", target.class.name)))
                         } else { self.registry.slot(&name) };
+                        if self.lang.bind_names && self.main_started && self.source == self.root_source
+                            && self.reading_in.is_none() && destination.is_none() {
+                            self.registry.program_bound.insert(name.clone());
+                        }
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone())); }
                         // Text run in a dictionary of its own is handed

@@ -18128,6 +18128,9 @@ impl<'a> Machine<'a> {
                         };
                         let slot = if let Some(index) = self.idents.iter().rposition(|word| word == &key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
+                        let entry_binding = owner.is_none() && self.reading_now.is_none()
+                            && self.user_source_started && self.written_in == self.entry_file;
+                        if self.names_in_calls && entry_binding { self.main_bindings.insert(name.clone()); }
                         self.booked_write(slot, &name, Some(worth.clone()));
                         // A text running in a dictionary of its own is
                         // handed the names there as well, so a later
