@@ -243,6 +243,8 @@ def reject_union_new(*args, **kwargs):
 
 # Initial specialization records arguments; subsequent substitution uses their hooks.
 def type_alias_subscribe(alias, arguments):
+    if not alias.__type_params__:
+        raise TypeError("Only generic type aliases are subscriptable")
     from types import GenericAlias
     return GenericAlias(alias, arguments)
 

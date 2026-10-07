@@ -1405,7 +1405,15 @@ impl<'a> Engine<'a> {
             // a thing again: each such step is counted with the calls
             // standing, so a thing whose call member is a thing of its
             // own kind is refused at the depth any endless call is.
-            Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
+            Value::Object(o) => {
+                let owner = o.class_now();
+                let member = self.class_value(&owner, self.class_word("call")).ok_or_else(|| self.class_refusal())?;
+                let bound = self.bind_class_value(member, Some(Value::Object(o)), owner)?;
+                self.reaching_further()?;
+                let answer = self.class_apply(bound, args);
+                self.answered();
+                answer
+            },
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
                 82 => {
