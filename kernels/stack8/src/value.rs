@@ -302,7 +302,7 @@ pub struct Traceback {
 #[derive(Debug)]
 pub struct MethodStamp;
 impl Drop for MethodStamp {
-    fn drop(&mut self) { crate::faint::plain_departing(); }
+    fn drop(&mut self) { crate::faint::plain_departing(self as *const Self as usize); }
 }
 
 #[derive(Debug, Clone)]
@@ -2544,13 +2544,13 @@ impl Drop for Generator {
 
 impl Drop for Members {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 
 impl Drop for Class {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 

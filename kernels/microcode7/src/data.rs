@@ -24,7 +24,7 @@ pub struct Env {
 }
 
 impl Drop for Env {
-    fn drop(&mut self) { crate::ghost::anything_departing(); }
+    fn drop(&mut self) { crate::ghost::target_departing(self as *const Self as usize); }
 }
 
 impl Env {
@@ -220,7 +220,7 @@ pub struct TraceLink {
 #[derive(Debug)]
 pub struct MethodMark;
 impl Drop for MethodMark {
-    fn drop(&mut self) { crate::ghost::anything_departing(); }
+    fn drop(&mut self) { crate::ghost::target_departing(self as *const Self as usize); }
 }
 
 #[derive(Clone)]
@@ -2430,13 +2430,13 @@ impl Drop for Thing {
 
 impl Drop for Blueprint {
     fn drop(&mut self) {
-        crate::ghost::anything_departing();
+        crate::ghost::target_departing(self as *const Self as usize);
     }
 }
 
 impl Drop for SetStore {
     fn drop(&mut self) {
-        crate::ghost::anything_departing();
+        crate::ghost::target_departing(self as *const Self as usize);
     }
 }
 

@@ -907,7 +907,7 @@ pub struct Routine {
 
 impl Drop for Routine {
     fn drop(&mut self) {
-        crate::ghost::anything_departing();
+        crate::ghost::target_departing(self as *const Self as usize);
     }
 }
 

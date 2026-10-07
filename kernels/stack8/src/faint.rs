@@ -65,6 +65,37 @@ impl Hold {
     }
 }
 
+/// Collect only identities relevant to live callbacks, including the
+/// reference object whose loss cancels its callback. No strong hold is kept.
+fn observe(reference: &Faint, addresses: &mut HashSet<usize>) {
+    addresses.insert(reference.bearer.as_ptr() as usize);
+    match &reference.hold {
+        Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Class(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Routine(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Method(receiver, body, identity) => {
+            addresses.insert(receiver.as_ptr() as usize);
+            addresses.insert(body.as_ptr() as usize);
+            addresses.insert(identity.as_ptr() as usize);
+        }
+        Hold::Generator(target) => {
+            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
+        }
+        Hold::Set(target) => {
+            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
+        }
+        Hold::Native(..) | Hold::Container(_) | Hold::Lasts(_) => {}
+    }
+}
+
+fn observe_remaining(references: &[Rc<Faint>]) {
+    let _ = OBSERVED.try_with(|addresses| {
+        let mut addresses = addresses.borrow_mut();
+        addresses.clear();
+        references.iter().for_each(|reference| observe(reference, &mut addresses));
+    });
+}
+
 /// A weak hold as the program sees it: what it points at, the program's
 /// own reference object that carries it, and the routine to call with
 /// that object once the value goes.
@@ -99,6 +130,7 @@ thread_local! {
     // Bit zero is queued work; bit one marks a nonempty anchor list.
     static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
+    static OBSERVED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
     static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -154,6 +186,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
             }
         }
         let _ = WATCHING.try_with(|count| count.set(kept.len()));
+        observe_remaining(&kept);
         *watched = kept;
         notices
     }).unwrap_or_default();
@@ -255,7 +288,7 @@ pub fn departing(dying: &mut Instance) {
             wake();
         }
     }
-    note_death();
+    plain_departing(here);
 }
 
 /// A walk is going. One asleep inside a try is rebuilt around its own
@@ -295,12 +328,14 @@ pub fn walk_departing(dying: &mut Generator) {
         });
         wake();
     }
-    note_death();
+    plain_departing(dying as *const Generator as usize);
 }
 
 /// A set, a class or a routine is going: only the watchers care.
-pub fn plain_departing() {
-    note_death();
+pub fn plain_departing(address: usize) {
+    if WATCHING.try_with(Cell::get).unwrap_or(0) == 0 { return; }
+    let interested = OBSERVED.try_with(|addresses| addresses.borrow().contains(&address)).unwrap_or(false);
+    if interested { note_death(); }
 }
 
 /// What the engine has to do now: the objects with last words to say,
@@ -340,6 +375,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
             }
             let _ = WATCHING.try_with(|n| n.set(kept.len()));
             kept.reverse();
+            observe_remaining(&kept);
             *watched = kept;
         });
     }
@@ -374,6 +410,7 @@ pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
         all.push(Rc::downgrade(&faint));
     });
     if faint.told.borrow().is_some() {
+        let _ = OBSERVED.try_with(|addresses| observe(&faint, &mut addresses.borrow_mut()));
         let _ = WATCHED.try_with(|w| w.borrow_mut().push(faint.clone()));
         let _ = WATCHING.try_with(|n| n.set(n.get() + 1));
     }
