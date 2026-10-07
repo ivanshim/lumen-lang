@@ -11969,8 +11969,20 @@ impl<'a> Engine<'a> {
                         return self.perform(&Action::Invoke(name.clone()), count + 1);
                     }
                 }
-                let Value::Object(o) = subject else {
-                    return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
+                let o = match subject {
+                    Value::Object(o) => o,
+                    other => {
+                        // A suspension's own method named on anything
+                        // else is an ordinary member: reading it is
+                        // what raises the missing-attribute complaint.
+                        if [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)) {
+                            let member = self.class_get(other, name, false)?;
+                            let answer = self.class_apply(member, args)?;
+                            self.data.push(answer);
+                            return Ok(());
+                        }
+                        return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
+                    }
                 };
                 let method = o.class_now().method(&name).cloned();
                 // A class may answer for a call it does not have: where

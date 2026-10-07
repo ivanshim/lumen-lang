@@ -7027,8 +7027,19 @@ impl<'a> Machine<'a> {
                             return self.value_of(&call, frame);
                         }
                     }
-                    let Value::Thing(thing) = subject else {
-                        return Err(format!("Cannot call '{}' on something that is not an object", called).into());
+                    let thing = match subject {
+                        Value::Thing(thing) => thing,
+                        other => {
+                            // The name a sleeping body answers to,
+                            // asked of anything else, is a plain
+                            // member: its absence is what is told.
+                            if ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter()
+                                .any(|label| self.table.spells(label, &called)) {
+                                let told = self.member_missing(&other, &called);
+                                if !told.is_empty() { return Err(told.into()); }
+                            }
+                            return Err(format!("Cannot call '{}' on something that is not an object", called).into());
+                        }
                     };
                     let program = thing.blueprint().program(&called).cloned();
                     // A class may answer for a call it does not have:
