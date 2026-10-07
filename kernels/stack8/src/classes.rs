@@ -2702,6 +2702,12 @@ impl<'a> Engine<'a> {
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, if name == self.class_word("allocate") { None } else { Some(receiver.clone()) }, dynamic);
                         }
+                        // A fault's own method is not written on its
+                        // class, so a super's walk answers it off the
+                        // receiver the same way a plain read does.
+                        if self.exception_class(class) && self.exception_method_named(name) {
+                            return Ok(Value::ValueMethod(Rc::new((receiver.clone(), name.to_string()))));
+                        }
                         if Self::own_kind(class).is_some() || self.exception_class(class) {
                             let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");
                             let native_method = match Self::worth_of(receiver) {
@@ -5398,6 +5404,10 @@ impl<'a> Engine<'a> {
                 let bound = if name == self.class_word("allocate") { member }
                     else { self.bind_class_value(member, Some(subject.clone()), receiver.clone())? };
                 return self.class_apply(bound, args);
+            }
+            if self.exception_class(c) && self.exception_method_named(name) {
+                let Value::Object(o) = subject.contents() else { return Err(self.class_refusal()); };
+                return self.exception_method(o, name, &args);
             }
             if self.exception_class(c) && self.class_word("allocate") == name {
                 let Some((Value::Class(cls), rest)) = args.split_first() else { return Err(self.class_refusal()) };

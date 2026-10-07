@@ -3237,6 +3237,12 @@ impl<'a> Machine<'a> {
                             let receiver = if key == self.detail("allocate") { None } else { Some(instance.clone()) };
                             return self.member_binding(entry, receiver, actual.clone());
                         }
+                        // A fault's own method is not written on its
+                        // kind, so a super's walk answers it off the
+                        // receiver the same way a plain read does.
+                        if self.is_fault_kind(base) && self.fault_method_word(key) {
+                            return Ok(Value::Member(Rc::new(instance.clone()), key.to_owned()));
+                        }
                         if Self::native_word(base).is_some() || self.is_fault_kind(base) {
                             let maker = key == self.detail("allocate") || self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key);
                             let working = Self::underlying(instance).and_then(|worth| self.attribute(&worth, key));
@@ -5523,6 +5529,11 @@ impl<'a> Machine<'a> {
                     let (mut plain, names) = self.open_arguments(args)?;
                     plain.extend(names.into_iter().map(|(word, item)| Value::Couple(Rc::new((Value::text(&word), item)))));
                     return self.fault_method(t.clone(), key, &plain);
+                }
+            }
+            if self.is_fault_kind(b) && self.fault_method_word(key) {
+                if let Value::Thing(t) = &receiver {
+                    return self.fault_method(t.clone(), key, &args);
                 }
             }
             // A fault's making, asked of a base, is the root's making.
