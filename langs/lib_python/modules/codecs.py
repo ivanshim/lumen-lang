@@ -250,8 +250,14 @@ def _stream_classes(name):
                     at += '_le' if sys.byteorder == 'little' else '_be'
                 elif at == 'utf_8_sig':
                     at = 'utf_8'
+            if name == 'utf_8_sig':
+                # The reference's utf-8-sig writer drops its mark before
+                # the first encoding is tried; the UTF-16 and UTF-32 ones
+                # only once it has worked.
+                self._later = True
+            encoded = _encode(input, at, errors)
             self._later = True
-            return _encode(input, at, errors), len(input)
+            return encoded, len(input)
         def reset(self):
             base_writer.reset(self)
             self._later = False
