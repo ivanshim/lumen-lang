@@ -1001,7 +1001,8 @@
     "ConnectionResetError",
     "InterruptedError",
     "ProcessLookupError",
-    "TimeoutError"
+    "TimeoutError",
+    "FloatingPointError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
