@@ -17,6 +17,11 @@ Py_DEBUG = False
 Py_GIL_DISABLED = False
 MS_WINDOWS = False
 MAX_Py_ssize_t = sys.maxsize
+
+# The most a pipe is expected to hold before a write blocks, as the reference
+# suite sets it.
+PIPE_MAX_SIZE = 4 * 1024 * 1024 + 1
+
 NHASHBITS = 64
 _TPFLAGS_BASETYPE = 1024
 _TPFLAGS_HAVE_GC = 16384
