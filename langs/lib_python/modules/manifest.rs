@@ -1,6 +1,8 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("_ast", include_str!("_ast.py"), "_ast.py"),
+    ("_ast_unparse", include_str!("_ast_unparse.py"), "_ast_unparse.py"),
     ("_bisect", include_str!("_bisect.py"), "_bisect.py"),
     ("_blake2", include_str!("_blake2.py"), "_blake2.py"),
     ("_buffer", include_str!("_buffer.py"), "_buffer.py"),
@@ -63,7 +65,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("annotationlib", concat!(include_str!("runtime_adapters/native_annotationlib.py"), "\n", include_str!("runtime_adapters/annotationlib.py")), "annotationlib.py"),
     ("argparse", include_str!("argparse.py"), "argparse.py"),
     ("array", include_str!("array.py"), "array.py"),
-    ("ast", include_str!("ast.py"), "ast.py"),
+    ("ast", concat!(include_str!("ast.py"), "\n", include_str!("runtime_adapters/syntax_visit.py")), "ast.py"),
     ("asyncio", include_str!("asyncio/__init__.py"), "asyncio/__init__.py"),
     ("asyncio.coroutines", include_str!("asyncio/coroutines.py"), "asyncio/coroutines.py"),
     ("atexit", include_str!("atexit.py"), "atexit.py"),
