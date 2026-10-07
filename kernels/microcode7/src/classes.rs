@@ -192,7 +192,24 @@ impl<'a> Machine<'a> {
         // of one, answers the members a value of that kind has: the
         // methods of the kind and the special names its mark answers.
         if let Some(sample)=self.directory_stand_in(item) {
-            let named=self.native_directory(&sample);
+            let mut named=self.native_directory(&sample);
+            // A backtrace names itself, so the listing it gives is
+            // complete; the other native kinds carry the root's members
+            // and the marks every type answers, and the subscription
+            // hook where the protocol declares one.
+            if !matches!(sample.settled(), Value::Backtrace(_)) {
+                for key in ["kind","get","set","remove","allocate","subclass","doc"] {
+                    let word=self.detail(key);
+                    if !word.is_empty() { named.push(word.to_owned()); }
+                }
+                if let Some(name)=self.rules.words_ext_stmt_class_constructor.first() { named.push(name.clone()); }
+                named.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
+                named.extend(self.rules.specials.get(72).cloned());
+                let kind=sample.settled().kind_word();
+                let hook=self.detail("getitem");
+                if !hook.is_empty() && self.native_declares_protocol(&kind, hook) { named.push(hook.to_owned()); }
+            }
+            named.sort(); named.dedup();
             return Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect()));
         }
         let mut names=Vec::new();
