@@ -242,7 +242,13 @@ pub fn answered(value: &Value, operation: &str) -> bool {
 pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String) -> Answer {
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
-        let slots: &[&str] = match op { "split" | "rsplit" => &["sep", "maxsplit"], _ => &[] };
+        let slots: &[&str] = match op {
+            "split" | "rsplit" => &["sep", "maxsplit"],
+            // Replace keeps old and new positional-only and takes one
+            // name, count, in the third place.
+            "replace" => &["", "", "count"],
+            _ => &[],
+        };
         for (name, v) in names {
             let Some(at) = slots.iter().position(|s| s == name) else { return Err(fault("arguments")); };
             if at < args.len() { return Err(fault("arguments")); }
