@@ -66,7 +66,12 @@ class _IOBase:
         except (AttributeError, ValueError):
             return
         if not closed:
-            self.close()
+            try:
+                warn = getattr(self, '_dealloc_warn', None)
+                if warn is not None:
+                    warn(self)
+            finally:
+                self.close()
     def _checkClosed(self):
         if self.closed:
             raise ValueError('I/O operation on closed file.')
@@ -792,6 +797,11 @@ class FileIO(_RawIOBase):
                 except OSError:
                     pass
             raise
+    def _dealloc_warn(self, source):
+        if self._fd >= 0 and self._closefd and not self.closed:
+            import warnings
+            warnings.warn('unclosed file ' + repr(source), ResourceWarning,
+                          stacklevel=2, source=self)
     @property
     def closefd(self):
         return self._closefd
