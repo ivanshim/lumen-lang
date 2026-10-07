@@ -1,10 +1,8 @@
 """Read and write ZIP archive files.
 
-Only the piece test_argparse needs is carried: writing an archive in the
-stored (uncompressed) form, so a script can be packed into a ZIP the host
-then runs from. Reading, compression and all the other formats a full
-zipfile knows are left out; what is here is the stored form the reference
-writes by default.
+Stored (uncompressed) archives can be written in mode "w". Reading,
+append and exclusive-creation modes, compression, and ZIP64 are not
+implemented.
 """
 
 import os
@@ -16,6 +14,12 @@ ZIP_DEFLATED = 8
 
 error = Exception
 BadZipFile = error
+
+
+def _encode_filename(filename):
+    if all(ord(character) < 128 for character in filename):
+        return filename.encode("ascii"), 0
+    return filename.encode("utf-8"), 0x800
 
 
 class ZipFile:
@@ -31,6 +35,7 @@ class ZipFile:
         self.compression = compression
         self._entries = []
         self._file = None
+        self._closed = False
         if mode == "w":
             self._file = open(file, "wb")
 
@@ -40,10 +45,17 @@ class ZipFile:
     def __exit__(self, kind, value, traceback):
         self.close()
 
+    def _check_write(self):
+        if self._closed:
+            raise ValueError("Attempt to write to ZIP archive that was already closed")
+        if self.mode == "r":
+            raise ValueError("write() requires mode 'w', 'x', or 'a'")
+        if self.mode != "w":
+            raise NotImplementedError("only mode 'w' is supported for writing")
+
     def write(self, filename, arcname=None, compress_type=None, *,
               filterfunc=None):
-        if self.mode != "w":
-            raise RuntimeError("Attempting to write to a ZIP that is not open for writing")
+        self._check_write()
         if compress_type is None:
             compress_type = self.compression
         if compress_type != ZIP_STORED:
@@ -57,16 +69,17 @@ class ZipFile:
 
     def close(self):
         if self._file is None:
+            self._closed = True
             return
         out = self._file
         records = []
         for arcname, data in self._entries:
             records.append((arcname, data, out.tell()))
-            name = arcname.encode("utf-8")
+            name, flags = _encode_filename(arcname)
             crc = zlib.crc32(data) & 0xffffffff
             header = struct.pack(
                 "<4sHHHHHIIIHH",
-                b"PK\x03\x04", 20, 0, 0, 0, 0,
+                b"PK\x03\x04", 20, flags, 0, 0, 0,
                 crc, len(data), len(data), len(name), 0,
             )
             out.write(header)
@@ -74,11 +87,11 @@ class ZipFile:
             out.write(data)
         directory_offset = out.tell()
         for arcname, data, header_offset in records:
-            name = arcname.encode("utf-8")
+            name, flags = _encode_filename(arcname)
             crc = zlib.crc32(data) & 0xffffffff
             header = struct.pack(
                 "<4sHHHHHHIIIHHHHHII",
-                b"PK\x01\x02", 20, 20, 0, 0, 0, 0,
+                b"PK\x01\x02", 20, 20, flags, 0, 0, 0,
                 crc, len(data), len(data), len(name), 0, 0, 0, 0, 0, header_offset,
             )
             out.write(header)
@@ -92,10 +105,14 @@ class ZipFile:
         out.write(end)
         out.close()
         self._file = None
+        self._closed = True
         self._entries = []
 
     def writestr(self, zinfo_or_arcname, data, compress_type=None,
                  compresslevel=None):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        self._check_write()
         if compress_type is None:
             compress_type = self.compression
         if compress_type != ZIP_STORED:
