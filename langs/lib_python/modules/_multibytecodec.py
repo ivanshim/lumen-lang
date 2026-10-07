@@ -8,6 +8,8 @@ class _CodecCall:
         self.encoding = encoding
     def __call__(self, input, errors='strict'):
         if self.encoding:
+            if not isinstance(input, str):
+                input = str(input)
             instance = MultibyteIncrementalEncoder(errors, self.codec)
             return instance.encode(input, True), len(input)
         instance = MultibyteIncrementalDecoder(errors, self.codec)
@@ -100,9 +102,19 @@ class MultibyteIncrementalEncoder(_State):
         self._state[0] = 66
         return prefix + wire
 
+    # Convert input and preserve buffered text when a stateful feed fails.
     def encode(self, input, final=False):
         if not isinstance(input, str):
-            raise TypeError('encoding with ' + self.codec.name + ' requires str')
+            input = str(input)
+        buffered = self._pending
+        try:
+            return self._encode(input, final)
+        except BaseException:
+            self._pending = buffered
+            raise
+
+    # Encode scalar units while retaining an unfinished combining prefix.
+    def _encode(self, input, final):
         text = self._pending + input
         self._pending = ''
         result = b''
@@ -331,11 +343,20 @@ class MultibyteStreamWriter:
     def __init__(self, stream, errors='strict'):
         codecs.StreamWriter.__init__(self, stream, errors)
         self._encoder = MultibyteIncrementalEncoder(errors, self.codec)
-        self.encode = self._encode
 
-    def _encode(self, text, errors='strict'):
-        self._encoder.errors = errors
-        return self._encoder.encode(text, False), len(text)
+    # Write through private incremental state without changing Codec.encode.
+    def write(self, object, /):
+        self._encoder.errors = self.errors
+        self.stream.write(self._encoder.encode(object, False))
+
+    # Write sequence entries separately, honoring changes to its length.
+    def writelines(self, lines, /):
+        if isinstance(lines, dict) or not hasattr(type(lines), '__getitem__'):
+            raise TypeError('arg must be a sequence object')
+        position = 0
+        while position < len(lines):
+            self.write(lines[position])
+            position += 1
 
     def reset(self):
         if not self._encoder._pending:
