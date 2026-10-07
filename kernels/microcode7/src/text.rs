@@ -245,6 +245,138 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
     if let Some(Value::Unpaired(numbers)) = input.first() {
+
+        if work == REPLACE {
+            let g = Given { tail: &input[1..], table };
+            if !(2..=3).contains(&g.tail.len()) { return Err(g.bad("arguments")); }
+            let units = |value: &Value, number: usize| match value {
+                Value::Text(word) => Ok(word.chars().map(u32::from).collect::<Vec<_>>()),
+                Value::Unpaired(row) => Ok(row.to_vec()),
+                _ => Err(format!("TypeError: replace() argument {number} must be str, not {}", value.kind_word())),
+            };
+            let old = units(&g.tail[0],1)?; let new = units(&g.tail[1],2)?;
+            let requested = g.whole(2,-1)?;
+            let mut budget = usize::try_from(requested).unwrap_or(usize::MAX);
+            let mut rest = numbers.as_ref(); let mut out = Vec::new();
+            loop {
+                if budget != 0 && rest.starts_with(&old) {
+                    out.extend_from_slice(&new); budget -= 1;
+                    if !old.is_empty() { rest = &rest[old.len()..]; continue; }
+                }
+                let Some((&unit, tail)) = rest.split_first() else { break };
+                out.push(unit); rest = tail;
+            }
+            return Ok(Value::characters(out));
+        }
+        if matches!(work, LOWER | UPPER | CASEFOLD) {
+            if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), input.len()-1)); }
+            let mut result: Vec<u32> = Vec::new();
+            let mut offset = 0;
+            while offset < numbers.len() {
+                if char::from_u32(numbers[offset]).is_none() {
+                    result.push(numbers[offset]); offset += 1; continue;
+                }
+                let begin = offset;
+                while offset < numbers.len() && char::from_u32(numbers[offset]).is_some() { offset += 1; }
+                let word: String = numbers[begin..offset].iter().filter_map(|u| char::from_u32(*u)).collect();
+                result.extend(case_changed(&word, work).chars().map(|letter| letter as u32));
+            }
+            return Ok(Value::characters(result));
+        }
+        if matches!(work, PARTITION | RPARTITION | COUNT | FIND | RFIND | INDEX | RINDEX) {
+            let g = Given { tail: &input[1..], table };
+            if g.tail.is_empty() || g.tail.len() > if matches!(work, PARTITION | RPARTITION) { 1 } else { 3 } { return Err(g.bad("arguments")); }
+            let pattern = match &g.tail[0] {
+                Value::Text(t) => t.chars().map(u32::from).collect::<Vec<_>>(),
+                Value::Unpaired(u) => u.to_vec(),
+                value => return Err(if work == COUNT { format!("TypeError: count() argument 1 must be str, not {}", value.kind_word()) }
+                    else { format!("TypeError: must be str, not {}", value.kind_word()) }),
+            };
+            if matches!(work, PARTITION | RPARTITION) {
+                if pattern.is_empty() { return Err(g.bad("separator")); }
+                let matched = if work == RPARTITION { numbers.windows(pattern.len()).rposition(|u| u == pattern) }
+                    else { numbers.windows(pattern.len()).position(|u| u == pattern) };
+                let trio = if let Some(at) = matched {
+                    vec![Value::characters(numbers[..at].to_vec()), Value::characters(pattern.clone()), Value::characters(numbers[at+pattern.len()..].to_vec())]
+                } else if work == RPARTITION { vec![Value::text(""), Value::text(""), Value::characters(numbers.to_vec())] }
+                else { vec![Value::characters(numbers.to_vec()), Value::text(""), Value::text("")] };
+                return Ok(Value::tuple(trio));
+            }
+            let width = numbers.len() as i64;
+            let begin = match g.tail.get(1) { Some(Value::Nil) | None => 0, Some(v) => count(v, table)? };
+            let stop = match g.tail.get(2) { Some(Value::Nil) | None => width, Some(v) => count(v, table)? };
+            let lower = if begin < 0 { begin.saturating_add(width).max(0) } else { begin };
+            let upper = if stop < 0 { stop.saturating_add(width).max(0) } else { stop.min(width) };
+            if work != COUNT {
+                let found = if upper < lower { None }
+                    else if pattern.is_empty() { Some(if work == RFIND || work == RINDEX { upper } else { lower }) }
+                    else {
+                        let selected = &numbers[lower as usize..upper as usize];
+                        let local = if matches!(work, RFIND | RINDEX) { selected.windows(pattern.len()).rposition(|row| row == pattern) }
+                            else { selected.windows(pattern.len()).position(|row| row == pattern) };
+                        local.map(|position| lower + position as i64)
+                    };
+                return match found {
+                    Some(position) => Ok(Value::Small(position)),
+                    None if work == INDEX || work == RINDEX => Err(g.bad("missing")),
+                    None => Ok(Value::Small(-1)),
+                };
+            }
+            if upper < lower { return Ok(Value::Small(0)); }
+            if pattern.is_empty() { return Ok(Value::Small(upper-lower+1)); }
+            let mut tail = &numbers[lower as usize..upper as usize]; let mut total = 0;
+            while pattern.len() <= tail.len() {
+                match tail.windows(pattern.len()).position(|u| u == pattern) {
+                    Some(at) => { total += 1; tail = &tail[at+pattern.len()..]; }
+                    None => break,
+                }
+            }
+            return Ok(Value::Small(total));
+        }
+
+        if work == SPLIT || work == RSPLIT {
+            let given = Given { tail: &input[1..], table };
+            if given.tail.len() > 2 { return Err(given.bad("arguments")); }
+            let quota = given.whole(1, -1)?;
+            let cap = usize::try_from(quota).unwrap_or(usize::MAX);
+            let delimiter: Option<Vec<u32>> = match given.tail.first() {
+                Some(Value::Text(t)) => Some(t.chars().map(u32::from).collect()),
+                Some(Value::Unpaired(units)) => Some(units.to_vec()),
+                Some(Value::Nil) | None => None,
+                Some(value) => return Err(format!("TypeError: must be str or None, not {}", value.kind_word())),
+            };
+            if let Some(d) = &delimiter { if d.is_empty() { return Err(given.bad("separator")); } }
+            let right = work == RSPLIT;
+            let is_space = |unit: &u32| char::from_u32(*unit).is_some_and(blank);
+            let mut remaining: &[u32] = numbers;
+            if delimiter.is_none() {
+                while remaining.first().filter(|_| !right).is_some_and(is_space) { remaining = &remaining[1..]; }
+                while remaining.last().filter(|_| right).is_some_and(is_space) { remaining = &remaining[..remaining.len()-1]; }
+            }
+            let mut slices: Vec<Value> = Vec::new();
+            while slices.len() < cap {
+                let located = if let Some(d) = &delimiter {
+                    if d.len() > remaining.len() { None }
+                    else if right { remaining.windows(d.len()).rposition(|part| part == d) }
+                    else { remaining.windows(d.len()).position(|part| part == d) }
+                } else if right { remaining.iter().rposition(is_space) }
+                else { remaining.iter().position(is_space) };
+                let Some(offset) = located else { break };
+                let extent = delimiter.as_ref().map_or(1, |d| d.len());
+                let (piece, rest) = if right { (&remaining[offset+extent..], &remaining[..offset]) }
+                    else { (&remaining[..offset], &remaining[offset+extent..]) };
+                slices.push(Value::characters(piece.to_vec()));
+                remaining = rest;
+                if delimiter.is_none() {
+                    while remaining.first().filter(|_| !right).is_some_and(is_space) { remaining = &remaining[1..]; }
+                    while remaining.last().filter(|_| right).is_some_and(is_space) { remaining = &remaining[..remaining.len()-1]; }
+                }
+            }
+            if delimiter.is_some() || !remaining.is_empty() { slices.push(Value::characters(remaining.to_vec())); }
+            if right { slices.reverse(); }
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(slices)));
+        }
+
         if work == NEWARGS {
             if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
             return Ok(Value::tuple(vec![Value::characters(numbers.to_vec())]));

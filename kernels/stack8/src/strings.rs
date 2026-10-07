@@ -266,6 +266,127 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         return Ok(Value::text(&repr(&args[0],words)));
     }
     if let Some(Value::Codepoints(codes)) = args.first() {
+
+        if op == Replace {
+            if !(3..=4).contains(&args.len()) { return Err(fault(lang, "arguments")); }
+            let before = args[1].text_codes().ok_or_else(|| format!("TypeError: replace() argument 1 must be str, not {}", args[1].core_kind()))?;
+            let after = args[2].text_codes().ok_or_else(|| format!("TypeError: replace() argument 2 must be str, not {}", args[2].core_kind()))?;
+            let count = args.get(3).map_or(Ok(-1), |v| integer(v, lang))?;
+            let cap = if count < 0 { usize::MAX } else { count as usize };
+            let mut result = Vec::new(); let mut position = 0; let mut changes = 0;
+            while position <= codes.len() {
+                let fits = before.len() <= codes.len()-position && codes[position..position+before.len()] == before[..];
+                if changes < cap && fits {
+                    result.extend_from_slice(&after); changes += 1;
+                    if !before.is_empty() { position += before.len(); continue; }
+                }
+                if position == codes.len() { break; }
+                result.push(codes[position]); position += 1;
+            }
+            return Ok(Value::from_codes(result));
+        }
+        if matches!(op, Lower | Upper | Casefold) {
+            if args.len() != 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), args.len()-1)); }
+            let mut output = Vec::new(); let mut run = String::new();
+            for &unit in codes.iter() {
+                if let Some(ch) = char::from_u32(unit) { run.push(ch); }
+                else {
+                    output.extend(recase(&run, op).chars().map(u32::from)); run.clear(); output.push(unit);
+                }
+            }
+            output.extend(recase(&run, op).chars().map(u32::from));
+            return Ok(Value::from_codes(output));
+        }
+        if matches!(op, Partition | Rpartition | Count | Find | Rfind | Index | Rindex) {
+            let arity = if matches!(op, Partition | Rpartition) { 2..=2 } else { 2..=4 };
+            if !arity.contains(&args.len()) { return Err(fault(lang, "arguments")); }
+            let needle = args[1].text_codes().ok_or_else(|| if op == Count {
+                format!("TypeError: count() argument 1 must be str, not {}", args[1].core_kind())
+            } else { format!("TypeError: must be str, not {}", args[1].core_kind()) })?;
+            if matches!(op, Partition | Rpartition) {
+                if needle.is_empty() { return Err(fault(lang, "separator")); }
+                let at = if op == Partition { codes.windows(needle.len()).position(|v| v == needle) }
+                    else { codes.windows(needle.len()).rposition(|v| v == needle) };
+                let parts = match at {
+                    Some(i) => [codes[..i].to_vec(), needle.clone(), codes[i+needle.len()..].to_vec()],
+                    None if op == Partition => [codes.to_vec(), Vec::new(), Vec::new()],
+                    None => [Vec::new(), Vec::new(), codes.to_vec()],
+                };
+                return Ok(Value::tuple(parts.into_iter().map(Value::from_codes).collect()));
+            }
+            let size = codes.len() as i64;
+            let first = args.get(2).filter(|v| !matches!(v, Value::Null)).map_or(Ok(0), |v| integer(v, lang))?;
+            let last = args.get(3).filter(|v| !matches!(v, Value::Null)).map_or(Ok(size), |v| integer(v, lang))?;
+            let left = if first < 0 { first.saturating_add(size).max(0) } else { first };
+            let right = if last < 0 { last.saturating_add(size).max(0) } else { last.min(size) };
+            if op != Count {
+                let at = if left > right { None }
+                    else if needle.is_empty() { Some(if matches!(op, Rfind | Rindex) { right } else { left }) }
+                    else {
+                        let window = &codes[left as usize..right as usize];
+                        let offset = if matches!(op, Rfind | Rindex) { window.windows(needle.len()).rposition(|row| row == needle) }
+                            else { window.windows(needle.len()).position(|row| row == needle) };
+                        offset.map(|i| left + i as i64)
+                    };
+                if let Some(at) = at { return Ok(Value::Small(at)); }
+                if matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
+                return Ok(Value::Small(-1));
+            }
+            if left > right { return Ok(Value::Small(0)); }
+            if needle.is_empty() { return Ok(Value::Small(right - left + 1)); }
+            let mut found = 0; let mut i = left as usize;
+            while i.saturating_add(needle.len()) <= right as usize {
+                if codes[i..i+needle.len()] == needle[..] { found += 1; i += needle.len(); }
+                else { i += 1; }
+            }
+            return Ok(Value::Small(found));
+        }
+
+        if matches!(op, Split | Rsplit) {
+            if args.len() > 3 { return Err(fault(lang, "arguments")); }
+            let limit = args.get(2).map_or(Ok(-1), |v| integer(v, lang))?;
+            let maximum = if limit < 0 { usize::MAX } else { limit as usize };
+            let separator = match args.get(1) {
+                None | Some(Value::Null) => None,
+                Some(Value::Text(text)) => Some(text.chars().map(|c| c as u32).collect::<Vec<_>>()),
+                Some(Value::Codepoints(row)) => Some(row.to_vec()),
+                Some(v) => return Err(format!("TypeError: must be str or None, not {}", v.core_kind())),
+            };
+            if separator.as_ref().is_some_and(Vec::is_empty) { return Err(fault(lang, "separator")); }
+            let backwards = op == Rsplit;
+            let mut pieces = Vec::new();
+            let mut start = 0; let mut end = codes.len();
+            let whitespace = |n: u32| char::from_u32(n).is_some_and(white);
+            if separator.is_none() {
+                if backwards { while end > start && whitespace(codes[end - 1]) { end -= 1; } }
+                else { while start < end && whitespace(codes[start]) { start += 1; } }
+            }
+            while pieces.len() < maximum && (separator.is_some() || start < end) {
+                let boundary = match separator.as_ref() {
+                    Some(sep) if sep.len() <= end - start => {
+                        let candidates = start..=end - sep.len();
+                        if backwards { candidates.rev().find(|&i| codes[i..i+sep.len()] == sep[..]) }
+                        else { candidates.into_iter().find(|&i| codes[i..i+sep.len()] == sep[..]) }
+                    }
+                    Some(_) => None,
+                    None if backwards => (start..end).rev().find(|&i| whitespace(codes[i])),
+                    None => (start..end).find(|&i| whitespace(codes[i])),
+                };
+                let Some(at) = boundary else { break };
+                let width = separator.as_ref().map_or(1, Vec::len);
+                if backwards {
+                    pieces.push(Value::from_codes(codes[at+width..end].to_vec())); end = at;
+                    if separator.is_none() { while end > start && whitespace(codes[end-1]) { end -= 1; } }
+                } else {
+                    pieces.push(Value::from_codes(codes[start..at].to_vec())); start = at+width;
+                    if separator.is_none() { while start < end && whitespace(codes[start]) { start += 1; } }
+                }
+            }
+            if separator.is_some() || start < end { pieces.push(Value::from_codes(codes[start..end].to_vec())); }
+            if backwards { pieces.reverse(); }
+            return Ok(Value::array(pieces));
+        }
+
         if op == Getnewargs {
             if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }
             return Ok(Value::tuple(vec![Value::from_codes(codes.to_vec())]));
