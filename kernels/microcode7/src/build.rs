@@ -235,6 +235,11 @@ pub struct Builder<'a> {
     /// assignment expression.
     named_blocked: bool,
     named_value: bool,
+    /// Whether the reader is inside the right operand of a `+` or `-`
+    /// whose left operand was one plain string or bytes literal: there
+    /// the reference reports an unparenthesized generator expression as
+    /// plain invalid syntax at its `for`.
+    string_sum_right: bool,
     pub presumed: HashMap<String, Signature>,
     pub seen: HashMap<String, Signature>,
     strict: bool,
@@ -650,7 +655,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -9496,7 +9501,11 @@ impl<'a> Builder<'a> {
                     prim_call(op.prim, vec![left, lazy])
                 }
                 other => {
-                    let right = self.expr(floor_right)?;
+                    let string_sum = matches!(op.prim, Prim::Plus | Prim::Minus) && self.pos - consumed == origin + 1 && matches!(self.tokens[origin].shape, Shape::Quote | Shape::ByteQuote);
+                    let outer = std::mem::replace(&mut self.string_sum_right, string_sum);
+                    let right = self.expr(floor_right);
+                    self.string_sum_right = outer;
+                    let right = right?;
                     // A bare name is fetched when the operator falls,
                     // not when it stands, so a write on the far side is
                     // seen by it. Nothing else is fetched that late: a
@@ -11568,6 +11577,7 @@ impl<'a> Builder<'a> {
         let mut preceding = 0;
         let mut clause_seen = false;
         let mut binding_names = false;
+        let mut for_at: Option<usize> = None;
         // The parameters of a lambda stand in the argument's own place
         // and mark their defaults there; the body's colon ends them.
         let mut defaults_open = 0usize;
@@ -11596,6 +11606,16 @@ impl<'a> Builder<'a> {
                 }
                 if word == ")" || (word == "," && !binding_names) {
                     if clause_seen && (preceding != 0 || word == ",") {
+                        if self.string_sum_right {
+                            if let Some(here) = for_at {
+                                let token = &self.tokens[here];
+                                self.range_end = Some((token.column + token.lexeme.chars().count(), token.row));
+                                self.pos = here;
+                            } else {
+                                self.pos = begins;
+                            }
+                            return Err("SyntaxError: invalid syntax".to_owned());
+                        }
                         let last = &self.tokens[at - 1];
                         self.range_end = Some((last.column + last.lexeme.chars().count(), last.row));
                         self.pos = begins;
@@ -11605,6 +11625,7 @@ impl<'a> Builder<'a> {
                     preceding += 1; begins = at + 1; clause_seen = false;
                 }
                 if self.table.spells("ext.op.comprehension.for", word) {
+                    if for_at.is_none() { for_at = Some(at); }
                     clause_seen = true;
                     binding_names = true;
                 } else if self.table.spells("ext.op.comprehension.in", word) { binding_names = false; }

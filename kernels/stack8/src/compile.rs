@@ -289,6 +289,11 @@ pub struct Compiler<'a> {
     /// reference reads the whole as invalid syntax.
     bare_named_blocked: bool,
     namedexpr_value: bool,
+    /// Whether the reader is inside the right operand of a `+` or `-`
+    /// whose left operand was one plain string or bytes literal: there
+    /// the reference reports an unparenthesized generator expression as
+    /// plain invalid syntax at its `for`.
+    string_sum_right: bool,
     generator_source: Option<(usize, usize, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
@@ -674,7 +679,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -9761,7 +9766,11 @@ impl<'a> Compiler<'a> {
                     if named.is_some() {
                         self.piece().instrs.truncate(from);
                     }
-                    self.expr(right_floor)?;
+                    let string_sum = matches!(&op, Action::Add | Action::Sub) && self.pos - width == begins + 1 && matches!(self.tokens[begins].shape, Shape::Quote | Shape::Bytes);
+                    let outer = std::mem::replace(&mut self.string_sum_right, string_sum);
+                    let outcome = self.expr(right_floor);
+                    self.string_sum_right = outer;
+                    outcome?;
                     match named {
                         // Where the other side is itself a name or a
                         // number the reading was late already: the
@@ -12264,6 +12273,7 @@ impl<'a> Compiler<'a> {
         let mut comma = false;
         let mut generator = false;
         let mut target = false;
+        let mut for_at: Option<usize> = None;
         // A lambda's own parameters stand where an argument stands and
         // carry marks of their own; the body's colon closes them.
         let mut lambda_parameters = 0usize;
@@ -12289,6 +12299,17 @@ impl<'a> Compiler<'a> {
             }
             if depth == 0 && (word == ")" || (word == "," && !target)) {
                 if generator && (comma || word == ",") {
+                    if self.string_sum_right {
+                        if let Some(here) = for_at {
+                            let token = &self.tokens[here];
+                            self.registry.stopped_end = token.column + token.lexeme.chars().count();
+                            self.registry.stopped_end_row = token.row;
+                            self.pos = here;
+                        } else {
+                            self.pos = start;
+                        }
+                        return Err("SyntaxError: invalid syntax".into());
+                    }
                     let end = &self.tokens[i - 1];
                     self.registry.stopped_end = end.column + end.lexeme.chars().count();
                     self.registry.stopped_end_row = end.row;
@@ -12298,7 +12319,10 @@ impl<'a> Compiler<'a> {
                 if word == ")" { break; }
                 comma = true; start = i + 1; generator = false;
             }
-            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) { generator = true; target = true; }
+            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) {
+                if for_at.is_none() { for_at = Some(i); }
+                generator = true; target = true;
+            }
             if depth == 0 && Lang::spells(&self.lang.comprehension_in, word) { target = false; }
             if ["(", "[", "{"].contains(&word) { depth += 1; }
             else if [")", "]", "}"].contains(&word) {
