@@ -52,6 +52,7 @@ pub struct Registry {
     /// Whether bare statements at this text's top level use the display hook.
     pub interactive: bool,
     pub allow_top_level_await: bool,
+    pub allow_flufl: bool,
     pub top_level_coroutine: bool,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
@@ -257,6 +258,7 @@ pub struct Compiler<'a> {
     reading_generic_class: bool,
     generic_class_parameters: Vec<String>,
     future_annotations: bool,
+    flufl: bool,
     pending_annotations: Vec<(String, usize)>,
     module_annotation_marks: HashMap<usize, String>,
     module_annotations: Vec<(String, usize)>,
@@ -456,6 +458,7 @@ pub fn compile_within(
     if lang.closes_over {
         let mut survey = Registry::default();
         survey.allow_top_level_await = table.allow_top_level_await;
+        survey.allow_flufl = table.allow_flufl;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -623,7 +626,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: false, flufl: table.allow_flufl, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -3657,6 +3660,7 @@ impl<'a> Compiler<'a> {
                     return Err(if original == "braces" { "SyntaxError: not a chance".into() } else { format!("SyntaxError: future feature {original} is not defined") });
                 }
                 if future && original == "annotations" { self.future_annotations = true; }
+                if future && original == "barry_as_FLUFL" { self.flufl = true; }
                 collected.push((original.clone(), bound.clone(), aliased));
                 let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
                 if !comma.map_or(false, |mark| self.at_symbol(mark)) {
@@ -9390,6 +9394,18 @@ impl<'a> Compiler<'a> {
                 self.registry.stopped_end_row = row;
                 let word = if text == "&" { "and" } else { "or" };
                 return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
+            }
+            if !lang.syntax_members.is_empty() && text == "<>" && !self.flufl {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?".into());
+            }
+            if !lang.syntax_members.is_empty() && text == "!=" && self.flufl {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
             }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
                 self.take();

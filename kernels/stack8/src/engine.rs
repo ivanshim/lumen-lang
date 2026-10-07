@@ -25336,6 +25336,7 @@ impl Engine<'_> {
         trial.value_only = mode == 1;
         trial.interactive = mode == 2;
         trial.allow_top_level_await = allow_top_await;
+        trial.allow_flufl = flags & 0x400000 != 0;
         let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source)),
