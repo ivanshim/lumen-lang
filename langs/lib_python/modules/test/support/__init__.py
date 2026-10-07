@@ -1641,3 +1641,38 @@ def open_urlresource(url, *args, **kwargs):
     if not is_resource_enabled('urlfetch'):
         raise unittest.SkipTest('resource urlfetch is not enabled')
     raise NotImplementedError('HTTP resource retrieval is not supported')
+
+
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
+def patch(test_instance, object_to_patch, attr_name, new_value):
+    """Override 'object_to_patch'.'attr_name' with 'new_value'.
+
+    Also, add a cleanup procedure to 'test_instance' to restore
+    'object_to_patch' value for 'attr_name'.
+    The 'attr_name' should be a valid attribute for 'object_to_patch'.
+
+    """
+    # check that 'attr_name' is a real attribute for 'object_to_patch'
+    # will raise AttributeError if it does not exist
+    getattr(object_to_patch, attr_name)
+
+    # keep a copy of the old value
+    attr_is_local = False
+    try:
+        old_value = object_to_patch.__dict__[attr_name]
+    except (AttributeError, KeyError):
+        old_value = getattr(object_to_patch, attr_name, None)
+    else:
+        attr_is_local = True
+
+    # restore the value when the test is done
+    def cleanup():
+        if attr_is_local:
+            setattr(object_to_patch, attr_name, old_value)
+        else:
+            delattr(object_to_patch, attr_name)
+
+    test_instance.addCleanup(cleanup)
+
+    # actually override the attribute
+    setattr(object_to_patch, attr_name, new_value)
