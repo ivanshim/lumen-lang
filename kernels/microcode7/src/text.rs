@@ -245,6 +245,21 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
     if let Some(Value::Unpaired(numbers)) = input.first() {
+        if work == SPLITLINES {
+            let given = Given { tail: &input[1..], table };
+            if given.tail.len() > 1 { return Err(given.bad("arguments")); }
+            let retain = given.whole(0, 0)? != 0;
+            let mut rest = numbers.as_ref(); let mut result = Vec::new();
+            while let Some(boundary) = rest.iter().position(|n| [13,10,133,8232,8233,11,12,28,29,30].contains(n)) {
+                let width = if rest[boundary] == 13 && rest.get(boundary+1) == Some(&10) { 2 } else { 1 };
+                let consumed = boundary + width;
+                result.push(Value::characters(rest[..if retain { consumed } else { boundary }].to_vec()));
+                rest = &rest[consumed..];
+            }
+            if !rest.is_empty() { result.push(Value::characters(rest.to_vec())); }
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(result)));
+        }
+
 
         if work == REPLACE {
             let g = Given { tail: &input[1..], table };

@@ -267,6 +267,22 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     }
     if let Some(Value::Codepoints(codes)) = args.first() {
 
+        if op == Splitlines {
+            if args.len() > 2 { return Err(fault(lang, "arguments")); }
+            let keep = args.get(1).map_or(Ok(0), |v| integer(v, lang))? != 0;
+            let mut lines = Vec::new(); let mut start = 0; let mut index = 0;
+            while index < codes.len() {
+                let at = index; let unit = codes[index]; index += 1;
+                if matches!(unit, 10 | 13 | 11 | 12 | 28 | 29 | 30 | 133 | 8232 | 8233) {
+                    if unit == 13 && codes.get(index) == Some(&10) { index += 1; }
+                    lines.push(Value::from_codes(codes[start..if keep { index } else { at }].to_vec()));
+                    start = index;
+                }
+            }
+            if start < codes.len() { lines.push(Value::from_codes(codes[start..].to_vec())); }
+            return Ok(Value::array(lines));
+        }
+
         if op == Replace {
             if !(3..=4).contains(&args.len()) { return Err(fault(lang, "arguments")); }
             let before = args[1].text_codes().ok_or_else(|| format!("TypeError: replace() argument 1 must be str, not {}", args[1].core_kind()))?;

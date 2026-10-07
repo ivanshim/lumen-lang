@@ -7787,7 +7787,7 @@ impl<'a> Machine<'a> {
             let (mut positional, named) = self.open_arguments(received)?;
             if *work != crate::text::Work::MAKETRANS { positional.insert(0, Value::Text(subject.clone())); }
             crate::text::fit_names(self.table, *work, &mut positional, named)?;
-            if matches!(*work, crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES) && positional.len() == 2 {
+            if (*work == crate::text::Work::EXPANDTABS || (*work == crate::text::Work::SPLITLINES && !self.table.flag("ext.op.arithmetic.python_numbers"))) && positional.len() == 2 {
                 if let Some(number) = self.stood_for_whole(&positional[1])? { positional[1] = number; }
             }
             if *work == crate::text::Work::FORMATMAP {
@@ -9926,7 +9926,7 @@ impl<'a> Machine<'a> {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
             found.push(word.clone());
         }
-        if !keywords.is_empty() && !["sort", "split", "rsplit", "format", "update", "encode"].contains(&name) {
+        if !keywords.is_empty() && !["sort", "split", "rsplit", "format", "update", "encode"].contains(&name) && !(name == "splitlines" && self.table.flag("ext.op.arithmetic.python_numbers")) {
             // A label the roster does not write is no label at all here:
             // the complaint names the method as the program named it.
             let spelling = self.table.loose_strings(&format!("ext.builtin.method.{name}")).first().map_or(name, String::as_str);
@@ -9949,9 +9949,14 @@ impl<'a> Machine<'a> {
         if matches!(receiver.settled(), Value::Unpaired(_)) {
             let type_word = self.table.prim_words.iter().find(|(p, _)| *p == Prim::AsText).map(|(_, word)| word);
             let text_operation = type_word.and_then(|word| self.table.prims.get(&format!("{word}.{name}"))).copied();
-            if let Some(Prim::Textual(work @ (crate::text::Work::SPLIT | crate::text::Work::RSPLIT | crate::text::Work::PARTITION | crate::text::Work::RPARTITION | crate::text::Work::LOWER | crate::text::Work::UPPER | crate::text::Work::CASEFOLD | crate::text::Work::COUNT | crate::text::Work::REPLACE | crate::text::Work::FIND | crate::text::Work::RFIND | crate::text::Work::INDEX | crate::text::Work::RINDEX))) = text_operation {
+            if let Some(Prim::Textual(work @ (crate::text::Work::SPLITLINES | crate::text::Work::SPLIT | crate::text::Work::RSPLIT | crate::text::Work::PARTITION | crate::text::Work::RPARTITION | crate::text::Work::LOWER | crate::text::Work::UPPER | crate::text::Work::CASEFOLD | crate::text::Work::COUNT | crate::text::Work::REPLACE | crate::text::Work::FIND | crate::text::Work::RFIND | crate::text::Work::INDEX | crate::text::Work::RINDEX))) = text_operation {
                 let mut supplied = vec![receiver.settled()]; supplied.extend(arguments);
                 crate::text::fit_names(self.table, work, &mut supplied, keywords)?;
+                if work == crate::text::Work::SPLITLINES {
+                    if let Some(parameter) = supplied.get(1) {
+                        supplied[1] = Value::Flag(self.object_truth(parameter)?);
+                    }
+                }
                 return crate::text::apply(self.table, work, name, &supplied, self.wording()).map_err(Escape::from);
             }
         }
@@ -17714,8 +17719,17 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                if matches!(work, crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES) && values.len() == 2 {
-                    if let Some(index) = self.stood_for_whole(&values[1])? { values[1] = index; }
+                if values.len() == 2 {
+                    match work {
+                        crate::text::Work::SPLITLINES if self.table.flag("ext.op.arithmetic.python_numbers") => {
+                            let retain = self.object_truth(&values[1])?;
+                            values[1] = Value::Flag(retain);
+                        }
+                        crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES => {
+                            if let Some(index) = self.stood_for_whole(&values[1])? { values[1] = index; }
+                        }
+                        _ => {}
+                    }
                 }
                 if work == crate::text::Work::TRANSLATE && values.len() == 2 {
                     if let (Value::Text(text), Value::Thing(_)) = (&values[0], &values[1]) {
@@ -20799,6 +20813,7 @@ impl<'a> Machine<'a> {
                     (Value::Frac(a), Value::Frac(b)) => Rc::ptr_eq(a, b),
                     (Value::Complex(a), Value::Complex(b)) => Rc::ptr_eq(a, b),
                     (Value::Text(a), Value::Text(b)) => Rc::ptr_eq(a, b),
+                    (Value::Unpaired(first), Value::Unpaired(second)) => std::ptr::eq(first.as_ref(), second.as_ref()),
                     (Value::Tuple(a), Value::Tuple(b)) => Rc::ptr_eq(a, b),
                     (Value::Span(a), Value::Span(b)) => Rc::ptr_eq(a, b),
                     (Value::Progression(a), Value::Progression(b)) => Rc::ptr_eq(a, b),
@@ -27430,6 +27445,7 @@ impl Machine<'_> {
                         words.iter().position(|w| w.as_str() == word.as_ref()).unwrap_or(0) as u64 + 16
                     }
                     Value::Text(chars) => chars.as_ptr() as usize as u64,
+                    Value::Unpaired(points) => points.as_ptr() as usize as u64,
                     Value::Set(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Dict(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,

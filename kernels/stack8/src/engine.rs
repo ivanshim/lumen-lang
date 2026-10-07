@@ -13724,6 +13724,7 @@ impl<'a> Engine<'a> {
                     (Value::Complex(x), Value::Complex(y)) => Rc::ptr_eq(x, y),
                     (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
                     (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
+                    (Value::Codepoints(left), Value::Codepoints(right)) => Rc::ptr_eq(left, right),
                     (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
                     (Value::Slice(x), Value::Slice(y)) => Rc::ptr_eq(x, y),
                     (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
@@ -16356,9 +16357,12 @@ impl<'a> Engine<'a> {
         if let Value::Codepoints(codes) = &contents {
             let qualified = self.lang.builtin_words.iter().find(|(op, _)| *op == Builtin::ToText)
                 .map(|(_, word)| format!("{word}.{operation}"));
-            if let Some(Builtin::Text(work)) = qualified.as_ref().and_then(|word| self.lang.builtins.get(word)).copied().filter(|op| matches!(op, Builtin::Text(crate::strings::TextOp::Split | crate::strings::TextOp::Rsplit | crate::strings::TextOp::Partition | crate::strings::TextOp::Rpartition | crate::strings::TextOp::Lower | crate::strings::TextOp::Upper | crate::strings::TextOp::Casefold | crate::strings::TextOp::Count | crate::strings::TextOp::Replace | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex))) {
+            if let Some(Builtin::Text(work)) = qualified.as_ref().and_then(|word| self.lang.builtins.get(word)).copied().filter(|op| matches!(op, Builtin::Text(crate::strings::TextOp::Splitlines | crate::strings::TextOp::Split | crate::strings::TextOp::Rsplit | crate::strings::TextOp::Partition | crate::strings::TextOp::Rpartition | crate::strings::TextOp::Lower | crate::strings::TextOp::Upper | crate::strings::TextOp::Casefold | crate::strings::TextOp::Count | crate::strings::TextOp::Replace | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex))) {
                 let mut supplied = vec![contents.clone()]; supplied.extend(args);
                 crate::strings::keywords(work, &mut supplied, named, self.lang)?;
+                if work == crate::strings::TextOp::Splitlines && supplied.len() == 2 {
+                    supplied[1] = Value::Flag(self.special_truth(&supplied[1])?);
+                }
                 return crate::strings::run(work, operation, &supplied, self.lang, &self.wording());
             }
             if operation == "__getnewargs__" {
@@ -18329,8 +18333,12 @@ impl<'a> Engine<'a> {
                         if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }
                     }
                 }
-                if matches!(op, crate::strings::TextOp::Expandtabs | crate::strings::TextOp::Splitlines) && normalized.len() == 2 {
-                    if let Some(index) = self.special_index(&normalized[1])? { normalized[1] = index; }
+                if normalized.len() == 2 {
+                    if op == crate::strings::TextOp::Splitlines && self.lang.python_numbers {
+                        normalized[1] = Value::Flag(self.special_truth(&normalized[1])?);
+                    } else if matches!(op, crate::strings::TextOp::Expandtabs | crate::strings::TextOp::Splitlines) {
+                        if let Some(index) = self.special_index(&normalized[1])? { normalized[1] = index; }
+                    }
                 }
                 if op == crate::strings::TextOp::Translate && normalized.len() == 2 && matches!(normalized[1], Value::Object(_)) {
                     if let Value::Text(source) = &normalized[0] {
@@ -22850,6 +22858,7 @@ impl Engine<'_> {
                     Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
+                    Value::Codepoints(storage) => Rc::as_ptr(storage) as usize as u64,
                     Value::Object(a) | Value::Fields(a) => Rc::as_ptr(a) as usize as u64,
                     Value::ValueMethod(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Method(_, _, identity) => Rc::as_ptr(identity) as usize as u64,
