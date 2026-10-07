@@ -11,7 +11,8 @@ _MAXSIZE = sys.maxsize
 _MINSIZE = -sys.maxsize - 1
 
 class UnsupportedOperation(OSError, ValueError):
-    pass
+    # Named for the module that exports it, as the reference's own is.
+    __module__ = 'io'
 
 def text_encoding(encoding, stacklevel=2):
     if encoding is None:
