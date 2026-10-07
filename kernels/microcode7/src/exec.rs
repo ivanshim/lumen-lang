@@ -20654,7 +20654,14 @@ impl<'a> Machine<'a> {
                 Value::Flag(alike != (op == Prim::Ne))
             }
             Prim::Eq | Prim::Ne if self.rules.unordered_maps => {
-                let alike = match (&v[0], &v[1]) {
+                // Object dictionaries use the same rich value comparisons as ordinary maps.
+                let materialize = |worth: &Value| match worth {
+                    Value::Attributes(owner) => Value::Dict(Rc::new(self.attribute_entries(owner).into())),
+                    _ => worth.clone(),
+                };
+                let left_map = materialize(&v[0]);
+                let right_map = materialize(&v[1]);
+                let alike = match (&left_map, &right_map) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
                     _ => match self.native_sequence_equal(op, v)? {
                         Some(equal) => equal,

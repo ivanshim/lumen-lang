@@ -9329,6 +9329,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let begins = self.pos;
         let from = self.mark();
+        let mut branched_value = false;
         let blocked = std::mem::take(&mut self.bare_named_blocked);
         if floor == 0 && !lang.syntax_members.is_empty() && ["(", "[", "{"].contains(&self.look().lexeme.as_str())
             && self.display_assignment(begins) {
@@ -9428,6 +9429,8 @@ impl<'a> Compiler<'a> {
                 return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
             }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
+                branched_value = true;
+                self.position_expression_action(begins, from);
                 self.take();
                 let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 self.expr(1)?;
@@ -9586,11 +9589,16 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        // Position calls and lookups without changing the shape of assignment targets.
-        if !lang.trace_fields.is_empty() && !self.writing_place {
+        if !branched_value { self.position_expression_action(begins, from); }
+        Ok(())
+    }
+
+    // Keep branch-local calls positioned before a conditional moves their instructions.
+    fn position_expression_action(&mut self, begin: usize, from: usize) {
+        if !self.lang.trace_fields.is_empty() && !self.writing_place {
             let at = self.mark().saturating_sub(1);
             if matches!(self.piece().instrs.get(at), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Grab(_) | Action::At, _))) {
-                let location = self.expression_location(begins);
+                let location = self.expression_location(begin);
                 for instruction in &mut self.piece().instrs[from..] {
                     let shift = |target: &mut usize| { if *target >= at { *target += 1; } };
                     match instruction {
@@ -9603,7 +9611,6 @@ impl<'a> Compiler<'a> {
                 self.piece().instrs.insert(at, location);
             }
         }
-        Ok(())
     }
 
     fn comparison(&self) -> Option<(Action, u32, usize)> {

@@ -526,3 +526,123 @@ def _lex(source, start, end, row, column, field, comments=None):
     if comments is not None:
         comments.extend(cached[1])
     return list(cached[0])
+
+# Field cardinalities from CPython Parser/Python.asdl at v3.14.8; PSF License.
+_DumpCardinality = {'Module': ((), ('body', 'type_ignores')), 'Interactive': ((), ('body',)), 'Expression': ((), ()), 'FunctionType': ((), ('argtypes',)), 'FunctionDef': (('returns', 'type_comment'), ('body', 'decorator_list', 'type_params')), 'AsyncFunctionDef': (('returns', 'type_comment'), ('body', 'decorator_list', 'type_params')), 'ClassDef': ((), ('bases', 'keywords', 'body', 'decorator_list', 'type_params')), 'Return': (('value',), ()), 'Delete': ((), ('targets',)), 'Assign': (('type_comment',), ('targets',)), 'TypeAlias': ((), ('type_params',)), 'AugAssign': ((), ()), 'AnnAssign': (('value',), ()), 'For': (('type_comment',), ('body', 'orelse')), 'AsyncFor': (('type_comment',), ('body', 'orelse')), 'While': ((), ('body', 'orelse')), 'If': ((), ('body', 'orelse')), 'With': (('type_comment',), ('items', 'body')), 'AsyncWith': (('type_comment',), ('items', 'body')), 'Match': ((), ('cases',)), 'Raise': (('exc', 'cause'), ()), 'Try': ((), ('body', 'handlers', 'orelse', 'finalbody')), 'TryStar': ((), ('body', 'handlers', 'orelse', 'finalbody')), 'Assert': (('msg',), ()), 'Import': ((), ('names',)), 'ImportFrom': (('module', 'level'), ('names',)), 'Global': ((), ('names',)), 'Nonlocal': ((), ('names',)), 'Expr': ((), ()), 'BoolOp': ((), ('values',)), 'NamedExpr': ((), ()), 'BinOp': ((), ()), 'UnaryOp': ((), ()), 'Lambda': ((), ()), 'IfExp': ((), ()), 'Dict': ((), ('keys', 'values')), 'Set': ((), ('elts',)), 'ListComp': ((), ('generators',)), 'SetComp': ((), ('generators',)), 'DictComp': ((), ('generators',)), 'GeneratorExp': ((), ('generators',)), 'Await': ((), ()), 'Yield': (('value',), ()), 'YieldFrom': ((), ()), 'Compare': ((), ('ops', 'comparators')), 'Call': ((), ('args', 'keywords')), 'FormattedValue': (('format_spec',), ()), 'Interpolation': (('format_spec',), ()), 'JoinedStr': ((), ('values',)), 'TemplateStr': ((), ('values',)), 'Constant': (('kind',), ()), 'Attribute': ((), ()), 'Subscript': ((), ()), 'Starred': ((), ()), 'Name': ((), ()), 'List': ((), ('elts',)), 'Tuple': ((), ('elts',)), 'Slice': (('lower', 'upper', 'step'), ()), 'comprehension': ((), ('ifs',)), 'ExceptHandler': (('type', 'name'), ('body',)), 'arguments': (('vararg', 'kwarg'), ('posonlyargs', 'args', 'kwonlyargs', 'kw_defaults', 'defaults')), 'arg': (('annotation', 'type_comment'), ()), 'keyword': (('arg',), ()), 'alias': (('asname',), ()), 'withitem': (('optional_vars',), ()), 'match_case': (('guard',), ('body',)), 'MatchValue': ((), ()), 'MatchSingleton': ((), ()), 'MatchSequence': ((), ('patterns',)), 'MatchMapping': (('rest',), ('keys', 'patterns')), 'MatchClass': ((), ('patterns', 'kwd_attrs', 'kwd_patterns')), 'MatchStar': (('name',), ()), 'MatchAs': (('pattern', 'name'), ()), 'MatchOr': ((), ('patterns',)), 'TypeIgnore': ((), ()), 'TypeVar': (('bound', 'default_value'), ()), 'ParamSpec': (('default_value',), ()), 'TypeVarTuple': (('default_value',), ())}
+
+def dump(node, annotate_fields=True, include_attributes=False, *, indent=None, show_empty=False):
+    if not isinstance(node, AST):
+        raise TypeError('expected AST, got %r' % type(node).__name__)
+    spacing = indent if isinstance(indent, str) or indent is None else ' ' * indent
+
+    def render(value, depth):
+        prefix = '' if spacing is None else '\n' + spacing * (depth + 1)
+        separator = ', ' if spacing is None else ',' + prefix
+        if isinstance(value, AST):
+            typename = type(value).__name__
+            optional, sequences = _DumpCardinality.get(typename, ((), ()))
+            parts = []
+            pending = []
+            keywords = annotate_fields
+            simple = True
+            for field in value._fields:
+                if not hasattr(value, field):
+                    keywords = True
+                    continue
+                item = getattr(value, field)
+                if item is None and field in optional:
+                    keywords = True
+                    continue
+                if not show_empty:
+                    if field in sequences and item == []:
+                        if not keywords:
+                            pending.append('[]')
+                        continue
+                    if not keywords:
+                        parts.extend(pending)
+                        pending = []
+                text, atomic = render(item, depth + 1)
+                simple = simple and atomic
+                parts.append(field + '=' + text if keywords else text)
+            if include_attributes:
+                for field in value._attributes:
+                    if not hasattr(value, field):
+                        continue
+                    item = getattr(value, field)
+                    if item is None:
+                        continue
+                    text, atomic = render(item, depth + 1)
+                    simple = simple and atomic
+                    parts.append(field + '=' + text)
+            if simple and len(parts) <= 3:
+                return typename + '(' + ', '.join(parts) + ')', not parts
+            return typename + '(' + prefix + separator.join(parts) + ')', False
+        if isinstance(value, list):
+            if not value:
+                return '[]', True
+            return '[' + prefix + separator.join(render(item, depth + 1)[0] for item in value) + ']', False
+        return repr(value), True
+
+    return render(node, 0)[0]
+
+class TypeIgnore(AST):
+    _fields = ('lineno', 'tag')
+    _attributes = ()
+    __match_args__ = _fields
+
+_CharacterParse = parse
+
+def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
+          feature_version=None, optimize=-1):
+    tree = _CharacterParse(source, filename, mode, type_comments=type_comments,
+                           feature_version=feature_version, optimize=optimize)
+    wide_columns = len(source.encode('utf-8')) != len(source)
+    if not type_comments and not wide_columns:
+        return tree
+    lines = source.split('\n')
+    nodes = []
+    todo = [tree]
+    while todo:
+        node = todo.pop()
+        nodes.append(node)
+        for field in node._fields:
+            value = getattr(node, field, None)
+            if isinstance(value, AST):
+                todo.append(value)
+            elif isinstance(value, list):
+                todo.extend(item for item in value if isinstance(item, AST))
+    if type_comments and mode == 'exec':
+        comments = []
+        _lex(source, 0, len(source), 1, 0, False, comments)
+        for row, column, text in comments:
+            payload = _type_comment_payload(text)
+            if payload is None:
+                label = text[1:].lstrip()
+                if label.startswith('type:'):
+                    label = label[5:].lstrip()
+                    if label.startswith('ignore') and (len(label) == 6 or not label[6].isalnum()):
+                        tree.type_ignores.append(TypeIgnore(lineno=row, tag=label[6:]))
+                continue
+            candidates = [node for node in nodes if isinstance(node, stmt)
+                          and 'type_comment' in node._fields and node.lineno <= row <= node.end_lineno]
+            if not candidates:
+                _syntax('invalid syntax')
+            statement = min(candidates, key=lambda node: (node.end_lineno - node.lineno, -node.col_offset))
+            statement.type_comment = payload
+            if isinstance(statement, Assign):
+                statement.end_lineno = row
+                statement.end_col_offset = column + len(text)
+    if not wide_columns:
+        return tree
+    # Syntax trees use UTF-8 byte columns; the reader's source slices use characters.
+    byte_columns = {}
+    for node in nodes:
+        for line_field, column_field in (('lineno', 'col_offset'), ('end_lineno', 'end_col_offset')):
+            row = getattr(node, line_field, None)
+            column = getattr(node, column_field, None)
+            if row is not None and column is not None:
+                key = (row, column)
+                if key not in byte_columns:
+                    byte_columns[key] = len(lines[row - 1][:column].encode('utf-8'))
+                setattr(node, column_field, byte_columns[key])
+    return tree

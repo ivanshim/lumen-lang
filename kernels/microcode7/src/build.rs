@@ -9114,6 +9114,10 @@ impl<'a> Builder<'a> {
             }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {
+                if self.place_depth == 0 && matches!(&left, Form::Apply(Callee::Code(_), _)) {
+                    let branch_span = self.span_since(origin);
+                    left = self.located(branch_span, left);
+                }
                 self.advance();
                 let test = self.expr(1)?;
                 let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
