@@ -81,6 +81,7 @@ class TestCase:
         self._method = methodName
         self._cleanups = []
         self._result = None
+        self._type_equality_funcs = {}
 
     @classmethod
     def setUpClass(cls):
@@ -108,7 +109,17 @@ class TestCase:
                     message = str(msg)
             self.fail(message)
 
+    # Register an equality assertion for exactly this operand type.
+    def addTypeEqualityFunc(self, typeobj, function):
+        self._type_equality_funcs[typeobj] = function
+
     def assertEqual(self, a, b, msg=None):
+        if type(a) is type(b):
+            assertion = self._type_equality_funcs.get(type(a))
+            if assertion is not None:
+                if isinstance(assertion, str):
+                    assertion = getattr(self, assertion)
+                return assertion(a, b, msg=msg)
         if a == b:
             return None
         left = _representation(a)

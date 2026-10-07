@@ -113,6 +113,14 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                 use std::os::unix::ffi::OsStrExt as _;
                 std::env::current_dir().map(|here| octets(here.as_os_str().as_bytes())).map_err(|err| err.raw_os_error().unwrap_or(libc::EIO))
             }
+            "socket_hostbyaddr" => Ok(reverse_record(&params[0])?),
+            "socket_hostname" => {
+                let mut name = [0u8; 256];
+                match libc::gethostname(name.as_mut_ptr().cast(),name.len()) {
+                    0 => {let end=name.iter().position(|&unit| unit==0).unwrap_or(name.len());Ok(octets(&name[..end]))},
+                    _ => Err(errno()),
+                }
+            },
             "getpid" | "getuid" | "geteuid" | "getgid" | "getegid" => {
                 let ident = match operation.as_ref() { "getpid" => libc::getpid() as i64, "getuid" => libc::getuid() as i64, "geteuid" => libc::geteuid() as i64, "getgid" => libc::getgid() as i64, _ => libc::getegid() as i64 };
                 Ok(Value::Small(ident))
@@ -314,4 +322,78 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
     };
     let (error, result) = match answer {Err(code) => (code, Value::Nil), Ok(value) => (0, value)};
     Ok(Value::tuple(vec![Value::Small(error.into()), result]))
+}
+
+// Bind the platform reverse resolver and its diagnostic strings.
+unsafe extern "C" {
+    #[link_name = "hstrerror"]
+    fn resolver_message(number: libc::c_int) -> *const libc::c_char;
+    #[link_name = "gethostbyaddr_r"]
+    fn resolve_reverse(ip: *const libc::c_void, count: libc::socklen_t, domain: libc::c_int,
+        record: *mut libc::hostent, work: *mut libc::c_char, available: usize,
+        resolved: *mut *mut libc::hostent, diagnostic: *mut libc::c_int) -> libc::c_int;
+}
+
+// Gather canonical names, aliases and addresses from the host database.
+fn reverse_record(value: &Value) -> Result<Value, String> {
+    let query = CString::new(data_of(value)?).map_err(|_| String::from("ValueError: embedded null byte"))?;
+    unsafe {
+        let error_result = |category: i64, number: i32, message: *const libc::c_char| {
+            let diagnostic = if message.is_null() { Vec::new() } else { CStr::from_ptr(message).to_bytes().into() };
+            Value::tuple(vec![Value::Small(category),Value::Small(i64::from(number)),octets(diagnostic),Value::Nil])
+        };
+        let mut request = std::mem::zeroed::<libc::addrinfo>();
+        request.ai_socktype = libc::SOCK_STREAM;
+        request.ai_family = libc::AF_UNSPEC;
+        let mut records: *mut libc::addrinfo = std::ptr::null_mut();
+        let status = libc::getaddrinfo(query.as_ptr(),std::ptr::null(),&request,&mut records);
+        if status != 0 { return Ok(error_result(1,status,libc::gai_strerror(status))); }
+        if records.is_null() { return Ok(error_result(1,libc::EAI_NONAME,libc::gai_strerror(libc::EAI_NONAME))); }
+        let domain = (*records).ai_family;
+        let payload: Vec<u8> = match domain {
+            libc::AF_INET6 => (*(*records).ai_addr.cast::<libc::sockaddr_in6>()).sin6_addr.s6_addr.into(),
+            libc::AF_INET => {
+                let address = (*(*records).ai_addr.cast::<libc::sockaddr_in>()).sin_addr;
+                address.s_addr.to_ne_bytes().into()
+            }
+            _ => {libc::freeaddrinfo(records);return Ok(error_result(1,libc::EAI_FAMILY,libc::gai_strerror(libc::EAI_FAMILY)));}
+        };
+        libc::freeaddrinfo(records);
+        let mut scratch = vec![0u8; 8192];
+        let mut host = std::mem::zeroed::<libc::hostent>();
+        let mut returned: *mut libc::hostent = std::ptr::null_mut();
+        let mut problem = 0;
+        loop {
+            match resolve_reverse(payload.as_ptr().cast(),payload.len() as libc::socklen_t,domain,
+                &mut host,scratch.as_mut_ptr().cast(),scratch.len(),&mut returned,&mut problem) {
+                libc::ERANGE => {let next=scratch.len().checked_mul(2).ok_or("MemoryError: resolver buffer is too large")?;scratch.resize(next,0);}
+                _ => break,
+            }
+        }
+        if returned.is_null() { return Ok(error_result(2,problem,resolver_message(problem))); }
+        let mut nicknames = Vec::new();
+        if !host.h_aliases.is_null() {
+            let mut offset = 0;
+            while !(*host.h_aliases.add(offset)).is_null() {
+                let alias = CStr::from_ptr(*host.h_aliases.add(offset)).to_bytes();
+                nicknames.push(octets(alias)); offset += 1;
+            }
+        }
+        let mut numbers = Vec::new();
+        if !host.h_addr_list.is_null() {
+            let mut offset = 0;
+            while !(*host.h_addr_list.add(offset)).is_null() {
+                let address = std::slice::from_raw_parts((*host.h_addr_list.add(offset)).cast::<u8>(),host.h_length as usize);
+                let representation = match (host.h_addrtype,address.len()) {
+                    (libc::AF_INET,4) => std::net::Ipv4Addr::from(<[u8;4]>::try_from(address).unwrap()).to_string(),
+                    (libc::AF_INET6,16) => std::net::Ipv6Addr::from(<[u8;16]>::try_from(address).unwrap()).to_string(),
+                    _ => return Err(String::from("OSError: resolver returned an unsupported address family")),
+                };
+                numbers.push(octets(representation.into_bytes()));offset += 1;
+            }
+        }
+        let official = octets(CStr::from_ptr(host.h_name).to_bytes());
+        let resolved = Value::tuple(vec![official,Value::Vector(crate::tuples::Sequence::plain(nicknames)),Value::Vector(crate::tuples::Sequence::plain(numbers))]);
+        Ok(Value::tuple(vec![Value::Small(0),Value::Small(0),octets(Vec::new()),resolved]))
+    }
 }

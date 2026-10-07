@@ -363,7 +363,7 @@ class BytesIO(_BufferedIOBase):
             self.__dict__.update(attrs)
 
 class StringIO(_TextIOBase):
-    __slots__ = ('_text', '_pos', '_closed', '_newline', '_seen')
+    __slots__ = ('_text', '_chunks', '_length', '_pos', '_closed', '_newline', '_seen')
     @property
     def closed(self):
         if not hasattr(self, '_text'):
@@ -386,11 +386,17 @@ class StringIO(_TextIOBase):
         self._newline = newline
         self._seen = 0
         self._text = ''
+        self._chunks = []
+        self._length = 0
         self._pos = 0
         self._closed = False
         if initial_value:
             self.write(initial_value)
             self._pos = 0
+    def _materialize(self):
+        if self._chunks:
+            self._text += ''.join(self._chunks)
+            self._chunks = []
     def _translate(self, text):
         if self._newline in (None, ''):
             crlf = text.count('\r\n')
@@ -411,6 +417,7 @@ class StringIO(_TextIOBase):
         return (None, '\n', '\r', ('\r', '\n'), '\r\n', ('\n', '\r\n'), ('\r', '\r\n'), ('\r', '\n', '\r\n'))[self._seen]
     def getvalue(self):
         self._checkClosed()
+        self._materialize()
         return self._text
     def readable(self):
         self._checkClosed()
@@ -418,6 +425,8 @@ class StringIO(_TextIOBase):
     writable = readable
     seekable = readable
     def close(self):
+        self._chunks = []
+        self._length = 0
         self._text = ''
         self._closed = True
     def write(self, text):
@@ -428,14 +437,22 @@ class StringIO(_TextIOBase):
         if not n:
             return 0
         data = self._translate(text)
+        if self._pos == self._length:
+            self._chunks.append(data)
+            self._length += len(data)
+            self._pos = self._length
+            return n
+        self._materialize()
         if self._pos > len(self._text):
             self._text += '\0' * (self._pos - len(self._text))
         self._text = self._text[:self._pos] + data + self._text[self._pos + len(data):]
         self._pos += len(data)
+        self._length = len(self._text)
         return n
     def read(self, size=-1):
         size = _size(size)
         self._checkClosed()
+        self._materialize()
         end = len(self._text) if size < 0 else min(len(self._text), self._pos + size)
         if end <= self._pos:
             return ''
@@ -445,6 +462,7 @@ class StringIO(_TextIOBase):
     def readline(self, size=-1):
         size = _size(size)
         self._checkClosed()
+        self._materialize()
         if self._newline != '':
             start = self._pos
             end = len(self._text)
@@ -458,24 +476,23 @@ class StringIO(_TextIOBase):
                 end = min(end, start + size)
             self._pos = end
             return self._text[start:end]
-        data = self._text[self._pos:]
-        end = len(data)
-        if self._newline == '':
-            for i in range(len(data)):
-                if data[i] in ('\r', '\n'):
-                    end = i + 1
-                    if data[i:i + 2] == '\r\n':
-                        end += 1
-                    break
-        else:
-            nl = self._newline or '\n'
-            i = data.find(nl)
-            if i >= 0:
-                end = i + len(nl)
+        start = self._pos
+        length = len(self._text)
+        if start >= length:
+            return ''
+        cr = self._text.find('\r', start)
+        lf = self._text.find('\n', start)
+        stop = length
+        if cr >= 0 and (lf < 0 or cr < lf):
+            stop = cr + 1
+            if self._text[stop:stop + 1] == '\n':
+                stop += 1
+        elif lf >= 0:
+            stop = lf + 1
         if size >= 0:
-            end = min(end, size)
-        self._pos += end
-        return data[:end]
+            stop = min(stop, start + size)
+        self._pos = stop
+        return self._text[start:stop]
     def seek(self, pos, whence=0):
         pos = _ssize(pos)
         whence = _whence(whence)
@@ -488,7 +505,7 @@ class StringIO(_TextIOBase):
         else:
             if pos:
                 raise OSError("Can't do nonzero cur-relative seeks")
-            pos = self._pos if whence == 1 else len(self._text)
+            pos = self._pos if whence == 1 else self._length
         self._pos = pos
         return pos
     def tell(self):
@@ -499,10 +516,13 @@ class StringIO(_TextIOBase):
         self._checkClosed()
         if size < 0:
             raise ValueError('Negative size value ' + str(size))
+        self._materialize()
         self._text = self._text[:size]
+        self._length = len(self._text)
         return size
     def __getstate__(self):
         self._checkClosed()
+        self._materialize()
         return self._text, self._newline, self._pos, self.__dict__.copy()
     def __setstate__(self, state):
         if getattr(self, '_closed', False):
@@ -519,6 +539,7 @@ class StringIO(_TextIOBase):
             raise TypeError('fourth item of state should be a dict')
         StringIO.__init__(self, '', newline)
         self._text = text
+        self._length = len(text)
         self._pos = pos
         if attrs is not None:
             self.__dict__.update(attrs)

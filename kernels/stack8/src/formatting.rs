@@ -178,6 +178,37 @@ impl Writer<'_> {
         }
     }
 
+    pub fn ascii_value(&self, value: &Value) -> Value {
+        let mut escaped = String::new();
+        for code in value.contents().text_codes().unwrap() {
+            match code {
+                0..=127 => escaped.push(char::from_u32(code).unwrap()),
+                128..=255 => escaped.push_str(&format!("\\x{code:02x}")),
+                256..=65535 => escaped.push_str(&format!("\\u{code:04x}")),
+                _ => escaped.push_str(&format!("\\U{code:08x}")),
+            }
+        }
+        Value::text(&escaped)
+    }
+
+    pub fn field_value(&self, value: &Value, spec: &str, conversion: &str) -> Result<Value> {
+        let held = value.contents();
+        if self.lang.python_numbers && matches!(held, Value::Codepoints(_)) && matches!(conversion, "" | "s") {
+            // Read the same string specification as the scalar-text path.
+            self.field(&Value::text(""), spec, "")?;
+            let rule = self.parse(spec, &Value::text(""))?;
+            let mut row = held.text_codes().unwrap();
+            row.truncate(rule.precision.unwrap_or(row.len()));
+            let extra = rule.width.saturating_sub(row.len());
+            let before = match rule.align { '>' => extra, '^' => extra / 2, _ => 0 };
+            let mut written = vec![rule.fill as u32; before];
+            written.extend(row);
+            written.resize(written.len() + extra - before, rule.fill as u32);
+            return Ok(Value::from_codes(written));
+        }
+        self.field(&held, spec, conversion).map(|s| Value::text(&s))
+    }
+
     pub fn field(&self, value: &Value, spec: &str, conversion: &str) -> Result<String> {
         if matches!(value, Value::Bond(_) | Value::Collection(..) | Value::View(_)) { return self.field(&value.contents(), spec, conversion); }
         if !conversion.is_empty() {
@@ -413,19 +444,19 @@ impl Writer<'_> {
     /// field before the writer takes it, because a thing of the
     /// program's own is written by methods only the caller can run; a
     /// caller that hands the field back gets the writer's own marks.
-    pub fn template(&self, text: &str, args: &[(Option<String>, Value)], offered: &mut Offer<'_>) -> Result<String> {
+    pub fn template(&self, text: &str, args: &[(Option<String>, Value)], offered: &mut Offer<'_>) -> Result<Value> {
         self.fill_template(text, args, &mut 0, &mut false, 0, offered)
     }
 
-    fn fill_template(&self, text: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool, depth: usize, offered: &mut Offer<'_>) -> Result<String> {
+    fn fill_template(&self, text: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool, depth: usize, offered: &mut Offer<'_>) -> Result<Value> {
         if depth > 2 { return Err(self.fault("ext.text.format.recursion", &[])); }
         let chars: Vec<char> = text.chars().collect();
         let mut at = 0;
-        let mut out = String::new();
+        let mut out = Vec::<u32>::new();
         while let Some(&c) = chars.get(at) {
             at += 1;
-            if !matches!(c, '{' | '}') { out.push(c); continue; }
-            if chars.get(at) == Some(&c) { out.push(c); at += 1; continue; }
+            if !matches!(c, '{' | '}') { out.push(c as u32); continue; }
+            if chars.get(at) == Some(&c) { out.push(c as u32); at += 1; continue; }
             if c == '}' { return Err(self.fault("ext.text.format.brace.close", &[])); }
             if depth == 2 { return Err(self.fault("ext.text.format.recursion", &[])); }
             let from = at;
@@ -476,16 +507,16 @@ impl Writer<'_> {
                     if c == '}' { nested -= 1; }
                     at += 1;
                 }
-                spec = self.fill_template(&chars[from..at].iter().collect::<String>(), args, next, manual, depth + 1, offered)?;
+                spec = self.fill_template(&chars[from..at].iter().collect::<String>(), args, next, manual, depth + 1, offered)?.plain();
             }
             if chars.get(at) != Some(&'}') { return Err(self.fault("ext.text.format.brace.open", &[])); }
             at += 1;
             match offered(&value, FieldRequest::Render(&spec, &conversion))? {
-                Some(written) => out.push_str(&written.plain()),
-                None => out.push_str(&self.field(&value, &spec, &conversion)?),
+                Some(written) => out.extend(written.contents().text_codes().ok_or_else(|| self.fault("ext.text.format.unready", &[]))?),
+                None => out.extend(self.field_value(&value, &spec, &conversion)?.text_codes().unwrap()),
             }
         }
-        Ok(out)
+        Ok(Value::from_codes(out))
     }
 
     fn lookup(&self, name: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool, offered: &mut Offer<'_>) -> Result<Value> {

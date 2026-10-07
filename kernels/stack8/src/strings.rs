@@ -318,7 +318,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     if matches!(op, Split | Rsplit) && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
         && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
         return crate::methods::call(&args[0], if op == Rsplit { "rsplit" } else { "split" }, &args[1..], &[], words,
-            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"));
+            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), lang.allow_cycles);
     }
     if op == Maketrans {
         return translated_table(args,lang);
@@ -330,6 +330,23 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     if args.iter().any(|value| matches!(value, Value::Codepoints(_)) || matches!(value, Value::Tuple(row) if row.iter().any(|item| matches!(item, Value::Codepoints(_))))) {
         let codes=match args.first(){Some(Value::Codepoints(row))=>row.clone(),Some(Value::Text(word))=>Rc::new(word.chars().map(u32::from).collect()),_=>return Err(fault(lang,"receiver"))};
         let code_row=|value:&Value| -> Result<Vec<u32>,String> {match value {Value::Text(text)=>Ok(text.chars().map(u32::from).collect()),Value::Codepoints(row)=>Ok(row.to_vec()),_=>Err(format!("TypeError: must be str, not {}",value.core_kind()))}};
+
+        if op == Splitlines {
+            if args.len() > 2 { return Err(fault(lang, "arguments")); }
+            let keep = args.get(1).map_or(Ok(0), |v| integer(v, lang))? != 0;
+            let mut lines = Vec::new(); let mut start = 0; let mut index = 0;
+            while index < codes.len() {
+                let at = index; let unit = codes[index]; index += 1;
+                if matches!(unit, 10 | 13 | 11 | 12 | 28 | 29 | 30 | 133 | 8232 | 8233) {
+                    if unit == 13 && codes.get(index) == Some(&10) { index += 1; }
+                    lines.push(Value::from_codes(codes[start..if keep { index } else { at }].to_vec()));
+                    start = index;
+                }
+            }
+            if start < codes.len() { lines.push(Value::from_codes(codes[start..].to_vec())); }
+            return Ok(Value::array(lines));
+        }
+
         if matches!(op, Strip | Lstrip | Rstrip) {
             let word = match op { Strip => "strip", Lstrip => "lstrip", _ => "rstrip" };
             if args.len() > 2 { return Err(format!("TypeError: {word} expected at most 1 argument, got {}", args.len() - 1)); }
@@ -579,7 +596,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 if matches!(op,Index|Rindex) {return Err(fault(lang,"missing"));}
                 return Ok(Value::Small(-1));
             }
-            if s.is_ascii() && matches!(op, Count | Find | Rfind | Index | Rindex) {
+            if (if lang.python_numbers { Value::text_ascii(source) } else { s.is_ascii() }) && matches!(op, Count | Find | Rfind | Index | Rindex) {
                 let size = s.len();
                 let trim = |value: i64| if value < 0 { (size as i64).saturating_add(value).max(0) as usize } else { value as usize };
                 let lower = trim(match params.get(1) { None | Some(Value::Null) => 0, Some(value) => integer(value, lang)? });
@@ -663,6 +680,12 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
+            // Keep the sole exact str object; subclass elements still need a base str.
+            if lang.python_numbers && items.len() == 1 {
+                if matches!(items[0], Value::Text(_) | Value::Codepoints(_)) {
+                    return Ok(items[0].clone());
+                }
+            }
             let separator: Vec<u32> = s.chars().map(u32::from).collect();
             let mut joined = Vec::new();
             for (i, item) in items.iter().enumerate() {
@@ -714,7 +737,9 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         let mut entries = cache.borrow_mut();
         let address = text.as_ptr() as usize;
         if let Some((_, length)) = entries.get(&address) { return *length; }
-        if entries.len() >= 1024 { entries.retain(|_, (text, _)| text.strong_count() != 0); }
+        // Weak str owners retain the allocation itself; discard dead buffers promptly.
+        entries.retain(|_, (owner, _)| owner.strong_count() != 0);
+        if entries.len() >= 16 { entries.clear(); }
         let count = text.chars().count();
         entries.insert(address, (Rc::downgrade(text), count));
         count

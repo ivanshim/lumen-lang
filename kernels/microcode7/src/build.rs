@@ -10010,7 +10010,7 @@ impl<'a> Builder<'a> {
             }
             // Resolve a shadowed owner before calling an entry whose full
             // dotted spelling would otherwise select a native primitive.
-            Shape::Bare if table.prims.get(&t.lexeme) == Some(&Prim::ValueMethod)
+            Shape::Bare if table.prims.contains_key(&t.lexeme)
                 && t.lexeme.split_once('.').is_some_and(|(kind, _)| self.uses_bound_callable(kind)) => {
                 self.advance();
                 let (kind, entry) = t.lexeme.split_once('.').expect("native entry spelling");

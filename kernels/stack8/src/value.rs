@@ -981,6 +981,29 @@ impl Value {
             many => Self::tuple_text(many, sp),
         })
     }
+    /// Repeated bounds on immutable text need not recheck every byte.
+    /// Weak references keep addresses distinct without retaining owners.
+    pub fn text_ascii(text: &Rc<str>) -> bool {
+        if text.len() < 256 { return text.is_ascii(); }
+        thread_local! {
+            static ASCII_FLAGS: RefCell<std::collections::VecDeque<(std::rc::Weak<str>, bool)>> = RefCell::new(std::collections::VecDeque::new());
+        }
+        ASCII_FLAGS.with(|saved| {
+            let mut entries = saved.borrow_mut();
+            entries.retain(|(owner, _)| owner.strong_count() != 0);
+            if let Some(at) = entries.iter().position(|(owner, _)| std::ptr::eq(owner.as_ptr(), Rc::as_ptr(text))) {
+                let entry = entries.remove(at).unwrap();
+                let answer = entry.1;
+                entries.push_front(entry);
+                return answer;
+            }
+            let answer = text.is_ascii();
+            entries.push_front((Rc::downgrade(text), answer));
+            entries.truncate(16);
+            answer
+        })
+    }
+
     pub fn text_codes(&self) -> Option<Vec<u32>> {
         match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
     }

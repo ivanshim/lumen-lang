@@ -1,6 +1,7 @@
 # Host primitives used by class bodies need non-private module bindings.
 _host_stream_read = __stream_read
 _host_stream_write = __stream_write
+_host_environment = __posix
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
@@ -27,7 +28,7 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 modules = {}
 _recursion_limit = 1000
 
-# Stub: startup flags describe the fixed library environment.
+# Startup flags describe the library environment and requested development mode.
 class _Flags:
     debug = 0
     inspect = 0
@@ -42,7 +43,7 @@ class _Flags:
     quiet = 0
     hash_randomization = 0
     isolated = 1
-    dev_mode = False
+    dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
     safe_path = True
