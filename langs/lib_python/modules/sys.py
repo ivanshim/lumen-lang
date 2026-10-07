@@ -6,10 +6,35 @@ _host_stream_write = __stream_write
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# The isolated default contains the library's own source location.
-# Callers add other directories explicitly; a program's directory is not
-# placed ahead of the embedded library merely because it contains a script.
+# Keep the safe-path default without implicitly adding the script directory.
+# Explicit PYTHONPATH entries precede the embedded library in their given order.
+# Normalize a POSIX search entry against the startup directory.
+def _absolute_search_entry(entry, cwd):
+    if not entry.startswith('/'):
+        entry = cwd + '/' + entry
+    prefix = '//' if entry.startswith('//') and not entry.startswith('///') else '/'
+    pieces = []
+    for piece in entry.split('/'):
+        if piece in ('', '.'):
+            continue
+        if piece == '..':
+            if pieces:
+                pieces.pop()
+        else:
+            pieces.append(piece)
+    return prefix + '/'.join(pieces)
+
+
 path = [__file__.rsplit('/', 1)[0]]
+_path_host = __host_info()
+_python_path = _path_host[3].get('PYTHONPATH', '')
+if _python_path:
+    _search_paths = []
+    for _entry in _python_path.split(':') + path:
+        _entry = _absolute_search_entry(_entry, _path_host[0])
+        if _entry not in _search_paths:
+            _search_paths.append(_entry)
+    path = _search_paths
 maxsize = 9223372036854775807
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'
@@ -39,12 +64,12 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 1
+    ignore_environment = 0
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 1
+    isolated = 0
     dev_mode = False
     utf8_mode = 1
     warn_default_encoding = 0
