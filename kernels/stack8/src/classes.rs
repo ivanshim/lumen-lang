@@ -3474,6 +3474,9 @@ impl<'a> Engine<'a> {
                 else { None };
             if let Some(tag) = tag { return Ok(Self::adapter(tag, if matches!(tag,11|12) {vec![Value::text("type")]} else {vec![]})); }
         }
+        if matches!(raw, Value::Bytes(..)) {
+            if let Some(method) = self.builtin_member(&subject, name)? { return Ok(method); }
+        }
         if matches!(&subject, Value::ByteKind(..)) {
             if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
         }
@@ -3829,6 +3832,12 @@ impl<'a> Engine<'a> {
                             if let Some((_, value)) = view.fields.borrow().iter().find(|(key, held)| key.as_str() == name && !matches!(held.contents(), Value::Blank)) { return Ok(value.clone()); }
                         }
                         _ => {}
+                    }
+                }
+                if o.fields.borrow().iter().any(|(word,_)| word == "\0keys") {
+                    let key = self.special_key(&Value::text(name))?;
+                    for (stored, held) in self.fields_entries(o) {
+                        if self.special_keys_equal(&stored, &key)? { return Ok(held); }
                     }
                 }
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,v)| n==name && !matches!(v.contents(), Value::Blank)) {return Ok(v.clone());}

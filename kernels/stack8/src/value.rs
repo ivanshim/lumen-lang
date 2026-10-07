@@ -1262,6 +1262,7 @@ impl Value {
             (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
             (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Flag(x), Value::Flag(y)) => x == y,
             (Value::Null, Value::Null) => true,

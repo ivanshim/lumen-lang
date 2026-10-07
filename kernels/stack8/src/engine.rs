@@ -1502,7 +1502,7 @@ impl<'a> Engine<'a> {
         let root = Rc::new(Class { outline: Some(format!("<class '{}'>", lang.class_details.get("root").and_then(|v| v.first()).cloned().unwrap_or_default())),
             name: lang.class_details.get("root").and_then(|v| v.first()).cloned().unwrap_or_default(),
             direct: std::cell::RefCell::new(vec![]), lineage: std::cell::RefCell::new(vec![]), base: std::cell::RefCell::new(None), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            methods: vec![], constants: vec![], shared: RefCell::new(Self::builtin_kind_doc(lang.class_details.get("root").and_then(|words|words.first()).map_or("",String::as_str)).map(|doc|vec![(lang.class_details.get("doc").and_then(|words|words.first()).cloned().unwrap_or_default(),Value::text(doc))]).unwrap_or_default()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let native_exceptions = Self::exception_classes(&lang.exceptions, &root);
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
@@ -6059,7 +6059,7 @@ impl<'a> Engine<'a> {
         Value::text(spelling).core_hash().map(Value::Small)
     }
 
-    fn special_key(&mut self, key: &Value) -> Res<Value> {
+    pub(super) fn special_key(&mut self, key: &Value) -> Res<Value> {
         if !self.lang.class_special.is_empty() {
             if let Some(hash) = Self::python_constructor_hash(key) {
                 return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
@@ -6072,7 +6072,7 @@ impl<'a> Engine<'a> {
         Ok(key.clone())
     }
 
-    fn special_keys_equal(&mut self, a: &Value, b: &Value) -> Res<bool> {
+    pub(super) fn special_keys_equal(&mut self, a: &Value, b: &Value) -> Res<bool> {
         // A key is found by the very thing before anything is asked of it.
         if a.same_place(b) { return Ok(true); }
         let (left, right) = match (a, b) {
@@ -9856,7 +9856,7 @@ impl<'a> Engine<'a> {
     /// The entries a thing's own dictionary shows: the names it holds
     /// as text, in order, and then the keys of any other kind kept
     /// beside them under the hidden name `\0keys`.
-    fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
+    pub(super) fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let fields = o.fields.borrow();
         // A name read out of a thing's dictionary stands for the value
@@ -24210,7 +24210,21 @@ impl Engine<'_> {
             _ => true,
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|base| self.type_base(base)).collect::<Flow<Vec<_>>>()? };
-        let factory = if custom { requested } else { self.maker_in_force(asked, &parents)?.map(Value::Class) };
+        let factory = if custom {
+            match requested {
+                Some(Value::Class(mut candidate)) => {
+                    for base in &plain {
+                        let actual = self.call_held(self.kind_maker_word(), vec![base.clone()])?;
+                        let other = self.type_base(&actual)?;
+                        if Rc::ptr_eq(&candidate, &other) || candidate.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, &other)) { continue; }
+                        if other.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, &candidate)) { candidate = other; }
+                        else { return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".into()); }
+                    }
+                    Some(Value::Class(candidate))
+                }
+                callable => callable,
+            }
+        } else { self.maker_in_force(asked, &parents)?.map(Value::Class) };
         let bases = Value::tuple(plain);
         let namespace = if let Some(factory) = &factory {
             let word = self.class_word("prepare").to_owned();

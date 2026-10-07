@@ -180,6 +180,7 @@ impl Value {
             (Self::Set(a), Self::Set(b)) => Rc::ptr_eq(a, b),
             (Self::Text(a), Self::Text(b)) => Rc::ptr_eq(a, b),
             (Self::Thing(a), Self::Thing(b)) => Rc::ptr_eq(a, b),
+            (Self::Octets { cell: here, .. }, Self::Octets { cell: there, .. }) => Rc::ptr_eq(here, there),
             (Self::Small(a), Self::Small(b)) => a == b,
             (Self::Flag(a), Self::Flag(b)) => a == b,
             (Self::Nil, Self::Nil) => true,
@@ -209,6 +210,18 @@ impl Value {
             Self::Octets { cell, changeable: false, .. } => {
                 let letters = cell.borrow().iter().copied().map(char::from).collect::<String>();
                 return Self::text(&letters).hash_number();
+            }
+            Self::Member(owner, operation) => {
+                let identity = match owner.as_ref() {
+                    Self::Mutable(place, _) => std::rc::Rc::as_ptr(place) as usize / 16,
+                    Self::Vector(row) => std::rc::Rc::as_ptr(row) as usize / 16,
+                    Self::Dict(pairs) => std::rc::Rc::as_ptr(pairs) as usize / 16,
+                    Self::Set(group) => std::rc::Rc::as_ptr(group) as usize / 16,
+                    Self::Thing(thing) => std::rc::Rc::as_ptr(thing) as usize / 16,
+                    Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    value => value.hash_number()? as usize,
+                };
+                identity as i64 ^ Self::text(operation).hash_number()?
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
             Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),

@@ -3959,6 +3959,9 @@ impl<'a> Machine<'a> {
             }
         }
         // A native kind's word read as a class: its maker, and its name.
+        if matches!(value.settled(), Value::Octets { .. }) {
+            if let Some(found) = self.attribute(&value, key) { return Ok(found); }
+        }
         if matches!(&value, Value::OctetKind { .. }) {
             if let Some(member) = self.carried_by_kind(&value, key) { return Ok(member); }
         }
@@ -4377,6 +4380,14 @@ impl<'a> Machine<'a> {
                     for (word, item) in entries.iter() {
                         if matches!(word, Value::Text(word) if word.as_ref() == key) { return Ok(item.clone()); }
                     }
+                }
+            }
+            let extended = t.holds.borrow().iter().any(|entry| entry.0 == "\0keys");
+            if extended {
+                let target = self.hash_key(&Value::text(key))?;
+                let contents = self.attribute_entries(t);
+                for entry in contents {
+                    if self.keys_agree(&entry.0, &target)? { return Ok(entry.1); }
                 }
             }
             let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());

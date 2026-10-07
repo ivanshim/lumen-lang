@@ -1808,7 +1808,7 @@ impl<'a> Machine<'a> {
         let root_title = table.single("ext.stmt.class.detail.root").unwrap_or_default().to_owned();
         let ancestor = Rc::new(Blueprint { presentation: Some(format!("<class '{root_title}'>")), name: root_title,
             parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), under: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
-            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Self::builtin_kind_doc(table.single("ext.stmt.class.detail.root").unwrap_or_default()).into_iter().map(|text|(table.single("ext.stmt.class.detail.doc").unwrap_or_default().to_owned(),Value::text(text))).collect()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let fault_kinds = Self::given_faults(table, &ancestor);
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = fault_kinds.get(word) { outermost.cells.borrow_mut()[i] = value.clone(); }
@@ -13384,7 +13384,7 @@ impl<'a> Machine<'a> {
         Some(Value::Small(Value::text(name).hash_number()?))
     }
 
-    fn hash_key(&mut self, value: &Value) -> Result<Value, String> {
+    pub(super) fn hash_key(&mut self, value: &Value) -> Result<Value, String> {
         if self.rules.has_any_ext_stmt_class_special {
             if let Some(number) = Self::constructor_hash(value) {
                 return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));
@@ -13396,7 +13396,7 @@ impl<'a> Machine<'a> {
         } else { Ok(value.clone()) }
     }
 
-    fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
+    pub(super) fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
         // A key is found by the very thing before anything is asked of it.
         if first.one_place(second) { return Ok(true); }
         let objects = match (first, second) {
@@ -14245,7 +14245,7 @@ impl<'a> Machine<'a> {
     /// The entries a thing's own dictionary shows: the names it keeps
     /// as text, in order, and then the keys of any other kind kept
     /// beside them under the hidden name `\0keys`.
-    fn attribute_entries(&self, t: &Rc<Thing>) -> Vec<(Value, Value)> {
+    pub(super) fn attribute_entries(&self, t: &Rc<Thing>) -> Vec<(Value, Value)> {
         let namespace = self.namespace_holding(&Value::Thing(t.clone())).is_some();
         let holds = t.holds.borrow();
         // A name read out of a thing's dictionary stands for the value
@@ -24747,7 +24747,19 @@ impl<'a> Machine<'a> {
             _ => true,
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|value| self.parent_from_type(value)).collect::<Result<Vec<_>, _>>()? };
-        let factory = if custom { requested } else { self.builder_for(asked, &parents)?.map(Value::Blueprint) };
+        let factory = if let (true, Some(Value::Blueprint(initial))) = (custom, requested.as_ref()) {
+            let mut choice = initial.clone();
+            for value in plain.iter() {
+                let kind = self.apply_held(self.kind_builder_word(), vec![value.clone()])?;
+                let parent_builder = self.parent_from_type(&kind)?;
+                let already_covers = Rc::ptr_eq(&choice, &parent_builder) || choice.ancestry().iter().any(|held| Rc::ptr_eq(held, &parent_builder));
+                if !already_covers {
+                    if parent_builder.ancestry().iter().any(|held| Rc::ptr_eq(held, &choice)) { choice = parent_builder; }
+                    else { return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".to_owned().into()); }
+                }
+            }
+            Some(Value::Blueprint(choice))
+        } else if custom { requested } else { self.builder_for(asked, &parents)?.map(Value::Blueprint) };
         let bases = Value::tuple(plain);
         let namespace = if let Some(factory) = &factory {
             let word = self.detail("prepare").to_owned();

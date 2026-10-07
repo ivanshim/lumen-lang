@@ -190,6 +190,19 @@ impl Value {
                 let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
                 Value::text(&text).core_hash()
             }
+            Value::ValueMethod(bound) => {
+                let receiver = match &bound.0 {
+                    Value::Binding(cell) | Value::Bond(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Collection(cell, _) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Array(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Map(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Set(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Bytes(cell, ..) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    other => other.core_hash()?,
+                };
+                Some(finish(receiver ^ Value::text(&bound.1).core_hash()?))
+            }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
