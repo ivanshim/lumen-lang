@@ -7045,6 +7045,9 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Value::View(Rc::new((view.0.clone(), "mapping".to_string())))); }
         }
         let numeric = matches!(target.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) | Value::Complex(_));
+        if numeric && self.lang.bind_names && !crate::methods::answered(&target, operation) {
+            return Err(self.member_amiss(&target, operation));
+        }
         if numeric && matches!(operation, "numerator" | "denominator" | "real" | "imag") {
             return match target.contents() {
                 Value::Complex(z) => Ok(crate::complex::real(if operation == "real" { z.real } else { z.imag })),
@@ -10823,7 +10826,10 @@ impl<'a> Engine<'a> {
                     for (old, held) in self.fields_entries(o) {
                         if self.special_keys_equal(&old, &key)? { found = true; } else { kept.push((old, held)); }
                     }
-                    if !found { return Err(self.special_fault().into()); }
+                    if !found {
+                        let absent = if self.lang.exceptions.is_empty() { self.special_fault() } else { self.key_absent(&named) };
+                        return Err(absent.into());
+                    }
                     self.fields_restore(o, kept);
                     self.drop_top()?;
                     self.data.push(Value::Null);

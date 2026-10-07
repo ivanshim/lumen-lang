@@ -3913,6 +3913,18 @@ impl<'a> Machine<'a> {
                 return Ok(Self::wrap(135, vec![Value::tuple(vec![restore, Value::tuple(vec![receiver, Value::text(&word)])])]));
             }
         }
+        if self.table.single("ext.stmt.annotation.adapter") == Some(key) {
+            if let Value::Wrapped(44, stored) = &value {
+                if stored.len() == 1 {
+                    let rows = match &stored[0] {
+                        Value::Blueprint(class) => class.shared.borrow().iter().find_map(|(word, held)|
+                            (word == crate::data::ANNOTATE_WORD).then(|| held.settled())).unwrap_or_else(|| Value::Vector(crate::tuples::Sequence::plain(Vec::new()))),
+                        rows => rows.clone(),
+                    };
+                    return Ok(rows);
+                }
+            }
+        }
         if let Value::Wrapped(14, arguments) = &value {
             if key == self.detail("receiver") {
                 if let Some(owner) = self.kind_by_word(&arguments[0].bare()) { return Ok(owner); }
@@ -4803,7 +4815,8 @@ impl<'a> Machine<'a> {
                     };
                 }
                 let carried=key==self.detail("module")||key==self.detail("qualified")||key==self.detail("name")||key==self.detail("doc")
-                    || self.rules.words_ext_stmt_class_annotations.first().map_or(false,|word|word==key);
+                    || self.rules.words_ext_stmt_class_annotations.first().map_or(false,|word|word==key)
+                    || self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word| word == key);
                 if carried { return self.read_class_member(items[0].clone(),key,true); }
             }
             // A method bound to its thing answers for the thing and the

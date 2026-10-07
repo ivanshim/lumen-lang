@@ -6397,7 +6397,7 @@ impl<'a> Machine<'a> {
                     for (stored, held) in self.attribute_entries(t) {
                         if self.keys_agree(&stored, &wanted)? { found = true; } else { kept.push((stored, held)); }
                     }
-                    if !found { return Err(self.bad_answer().into()); }
+                    if !found { return Err(self.absent_key(&named).into()); }
                     self.attribute_restore(t, kept);
                     return Ok(Value::Nil);
                 }
@@ -9721,6 +9721,11 @@ impl<'a> Machine<'a> {
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
     pub(super) fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+        if self.table.flag("ext.syntax.call.bind_names")
+            && matches!(receiver.settled(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_) | Value::Complex(_))
+            && !crate::members::answers_to(&receiver, operation) {
+            return Err(self.member_missing(&receiver, operation).into());
+        }
         if operation == "__index__" {
             if self.native_place(&receiver, operation).is_none() {
                 return Err(self.member_missing(&receiver, operation).into());
@@ -16927,7 +16932,7 @@ impl<'a> Machine<'a> {
                 for (stored, held) in self.attribute_entries(t) {
                     if self.keys_agree(&stored, &wanted)? { found = true; } else { kept.push((stored, held)); }
                 }
-                if !found { return Err(self.bad_answer()); }
+                if !found { return Err(self.absent_key(key)); }
                 self.attribute_restore(t, kept);
                 one.clone()
             }

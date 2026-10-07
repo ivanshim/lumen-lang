@@ -3403,6 +3403,13 @@ impl<'a> Engine<'a> {
         }
         if let Value::Adapter(entry) = &subject {
             let w = entry;
+            if entry.0 == 44 && entry.1.len() == 1 && self.lang.annotation_adapter.first().is_some_and(|word| word == name) {
+                return Ok(match &entry.1[0] {
+                    Value::Class(owner) => owner.shared.borrow().iter().find(|(key, _)| key == crate::code::ANNOTATE_WORD)
+                        .map(|(_, rows)| rows.contents()).unwrap_or_else(|| Value::array(Vec::new())),
+                    rows => rows.clone(),
+                });
+            }
             if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
                 if name == self.class_word("name") { return Ok(w.1[0].clone()); }
                 if name == "__objclass__" { return Ok(w.1[1].clone()); }
@@ -4237,7 +4244,8 @@ impl<'a> Engine<'a> {
                 let inner=w.1[0].clone();
                 let carried=[self.class_word("module"),self.class_word("qualified"),self.class_word("name"),self.class_word("doc")];
                 let copied=carried.iter().any(|word|!word.is_empty()&&*word==name)
-                    || self.lang.class_annotations.first().map_or(false,|word|word==name);
+                    || self.lang.class_annotations.first().map_or(false,|word|word==name)
+                    || self.lang.class_details.get("code.fields").and_then(|fields| fields.get(10)).is_some_and(|word| word == name);
                 if copied { return self.class_get(inner,name,true); }
             }
             Value::Adapter(w) if w.0 == 143 => {

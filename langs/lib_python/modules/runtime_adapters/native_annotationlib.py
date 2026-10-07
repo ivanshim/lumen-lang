@@ -716,8 +716,10 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
     try:
         return annotate(format)
     except NotImplementedError:
-        if format == Format.FORWARDREF and isinstance(owner, type) and not isinstance(annotate, types.FunctionType):
-            rows = getattr(owner, '__native_annotation_rows__', None)
+        if format == Format.FORWARDREF and not isinstance(annotate, types.FunctionType):
+            rows = getattr(annotate, '__native_annotation_rows__', None)
+            if rows is None and isinstance(owner, type):
+                rows = getattr(owner, '__native_annotation_rows__', None)
             if rows is not None:
                 return _native_annotation_rows(rows, owner)
     if format == Format.STRING:

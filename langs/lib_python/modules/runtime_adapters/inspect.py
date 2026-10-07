@@ -1,5 +1,6 @@
 # Source: CPython Lib/inspect.py unwrap at v3.14.8 / 8e6e75d9102e; PSF License.
 import sys
+import re
 
 def unwrap(func, *, stop=None):
     """Get the object wrapped by *func*.
