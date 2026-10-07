@@ -59,7 +59,9 @@ class ZipFile:
         if self._file is None:
             return
         out = self._file
+        records = []
         for arcname, data in self._entries:
+            records.append((arcname, data, out.tell()))
             name = arcname.encode("utf-8")
             crc = zlib.crc32(data) & 0xffffffff
             header = struct.pack(
@@ -71,13 +73,13 @@ class ZipFile:
             out.write(name)
             out.write(data)
         directory_offset = out.tell()
-        for arcname, data in self._entries:
+        for arcname, data, header_offset in records:
             name = arcname.encode("utf-8")
             crc = zlib.crc32(data) & 0xffffffff
             header = struct.pack(
                 "<4sHHHHHHIIIHHHHHII",
                 b"PK\x01\x02", 20, 20, 0, 0, 0, 0,
-                crc, len(data), len(data), len(name), 0, 0, 0, 0, 0, 0,
+                crc, len(data), len(data), len(name), 0, 0, 0, 0, 0, header_offset,
             )
             out.write(header)
             out.write(name)

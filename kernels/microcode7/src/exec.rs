@@ -22254,6 +22254,8 @@ impl<'a> Machine<'a> {
             let place = if let Value::Small(n) = at {
                 let n = if *n < 0 { row.len() as i128 + i128::from(*n) } else { i128::from(*n) };
                 usize::try_from(n).ok()
+            } else if self.works_sequences() && matches!(at, Value::Flag(_)) {
+                at.as_big()?.to_usize()
             } else { as_index(at).ok() };
             return place.and_then(|p| row.get(p)).cloned().ok_or_else(|| format!("\0{}: {}", self.table.strings("ext.system.fault.class.index").first().map(String::as_str).unwrap_or_default(), self.table.strings("ext.system.fault.index").first().map(String::as_str).unwrap_or_default()));
         }
@@ -23015,9 +23017,6 @@ fn as_index(v: &Value) -> Result<usize, String> {
     match v {
         Value::Small(i) => usize::try_from(*i).map_err(|_| "Array index out of bounds".to_string()),
         Value::Huge(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
-        // True and False are the two integers they spell, as the
-        // reference reads them wherever a place is asked for.
-        Value::Flag(b) => Ok(usize::from(*b)),
         _ => Err("Array index must be a number".to_string()),
     }
 }

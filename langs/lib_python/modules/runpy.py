@@ -16,45 +16,61 @@ class _Spec:
         self.parent = parent
 
 
+# Normalize sys.path entries without changing their search order.
 def _search_directories():
-    # The directories a module is looked for in, in order: the current
-    # directory first (where -m puts its own first path entry), then the
-    # module search path, each entry made absolute and kept once. A name
-    # that names the current directory over again is not searched twice.
     seen = []
-    for entry in [os.getcwd()] + list(sys.path):
-        if not entry:
-            continue
-        entry = entry if os.path.isabs(entry) else os.path.normpath(os.path.join(os.getcwd(), entry))
+    for entry in sys.path:
+        entry = os.path.abspath(entry or os.curdir)
         if entry not in seen:
             seen.append(entry)
     return seen
 
 
+# Resolve one module component, initializing regular packages when selected.
+def _find_component(name, directories):
+    leaf = name.rpartition(".")[2]
+    namespaces = []
+    for directory in directories:
+        package_dir = os.path.join(directory, leaf)
+        initializer = os.path.join(package_dir, "__init__.py")
+        if os.path.isfile(initializer):
+            package = __import__(name, fromlist=["__path__"])
+            return None, list(package.__path__)
+        candidate = os.path.join(directory, leaf + ".py")
+        if os.path.isfile(candidate):
+            return candidate, None
+        if os.path.isdir(package_dir):
+            namespaces.append(package_dir)
+    if namespaces:
+        return None, namespaces
+    raise ImportError("No module named " + name)
+
+
+# Resolve dotted names through each selected package's initialized path.
 def _get_module_details(mod_name):
-    # A dotted name resolved the way -m resolves it: the current
-    # directory first, then each directory on the module search path. A
-    # name ending in .__main__ names that submodule outright; any other
-    # name names a module file, or a package run through the __main__.py
-    # its directory carries.
+    directories = _search_directories()
+    parts = mod_name.split(".")
+    name = ""
+    for part in parts:
+        name = name + "." + part if name else part
+        loaded = sys.modules.get(name)
+        if loaded is not None and hasattr(loaded, "__path__"):
+            origin, directories = None, list(loaded.__path__)
+        else:
+            origin, package_path = _find_component(name, directories)
+            if package_path is not None:
+                directories = package_path
+        if origin is not None:
+            if name != mod_name:
+                raise ImportError("No module named " + mod_name + "; " + name + " is not a package")
+            return name, origin, name.rpartition(".")[0]
     if mod_name.endswith(".__main__"):
-        pkg = mod_name[: -len(".__main__")]
-        rel = pkg.replace(".", "/") + "/__main__.py"
-        for directory in _search_directories():
-            candidate = os.path.join(directory, rel)
-            if os.path.isfile(candidate):
-                return mod_name, candidate, pkg
-        raise ImportError("No module named " + mod_name)
-    rel = mod_name.replace(".", "/")
-    for directory in _search_directories():
-        candidate = os.path.join(directory, rel + ".py")
-        if os.path.isfile(candidate):
-            return mod_name, candidate, mod_name.rpartition(".")[0]
-    for directory in _search_directories():
-        candidate = os.path.join(directory, rel, "__main__.py")
-        if os.path.isfile(candidate):
-            return mod_name + ".__main__", candidate, mod_name
-    raise ImportError("No module named " + mod_name)
+        raise ImportError("Cannot use package as __main__ module")
+    main_name = mod_name + ".__main__"
+    origin, package_path = _find_component(main_name, directories)
+    if origin is None:
+        raise ImportError("Cannot use package as __main__ module")
+    return main_name, origin, mod_name
 
 
 def _run_module_as_main(mod_name, alter_argv=True):

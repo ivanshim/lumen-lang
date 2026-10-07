@@ -14762,6 +14762,7 @@ impl<'a> Engine<'a> {
             }
             let index = match at {
                 Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                Value::Flag(flag) if self.lang.sequence_values => Some(usize::from(*flag)),
                 _ => as_index(at).ok(),
             };
             return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| match self.lang.sequence_values {
@@ -21059,9 +21060,6 @@ fn as_index(v: &Value) -> Res<usize> {
     match v {
         Value::Small(n) => usize::try_from(*n).map_err(|_| "Array index out of bounds".to_string()),
         Value::Huge(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
-        // True and False are the two integers they spell, as the
-        // reference reads them wherever a place is asked for.
-        Value::Flag(b) => Ok(usize::from(*b)),
         _ => Err("Array index must be a number".to_string()),
     }
 }
