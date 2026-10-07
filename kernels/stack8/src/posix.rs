@@ -245,6 +245,33 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
             let mut data = vec![0u8; number(0)? as usize];
             match std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut data)) { Ok(()) => Ok(bytes(data)), Err(e) => Err(e.raw_os_error().unwrap_or(libc::EIO)) }
         },
+        "socketpair" => {
+            let mut fds = [0; 2];
+            if libc::socketpair(number(0)? as _, number(1)? as i32 | libc::SOCK_CLOEXEC, number(2)? as _, fds.as_mut_ptr()) < 0 {
+                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+            } else { Ok(Value::tuple(fds.into_iter().map(|fd| Value::Small(fd.into())).collect())) }
+        },
+        "socket_shutdown" => status(libc::shutdown(number(0)? as _, number(1)? as _) as i64),
+        "set_blocking" => {
+            let fd = number(0)? as i32;
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 { status(-1) } else {
+                let flags = if matches!(a[1].contents(), Value::Flag(true)) { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
+                status(libc::fcntl(fd, libc::F_SETFL, flags) as i64)
+            }
+        },
+        "poll" => {
+            let Value::Tuple(requests) = a[0].contents() else { return Err("TypeError: poll requests must be tuple".into()) };
+            let mut fds = Vec::new();
+            for request in requests.iter() {
+                let Value::Tuple(pair) = request.contents() else { return Err("TypeError: poll entry must be tuple".into()) };
+                fds.push(libc::pollfd { fd: integer(&pair[0])? as _, events: integer(&pair[1])? as _, revents: 0 });
+            }
+            let ready = libc::poll(fds.as_mut_ptr(), fds.len() as _, number(1)? as _);
+            if ready < 0 { status(-1) } else {
+                Ok(Value::tuple(fds.iter().filter(|fd| fd.revents != 0).map(|fd| Value::tuple(vec![Value::Small(fd.fd.into()), Value::Small(fd.revents.into())])).collect()))
+            }
+        },
         "socket" => status(libc::socket(number(0)? as i32, number(1)? as i32 | libc::SOCK_CLOEXEC, number(2)? as i32) as i64),
         "bind_unix" => {
             let name = raw(&a[1])?;

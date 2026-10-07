@@ -1760,17 +1760,18 @@ impl<'a> Machine<'a> {
                     44 => {
                         if values.len() != 1 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
                         let format = values[0].settled();
-                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
+                        let symbolic = matches!(format, Value::Small(3));
+                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(3)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
                         match &kept[0] {
-                            Value::Blueprint(owner) => self.resolve_blueprint_annotations(owner),
+                            Value::Blueprint(owner) => self.blueprint_annotation_values(owner, symbolic),
                             Value::Vector(rows) => {
                                 let mut annotations = Vec::new();
                                 for index in (0..rows.len()).step_by(2) {
                                     let Some(source) = rows.get(index + 1) else { break; };
                                     let source = source.settled();
                                     if matches!(source, Value::Unset) { continue; }
-                                    let found = match source { Value::Routine(_) | Value::Bound(..) => self.apply_class_member(source, Vec::new())?, other => other };
+                                    let found = self.annotation_entry(source, symbolic, None)?;
                                     annotations.push((rows[index].clone(), found));
                                 }
                                 let mapping = Value::Dict(Rc::new(annotations.into()));
@@ -3488,7 +3489,26 @@ impl<'a> Machine<'a> {
         b.shared.borrow_mut().push((word, made.clone()));
         Ok(made)
     }
+    fn annotation_entry(&mut self, worth: Value, symbolic: bool, declaring: Option<Rc<Blueprint>>) -> Res {
+        let spelling = match &worth { Value::Routine(code) | Value::Bound(code, _) => code.annotation_spelling.clone(), _ => None };
+        let result = match worth {Value::Routine(_)|Value::Bound(..)=>self.apply_class_member(worth,Vec::new()),other=>Ok(other)};
+        match result {
+            Err(away) if symbolic && spelling.is_some() && (matches!(&away, Escape::Error(message) if message.starts_with("NameError:"))
+                || matches!(&away, Escape::Thrown(Value::Thing(fault)) if self.stands_under(&fault.blueprint(), 10))) => {
+                let options = self.rules.words_ext_stmt_class_annotations.to_vec();
+                let namespace = self.load_namespace(&options[1])?;
+                let constructor = self.read_class_member(namespace, &options[2], false)?;
+                let unresolved = self.apply_class_member(constructor, vec![Value::text(spelling.as_deref().unwrap())])?;
+                self.alter_class_member(unresolved.clone(), &options[3], Some(declaring.clone().map_or(Value::Nil, Value::Blueprint)), false)?;
+                Ok(unresolved)
+            }
+            outcome => outcome,
+        }
+    }
     fn resolve_blueprint_annotations(&mut self, b: &Rc<Blueprint>) -> Res {
+        self.blueprint_annotation_values(b, false)
+    }
+    fn blueprint_annotation_values(&mut self, b: &Rc<Blueprint>, symbolic: bool) -> Res {
         let mut pairs=Vec::new();
         // The entry is kept in a cell, as the blueprint's members are; keys
         // and routines alternate along it.
@@ -3497,7 +3517,7 @@ impl<'a> Machine<'a> {
                 let [key,worth]=pair else{break};
                 let worth = worth.settled();
                 if matches!(worth, Value::Unset) { continue; }
-                let value=match worth {Value::Routine(_)|Value::Bound(..)=>self.apply_class_member(worth,Vec::new())?,other=>other};
+                let value = self.annotation_entry(worth, symbolic, Some(b.clone()))?;
                 pairs.push((key.clone(),value));
             }
         }
@@ -6791,7 +6811,10 @@ impl<'a> Machine<'a> {
             if passed {
                 if key == self.detail("allocate") {
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
-                        return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
+                        return Ok(Some(match Self::own_entry(base, key) {
+                            Some(allocator) => allocator,
+                            None => Self::wrap(14, vec![Value::text(&native)]),
+                        }));
                     }
                 }
                 if let Some(entry) = Self::own_entry(base, key) {

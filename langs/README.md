@@ -5309,9 +5309,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
-| `ext.stmt.async.coroutine.errors` | - | - | `RuntimeError: coroutine raised StopIteration` `TypeError: can't send non-None value to a just-started coroutine` `ValueError: coroutine already executing` `RuntimeError: coroutine ignored GeneratorExit` `RuntimeError: cannot reuse already awaited coroutine` `TypeError: '` `' object can't be awaited` `RuntimeError: coroutine is being awaited already` `TypeError: 'async with' received an object from ` ` that does not implement __await__: ` `TypeError: 'async for' received an invalid object from __anext__: ` | - | - | - | - | - | - | - |
+| `ext.stmt.async.coroutine.errors` | - | - | `RuntimeError: coroutine raised StopIteration` `TypeError: can't send non-None value to a just-started coroutine` `ValueError: coroutine already executing` `RuntimeError: coroutine ignored GeneratorExit` `RuntimeError: cannot reuse already awaited coroutine` `TypeError: '` `' object can't be awaited` `RuntimeError: coroutine is being awaited already` `TypeError: 'async with' received an object from ` ` that does not implement __await__: ` `TypeError: 'async for' received an invalid object from __anext__: ` `TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: ` | - | - | - | - | - | - | - |
 | `ext.stmt.async.coroutine.fields` | - | - | `cr_code` `cr_frame` `cr_running` `cr_await` `cr_origin` `cr_suspended` | - | - | - | - | - | - | - |
-| `ext.stmt.async.coroutine.warning` | - | - | `warnings` `warn_explicit` `RuntimeWarning` `coroutine '` `' was never awaited` | - | - | - | - | - | - | - |
+| `ext.stmt.async.coroutine.warning` | - | - | `warnings` `warn_explicit` `RuntimeWarning` `coroutine '` `' was never awaited` `_warn_unawaited_coroutine` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
@@ -5336,7 +5336,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
-| `ext.stmt.class.annotations` | - | - | `__annotations__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.annotations` | - | - | `__annotations__` `annotationlib` `ForwardRef` `__owner__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.resolve` | - | - | `__mro_entries__` `__orig_bases__` | - | - | - | - | - | - | - |
@@ -6124,3 +6124,7 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.system.warnings` names the Python native warnings backend and its entry points. The full kernels own filtering, registry versions, caller selection and locking; the public library owns warning formatting and capture hooks.
+
+Python class annotation readers preserve each deferred expression for FORWARDREF format. The class annotation label also names the annotation module, ForwardRef constructor and owner slot; unresolved names retain their original expression and actual class owner. VALUE format still raises the original NameError.
+
+The Python tracing bridge retains coroutine-origin depth (operations 3/4), reports live heap ownership counters (5), stores async-generator callbacks (6/7/8), and reports interpreter shutdown state (9). Coroutine creation captures the active frame chain at the configured depth; warning finalization calls the unawaited-coroutine hook with the actual coroutine. Inline scalar values have no heap reference counter and report that limitation honestly.

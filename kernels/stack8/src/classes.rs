@@ -1830,18 +1830,19 @@ impl<'a> Engine<'a> {
                 }
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
-                    self.data.extend([args[0].clone(), Value::Small(2)]);
+                    let forward = matches!(args[0].contents(), Value::Small(3));
+                    self.data.extend([args[0].clone(), Value::Small(3)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     match &w.1[0] {
-                        Value::Class(owner) => self.evaluate_class_annotations(owner),
+                        Value::Class(owner) => self.class_annotation_values(owner, forward),
                         Value::Array(row) => {
                             let mut entries = Vec::new();
                             for pair in row.chunks(2) {
                                 let [key, evaluator] = pair else { break; };
                                 let evaluator = evaluator.contents();
                                 if matches!(evaluator, Value::Blank) { continue; }
-                                let value = match evaluator { Value::Routine(_) | Value::Method(..) => self.class_apply(evaluator, Vec::new())?, value => value };
+                                let value = self.annotation_value(evaluator, forward, None)?;
                                 entries.push((key.clone(), value));
                             }
                             Ok(self.keep_collection(Value::Map(Rc::new(entries.into()))))
@@ -4568,7 +4569,26 @@ impl<'a> Engine<'a> {
         c.shared.borrow_mut().push((word,made.clone()));
         Ok(made)
     }
+    fn annotation_value(&mut self, routine: Value, forward: bool, owner: Option<Rc<Class>>) -> Flow<Value> {
+        let source = match &routine { Value::Routine(body) | Value::Method(_, body, _) => body.annotation_source.clone(), _ => None };
+        let resolved = match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine,Vec::new()),other=>Ok(other)};
+        match resolved {
+            Err(fault) if forward && source.is_some() && (matches!(&fault, Fault::Note(words) if words.starts_with("NameError:"))
+                || matches!(&fault, Fault::Thrown(Value::Object(error)) if error.class_now().named(&self.lang.exceptions[10], false))) => {
+                let words = self.lang.class_annotations.clone();
+                let module = self.import_module(&words[1])?;
+                let factory = self.class_get(module, &words[2], false)?;
+                let reference = self.class_apply(factory, vec![Value::text(&source.unwrap())])?;
+                self.class_write(reference.clone(), &words[3], Some(owner.clone().map_or(Value::Null, Value::Class)), false)?;
+                Ok(reference)
+            }
+            other => other,
+        }
+    }
     fn evaluate_class_annotations(&mut self, c: &Rc<Class>) -> Flow<Value> {
+        self.class_annotation_values(c, false)
+    }
+    fn class_annotation_values(&mut self, c: &Rc<Class>, forward: bool) -> Flow<Value> {
         // The entry stands in a cell, as a class's members do.
         let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
         let mut pairs=Vec::new();
@@ -4577,7 +4597,7 @@ impl<'a> Engine<'a> {
                 let [key,routine]=pair else {break};
                 let routine = routine.contents();
                 if matches!(routine, Value::Blank) { continue; }
-                let value=match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine,Vec::new())?,other=>other};
+                let value = self.annotation_value(routine, forward, Some(c.clone()))?;
                 pairs.push((key.clone(),value));
             }
         }
@@ -6338,7 +6358,10 @@ impl<'a> Engine<'a> {
         for class in &order[start + 1..] {
             if name == self.class_word("allocate") {
                 if let Some(word) = Self::own_kind(class) {
-                    if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
+                    if word != self.class_word("root") {
+                        let maker = Self::own_class_value(class, name).unwrap_or_else(|| Self::adapter(14, vec![Value::text(&word)]));
+                        return Ok(Some(maker));
+                    }
                 }
             }
             if let Some(value) = Self::own_class_value(class, name) {

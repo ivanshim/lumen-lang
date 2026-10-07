@@ -268,7 +268,7 @@ pub fn walk_departing(dying: &mut Generator) {
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
+                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
@@ -498,6 +498,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
+                out.push(g.coroutine_origin.clone());
+                out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
                 out.extend(g.frame.iter().cloned());
@@ -777,6 +779,8 @@ impl Graph {
                 Value::Generator(g) => {
                     if let Ok(mut g) = g.try_borrow_mut() {
                         g.closed = true;
+                        grave.push(std::mem::replace(&mut g.coroutine_origin, Value::Null));
+                        grave.push(std::mem::replace(&mut g.async_finalizer, Value::Null));
                         grave.extend(g.frame.drain(..));
                         grave.extend(g.stack.drain(..));
                         grave.extend(g.items.drain(..));

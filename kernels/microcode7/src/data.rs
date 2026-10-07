@@ -571,6 +571,44 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
 }
 
 impl Value {
+    pub(super) fn ownership_count(&self) -> Option<usize> {
+        if let Value::Shared(binding) = self {
+            return match &*binding.borrow() {
+                Value::Vector(_) | Value::Dict(_) => Some(Rc::strong_count(binding)),
+                captured => captured.ownership_count(),
+            };
+        }
+        let count = match self {
+            Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
+            Value::Tuple(t) | Value::Vector(t) | Value::Row(t) | Value::Arguments(t) | Value::Span(t) => Rc::strong_count(t),
+            Value::Generator(t) => Rc::strong_count(t),
+            Value::Text(t) | Value::Refusal(t) => Rc::strong_count(t),
+            Value::Huge(t) => Rc::strong_count(t),
+            Value::Frac(t) => Rc::strong_count(t),
+            Value::Complex(t) => Rc::strong_count(t),
+            Value::Mutable(t, _) => Rc::strong_count(t),
+            Value::Iterator(t) => Rc::strong_count(t),
+            Value::Backtrace(t) => Rc::strong_count(t),
+            Value::Member(t, _) | Value::Window(t, _) => Rc::strong_count(t),
+            Value::Unpaired(t) => Rc::strong_count(t),
+            Value::Cursor(t) => Rc::strong_count(t),
+            Value::Octets { cell, .. } => Rc::strong_count(cell),
+            Value::Export(t) => Rc::strong_count(t),
+            Value::Progression(t) => Rc::strong_count(t),
+            Value::TextRow(t, _) => Rc::strong_count(t),
+            Value::Set(t) => Rc::strong_count(t),
+            Value::Dict(t) => Rc::strong_count(t),
+            Value::Couple(t) => Rc::strong_count(t),
+            Value::Blueprint(t) => Rc::strong_count(t),
+            Value::Routine(t) | Value::Bound(t, _) => Rc::strong_count(t),
+            Value::Method(_, _, t) => Rc::strong_count(t),
+            Value::Adorned(t) => Rc::strong_count(t),
+            Value::Dim(t) => Rc::strong_count(t),
+            _ => return None,
+        };
+        Some(count)
+    }
+
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }

@@ -927,6 +927,7 @@ impl Builtin {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub postponed_annotation: bool,
+    pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,

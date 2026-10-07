@@ -829,6 +829,7 @@ pub struct Routine {
     /// The compiled definition shared by independently created functions.
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
+    pub annotation_spelling: Option<String>,
     pub annotation_protocol: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,

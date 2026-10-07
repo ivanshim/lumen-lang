@@ -38,7 +38,12 @@ def get_annotate_from_class_namespace(obj):
 def call_annotate_function(annotate, format, owner=None):
     _check_format(format)
     try:
-        return annotate(format)
+        result = annotate(format)
+        if format == Format.FORWARDREF and owner is not None:
+            for value in result.values():
+                if isinstance(value, ForwardRef) and value.__owner__ is None:
+                    value.__owner__ = owner
+        return result
     except NotImplementedError:
         if format != Format.FORWARDREF:
             raise

@@ -197,6 +197,9 @@ pub struct Generator {
     pub name: String,
     pub qualified: String,
     pub coroutine_identity: usize,
+    pub coroutine_origin: Value,
+    pub async_hooks_initialized: bool,
+    pub async_finalizer: Value,
     pub trace_frame: Option<Rc<Instance>>,
     pub suspended_position: Option<(u32, u32, u32, u32)>,
     pub program: Option<Rc<Routine>>,
@@ -234,7 +237,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), coroutine_identity: 0, trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), coroutine_identity: 0, coroutine_origin: Value::Null, async_hooks_initialized: false, async_finalizer: Value::Null, trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -751,6 +754,51 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
 }
 
 impl Value {
+    pub(super) fn retained_count(&self) -> Option<usize> {
+        match self {
+            Value::Binding(cell) => cell.borrow().retained_count(),
+            Value::Bond(cell) => {
+                let held = cell.borrow();
+                if matches!(&*held, Value::Array(_) | Value::Map(_)) { Some(Rc::strong_count(cell)) }
+                else { held.retained_count() }
+            }
+            Value::Collection(p, _) => Some(Rc::strong_count(p)),
+            Value::Codepoints(p) => Some(Rc::strong_count(p)),
+            Value::ValueMethod(p) => Some(Rc::strong_count(p)),
+            Value::View(p) => Some(Rc::strong_count(p)),
+            Value::Cursor(p) => Some(Rc::strong_count(p)),
+            Value::Trace(p) => Some(Rc::strong_count(p)),
+            Value::Hashed(p) => Some(Rc::strong_count(p)),
+            Value::Fields(p) => Some(Rc::strong_count(p)),
+            Value::Walking(p) => Some(Rc::strong_count(p)),
+            Value::Walk(p) => Some(Rc::strong_count(p)),
+            Value::Bytes(p, _, _) => Some(Rc::strong_count(p)),
+            Value::Export(p) => Some(Rc::strong_count(p)),
+            Value::Adapter(p) => Some(Rc::strong_count(p)),
+            Value::Counted(p) => Some(Rc::strong_count(p)),
+            Value::Huge(p) => Some(Rc::strong_count(p)),
+            Value::Frac(p) => Some(Rc::strong_count(p)),
+            Value::Real(p) => Some(Rc::strong_count(p)),
+            Value::Complex(p) => Some(Rc::strong_count(p)),
+            Value::Text(p) => Some(Rc::strong_count(p)),
+            Value::Words(p, _) => Some(Rc::strong_count(p)),
+            Value::Array(p) => Some(Rc::strong_count(p)),
+            Value::Tuple(p) => Some(Rc::strong_count(p)),
+            Value::Generator(p) => Some(Rc::strong_count(p)),
+            Value::Set(p) => Some(Rc::strong_count(p)),
+            Value::Slice(p) => Some(Rc::strong_count(p)),
+            Value::Map(p) => Some(Rc::strong_count(p)),
+            Value::Class(p) => Some(Rc::strong_count(p)),
+            Value::Object(p) => Some(Rc::strong_count(p)),
+            Value::Tie(p) => Some(Rc::strong_count(p)),
+            Value::Routine(p) => Some(Rc::strong_count(p)),
+            Value::Method(_, _, p) => Some(Rc::strong_count(p)),
+            Value::Descriptor(p) => Some(Rc::strong_count(p)),
+            Value::Faint(p) => Some(Rc::strong_count(p)),
+            _ => None,
+        }
+    }
+
     pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }

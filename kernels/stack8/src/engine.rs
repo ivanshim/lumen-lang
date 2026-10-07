@@ -107,6 +107,10 @@ pub struct Engine<'a> {
     finder_active: std::collections::HashSet<String>,
     trace_frame: Option<Rc<Instance>>,
     trace_hook: Value,
+    coroutine_depth: usize,
+    async_firstiter: Value,
+    async_finalizer: Value,
+    finalizing: bool,
     in_trace_hook: bool,
     trace_fault_outside: Option<(Weak<Instance>, Weak<Instance>)>,
     running_routine: Option<Rc<Routine>>,
@@ -114,7 +118,7 @@ pub struct Engine<'a> {
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
-    coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>)>,
+    coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     delegated_tokens: std::collections::HashSet<usize>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
@@ -574,7 +578,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String], root: &Rc<Class>) -> HashMap<String, Value> {
-        let mut parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(20), Some(2), Some(20), Some(20), Some(20), Some(20), Some(62), Some(62), Some(62), Some(20), Some(20), Some(20), Some(13), Some(22)];
+        let mut parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(20), Some(2), Some(20), Some(20), Some(20), Some(20), Some(62), Some(62), Some(62), Some(20), Some(20), Some(20), Some(13), Some(36)];
         if parents.len() > 62 { parents[57] = Some(62); }
         let mut classes: Vec<Option<Rc<Class>>> = vec![None; names.len()];
         let mut pending: Vec<usize> = (0..names.len()).collect();
@@ -1580,6 +1584,10 @@ impl<'a> Engine<'a> {
             line: 0,
             trace_frame: None,
             trace_hook: Value::Null,
+            coroutine_depth: 0,
+            async_firstiter: Value::Null,
+            async_finalizer: Value::Null,
+            finalizing: false,
             in_trace_hook: false,
             trace_fault_outside: None,
             running_routine: None,
@@ -1947,6 +1955,8 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
+        self.finalizing = true;
+        self.trace_hook = Value::Null;
         self.settle_departed();
         if let Some(named) = self.lang.destructor.clone().as_deref() {
             // The words an object says as it goes: the destructor the
@@ -2093,18 +2103,37 @@ impl<'a> Engine<'a> {
     }
 
     fn warn_unawaited_coroutine(&mut self, walk: &Rc<RefCell<Generator>>) -> Flow<Value> {
-        let (name, file, line) = {
+        let (name, code, origin, frame, identity) = {
             let state = walk.borrow();
-            let code = state.program.as_ref().expect("an unstarted coroutine has code");
-            (state.qualified.clone(), code.written_in.clone().unwrap_or_else(|| self.source.clone()), code.declared_on)
+            (state.qualified.clone(), state.program.clone().expect("unstarted coroutine code"),
+                state.coroutine_origin.clone(), state.trace_frame.as_ref().map(Rc::downgrade), state.coroutine_identity)
         };
+        self.coroutines.insert(Rc::as_ptr(walk) as usize, (Rc::downgrade(walk), code.clone(), frame, origin, identity));
         let words = self.lang.coroutine_warning.clone();
-        if words.len() == 5 {
-            let module = self.import_module(&words[0])?;
-            let tell = self.class_get(module, &words[1], false)?;
-            if let Some(category) = self.native_exceptions.get(&words[2]).cloned() {
-                self.class_apply(tell, vec![Value::text(&format!("{}{}{}", words[3], name, words[4])), category, Value::text(&file), Value::Small(line as i64)])?;
+        if words.len() < 6 { return Ok(Value::Null); }
+        let module = self.import_module(&words[0])?;
+        let coroutine = Value::Generator(walk.clone());
+        match self.class_get(module.clone(), &words[5], false) {
+            Ok(hook) => match self.class_apply(hook, vec![coroutine.clone()]) {
+                Ok(_) => return Ok(Value::Null),
+                Err(fault) => {
+                    let warning_error = matches!(&fault, Fault::Thrown(Value::Object(exception)) if exception.class_now().name == words[2]);
+                    if warning_error { return Err(fault); }
+                    self.ignore_fault(fault, &coroutine, "coroutine");
+                }
+            },
+            Err(fault) => {
+                if !matches!(&fault, Fault::Thrown(Value::Object(error)) if error.class_now().name == "AttributeError") && !matches!(&fault, Fault::Note(message) if message.starts_with("AttributeError:")) {
+                    self.ignore_fault(fault, &coroutine, "coroutine");
+                }
+                self.carried.take();
             }
+        }
+        let tell = self.class_get(module, &words[1], false)?;
+        if let Some(category) = self.native_exceptions.get(&words[2]).cloned() {
+            let file = code.written_in.as_deref().unwrap_or(&self.source);
+            self.class_apply(tell, vec![Value::text(&format!("{}{}{}", words[3], name, words[4])),
+                category, Value::text(file), Value::Small(code.declared_on as i64)])?;
         }
         Ok(Value::Null)
     }
@@ -2113,6 +2142,17 @@ impl<'a> Engine<'a> {
     /// that made it while its pending finalizer runs, even when its
     /// defining exec namespace has otherwise become unreachable.
     fn close_departed_generator(&mut self, walk: &Rc<RefCell<Generator>>) -> Flow<Value> {
+        let finalizer = {
+            let mut state = walk.borrow_mut();
+            if state.finalized { return Ok(Value::Null); }
+            let callback = if !state.closed && state.program.as_ref().is_some_and(|code| code.code_flags & 512 != 0) { state.async_finalizer.clone() } else { Value::Null };
+            if !matches!(callback, Value::Null) { state.finalized = true; }
+            callback
+        };
+        if !matches!(finalizer, Value::Null) {
+            self.async_generators.insert(Rc::as_ptr(walk) as usize, (Rc::downgrade(walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false)), Rc::new(StateCell::new(false))));
+            return self.class_apply(finalizer, vec![Value::Generator(walk.clone())]);
+        }
         {
             let mut state = walk.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
             if state.finalized { return Ok(Value::Null); }
@@ -4273,9 +4313,11 @@ impl<'a> Engine<'a> {
             generator.trace_frame = self.make_frame(program, &generator.frame, None);
             let walk = Rc::new(RefCell::new(generator));
             if !self.lang.coroutine_fields.is_empty() && program.code_flags & 128 != 0 {
+                let origin = self.capture_coroutine_origin();
+                walk.borrow_mut().coroutine_origin = origin.clone();
                 walk.borrow_mut().coroutine_identity = Rc::as_ptr(&walk) as usize;
                 let observed = walk.borrow().trace_frame.as_ref().map(Rc::downgrade);
-                self.coroutines.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), program.clone(), observed));
+                self.coroutines.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), program.clone(), observed, origin, Rc::as_ptr(&walk) as usize));
             }
             if !self.lang.async_generator_methods.is_empty() && program.code_flags & 512 != 0 {
                 self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false)), Rc::new(StateCell::new(false))));
@@ -7657,7 +7699,7 @@ impl<'a> Engine<'a> {
         if self.is_async_generator(receiver) && matches!(place, 83 | 84) {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return Ok(if place == 83 { receiver.clone() }
-                else { self.async_generator_awaitable(receiver.clone(), 0, Value::Null) });
+                else { self.async_generator_awaitable(receiver.clone(), 0, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() })? });
         }
         let original = receiver;
         let underlying = Self::worth_of(original).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
@@ -9946,9 +9988,25 @@ impl<'a> Engine<'a> {
     /// One step of an asynchronous walk: the walk's own word for the
     /// next member is asked, and the fault that ends such a walk ends it.
     // Identify native coroutines without borrowing their running frames.
+    fn capture_coroutine_origin(&self) -> Value {
+        if self.coroutine_depth == 0 { return Value::Null; }
+        let mut result = Vec::new();
+        let mut frame = self.trace_frame.clone();
+        while result.len() < self.coroutine_depth {
+            let Some(current) = frame else { break };
+            let fields = current.fields.borrow();
+            if let Value::Routine(code) = &fields[6].1 {
+                let file = code.written_in.as_deref().unwrap_or(&self.source);
+                result.push(Value::tuple(vec![Value::text(file), fields[0].1.clone(), Value::text(if code.ident == "<program>" { &self.lang.trace_fields[10] } else { &code.ident })]));
+            }
+            frame = match &fields[2].1 { Value::Object(parent) => Some(parent.clone()), _ => None };
+        }
+        Value::tuple(result)
+    }
+
     pub(super) fn is_coroutine(&self, value: &Value) -> bool {
         let Value::Generator(body) = value else { return false };
-        self.coroutines.get(&(Rc::as_ptr(body) as usize)).and_then(|(weak, _, _)| weak.upgrade())
+        self.coroutines.get(&(Rc::as_ptr(body) as usize)).and_then(|(weak, _, _, _, _)| weak.upgrade())
             .is_some_and(|known| Rc::ptr_eq(&known, body))
     }
 
@@ -9969,7 +10027,7 @@ impl<'a> Engine<'a> {
             let frame = self.coroutines[&(Rc::as_ptr(body) as usize)].2.as_ref().and_then(Weak::upgrade);
             return Ok(Some(frame.map_or(Value::Null, Value::Object)));
         }
-        if index == 4 { return Ok(Some(Value::Null)); }
+        if index == 4 { return Ok(Some(self.coroutines[&(Rc::as_ptr(body) as usize)].3.clone())); }
         if body.try_borrow().is_err() && (index == 3 || index == 5) {
             return Ok(Some(if index == 3 { Value::Null } else { Value::Flag(false) }));
         }
@@ -9988,9 +10046,20 @@ impl<'a> Engine<'a> {
             .and_then(|entry| entry.0.upgrade()).is_some_and(|known| Rc::ptr_eq(&known, state))
     }
 
-    fn async_generator_awaitable(&self, generator: Value, operation: i64, argument: Value) -> Value {
-        Value::Adapter(Rc::new((32, vec![generator, Value::Small(operation), argument,
-            Value::Binding(Rc::new(RefCell::new(Value::Small(0))))])))
+    fn async_generator_awaitable(&mut self, generator: Value, operation: i64, argument: Value) -> Flow<Value> {
+        if let Value::Generator(walk) = &generator {
+            let mut state = walk.borrow_mut();
+            if !state.async_hooks_initialized {
+                state.async_hooks_initialized = true;
+                state.async_finalizer = self.async_finalizer.clone();
+                drop(state);
+                if !matches!(self.async_firstiter, Value::Null) {
+                    self.class_apply(self.async_firstiter.clone(), vec![generator.clone()])?;
+                }
+            }
+        }
+        Ok(Value::Adapter(Rc::new((32, vec![generator, Value::Small(operation), argument,
+            Value::Binding(Rc::new(RefCell::new(Value::Small(0))))]))))
     }
 
     fn async_generator_exception(&mut self, name: &str, args: Vec<Value>) -> Fault {
@@ -10166,12 +10235,12 @@ impl<'a> Engine<'a> {
     /// become items in the asynchronous walk.
     fn async_next_walk(&mut self, walker: &Value) -> Flow<Value> {
         if self.is_async_generator(walker) {
-            let operation = self.async_generator_awaitable(walker.clone(), 0, Value::Null);
+            let operation = self.async_generator_awaitable(walker.clone(), 0, Value::Null)?;
             return self.await_iterator(operation);
         }
-        let method = self.special_method(walker, 84).ok_or_else(|| self.special_fault())?;
-        self.invoke(&method, vec![walker.clone()])?;
-        let operation = self.drop_top()?;
+        let answer = self.special_call(walker, 84, Vec::new());
+        if let Some(escape) = self.carried.take() { return Err(escape); }
+        let operation = answer?.ok_or_else(|| self.special_fault())?;
         let kind = operation.core_kind();
         match self.awaited_walk(operation) {
             Ok(walk) => Ok(walk),
@@ -10742,6 +10811,11 @@ impl<'a> Engine<'a> {
         }
         if self.fuller_classes() {
             let result = match op {
+                Action::Grab(name) if self.data.last().is_some_and(|v| self.is_coroutine(v))
+                    && self.lang.class_details.get("root.members").is_some_and(|words| words.iter().skip(11).take(2).any(|word| word == name.as_ref())) => {
+                    let coroutine = self.drop_top()?;
+                    Some(self.class_get(coroutine, name, false)?)
+                },
                 Action::Grab(name) if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref()))
                     && self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _))) => {
                     let class = self.drop_top()?.contents();
@@ -10813,6 +10887,10 @@ impl<'a> Engine<'a> {
                     let kind = match &subject { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
                     return Err(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}").into());
                 };
+                if !self.is_async_generator(&walker) && self.special_value(&walker, 84).is_none() {
+                    let kind = match &walker { Value::Object(object) => object.class_now().name.clone(), value => value.core_kind() };
+                    return Err(format!("{}{}", self.lang.coroutine_errors[11], kind).into());
+                }
                 Value::Adapter(Rc::new((30, vec![walker])))
             }
             Action::ByteAssign(repeat) => {
@@ -12212,7 +12290,9 @@ impl<'a> Engine<'a> {
                     && (["send", "throw", "close"].contains(&name.as_ref())
                         || [15, 16].iter().any(|place| self.lang.class_special.get(*place).is_some_and(|word| word == name.as_ref()))
                         || matches!(&held, Value::Adapter(parts) if parts.0 == 32) && self.lang.async_generator_methods.get(3).is_some_and(|word| word == name.as_ref()));
-                Value::Flag(async_awaitable || name.as_ref() == "__getformat__" && matches!(&held, Value::Real(_)) || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_allocate || kind_initialiser || kind_doc || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                let coroutine_reduction = (self.is_coroutine(&held) || matches!(&held, Value::Adapter(parts) if parts.0 == 34))
+                    && self.lang.class_details.get("root.members").is_some_and(|words| words.iter().skip(11).take(2).any(|word| word == name.as_ref()));
+                Value::Flag(coroutine_reduction || async_awaitable || name.as_ref() == "__getformat__" && matches!(&held, Value::Real(_)) || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_allocate || kind_initialiser || kind_doc || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -17043,13 +17123,13 @@ impl<'a> Engine<'a> {
             if let Some(operation) = self.lang.async_generator_methods.iter().take(3).position(|word| word == operation) {
                 let valid = if operation == 2 { args.is_empty() } else { args.len() == 1 };
                 if !valid { return Err(self.lang.method_errors["arguments"].clone()); }
-                return Ok(self.async_generator_awaitable(receiver.contents(), operation as i64 + 1,
-                    args.first().cloned().unwrap_or(Value::Null)));
+                return self.async_generator_awaitable(receiver.contents(), operation as i64 + 1,
+                    args.first().cloned().unwrap_or(Value::Null)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
             }
             if let Some(which) = self.lang.async_generator_methods.iter().enumerate().skip(4)
                 .find(|(_, word)| *word == operation).map(|(at, _)| at) {
                 if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-                if which == 4 { return Ok(self.async_generator_awaitable(receiver.contents(), 0, Value::Null)); }
+                if which == 4 { return self.async_generator_awaitable(receiver.contents(), 0, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() }); }
                 return Ok(receiver.contents());
             }
         }
@@ -24153,6 +24233,21 @@ impl Engine<'_> {
                     Value::Small(0) => self.trace_hook.clone(),
                     Value::Small(1) if args.len() == 2 => { self.trace_hook = args[1].clone(); Value::Null },
                     Value::Small(2) if args.len() == 2 => self.inspect_instructions(&args[1])?,
+                    Value::Small(3) => Value::Small(self.coroutine_depth as i64),
+                    Value::Small(4) if args.len() == 2 => {
+                        let Value::Small(depth) = args[1] else { return Err("OverflowError: Python int too large to convert to C int".into()) };
+                        if depth < 0 { return Err("ValueError: depth must be >= 0".into()); }
+                        if depth > i32::MAX as i64 { return Err("OverflowError: Python int too large to convert to C int".into()); }
+                        self.coroutine_depth = depth as usize;
+                        Value::Null
+                    }
+                    Value::Small(6) => Value::tuple(vec![self.async_firstiter.clone(), self.async_finalizer.clone()]),
+                    Value::Small(mode @ (7 | 8)) if args.len() == 2 => {
+                        if mode == 7 { self.async_firstiter = args[1].clone(); } else { self.async_finalizer = args[1].clone(); }
+                        Value::Null
+                    }
+                    Value::Small(9) => Value::Flag(self.finalizing),
+                    Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: inline values have no reference counter")? as i64),
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }
@@ -24205,7 +24300,8 @@ impl Engine<'_> {
                     Value::Slice(bounds) => Rc::as_ptr(bounds) as usize as u64,
                     Value::Counted(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Generator(a) => self.coroutines.get(&(Rc::as_ptr(a) as usize))
+                        .filter(|record| record.0.upgrade().is_some()).map_or(Rc::as_ptr(a) as usize, |record| record.4) as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
                     Value::ByteKind(changeable, _) => {
                         let word = self.byte_kind_word(*changeable).to_owned();
@@ -25196,7 +25292,7 @@ impl Engine<'_> {
             }
         }
         let hook = if let Value::Object(space) = module {
-            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents())
+            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents()).filter(|value| !matches!(value, Value::Blank))
         } else { None };
         if let Some(callable) = hook {
             match self.class_apply(callable, vec![Value::text(name)]) {

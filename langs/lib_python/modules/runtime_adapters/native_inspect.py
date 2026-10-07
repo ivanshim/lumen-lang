@@ -91,7 +91,8 @@ def stack(context=1):
 
 
 def currentframe():
-    raise 'NotImplementedError: inspect.currentframe needs a frame object, which this runtime does not keep'
+    import sys
+    return sys._getframe(1)
 
 
 def getgeneratorstate(generator):
@@ -765,3 +766,30 @@ def _unwrap_coroutine_callable(func):
             func = func.func
         else:
             return func
+
+
+from collections import namedtuple as _frame_tuple
+
+class Traceback(_frame_tuple('_Traceback', 'filename lineno function code_context index')):
+    def __new__(cls, filename, lineno, function, code_context, index, *, positions=None):
+        item = super().__new__(cls, filename, lineno, function, code_context, index)
+        item.positions = positions
+        return item
+
+
+def getframeinfo(frame, context=1):
+    import linecache
+    if hasattr(frame, 'tb_frame'):
+        lineno = frame.tb_lineno
+        frame = frame.tb_frame
+    else:
+        lineno = frame.f_lineno
+    filename = frame.f_code.co_filename
+    lines = linecache.getlines(filename, frame.f_globals)
+    if context > 0 and lines:
+        start = max(0, min(lineno - 1 - context // 2, len(lines) - context))
+        code_context = lines[start:start + context]
+        index = lineno - 1 - start
+    else:
+        code_context = index = None
+    return Traceback(filename, lineno, frame.f_code.co_name, code_context, index)

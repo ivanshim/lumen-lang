@@ -523,3 +523,43 @@ def settrace(trace):
     __trace_native__(1, trace)
 # Source and native modules participate in the same finder protocol.
 meta_path = []
+
+
+def getrefcount(object, /):
+    return __trace_native__(5, object)
+
+
+def get_coroutine_origin_tracking_depth():
+    return __trace_native__(3)
+
+
+def set_coroutine_origin_tracking_depth(depth):
+    from operator import index
+    __trace_native__(4, index(depth))
+
+
+_asyncgen_hook_missing = object()
+_asyncgen_hook_type = None
+
+
+def get_asyncgen_hooks():
+    global _asyncgen_hook_type
+    if _asyncgen_hook_type is None:
+        from collections import namedtuple
+        _asyncgen_hook_type = namedtuple('asyncgen_hooks', 'firstiter finalizer', module='sys')
+    return _asyncgen_hook_type(*__trace_native__(6))
+
+
+def set_asyncgen_hooks(firstiter=_asyncgen_hook_missing, finalizer=_asyncgen_hook_missing):
+    if firstiter is not _asyncgen_hook_missing and firstiter is not None and not callable(firstiter):
+        raise TypeError('callable firstiter expected')
+    if finalizer is not _asyncgen_hook_missing and finalizer is not None and not callable(finalizer):
+        raise TypeError('callable finalizer expected')
+    if firstiter is not _asyncgen_hook_missing:
+        __trace_native__(7, firstiter)
+    if finalizer is not _asyncgen_hook_missing:
+        __trace_native__(8, finalizer)
+
+
+def is_finalizing():
+    return __trace_native__(9)
