@@ -6937,3 +6937,22 @@
 {"t":"2026-10-07T06:01:14Z","event":"exited","job":"review-auto-dsflash-dataclasses-0544","code":0}
 {"t":"2026-10-07T06:02:18Z","event":"note","text":"toolkit-sync: committed and pushed"}
 {"t":"2026-10-07T06:02:22Z","event":"queued","job":"dsflash-builtin","model":"deepseek-flash","line":"or-resume dsflash-builtin deepseek-flash ses_eed605a88ffeMOz7pUzJh809wK"}
+{"t":"2026-10-07T06:13:23Z","event":"accepted","job":"dsflash-dataclasses","review":"review-auto-dsflash-dataclasses-0544","batch":"21e","commit":"6a5a01e22","note":"(after 1st return) dataclasses 235->262/280, enum +2, functools +1 both kernels; inspect Signature ctor/replace, metaclass call binding, Parameter hash fixed; overlaps 21d pickle/patma/bytes/super/uuid and 21e cmd/syntax/enum — reconcile at integration (keep CPython pickle.py; keep __dict__/__weakref__ getset from stdlib-cmd)"}
+{"t":"2026-10-07T06:13:23Z","event":"returned","job":"claude-functools-sol","review":"review-auto-claude-functools-sol-0529","commit":"fa025a393","note":"(Sol 1st; recursive partial pickle must raise RecursionError; partial repr must snapshot before user repr; gains functools +20, dataclasses +15, reprlib +1 kept) -> Sol queue (resume)"}
+{"t":"2026-10-07T06:14:15Z","event":"quota","codex_week_used":6,"codex_credits":0,"claude_week_used":27,"claude_5h_used":8,"kimi_5h_used":0,"kimi_month_used":0.9,"kimi_code_used":0,"deepseek_usd":344.81}
+{"t":"2026-10-07T06:14:19Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":6,"expected":5.5,"gap":"+0.5","status":"ok"}
+{"t":"2026-10-07T06:14:31Z","event":"checkin","status":"done","actions":"accepted dsflash-dataclasses (6a5a01e22, 21e); returned claude-functools-sol (Sol 1st: recursive partial pickle RecursionError, partial repr snapshot) -> returns/claude-functools-sol.md + sol-resume queued; prune-merged freed 0MB; slots full (Sol 10 running + 2 queued, DS Flash 8 running + 5 queued, DS Pro 1, Kimi 1, Sonnet 1)","notes":"Mac disk 89.97% (just under 90%, no alert yet); box disk 77%, load 7.1, 7.3 GB available; no open PRs (integrate-21d running); luna: no new alerts, meter gap +0.5 ok"}
+{"t":"2026-10-07T06:15:20Z","event":"started","job":"dsflash-hash","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T06:23:13Z","event":"exited","job":"dsflash-tomllib","code":0}
+{"t":"2026-10-07T06:25:05Z","event":"finished","job":"dsflash-tomllib","exit_time":"2026-10-07T06:23:13Z"}
+{"t":"2026-10-07T06:25:05Z","event":"review-queued","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-0625"}
+{"t":"2026-10-07T06:25:08Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T06:26:25Z","event":"started","job":"stdlib-warnings","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T06:28:36Z","event":"exited","job":"stdlib-codecs","code":0}
+{"t":"2026-10-07T06:28:59Z","event":"exited","job":"dsflash-mimetypes","code":0}
+{"t":"2026-10-07T06:30:12Z","event":"finished","job":"dsflash-mimetypes","exit_time":"2026-10-07T06:28:59Z"}
+{"t":"2026-10-07T06:30:12Z","event":"review-queued","job":"dsflash-mimetypes","review":"review-auto-dsflash-mimetypes-0630"}
+{"t":"2026-10-07T06:30:15Z","event":"finished","job":"stdlib-codecs","exit_time":"2026-10-07T06:28:36Z"}
+{"t":"2026-10-07T06:30:15Z","event":"review-queued","job":"stdlib-codecs","review":"review-auto-stdlib-codecs-0630"}
+{"t":"2026-10-07T06:30:17Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T06:31:26Z","event":"started","job":"dsflash-structseq","model":"deepseek-flash","via":"ds-run"}
