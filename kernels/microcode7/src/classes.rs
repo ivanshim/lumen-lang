@@ -5326,6 +5326,44 @@ impl<'a> Machine<'a> {
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if op == 27 && self.table.has_any("ext.builtin.partial_repr") {
+            if values.len() != 2 { return Err(self.class_unready()); }
+            let receiver = values[0].clone();
+            let Value::Blueprint(root) = &values[1] else { return Err(self.class_unready()); };
+            let read_slot = |key: &str| -> Res {
+                match self.inherited_entry(root, key) {
+                    Some(Value::Wrapped(32, layout)) => self.slot_value(&receiver, &layout),
+                    _ => Err(self.class_unready()),
+                }
+            };
+            let callable = read_slot("func")?;
+            let arguments = read_slot("args")?;
+            let keywords = read_slot("keywords")?;
+            // Keyword iteration follows the retained dictionary, while state replacement
+            // cannot change either of the containers this representation is using.
+            let Value::Tuple(row) = arguments.settled() else { return Err(self.class_unready()); };
+            let mut pieces = Vec::new();
+            for item in row.iter() { pieces.push(self.object_words(item, true)?); }
+            let mut cursor = 0;
+            while let Value::Dict(entries) = keywords.settled() {
+                match entries.get(cursor).cloned() {
+                    None => break,
+                    Some((key, held)) => {
+                        cursor += 1;
+                        let word = self.object_words(&key, false)?;
+                        pieces.push(format!("{}={}", word, self.object_words(&held, true)?));
+                    }
+                }
+            }
+            let Value::Thing(instance) = receiver else { return Err(self.class_unready()); };
+            let kind = Value::Blueprint(instance.blueprint().clone());
+            let module = self.read_class_member(kind.clone(), "__module__", false)?;
+            let qualified = self.read_class_member(kind, "__qualname__", false)?;
+            let title = self.object_words(&module, false)? + "." + &self.object_words(&qualified, false)?;
+            let head = self.object_words(&callable, true)?;
+            let extra = if pieces.is_empty() { String::new() } else { format!(", {}", pieces.join(", ")) };
+            return Ok(Value::text(&format!("{title}({head}{extra})")));
+        }
         if op == 26 && self.table.has_any("ext.builtin.annotation_call") {
             let [function, names, symbolic] = values.as_slice() else {
                 return Err(String::from("TypeError: annotation adapter requires three arguments").into());

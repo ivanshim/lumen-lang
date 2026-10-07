@@ -5097,6 +5097,39 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 27 && !self.lang.partial_repr.is_empty() {
+            let [subject, Value::Class(base)] = args.as_slice() else {
+                return Err("TypeError: partial representation requires an instance and its base type".into());
+            };
+            // Keep the native slots alive before any representation can replace them.
+            let mut saved = Vec::new();
+            for name in ["func", "args", "keywords"] {
+                let Some(Value::Adapter(slot)) = self.class_value(base, name) else { return Err(self.class_refusal()); };
+                saved.push(self.slot_read(subject, &slot.1)?);
+            }
+            let Value::Tuple(positional) = saved[1].contents() else { return Err(self.class_refusal()); };
+            let mut tail = String::new();
+            for value in positional.iter() {
+                tail.push_str(", ");
+                tail.push_str(&self.special_text(value, true)?);
+            }
+            let mut position = 0;
+            loop {
+                let Value::Map(pairs) = saved[2].contents() else { return Err(self.class_refusal()); };
+                let Some((key, value)) = pairs.get(position).cloned() else { break };
+                position += 1;
+                let key_text = self.special_text(&key, false)?;
+                let value_text = self.special_text(&value, true)?;
+                tail.push_str(&format!(", {key_text}={value_text}"));
+            }
+            let Value::Object(instance) = subject else { return Err(self.class_refusal()); };
+            let owner = Value::Class(instance.class_now().clone());
+            let module = self.class_get(owner.clone(), "__module__", false)?;
+            let name = self.class_get(owner, "__qualname__", false)?;
+            let prefix = format!("{}.{}", self.special_text(&module, false)?, self.special_text(&name, false)?);
+            let function = self.special_text(&saved[0], true)?;
+            return Ok(Value::text(&format!("{prefix}({function}{tail})")));
+        }
         if which == 26 && !self.lang.annotation_call.is_empty() {
             if args.len() != 3 { return Err("TypeError: annotation adapter requires three arguments".into()); }
             let prior = self.armed_names.replace((args[1].clone(), args[2].is_true()));
