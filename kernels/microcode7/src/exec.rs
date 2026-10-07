@@ -560,6 +560,7 @@ pub struct Machine<'a> {
     /// has asked for it: from then on those names are read out of it
     /// and written into it, so either side sees the other's writing.
     world_book: Option<Rc<RefCell<Value>>>,
+    supplied_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Each text read into dictionaries handed over: the slots it was
     /// given, the dictionary its names live in, and the outer one for
     /// what the near one lacks and for its declared globals.
@@ -1983,6 +1984,7 @@ impl<'a> Machine<'a> {
             namespace_books: Vec::new(),
             within_spare: false,
             world_book: None,
+            supplied_books: Vec::new(),
             readings: Vec::new(),
             reading_now: None,
             natives_book: None,
@@ -2851,8 +2853,10 @@ impl<'a> Machine<'a> {
             }))
         };
         let saved = self.world_book.clone();
-        if let Some(book) = book { self.world_book = Some(book); }
+        let supplied = book.is_some();
+        if let Some(book) = book { self.world_book = Some(book); self.supplied_books.push(saved.clone()); }
         let outcome = self.shut_generator(walk);
+        if supplied { self.supplied_books.pop(); }
         self.world_book = saved;
         outcome
     }
@@ -2899,6 +2903,7 @@ impl<'a> Machine<'a> {
             .chain(&self.holding_fault).chain(std::iter::once(&self.tracing_function)).cloned().map(Knot::Held)
             .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
             .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+            .chain(self.supplied_books.iter().flatten().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .collect();
         {
@@ -4524,10 +4529,10 @@ impl<'a> Machine<'a> {
         if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) {
             if book < self.readings.len() { self.reading_now = Some(book); }
         }
-        let chosen = generator.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| Self::explicit_globals(body)));
-        let previous_world = chosen.map(|book| self.world_book.replace(book));
+        let body = generator.try_borrow().ok().and_then(|state| state.of.clone());
+        let namespace = body.map(|program| self.enter_function_globals(&program));
         let result = self.step_into_body(generator, sent, hurled, given, close_on_exit);
-        if let Some(previous) = previous_world { self.world_book = previous; }
+        if let Some(previous) = namespace { self.leave_function_globals(previous); }
         self.reading_now = previous_reading;
         result
     }
@@ -6026,11 +6031,11 @@ impl<'a> Machine<'a> {
         let callee = self.env_for(&p, env, args, frame)?;
         let suspended_reading = self.reading_now;
         if p.globe.is_none() { self.reading_now = None; }
-        let previous = Self::explicit_globals(&p).map(|book| self.world_book.replace(book));
+        let previous = self.enter_function_globals(&p);
         let outcome = if p.generator && self.rules.suspends {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
-        if let Some(saved) = previous { self.world_book = saved; }
+        self.leave_function_globals(previous);
         self.reading_now = suspended_reading;
         outcome
     }
@@ -12161,12 +12166,28 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn enter_function_globals(&mut self, program: &Routine) -> (bool, Option<Option<Rc<RefCell<Value>>>>) {
+        let explicit = Self::explicit_globals(program);
+        let supplied = explicit.is_some();
+        let ordinary = program.globe.is_none() && !self.supplied_books.is_empty();
+        let previous = if supplied || ordinary {
+            let next = explicit.or_else(|| self.supplied_books.first().cloned().flatten());
+            Some(std::mem::replace(&mut self.world_book, next))
+        } else { None };
+        if supplied { self.supplied_books.push(previous.clone().flatten()); }
+        (supplied, previous)
+    }
+
+    fn leave_function_globals(&mut self, state: (bool, Option<Option<Rc<RefCell<Value>>>>)) {
+        if state.0 { self.supplied_books.pop(); }
+        if let Some(previous) = state.1 { self.world_book = previous; }
+    }
+
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
         let resumed_reading = if program.globe.is_none() { self.reading_now.take() } else { self.reading_now };
-        let namespace = Self::explicit_globals(&program);
-        let saved = namespace.map(|book| self.world_book.replace(book));
+        let namespace = self.enter_function_globals(&program);
         let result = self.invoke_body(program, env, args);
-        if let Some(previous) = saved { self.world_book = previous; }
+        self.leave_function_globals(namespace);
         self.reading_now = resumed_reading;
         result
     }

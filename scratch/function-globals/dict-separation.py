@@ -30,4 +30,23 @@ walk = made()
 assert next(walk) == 24
 assert next(walk) is namespace
 assert made.__globals__ is namespace
+# A callback still reads the namespace in which it was defined.
+def callback():
+    return value
+
+def bridge():
+    return callback()
+
+caller = types.FunctionType(bridge.__code__, {'callback': callback, 'value': 42})
+assert caller() == 17
+
+def callback_generator():
+    yield value
+
+def generator_bridge():
+    return next(callback_generator())
+
+caller = types.FunctionType(generator_bridge.__code__, {'callback_generator': callback_generator, 'value': 42})
+assert caller() == 17
+
 print('function attributes and live globals stay separate')

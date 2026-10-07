@@ -139,6 +139,7 @@ pub struct Engine<'a> {
     /// to once the program has asked for it: what the program writes
     /// into the dictionary the names then show, and the other way about.
     outer_book: Option<Rc<RefCell<Value>>>,
+    function_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Text read into dictionaries handed over: each keeps the slots it
     /// was given, the dictionary its names live in and, where two were
     /// handed over, the outer one its declared globals go to.
@@ -1616,6 +1617,7 @@ impl<'a> Engine<'a> {
             reaching: 0,
             reading_amiss: None,
             outer_book: None,
+            function_books: Vec::new(),
             text_books: Vec::new(),
             reading_in: None,
             text_within: None,
@@ -2099,8 +2101,10 @@ impl<'a> Engine<'a> {
             }))
         };
         let saved = self.outer_book.clone();
-        if let Some(book) = book { self.outer_book = Some(book); }
+        let supplied = book.is_some();
+        if let Some(book) = book { self.outer_book = Some(book); self.function_books.push(saved.clone()); }
         let outcome = self.close_generator(walk);
+        if supplied { self.function_books.pop(); }
         self.outer_book = saved;
         outcome
     }
@@ -2154,6 +2158,7 @@ impl<'a> Engine<'a> {
             // no node from which to mark its still-live attribute dictionary.
             .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
+            .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
             .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
         {
             let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
@@ -4088,8 +4093,15 @@ impl<'a> Engine<'a> {
             Value::Map(_) => Some(Rc::new(RefCell::new(globals.clone()))),
             _ => None,
         });
-        let earlier = namespace.map(|book| self.outer_book.replace(book));
+        let supplied = namespace.is_some();
+        let restoring = program.globe.is_none() && !self.function_books.is_empty();
+        let earlier = if supplied || restoring {
+            let next = namespace.or_else(|| self.function_books.first().cloned().flatten());
+            Some(std::mem::replace(&mut self.outer_book, next))
+        } else { None };
+        if supplied { self.function_books.push(earlier.clone().flatten()); }
         let answer = self.invoke_top_body(program, n);
+        if supplied { self.function_books.pop(); }
         if let Some(saved) = earlier { self.outer_book = saved; }
         self.reading_in = reading;
         answer
@@ -5044,9 +5056,15 @@ impl<'a> Engine<'a> {
             Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
                     Some(globals @ Value::Map(_)) => Some(Rc::new(RefCell::new(globals.clone()))), _ => None,
         }));
-        let Some(book) = book else { return self.step_generator_body(held, sent, hurled, given, close_on_exit); };
-        let saved = self.outer_book.replace(book);
+        let supplied = book.is_some();
+        let ordinary = !self.function_books.is_empty() && held.try_borrow().ok()
+            .is_some_and(|state| state.program.as_ref().is_some_and(|body| body.globe.is_none()));
+        if !supplied && !ordinary { return self.step_generator_body(held, sent, hurled, given, close_on_exit); }
+        let namespace = book.or_else(|| self.function_books.first().cloned().flatten());
+        let saved = std::mem::replace(&mut self.outer_book, namespace);
+        if supplied { self.function_books.push(saved.clone()); }
         let outcome = self.step_generator_body(held, sent, hurled, given, close_on_exit);
+        if supplied { self.function_books.pop(); }
         self.outer_book = saved;
         outcome
     }
