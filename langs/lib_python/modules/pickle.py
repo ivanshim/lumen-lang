@@ -1,8 +1,10 @@
 # Pickle reductions use the Python reconstruction protocol. The byte
 # envelope remains the runtime's private marshal-based representation,
 # except for boolean roots using standard pickle encodings for protocols 0--5.
+import codecs
 import marshal
 import sys
+from struct import pack as _pack
 
 HIGHEST_PROTOCOL = 5
 DEFAULT_PROTOCOL = 5
@@ -175,6 +177,8 @@ def _reduce(value, protocol):
         return (slice, (value.start, value.stop, value.step))
     if type(value) is bytearray:
         return (bytearray, (bytes(value),))
+    if type(value) is complex:
+        return (complex, (value.real, value.imag))
     forwarded = __reduce_native__(value)
     if forwarded is not None and forwarded[0] == 'handed':
         return _reduce(forwarded[1], protocol)
@@ -221,62 +225,471 @@ def _apply_state(value, state):
             setattr(value, name, item)
 
 
-class _Writer(marshal._Writer):
-    def __init__(self, protocol):
-        super().__init__(True, self.refused)
-        self.protocol = protocol
-        self.keepalive = []
+# The standard pickle opcodes, exactly as CPython's Lib/pickle.py spells
+# them, so that the stream is protocol-sensitive and readable by the
+# reference unpickler.
+MARK = b'('
+STOP = b'.'
+POP = b'0'
+POP_MARK = b'1'
+DUP = b'2'
+FLOAT = b'F'
+INT = b'I'
+BININT = b'J'
+BININT1 = b'K'
+LONG = b'L'
+BININT2 = b'M'
+NONE = b'N'
+REDUCE = b'R'
+STRING = b'S'
+BINSTRING = b'T'
+SHORT_BINSTRING = b'U'
+UNICODE = b'V'
+BINUNICODE = b'X'
+APPEND = b'a'
+BUILD = b'b'
+GLOBAL = b'c'
+DICT = b'd'
+EMPTY_DICT = b'}'
+APPENDS = b'e'
+GET = b'g'
+BINGET = b'h'
+LONG_BINGET = b'j'
+LIST = b'l'
+EMPTY_LIST = b']'
+PUT = b'p'
+BINPUT = b'q'
+LONG_BINPUT = b'r'
+SETITEM = b's'
+TUPLE = b't'
+EMPTY_TUPLE = b')'
+SETITEMS = b'u'
+BINFLOAT = b'G'
+TRUE = b'I01\n'
+FALSE = b'I00\n'
+PROTO = b'\x80'
+NEWOBJ = b'\x81'
+TUPLE1 = b'\x85'
+TUPLE2 = b'\x86'
+TUPLE3 = b'\x87'
+NEWTRUE = b'\x88'
+NEWFALSE = b'\x89'
+LONG1 = b'\x8a'
+LONG4 = b'\x8b'
+BINBYTES = b'B'
+SHORT_BINBYTES = b'C'
+SHORT_BINUNICODE = b'\x8c'
+BINUNICODE8 = b'\x8d'
+BINBYTES8 = b'\x8e'
+EMPTY_SET = b'\x8f'
+ADDITEMS = b'\x90'
+FROZENSET = b'\x91'
+NEWOBJ_EX = b'\x92'
+STACK_GLOBAL = b'\x93'
+MEMOIZE = b'\x94'
+FRAME = b'\x95'
+BYTEARRAY8 = b'\x96'
 
-    def held(self, value):
-        self.keepalive.append(value)
-        return super().held(value)
+_tuplesize2code = [EMPTY_TUPLE, TUPLE1, TUPLE2, TUPLE3]
 
-    def refused(self, value):
-        raise PicklingError('cannot pickle ' + repr(value))
 
-    def put(self, value):
-        cls = type(value)
-        if value is None or cls in (bool, int, float, complex, str, bytes, tuple, list, dict, set, frozenset):
-            super().put(value)
+def _encode_long(x):
+    if x == 0:
+        return b''
+    nbytes = (x.bit_length() >> 3) + 1
+    result = x.to_bytes(nbytes, byteorder='little', signed=True)
+    if x < 0 and nbytes > 1:
+        if result[-1] == 0xff and (result[-2] & 0x80) != 0:
+            result = result[:-1]
+    return result
+
+
+def _batches(items, size):
+    import itertools
+    return itertools.batched(items, size)
+
+
+class _Pickler:
+    def __init__(self, protocol=None):
+        self.proto = _reach(protocol)
+        self.bin = self.proto >= 1
+        self.memo = {}
+        self.buffer = bytearray()
+        self.frame = None
+
+    def _key(self, obj):
+        try:
+            return id(obj)
+        except Exception:
+            name = _global_name(obj)
+            return ('name',) + (name if name is not None else (repr(obj),))
+
+    def write(self, data):
+        if self.frame is None:
+            self.buffer += data
+        else:
+            self.frame += data
+            if len(self.frame) >= 65536:
+                self.commit_frame()
+
+    def commit_frame(self):
+        if self.frame:
+            data = bytes(self.frame)
+            if len(data) >= 4:
+                self.buffer += FRAME + _pack('<Q', len(data))
+            self.buffer += data
+        self.frame = bytearray()
+
+    def dump(self, obj):
+        if self.proto >= 2:
+            self.write(PROTO + _pack('<B', self.proto))
+        if self.proto >= 4:
+            self.frame = bytearray()
+        self.save(obj)
+        self.write(STOP)
+        if self.frame is not None:
+            self.commit_frame()
+            self.frame = None
+        return bytes(self.buffer)
+
+    def memoize(self, obj):
+        idx = len(self.memo)
+        self.write(self.put(idx))
+        self.memo[self._key(obj)] = (idx, obj)
+
+    def put(self, idx):
+        if self.proto >= 4:
+            return MEMOIZE
+        if self.bin:
+            if idx < 256:
+                return BINPUT + _pack('<B', idx)
+            return LONG_BINPUT + _pack('<I', idx)
+        return PUT + repr(idx).encode('ascii') + b'\n'
+
+    def get(self, idx):
+        if self.bin:
+            if idx < 256:
+                return BINGET + _pack('<B', idx)
+            return LONG_BINGET + _pack('<I', idx)
+        return GET + repr(idx).encode('ascii') + b'\n'
+
+    def save(self, obj):
+        if self._key(obj) in self.memo:
+            self.write(self.get(self.memo[self._key(obj)][0]))
             return
-        if cls is slice:
-            self.pieces.append('Q')
-            self.put(value.start)
-            self.put(value.stop)
-            self.put(value.step)
+        cls = type(obj)
+        if obj is None:
+            self.write(NONE)
+        elif cls is bool:
+            if self.proto >= 2:
+                self.write(NEWTRUE if obj else NEWFALSE)
+            else:
+                self.write(TRUE if obj else FALSE)
+        elif cls is int:
+            self.save_long(obj)
+        elif cls is float:
+            self.save_float(obj)
+        elif cls is str:
+            self.save_str(obj)
+        elif cls is bytes:
+            self.save_bytes(obj)
+        elif cls is bytearray:
+            self.save_bytearray(obj)
+        elif cls is tuple:
+            self.save_tuple(obj)
+        elif cls is list:
+            self.save_list(obj)
+        elif cls is dict:
+            self.save_dict(obj)
+        elif cls is set:
+            self.save_set(obj)
+        elif cls is frozenset:
+            self.save_frozenset(obj)
+        elif isinstance(obj, type):
+            self.save_type(obj)
+        else:
+            name = _global_name(obj)
+            if name is not None:
+                self.save_global(obj, name)
+                return
+            reduction = _reduce(obj, self.proto)
+            if isinstance(reduction, str):
+                self.save_global(obj, reduction)
+                return
+            if not isinstance(reduction, tuple) or not 2 <= len(reduction) <= 6:
+                raise PicklingError('__reduce__ must return a string or tuple of two to six elements')
+            reduction = reduction + (None,) * (6 - len(reduction))
+            self.save_reduce(reduction[0], reduction[1], reduction[2], reduction[3], reduction[4], reduction[5], obj=obj)
+
+    def save_long(self, obj):
+        if self.bin:
+            if obj >= 0:
+                if obj <= 0xff:
+                    self.write(BININT1 + _pack('<B', obj))
+                    return
+                if obj <= 0xffff:
+                    self.write(BININT2 + _pack('<H', obj))
+                    return
+            if -0x80000000 <= obj <= 0x7fffffff:
+                self.write(BININT + _pack('<i', obj))
+                return
+        if self.proto >= 2:
+            encoded = _encode_long(obj)
+            size = len(encoded)
+            if size < 256:
+                self.write(LONG1 + _pack('<B', size) + encoded)
+            else:
+                self.write(LONG4 + _pack('<i', size) + encoded)
             return
-        global_name = _global_name(value)
-        if global_name is not None:
-            self.pieces.append('G')
-            self.put(global_name[0])
-            self.put(global_name[1])
+        if -0x80000000 <= obj <= 0x7fffffff:
+            self.write(INT + repr(obj).encode('ascii') + b'\n')
+        else:
+            self.write(LONG + repr(obj).encode('ascii') + b'L\n')
+
+    def save_float(self, obj):
+        if self.bin:
+            self.write(BINFLOAT + _pack('>d', obj))
+        else:
+            self.write(FLOAT + repr(obj).encode('ascii') + b'\n')
+
+    def save_str(self, obj):
+        if self.bin:
+            encoded = obj.encode('utf-8', 'surrogatepass')
+            size = len(encoded)
+            if size <= 0xff and self.proto >= 4:
+                self.write(SHORT_BINUNICODE + _pack('<B', size) + encoded)
+            elif size > 0xffffffff and self.proto >= 4:
+                self.write(BINUNICODE8 + _pack('<Q', size) + encoded)
+            else:
+                self.write(BINUNICODE + _pack('<I', size) + encoded)
+        else:
+            escaped = obj.replace('\\', '\\u005c')
+            escaped = escaped.replace('\0', '\\u0000')
+            escaped = escaped.replace('\n', '\\u000a')
+            escaped = escaped.replace('\r', '\\u000d')
+            escaped = escaped.replace('\x1a', '\\u001a')
+            self.write(UNICODE + escaped.encode('raw-unicode-escape') + b'\n')
+        self.memoize(obj)
+
+    def save_bytes(self, obj):
+        if self.proto < 3:
+            if not obj:
+                self.save_reduce(bytes, (), obj=obj)
+            else:
+                self.save_reduce(codecs.encode, (str(obj, 'latin1'), 'latin1'), obj=obj)
             return
-        reduction = _reduce(value, self.protocol)
-        if isinstance(reduction, str):
-            try:
-                existing = _global('__main__', reduction)
-            except (KeyError, AttributeError):
-                raise PicklingError('global name does not refer to the object being pickled')
-            if existing is not value:
-                raise PicklingError('global name does not refer to the object being pickled')
-            self.pieces.append('G')
-            self.put('__main__')
-            self.put(reduction)
+        size = len(obj)
+        if size <= 0xff:
+            self.write(SHORT_BINBYTES + _pack('<B', size) + obj)
+        elif size > 0xffffffff:
+            self.write(BINBYTES8 + _pack('<Q', size) + obj)
+        else:
+            self.write(BINBYTES + _pack('<I', size) + obj)
+        self.memoize(obj)
+
+    def save_bytearray(self, obj):
+        if self.proto < 5:
+            if not obj:
+                self.save_reduce(bytearray, (), obj=obj)
+            else:
+                self.save_reduce(bytearray, (bytes(obj),), obj=obj)
             return
-        if not isinstance(reduction, tuple) or not 2 <= len(reduction) <= 6:
-            raise PicklingError('__reduce__ must return a string or tuple of two to six elements')
-        if not callable(reduction[0]) or not isinstance(reduction[1], tuple):
-            raise PicklingError('invalid reduction callable or arguments')
-        if self.held(value):
+        size = len(obj)
+        self.write(BYTEARRAY8 + _pack('<Q', size) + bytes(obj))
+        self.memoize(obj)
+
+    def save_tuple(self, obj):
+        if not obj:
+            if self.bin:
+                self.write(EMPTY_TUPLE)
+            else:
+                self.write(MARK + TUPLE)
             return
-        self.pieces.append('O')
-        self.put(reduction[0])
-        self.put(reduction[1])
-        # The new object enters the reader memo before its state is read.
-        self.put(reduction[2] if len(reduction) > 2 else None)
-        self.put(list(reduction[3]) if len(reduction) > 3 and reduction[3] is not None else None)
-        self.put(list(reduction[4]) if len(reduction) > 4 and reduction[4] is not None else None)
-        self.put(reduction[5] if len(reduction) > 5 else None)
+        size = len(obj)
+        save = self.save
+        if size <= 3 and self.proto >= 2:
+            for element in obj:
+                save(element)
+            if self._key(obj) in self.memo:
+                self.write(POP * size + self.get(self.memo[self._key(obj)][0]))
+            else:
+                self.write(_tuplesize2code[size])
+                self.memoize(obj)
+            return
+        self.write(MARK)
+        for element in obj:
+            save(element)
+        if self._key(obj) in self.memo:
+            if self.bin:
+                self.write(POP_MARK + self.get(self.memo[self._key(obj)][0]))
+            else:
+                self.write(POP * (size + 1) + self.get(self.memo[self._key(obj)][0]))
+            return
+        self.write(TUPLE)
+        self.memoize(obj)
+
+    def save_list(self, obj):
+        if self.bin:
+            self.write(EMPTY_LIST)
+        else:
+            self.write(MARK + LIST)
+        self.memoize(obj)
+        self._batch_appends(obj)
+
+    def save_dict(self, obj):
+        if self.bin:
+            self.write(EMPTY_DICT)
+        else:
+            self.write(MARK + DICT)
+        self.memoize(obj)
+        self._batch_setitems(obj.items())
+
+    def save_set(self, obj):
+        if self.proto < 4:
+            self.save_reduce(set, (list(obj),), obj=obj)
+            return
+        self.write(EMPTY_SET)
+        self.memoize(obj)
+        for batch in _batches(obj, 1000):
+            self.write(MARK)
+            for item in batch:
+                self.save(item)
+            self.write(ADDITEMS)
+
+    def save_frozenset(self, obj):
+        if self.proto < 4:
+            self.save_reduce(frozenset, (list(obj),), obj=obj)
+            return
+        self.write(MARK)
+        for item in obj:
+            self.save(item)
+        if self._key(obj) in self.memo:
+            self.write(POP_MARK + self.get(self.memo[self._key(obj)][0]))
+            return
+        self.write(FROZENSET)
+        self.memoize(obj)
+
+    def _batch_appends(self, items):
+        save = self.save
+        write = self.write
+        if not self.bin:
+            for item in items:
+                save(item)
+                write(APPEND)
+            return
+        for batch in _batches(items, 1000):
+            if len(batch) != 1:
+                write(MARK)
+                for item in batch:
+                    save(item)
+                write(APPENDS)
+            else:
+                save(batch[0])
+                write(APPEND)
+
+    def _batch_setitems(self, items):
+        save = self.save
+        write = self.write
+        if not self.bin:
+            for key, value in items:
+                save(key)
+                save(value)
+                write(SETITEM)
+            return
+        for batch in _batches(items, 1000):
+            if len(batch) != 1:
+                write(MARK)
+                for key, value in batch:
+                    save(key)
+                    save(value)
+                write(SETITEMS)
+            else:
+                key, value = batch[0]
+                save(key)
+                save(value)
+                write(SETITEM)
+
+    def save_type(self, obj):
+        if obj is type(None):
+            return self.save_reduce(type, (None,), obj=obj)
+        if obj is type(NotImplemented):
+            return self.save_reduce(type, (NotImplemented,), obj=obj)
+        if obj is type(...):
+            return self.save_reduce(type, (...,), obj=obj)
+        return self.save_global(obj)
+
+    def save_global(self, obj, name=None):
+        resolved = _global_name(obj)
+        if resolved is None:
+            raise PicklingError('cannot pickle ' + repr(obj))
+        module_name, name = resolved
+        if self.proto >= 4:
+            self.save(module_name)
+            self.save(name)
+            self.write(STACK_GLOBAL)
+        elif '.' in name:
+            dotted = name.split('.')
+            leaf = dotted.pop(0)
+            for _ in dotted:
+                self.save(getattr)
+                if self.proto < 2:
+                    self.write(MARK)
+            self._toplevel(module_name, leaf)
+            for attrname in dotted:
+                self.save(attrname)
+                self.write(TUPLE2 if self.proto >= 2 else TUPLE)
+                self.write(REDUCE)
+        else:
+            self._toplevel(module_name, name)
+        self.memoize(obj)
+
+    def _toplevel(self, module_name, name):
+        encoding = 'utf-8' if self.proto >= 3 else 'ascii'
+        self.write(GLOBAL + module_name.encode(encoding) + b'\n')
+        self.write(name.encode(encoding) + b'\n')
+
+    def save_reduce(self, func, args, state=None, listitems=None, dictitems=None, state_setter=None, *, obj=None):
+        if not callable(func):
+            raise PicklingError('first item of the tuple returned by __reduce__ must be callable')
+        if not isinstance(args, tuple):
+            raise PicklingError('second item of the tuple returned by __reduce__ must be a tuple')
+        func_name = getattr(func, '__name__', '')
+        if self.proto >= 2 and func_name == '__newobj_ex__':
+            cls, positional, keywords = args
+            self.save(cls)
+            self.save(positional)
+            self.save(keywords)
+            self.write(NEWOBJ_EX)
+        elif self.proto >= 2 and func_name == '__newobj__':
+            cls = args[0]
+            args = args[1:]
+            self.save(cls)
+            self.save(args)
+            self.write(NEWOBJ)
+        else:
+            self.save(func)
+            self.save(args)
+            self.write(REDUCE)
+        if obj is not None:
+            if self._key(obj) in self.memo:
+                self.write(POP + self.get(self.memo[self._key(obj)][0]))
+            else:
+                self.memoize(obj)
+        if listitems is not None:
+            self._batch_appends(listitems)
+        if dictitems is not None:
+            self._batch_setitems(dictitems)
+        if state is not None:
+            if state_setter is None:
+                self.save(state)
+                self.write(BUILD)
+            else:
+                self.save(state_setter)
+                self.save(obj)
+                self.save(state)
+                self.write(TUPLE2)
+                self.write(REDUCE)
+                self.write(POP)
 
 
 class _Reader(marshal._Reader):
@@ -313,14 +726,7 @@ class _Reader(marshal._Reader):
 
 
 def dumps(obj, protocol=None, *, fix_imports=True, buffer_callback=None):
-    protocol = _reach(protocol)
-    if type(obj) is bool:
-        if protocol < 2:
-            return b'I01\n.' if obj else b'I00\n.'
-        return b'\x80' + bytes([protocol]) + (b'\x88.' if obj else b'\x89.')
-    writer = _Writer(protocol)
-    writer.put(obj)
-    return b'LP1\n' + writer.text().encode()
+    return _Pickler(protocol).dump(obj)
 
 
 def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=None):
@@ -440,6 +846,7 @@ def _read_protocol(data, encoding='ASCII'):
     while at < len(data):
         op = data[at]
         at += 1
+
         if op == 128:
             at += 1
         elif op == 149:
@@ -466,7 +873,10 @@ def _read_protocol(data, encoding='ASCII'):
             at = end + 1
             if number.endswith('L'):
                 number = number[:-1]
-            stack.append(int(number))
+            if op == 73 and number in ('00', '01'):
+                stack.append(number == '01')
+            else:
+                stack.append(int(number))
         elif op == 75:
             stack.append(data[at])
             at += 1
@@ -536,9 +946,8 @@ def _read_protocol(data, encoding='ASCII'):
             stack.append(_unescape_string(text[1:len(text) - 1]))
         elif op == 86:
             end = data.index(b'\n', at)
-            text = data[at:end].decode()
+            stack.append(data[at:end].decode('raw-unicode-escape'))
             at = end + 1
-            stack.append(_unescape_string(text))
         elif op == 85:
             size = data[at]
             at += 1
@@ -607,6 +1016,57 @@ def _read_protocol(data, encoding='ASCII'):
                 memo[index] = stack[-1]
             else:
                 stack.append(memo[index])
+        elif op == 48:
+            stack.pop()
+        elif op == 49:
+            del stack[marks.pop():]
+        elif op == 50:
+            stack.append(stack[-1])
+        elif op == 66:
+            size = int.from_bytes(data[at:at + 4], 'little')
+            at += 4
+            stack.append(bytes(data[at:at + size]))
+            at += size
+        elif op == 67:
+            size = data[at]
+            at += 1
+            stack.append(bytes(data[at:at + size]))
+            at += size
+        elif op == 129:
+            args = stack.pop()
+            cls = stack.pop()
+            stack.append(cls.__new__(cls, *args))
+        elif op == 141:
+            size = int.from_bytes(data[at:at + 8], 'little')
+            at += 8
+            stack.append(data[at:at + size].decode('utf-8', 'surrogatepass'))
+            at += size
+        elif op == 142:
+            size = int.from_bytes(data[at:at + 8], 'little')
+            at += 8
+            stack.append(bytes(data[at:at + size]))
+            at += size
+        elif op == 143:
+            stack.append(set())
+        elif op == 144:
+            mark = marks.pop()
+            stack[mark - 1].update(stack[mark:])
+            del stack[mark:]
+        elif op == 145:
+            mark = marks.pop()
+            value = frozenset(stack[mark:])
+            del stack[mark:]
+            stack.append(value)
+        elif op == 146:
+            keywords = stack.pop()
+            positional = stack.pop()
+            cls = stack.pop()
+            stack.append(cls.__new__(cls, *positional, **keywords))
+        elif op == 150:
+            size = int.from_bytes(data[at:at + 8], 'little')
+            at += 8
+            stack.append(bytearray(data[at:at + size]))
+            at += size
         else:
             raise UnpicklingError('unsupported pickle opcode: ' + str(op))
     raise UnpicklingError('pickle data was truncated')
