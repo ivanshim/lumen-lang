@@ -656,6 +656,12 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
+            // Keep the sole exact str object; subclass elements still need a base str.
+            if lang.python_numbers && items.len() == 1 {
+                if matches!(items[0], Value::Text(_) | Value::Codepoints(_)) {
+                    return Ok(items[0].clone());
+                }
+            }
             let separator: Vec<u32> = s.chars().map(u32::from).collect();
             let mut joined = Vec::new();
             for (i, item) in items.iter().enumerate() {
@@ -707,7 +713,9 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         let mut entries = cache.borrow_mut();
         let address = text.as_ptr() as usize;
         if let Some((_, length)) = entries.get(&address) { return *length; }
-        if entries.len() >= 1024 { entries.retain(|_, (text, _)| text.strong_count() != 0); }
+        // Weak str owners retain the allocation itself; discard dead buffers promptly.
+        entries.retain(|_, (owner, _)| owner.strong_count() != 0);
+        if entries.len() >= 16 { entries.clear(); }
         let count = text.chars().count();
         entries.insert(address, (Rc::downgrade(text), count));
         count

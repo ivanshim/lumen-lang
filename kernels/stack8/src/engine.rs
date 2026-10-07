@@ -13306,6 +13306,10 @@ impl<'a> Engine<'a> {
         }
         if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
             if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
+                if matches!(op, Action::Add) && self.lang.python_numbers {
+                    if right.is_empty() && matches!(a, Value::Text(_) | Value::Codepoints(_)) { return Ok(a.clone()); }
+                    if left.is_empty() && matches!(b, Value::Text(_) | Value::Codepoints(_)) { return Ok(b.clone()); }
+                }
                 if matches!(op, Action::Add | Action::Join) { left.extend(right); return Ok(Value::from_codes(left)); }
                 if matches!(op, Action::Contains | Action::Lacks) {
                     let found = left.is_empty() || right.windows(left.len()).any(|part| part == left);
@@ -13547,7 +13551,19 @@ impl<'a> Engine<'a> {
             return Err(self.byte_fault("unready"));
         }
         let sp = self.wording();
-        let joined = || Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)));
+        let joined = || {
+            // Join Python text without allocating temporary display strings.
+            if self.lang.python_numbers {
+                if let (Value::Text(left), Value::Text(right)) = (a, b) {
+                    if right.is_empty() { return a.clone(); }
+                    if left.is_empty() { return b.clone(); }
+                    let mut combined = String::with_capacity(left.len() + right.len());
+                    combined.push_str(left); combined.push_str(right);
+                    return Value::text(&combined);
+                }
+            }
+            Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)))
+        };
         Ok(match op {
             Action::Matrix => return Err(if self.lang.matrix_unready.is_some() { self.operands_complaint(&self.sign_of(op), a, b) } else { "Matrix multiplication cannot run".into() }),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),

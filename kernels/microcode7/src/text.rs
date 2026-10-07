@@ -579,6 +579,13 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
+            // A singleton containing an exact string keeps its original storage.
+            if g.table.flag("ext.op.arithmetic.python_numbers") && row.len() == 1 {
+                match &row[0] {
+                    Value::Text(_) | Value::Unpaired(_) => return Ok(row[0].clone()),
+                    _ => (),
+                }
+            }
             let mut result: Vec<u32> = Vec::new();
             for (position, item) in row.into_iter().enumerate() {
                 let numbers = item.character_numbers().ok_or_else(|| g.bad("join"))?;
@@ -730,7 +737,12 @@ pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
         if let Some((_, measured)) = known.borrow().get(&identity) { return *measured; }
         let measured = subject.chars().count();
         let mut lengths = known.borrow_mut();
-        if lengths.len() > 1000 { lengths.retain(|_, entry| entry.0.strong_count() > 0); }
+        // Remove expired weak owners before they retain many obsolete large buffers.
+        lengths.retain(|_, (owner, _)| owner.upgrade().is_some());
+        while lengths.len() >= 16 {
+            let Some(first) = lengths.keys().next().copied() else { break };
+            lengths.remove(&first);
+        }
         lengths.insert(identity, (Rc::downgrade(subject), measured));
         measured
     })

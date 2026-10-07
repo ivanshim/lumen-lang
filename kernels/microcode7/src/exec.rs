@@ -16896,6 +16896,10 @@ impl<'a> Machine<'a> {
         }
         if [Prim::Plus, Prim::Join].contains(&op) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
             if let (Some(first), Some(last)) = (v[0].character_numbers(), v[1].character_numbers()) {
+                if op == Prim::Plus && self.table.flag("ext.op.arithmetic.python_numbers") {
+                    let original = if last.is_empty() { Some(&v[0]) } else if first.is_empty() { Some(&v[1]) } else { None };
+                    if let Some(value @ (Value::Text(_) | Value::Unpaired(_))) = original { return Ok(value.clone()); }
+                }
                 return Ok(Value::characters(first.into_iter().chain(last).collect()));
             }
         }
@@ -20969,7 +20973,21 @@ impl<'a> Machine<'a> {
             Prim::Plus
                 if !self.rules.has_any_op_concat && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
             {
-                Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
+                // Exact Python strings concatenate from their borrowed UTF-8 storage.
+                match (&v[0], &v[1]) {
+                    (Value::Text(first), Value::Text(second)) if self.table.flag("ext.op.arithmetic.python_numbers") => {
+                        match (first.is_empty(), second.is_empty()) {
+                            (_, true) => v[0].clone(),
+                            (true, _) => v[1].clone(),
+                            _ => {
+                                let mut text = String::with_capacity(first.len() + second.len());
+                                text.push_str(first.as_ref()); text.push_str(second.as_ref());
+                                Value::text(&text)
+                            }
+                        }
+                    }
+                    _ => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+                }
             }
             Prim::Times if self.rules.repeated_text && v.iter().any(|x| matches!(x,Value::Unpaired(_))) => {
                 let (numbers, multiplier) = match (&v[0],&v[1]) { (Value::Unpaired(t),x)|(x,Value::Unpaired(t)) => (t,x), _ => unreachable!() };
