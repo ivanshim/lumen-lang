@@ -8204,7 +8204,8 @@ impl<'a> Machine<'a> {
         match at {
             slot if slot == usize::MAX - 3 => {
                 if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
-                return Ok(receiver.clone());
+                let octets = Self::underlying(receiver).unwrap_or_else(|| receiver.clone());
+                return Ok(octets);
             }
             73 => {
                 if arguments.len() > 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
@@ -17326,7 +17327,8 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::Hashed | Prim::SetCall(14) | Prim::RenderField | Prim::FormatValue);
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::Hashed | Prim::SetCall(14) | Prim::RenderField | Prim::FormatValue)
+            || v.iter().any(|argument| matches!(argument, Value::Window(_, 'm')));
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()

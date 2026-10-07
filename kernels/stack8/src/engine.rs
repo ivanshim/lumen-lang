@@ -7236,7 +7236,7 @@ impl<'a> Engine<'a> {
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if place == usize::MAX - 3 {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-            return Ok(receiver.clone());
+            return Ok(Self::worth_of(receiver).unwrap_or_else(|| receiver.clone()));
         }
         if place == 73 {
             if args.len() > 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
