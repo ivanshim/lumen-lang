@@ -7545,3 +7545,28 @@
 {"t":"2026-10-07T16:16:54Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":31,"expected":30.3,"gap":"+0.7","status":"ok"}
 {"t":"2026-10-07T16:17:18Z","event":"checkin","status":"done","actions":"returned dsflash-yieldfrom (2nd: inspect.FrameInfo 7-tuple breaks 6-element contract; 34->43/43 both kept) -> returns + or-resume parked in held-resumes (DS Flash 12/12); dspro-argparse 3rd return (multi-entry zip offsets, Flag as_index leak, runpy precedence) -> handed to Sol (brief-dspro-argparse-sol.md, sol-new queued); DS Pro slot filled: dspro-tstring (test_tstring, language) brief + worktree, ds-new queued; prune-merged freed 0MB; no idle accepted target/ to remove","notes":"box disk 91% (15G free; alert already sent today): ~/.debug 11G perf cache safe to delete, ~/wt/_int21d/probe 22G integration artefacts (resume-candidates 5G, resume-history 3.2G + target 2.4G) - Ivan to OK; box load 7.4, 11.6 GB available; Mac disk 81%; Sol 11/11 feature slots running + coroutines/integrate-21d/argparse-sol queued; DS Flash 12/12; Kimi metaclass (final check), Sonnet claude-io running; no open PRs; luna: 2 new turns in the known OpenClaw relay session (expected), meter gap +0.7 ok; Codex week 31%, Claude week 31%"}
 {"t":"2026-10-07T16:17:27Z","event":"started","job":"dspro-tstring","model":"deepseek-v4-pro","via":"ds-run"}
+{"t":"2026-10-07T16:21:07Z","event":"exited","job":"dsflash-tomllib","code":0}
+{"t":"2026-10-07T16:22:12Z","event":"exited","job":"dsflash-copyreg","code":0}
+{"t":"2026-10-07T16:22:20Z","event":"exited","job":"claude-io","code":0}
+{"t":"2026-10-07T16:23:12Z","event":"resumed","job":"claude-strptime","model":"claude-sonnet-5-5","session":"7c65e1c7-86ed-40da-8f24-147be27785c5"}
+{"t":"2026-10-07T16:25:55Z","event":"finished","job":"claude-io","exit_time":"2026-10-07T16:22:20Z"}
+{"t":"2026-10-07T16:25:55Z","event":"review-queued","job":"claude-io","review":"review-auto-claude-io-1625"}
+{"t":"2026-10-07T16:25:57Z","event":"finished","job":"dsflash-copyreg","exit_time":"2026-10-07T16:22:12Z"}
+{"t":"2026-10-07T16:25:57Z","event":"review-queued","job":"dsflash-copyreg","review":"review-auto-dsflash-copyreg-1625"}
+{"t":"2026-10-07T16:26:00Z","event":"finished","job":"dsflash-tomllib","exit_time":"2026-10-07T16:21:07Z"}
+{"t":"2026-10-07T16:26:00Z","event":"review-queued","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-1625"}
+{"t":"2026-10-07T16:26:04Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T16:26:30Z","event":"review-started","job":"claude-io","review":"review-auto-claude-io-1625"}
+{"t":"2026-10-07T16:32:07Z","event":"exited","job":"review-auto-claude-io-1625","code":0}
+{"t":"2026-10-07T16:33:32Z","event":"review-started","job":"dsflash-copyreg","review":"review-auto-dsflash-copyreg-1625"}
+{"t":"2026-10-07T16:33:39Z","event":"handed-over","job":"claude-io","review":"review-auto-claude-io-1625","commit":630635100,"round":3,"note":"(3rd; CSignals/PySignals thread+SIGALRM errors both kernels; introduced BufferedRWPair _dealloc_warn finalizer bug; test_io 615/669 stack8, 533/585 mc7 kept; calendar 64->79 + timeouts to re-certify) -> GPT-6.1 Sol (brief-claude-io-sol.md, queued sol-new claude-io-sol)"}
+{"t":"2026-10-07T16:33:39Z","event":"queued","job":"claude-io-sol","model":"gpt-6.1-sol","line":"sol-new claude-io-sol"}
+{"t":"2026-10-07T16:34:20Z","event":"queued","job":"dsflash-yieldfrom","model":"deepseek-flash","line":"or-resume dsflash-yieldfrom (from held-resumes; DS Flash 10/12)"}
+{"t":"2026-10-07T16:34:56Z","event":"queued","job":"dsflash-osx-support","model":"deepseek-flash","line":"ds-new dsflash-osx-support","note":"new subject test__osx_support (library, not-yet), worktree at 589a950a9"}
+{"t":"2026-10-07T16:35:17Z","event":"quota","codex_week_used":31,"codex_credits":0,"claude_week_used":32,"claude_5h_used":23,"kimi_5h_used":0,"kimi_month_used":0.9221,"kimi_code_used":0,"deepseek_usd":332.37}
+{"t":"2026-10-07T16:35:21Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":31,"expected":31.3,"gap":-0.3,"status":"ok"}
+{"t":"2026-10-07T16:35:36Z","event":"checkin","status":"done","actions":"handed-over claude-io (3rd return: signals/threads errors + BufferedRWPair finalizer bug; test_io 615/533 kept) -> brief-claude-io-sol.md, sol-new claude-io-sol queued; released held or-resume dsflash-yieldfrom to queue (DS Flash 10/12); new DS Flash subject dsflash-osx-support (test__osx_support, library, not-yet) brief + worktree at 589a950a9, ds-new queued; prune-merged freed 0MB; no idle accepted target/ to delete","notes":"box disk 93% (>90; recommendation stands: ~/.debug 9.9G perf cache, ~/runs/target-o1 1.3G, ~/tmp 885M; Telegram already sent today); load 4.6, 12.0 GB available; Mac disk 81%; Sol 12/12 running + 5 queued; DS Flash 10 running + 2 queued; DS Pro tstring, Kimi metaclass, Sonnet claude-strptime running; no open PRs; luna: no new alerts, meter gap -0.3 ok; Claude week 32%, Codex metered 31%; claude-io calendar 64->79 + timeouts to re-certify"}
+{"t":"2026-10-07T16:36:05Z","event":"note","text":"prune-box: ~/.debug trim tightened from unused 1 day to unused 3 h (box disk 93% overnight); run now"}
+{"t":"2026-10-07T16:36:09Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-07T16:38:15Z","event":"exited","job":"review-auto-dsflash-copyreg-1625","code":0}
+{"t":"2026-10-07T16:38:34Z","event":"review-started","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-1625"}
