@@ -94,6 +94,8 @@ thread_local! {
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
+    // The length the list of holds may reach before it is swept again.
+    static SWEEP_AT: Cell<usize> = const { Cell::new(32) };
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
 }
@@ -333,7 +335,14 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None), detached: Cell::new(false) });
     REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
-        refs.retain(|weak| weak.strong_count() != 0);
+        // Dead holds are only swept out once the list has grown to twice
+        // what it kept last time, so making many holds does not rescan
+        // every earlier one each time.
+        if refs.len() >= SWEEP_AT.with(|at| at.get()) {
+            refs.retain(|weak| weak.strong_count() != 0);
+            let kept = refs.len();
+            SWEEP_AT.with(|at| at.set((kept * 2).max(32)));
+        }
         refs.push(Rc::downgrade(&held));
     });
     if wants_telling {

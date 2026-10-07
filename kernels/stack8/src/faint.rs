@@ -113,6 +113,8 @@ thread_local! {
     static WATCHING: Cell<usize> = const { Cell::new(0) };
     /// Those holds.
     static REFERENCES: RefCell<Vec<Weak<Faint>>> = const { RefCell::new(Vec::new()) };
+    /// How long REFERENCES may grow before the dead are swept out of it.
+    static REFERENCE_LIMIT: Cell<usize> = const { Cell::new(32) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
     /// Whether anything at all is waiting for the engine's next step.
     // Bit zero is queued work; bit one marks a nonempty anchor list.
@@ -389,7 +391,12 @@ pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
     let faint = Rc::new(Faint { hold, bearer, told: RefCell::new(told), cached_hash: RefCell::new(None), cleared: Cell::new(false) });
     REFERENCES.with(|all| {
         let mut all = all.borrow_mut();
-        all.retain(|r| r.strong_count() != 0);
+        // Sweeping the whole list for every new hold made a loop that
+        // holds n things cost n squared; it is swept when it has doubled.
+        if all.len() >= REFERENCE_LIMIT.with(Cell::get) {
+            all.retain(|r| r.strong_count() != 0);
+            REFERENCE_LIMIT.with(|limit| limit.set((all.len() * 2).max(32)));
+        }
         all.push(Rc::downgrade(&faint));
     });
     if faint.told.borrow().is_some() {
