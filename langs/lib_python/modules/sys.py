@@ -501,7 +501,7 @@ def _getframemodulename(depth=0):
     return __frame_module(max(depth, 0) + 1)
 
 # Names supplied by the native importer and its source-backed adapters.
-builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal')
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings')
 
 
 def getfilesystemencoding():
@@ -511,3 +511,6 @@ def getfilesystemencoding():
 def getfilesystemencodeerrors():
     return "surrogateescape"
 
+
+# Source and native modules participate in the same finder protocol.
+meta_path = []

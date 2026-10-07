@@ -770,6 +770,7 @@ pub enum Builtin {
     BinAscii,
     HeapNative,
     ContextNative,
+    WarningBackend(u8),
     ReduceNative,
     RebuildNative,
     CharAtIndex,

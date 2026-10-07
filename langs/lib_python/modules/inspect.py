@@ -291,18 +291,26 @@ def __getattr__(name):
 
 
 # A signature reconstructed from the code fields the runtime exposes.
-# Frame walking and builtin text signatures remain unavailable.
+# Builtin text signatures remain unavailable.
+_signature_empty = object()
+
+
+def _signature_unwrap(obj):
+    seen = set()
+    while hasattr(obj, '__wrapped__'):
+        if id(obj) in seen:
+            raise ValueError('wrapper loop when unwrapping ' + repr(obj))
+        seen.add(id(obj))
+        obj = obj.__wrapped__
+    return obj
+
+
 class Signature:
     @classmethod
     def from_callable(cls, obj, *, follow_wrapped=True, globals=None, locals=None,
                       eval_str=False, annotation_format=1):
         if follow_wrapped:
-            seen = set()
-            while hasattr(obj, '__wrapped__'):
-                if id(obj) in seen:
-                    raise ValueError('wrapper loop when unwrapping ' + repr(obj))
-                seen.add(id(obj))
-                obj = obj.__wrapped__
+            obj = _signature_unwrap(obj)
         given = getattr(obj, '__signature__', None)
         if given is not None:
             if not isinstance(given, cls):
@@ -312,13 +320,39 @@ class Signature:
         if hasattr(obj, '__func__'):
             obj = obj.__func__
         if isinstance(obj, type):
-            obj = obj.__init__
+            new = obj.__new__
+            init = obj.__init__
+            if follow_wrapped:
+                new = _signature_unwrap(new)
+                init = _signature_unwrap(init)
+            meta_call = getattr(type(obj), '__call__', None)
+            selected = meta_call if hasattr(meta_call, '__code__') else None
+            if selected is None:
+                for base in obj.__mro__:
+                    namespace = base.__dict__
+                    if new is not object.__new__ and '__new__' in namespace:
+                        selected = new
+                        break
+                    if init is not object.__init__ and '__init__' in namespace:
+                        selected = init
+                        break
+            if selected is None and new is object.__new__ and init is object.__init__:
+                result = cls()
+                result._text = '()'
+                result._comparison = ((), {}, _signature_empty)
+                return result
+            obj = selected
             bound = True
         elif not hasattr(obj, '__code__'):
             if not callable(obj):
                 raise TypeError(repr(obj) + ' is not a callable object')
-            obj = obj.__call__
+            original = obj
+            obj = getattr(obj, '__call__', None)
+            if obj is None:
+                raise ValueError('no signature found for builtin ' + repr(original))
             bound = True
+        if follow_wrapped:
+            obj = _signature_unwrap(obj)
         code = getattr(obj, '__code__', None)
         if code is None:
             raise ValueError('no signature found for builtin ' + repr(obj))
@@ -351,7 +385,27 @@ class Signature:
             parts.append('**' + names[cursor])
         result = cls()
         result._text = '(' + ', '.join(parts) + ')'
+        annotations = getattr(obj, '__annotations__', None) or {}
+        ordered = []
+        keyword = {}
+        for i in range(1 if bound else 0, count):
+            default = defaults[i - count + len(defaults)] if i >= count - len(defaults) else _signature_empty
+            ordered.append((names[i], 0 if i < posonly else 1, default, annotations.get(names[i], _signature_empty)))
+        cursor = count + kwonly
+        if code.co_flags & CO_VARARGS:
+            ordered.append((names[cursor], 2, _signature_empty, annotations.get(names[cursor], _signature_empty)))
+            cursor += 1
+        for i in range(count, count + kwonly):
+            keyword[names[i]] = (3, kwdefaults.get(names[i], _signature_empty), annotations.get(names[i], _signature_empty))
+        if code.co_flags & CO_VARKEYWORDS:
+            ordered.append((names[cursor], 4, _signature_empty, annotations.get(names[cursor], _signature_empty)))
+        result._comparison = (tuple(ordered), keyword, annotations.get('return', _signature_empty))
         return result
+
+    def __eq__(self, other):
+        if not isinstance(other, Signature):
+            return NotImplemented
+        return self._comparison == other._comparison
 
     def __str__(self):
         return self._text

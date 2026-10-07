@@ -1408,7 +1408,9 @@ impl<'a> Machine<'a> {
             Value::Intrinsic(Prim::SortOf, _) if !self.rules.words_ext_stmt_class_builder.is_empty() => self.class_from_type(values),
             Value::Intrinsic(operation, name) => {
                 let (mut input, keywords) = self.open_arguments(values)?;
-                if let Some(answer) = self.builtin_names(operation, &name, &mut input, keywords)? { return Ok(answer); }
+                let named = self.builtin_names(operation, &name, &mut input, keywords);
+                if let Some(exception) = self.got_away.take() { return Err(exception); }
+                if let Some(answer) = named? { return Ok(answer); }
                 let result = self.prim(operation, &name, &input);
                 if let Some(raised) = self.got_away.take() { return Err(raised); }
                 Ok(result?)
@@ -3692,6 +3694,11 @@ impl<'a> Machine<'a> {
             {
                 let tag=if key==self.detail("allocate")&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){70}else if key==self.detail("allocate"){1}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){73}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
+                if tag == 2 && self.table.has_any("ext.system.warnings") && self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key) {
+                    let mut descriptors = self.loose_members.borrow_mut();
+                    let initializer = descriptors.entry(String::from("root:initializer")).or_insert_with(|| Self::wrap(2, Vec::new()));
+                    return Ok(initializer.clone());
+                }
                 if tag!=255{return Ok(Self::wrap(tag, if key == self.detail("subclass") { vec![Value::text(key)] } else { Vec::new() }));}
             }
             if let Some(root)=self.from_the_root(key,false,b){return Ok(root);}

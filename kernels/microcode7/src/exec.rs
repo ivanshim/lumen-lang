@@ -506,6 +506,11 @@ struct ExecutionRules<'a> {
 
 pub struct Machine<'a> {
     context_storage: crate::context::Bindings,
+    warning_epoch: i64,
+    warning_lock_count: usize,
+    warning_fallback: Option<Value>,
+    warning_target: Option<Value>,
+    finding_import: std::collections::HashSet<String>,
     rules: ExecutionRules<'a>,
     active_trace: Option<Rc<Thing>>,
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
@@ -1953,6 +1958,7 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             context_storage: crate::context::Bindings::new(),
+            warning_epoch: 0, warning_lock_count: 0, warning_fallback: None, warning_target: None, finding_import: std::collections::HashSet::new(),
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
@@ -8542,6 +8548,7 @@ impl<'a> Machine<'a> {
     /// that same module for the bytes table-maker, whose own home the
     /// reference hands back for it.
     fn intrinsic_home(&self, op: &Prim, word: &str) -> Value {
+        if matches!(op, Prim::WarningOperation(_)) { return self.table.strings("ext.system.warnings").first().map_or(Value::Nil, |name| Value::text(name)); }
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
@@ -9769,6 +9776,24 @@ impl<'a> Machine<'a> {
                 ("slice_hash", 0) => self.span_hashed(&receiver.settled()).map_err(Escape::from),
                 _ => Err(self.method_fault("arguments").into()),
             };
+        }
+        if let Value::Unpaired(numbers) = receiver.settled() {
+            use crate::text::Work;
+            let operation = match name { "lower" => Some(Work::LOWER), "upper" => Some(Work::UPPER), "casefold" => Some(Work::CASEFOLD), _ => None };
+            if let Some(operation) = operation {
+                if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
+                let mut result = Vec::with_capacity(numbers.len());
+                let mut start = 0;
+                while start < numbers.len() {
+                    if char::from_u32(numbers[start]).is_none() { result.push(numbers[start]); start += 1; continue; }
+                    let end = (start..numbers.len()).find(|index| char::from_u32(numbers[*index]).is_none()).unwrap_or(numbers.len());
+                    let segment: String = numbers[start..end].iter().filter_map(|number| char::from_u32(*number)).collect();
+                    let changed = crate::text::case_changed(&segment, operation);
+                    result.extend(changed.chars().map(u32::from));
+                    start = end;
+                }
+                return Ok(Value::Unpaired(result.into()));
+            }
         }
         let actual = receiver.settled();
         // A tuple answers to the two methods that only look through it,
@@ -18180,7 +18205,7 @@ impl<'a> Machine<'a> {
             }
             Prim::LoadModule => {
                 match (v.len(), v.get(1)) {
-                    (2, Some(Value::Flag(false))) => Value::Flag(self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
+                    (2, Some(Value::Flag(false))) => Value::Flag(self.table.strings("ext.system.warnings").first().is_some_and(|word| word == &v[0].bare()) || self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
                     _ => { n(1)?; self.load_namespace(&v[0].bare())? }
                 }
@@ -19084,10 +19109,13 @@ impl<'a> Machine<'a> {
             }
             Prim::LoaderSource => {
                 n(1)?;
-                let content = match std::fs::read(self.entry_file.as_ref()) {
-                    Ok(content) => content,
-                    Err(_) => return Err(String::from("ImportError: source not available through get_data()")),
-                };
+                let name = match v[0].settled() { Value::Text(word) => word.to_string(), _ => return Err(String::from("TypeError: module name must be a string")) };
+                let content = match name.as_str() {
+                    "__main__" => std::fs::read(self.entry_file.as_ref()).ok(),
+                    _ => self.sys_path_source(&name).map(|pair| pair.1)
+                        .or_else(|| self.library_module_file(&name).and_then(|filename| std::fs::read(filename).ok()))
+                        .or_else(|| self.library_sources.get(&name).map(|text| text.as_bytes().to_vec())),
+                }.ok_or_else(|| String::from("ImportError: source not available through get_data()"))?;
                 let adapter = self.load_namespace("_tokenize")?;
                 let Some(decode) = self.attribute(&adapter, "_decode_source") else {
                     return Err(String::from("ImportError: source decoder is unavailable"));
@@ -21190,7 +21218,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::WarningOperation(_) | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -23874,6 +23902,10 @@ impl Machine<'_> {
             let absolute = self.qualified_import(path)?;
             return self.load_namespace(&absolute);
         }
+        if self.table.has_any("ext.system.module.path") && !self.finding_import.contains(path) {
+            if let Some(found) = self.import_from_finders(path)? { return Ok(found); }
+        }
+        if self.table.strings("ext.system.warnings").first().is_some_and(|word| word == path) { return self.warning_namespace(); }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let split = path.rsplit_once('.');
@@ -24045,6 +24077,7 @@ impl Machine<'_> {
         // reads all meet in one place.
         *namespace.borrow_mut() = Value::Attributes(match &value { Value::Thing(t) => t.clone(), _ => unreachable!() });
         self.imported.insert(path.into(), value.clone());
+        self.source_namespace_metadata(path, &value)?;
         self.namespace_places.borrow_mut().take();
         let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
@@ -25676,9 +25709,9 @@ impl<'a> Machine<'a> {
         let category = self.fault_kinds.get(&names[2]).cloned().ok_or_else(|| self.source_refused())?;
         // The module the notice belongs to is the one the text runs
         // under where that is named, else the one its file spells.
-        let spoken_as = match module_hint { Some(named) => Value::text(named), None => Value::Nil };
         for (words, row) in notices {
-            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row)), spoken_as.clone()];
+            let arguments = [Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row))].into_iter()
+                .chain(module_hint.map(Value::text)).collect();
             match self.core_run(&report, arguments) {
                 Ok(_) => {}
                 Err(failure) => {
@@ -25766,7 +25799,7 @@ impl<'a> Machine<'a> {
             Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
         };
         let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
-        handed.push(match module_hint { Some(named) => Value::text(named), None => Value::Nil });
+        match module_hint { Some(owner) => handed.push(Value::text(owner)), None => {} }
         match self.apply_class_member(teller, handed) {
             Ok(_) => Ok(()),
             Err(Escape::Thrown(Value::Thing(raised))) if raised.blueprint().goes_by(&kind_name, false) => {
@@ -26215,7 +26248,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, WarningOperation(_) | Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -27109,6 +27142,7 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        if let Prim::WarningOperation(task) = op { return self.warning_operation(task, input, keywords); }
         // A value's identity is the cell it is kept in, so that one
         // primitive alone is handed the cell as it stands.
         // A list or a dictionary's window is walked as it stands, so what
@@ -28152,3 +28186,5 @@ mod heap;
 
 #[path = "binascii.rs"]
 mod binascii;
+
+include!("warnings.rs");

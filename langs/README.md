@@ -5696,6 +5696,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
+| `ext.system.warnings` | - | - | `_warnings` `warn` `warn_explicit` `_filters_mutated` `_filters_mutated_lock_held` `_acquire_lock` `_release_lock` `_set_module` | - | - | - | - | - | - | - |
 | `ext.text.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.text.format.align.string` | - | - | `ValueError: '=' alignment not allowed in string format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.alternate.character` | - | - | `ValueError: Alternate form (#) not allowed with integer format specifier 'c'` | - | - | - | - | - | - | - |
@@ -6087,3 +6088,5 @@ class descriptor cycles are candidates for the existing cycle collector.
 Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
+
+`ext.system.warnings` names the Python native warnings backend and its entry points. The full kernels own filtering, registry versions, caller selection and locking; the public library owns warning formatting and capture hooks.

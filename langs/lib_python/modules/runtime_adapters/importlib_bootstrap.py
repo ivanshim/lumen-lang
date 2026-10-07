@@ -36,8 +36,7 @@ def _setup(sys_module, _imp_module):
             builtin_module = sys.modules[builtin_name]
         setattr(self_module, builtin_name, builtin_module)
 
-    # Source-only runtimes use the Python warning backend directly. Its
-    # local bootstrap binding does not install an entry for a C extension.
+    # Bootstrap can also run when an optional warning extension is blocked.
     try:
         _warnings = __load_module('_warnings')
     except ImportError:
@@ -45,4 +44,6 @@ def _setup(sys_module, _imp_module):
 
     # Instantiation requires _weakref to have been set.
     _blocking_on = _WeakValueDictionary()
+    if _imp._NativeFinder not in sys.meta_path:
+        sys.meta_path.append(_imp._NativeFinder)
 

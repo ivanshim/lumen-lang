@@ -394,6 +394,7 @@ pub enum Prim {
     BinaryAscii,
     HeapNative,
     ContextStore,
+    WarningOperation(u8),
     ReduceNative,
     ProductStep,
     RebuildNative,

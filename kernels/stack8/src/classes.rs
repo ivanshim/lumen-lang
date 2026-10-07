@@ -3182,7 +3182,12 @@ impl<'a> Engine<'a> {
                         else if self.lang.constructor.as_deref()==Some(name) || name==self.class_word("subclass") {Some(2)}
                         else if name==self.class_word("get") {Some(10)} else if name==self.class_word("set") {Some(11)}
                         else if name==self.class_word("remove") {Some(12)} else {None};
-                    if let Some(i)=index {return Ok(Self::adapter(i, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] }));}
+                    if let Some(i)=index {
+                        if i == 2 && !self.lang.warning_backend.is_empty() && self.lang.constructor.as_deref() == Some(name) {
+                            return Ok(self.loose_members.borrow_mut().entry("root:initializer".into()).or_insert_with(|| Self::adapter(2, Vec::new())).clone());
+                        }
+                        return Ok(Self::adapter(i, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] }));
+                    }
                 }
                 if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }

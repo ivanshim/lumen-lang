@@ -3244,7 +3244,9 @@ impl<'a> Builder<'a> {
                 (true, Some(mark)) => said.split(mark).collect::<Vec<_>>(),
                 _ => vec![said.as_str()],
             };
-            if pieces.iter().any(|part| !self.table.name_like(part) || self.table.keywords.contains(*part)) {
+            let reserved = |part: &&str| self.table.keywords.contains(*part)
+                && !["ext.stmt.match", "ext.stmt.match.case", "ext.stmt.type_alias"].iter().any(|label| self.table.spells(label, part));
+            if pieces.iter().any(|part| !self.table.name_like(part) || reserved(part)) {
                 return Err(format!("Expected identifier among imported names, got '{}'", said));
             }
             path.extend(pieces.iter().map(|s| s.to_string()));

@@ -25,6 +25,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `../langs/lib_python/modules/test/test_warnings/` | `Lib/test/test_warnings/__init__.py` and `data/{import_warning,package_helper,stacklevel}.py`, embedded unchanged beneath PSF provenance headers | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_warnings/` | `Lib/test/test_warnings/{__init__,__main__}.py` and `data/{import_warning,package_helper,stacklevel}.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/support/warnings_helper.py` | [python/cpython](https://github.com/python/cpython) `Lib/test/support/warnings_helper.py`, unchanged beneath a single PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_sources/unittest_{case,result}.py` | [python/cpython](https://github.com/python/cpython) `Lib/unittest/{case,result}.py`, unchanged beneath a single PSF provenance header; registered as the real package submodules without editing the existing unittest implementation | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
@@ -105,7 +107,7 @@ were compared to their documented source module or C implementation. The
 previous 120-entry re-pin inventory was recovered from repository history
 for the inventory comparison; the new rows below record every audited file.
 
-Hashes apply to file bodies after the single `# Source: CPython` provenance
+Hashes apply to file bodies after the single PSF provenance
 line, where present. Adapter hashes deliberately differ; no claim of
 byte-for-byte provenance is made for them. A dash means no same-path release
 source exists. Full working measurements are in ignored `probe/`.
@@ -202,7 +204,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `test/support/script_helper.py` | runtime adapter / implementation | `4ce0a8771b3aaf48ffc2fd01a00b423c24b281f6f849a38df65603344b6a7e55` | `d94c1502c2b7a3f1e57deb1c8913e1890049c73979261f205fc2f7e96fc03677` |
 | `test/support/testcase.py` | restored release copy | `69683bb4a66f7abfb91c5726b0e6c2434a2e1bd2d7ddda5b88b602b1577be12c` | `69683bb4a66f7abfb91c5726b0e6c2434a2e1bd2d7ddda5b88b602b1577be12c` |
 | `test/support/threading_helper.py` | runtime adapter / implementation | `32b013b39f834663bd1f253ca11cc18e99a5cdb558178e1a35b8ada372442f76` | `93976321a0592dda85d769089d443f7ce6f0742911852d3d875de5f03a8d7471` |
-| `test/support/warnings_helper.py` | runtime adapter / implementation | `065324aee43a5c679cf698c0155583b064960153f7f37ae83589b01fdfbf2807` | `fc02de4d91bae3988079e3fb3fec3da96ae467fd548295745c2846af179f3870` |
+| `test/support/warnings_helper.py` | unchanged release body beneath PSF header | `fc02de4d91bae3988079e3fb3fec3da96ae467fd548295745c2846af179f3870` | `fc02de4d91bae3988079e3fb3fec3da96ae467fd548295745c2846af179f3870` |
 | `test/test_iter.py` | unchanged release copy | `2255bb4dac0165fd5f9bcc56112ec938722d425b819099749efdd24b9193887e` | `2255bb4dac0165fd5f9bcc56112ec938722d425b819099749efdd24b9193887e` |
 | `test/test_math.py` | runtime adapter / implementation | `1f352896629e30e7e6f6d2efab100e559a6864d003dab0638cd9db3c2476e711` | `17a9b4e60bcf3e0ac185d0b4f4d97ab1ea91c4f94069c3032ba56d7994930b03` |
 | `test/typinganndata/__init__.py` | unchanged release copy | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
@@ -304,14 +306,26 @@ language score. Its five upstream files are preserved byte for byte. The
 embedded test package and its helper files retain upstream bodies beneath
 PSF provenance headers so `test.test_warnings` imports through the runtime.
 `warnings.py` and `_py_warnings.py` also retain complete upstream bodies.
-Separate runtime adapters preserve the existing private capture interface
-and use the Python warning backend during importlib bootstrap; they do not
-register an `_warnings` extension. The original importlib source files are
-unchanged. The external bootstrap adapter differs only in its warning
-backend import, besides its provenance docstring; source line positions are preserved.
+Separate runtime adapters preserve the existing private capture interface.
+Both Python kernels provide a native `_warnings` module with filter and once
+registries, warning emission, revision invalidation and lock operations. The
+module is advertised through `_imp` and `sys.builtin_module_names`; its warning
+functions are native kernel callables. The public library bodies and original
+importlib source files remain unchanged. The external bootstrap adapter changes
+only its warning backend import and provenance docstring, preserving positions.
 
-The v3.14.8 package calls `c_warnings._set_module(c_warnings)` unconditionally.
-When `import_fresh_module` returns `None` for the missing C backend, package
-collection raises `AttributeError` before any classes run. This also occurs
-on CPython with that backend unavailable. The suite is left unchanged and
-the collection error remains visible rather than supplying a C facade.
+Fresh imports exercise both upstream variants without changing the import
+helper or skip logic. A custom finder can still make `_warnings` unavailable;
+the resulting upstream collection error remains honest. Real caller frames,
+source-loader metadata and the standard warning recorder are shared runtime
+behavior rather than reference-test substitutions. The real `unittest.case`
+and `unittest.result` sources are registered from separate source files so the
+existing unittest implementation and its directory remain untouched.
+
+The unchanged warnings suite now collects 197 methods on each full kernel,
+with 176 passing, 10 skipped by the existing suite and 11 nonpassing methods
+(7 failures and 4 errors), compared with zero collected methods before the
+native backend. Remaining cases expose subprocess option/module startup,
+resource finalization and an unresolved `ClassVar` annotation in subprocess
+support. The 13 original semantic probes and eight additional native/runtime
+probes match CPython on both kernels. No copied test or library body is edited.
