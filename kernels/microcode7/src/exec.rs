@@ -1798,6 +1798,9 @@ impl<'a> Machine<'a> {
             if let Some(at) = find("ext.system.fault.class.value") {
                 let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     name: idents[at].clone(), under: None, answers: Vec::new(),
+        crate::data::set_implicit_words([("allocate", 4u8), ("getitem", 5), ("subclass", 5)].iter().filter_map(|(key, manner)| {
+            table.single(&format!("ext.stmt.class.detail.{key}")).map(|word| (word.to_string(), *manner))
+        }).collect());
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
                 };

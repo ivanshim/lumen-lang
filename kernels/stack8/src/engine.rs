@@ -1508,6 +1508,9 @@ impl<'a> Engine<'a> {
             class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
+        crate::value::implicit_members(["allocate", "getitem", "subclass"].iter().filter_map(|part| {
+            lang.class_details.get(*part).and_then(|list| list.first()).map(|word| (word.clone(), *part == "allocate"))
+        }).collect());
             contexts: crate::context::ContextStore::default(),
             constructor_indices: RefCell::new(HashMap::new()),
             member_words: [

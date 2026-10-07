@@ -288,6 +288,17 @@ pub enum Value {
     Unset,
 }
 
+thread_local! {
+    // The words a class body gives a plain routine for, that the language
+    // reads back out of the class's namespace wrapped as a static ('s')
+    // or a class ('c') member, by the number of the wrapped kind.
+    static IMPLICIT_WORDS: RefCell<Vec<(String, u8)>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn set_implicit_words(words: Vec<(String, u8)>) {
+    IMPLICIT_WORDS.with(|held| *held.borrow_mut() = words);
+}
+
 /// A member keeps its callable and, where needed, its writer or receiver.
 pub struct Adornment {
     pub manner: char,
@@ -592,13 +603,21 @@ impl Value {
     }
 
     pub fn proxy_pairs(&self) -> Value {
+        fn shown(word: &str, held: &Value) -> Value {
+            if !matches!(held, Value::Routine(..) | Value::Bound(..)) { return held.clone(); }
+            let manner = IMPLICIT_WORDS.with(|words| words.borrow().iter().find(|(name, _)| name == word).map(|(_, manner)| *manner));
+            match manner {
+                Some(wrapping) => Value::Wrapped(wrapping, Rc::new(vec![held.clone()]).into()),
+                None => held.clone(),
+            }
+        }
         if let Value::Shared(cell) | Value::Mutable(cell, _) = self { return cell.borrow().proxy_pairs(); }
         if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
         if let Value::Blueprint(blueprint) = self {
             let fields = blueprint.shared.borrow();
             return Value::Dict(Rc::new(fields.iter().filter_map(|(word, held)| {
                 if word.starts_with('\0') || word.starts_with('#') { None }
-                else { Some((Value::text(word), held.clone())) }
+                else { Some((Value::text(word), shown(word, held))) }
             }).collect()));
         }
         self.settled()

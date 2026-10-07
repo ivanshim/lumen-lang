@@ -527,6 +527,24 @@ pub enum Placement {
     Uncertain,
 }
 
+thread_local! {
+    /// The members a class body writes as plain routines that the language
+    /// reads back out of the class namespace as a static or class method,
+    /// each with whether it is the static kind.
+    static IMPLICIT_MEMBERS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn implicit_members(names: Vec<(String, bool)>) {
+    IMPLICIT_MEMBERS.with(|held| *held.borrow_mut() = names);
+}
+
+fn namespace_entry(key: &str, value: &Value) -> Value {
+    if !matches!(value, Value::Routine(_)) { return value.clone(); }
+    IMPLICIT_MEMBERS.with(|held| held.borrow().iter().find(|(name, _)| name == key).map(|(_, plain)| {
+        Value::Adapter(Rc::new((if *plain { 4 } else { 5 }, vec![value.clone()])))
+    })).unwrap_or_else(|| value.clone())
+}
+
 thread_local! { static MAP_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 
 fn next_map_revision() -> u64 {
@@ -774,7 +792,7 @@ impl Value {
             Value::View(proxy) if proxy.1 == "mapping" => proxy.0.proxy_dictionary(),
             Value::Class(class) => Value::Map(Rc::new(class.shared.borrow().iter()
                 .filter(|(key, _)| !key.starts_with(['\0', '#']))
-                .map(|(key, value)| (Value::text(key), value.clone())).collect())),
+                .map(|(key, value)| (Value::text(key), namespace_entry(key, value))).collect())),
             other => other.contents(),
         }
     }
