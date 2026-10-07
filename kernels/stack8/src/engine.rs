@@ -7499,6 +7499,17 @@ impl<'a> Engine<'a> {
     }
 
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        if place == 15 && self.lang.type_parameters {
+            let slot = self.special_value(value, place);
+            let native = match value { Value::Object(object) => Self::own_kind(&object.class_now()), _ => None };
+            let qualified = native.as_deref().and_then(|name| match name {
+                "Union" | "TypeVar" | "ParamSpec" | "ParamSpecArgs" | "ParamSpecKwargs" => Some(format!("typing.{name}")),
+                "SimpleNamespace" => Some(String::from("types.SimpleNamespace")), _ => None,
+            });
+            if matches!(slot, Some(Value::Null)) || (slot.is_none() && qualified.is_some()) {
+                return Err(self.core_fault("core.uniterable", &qualified.unwrap_or_else(|| value.core_kind())));
+            }
+        }
         if let Value::Class(class) = value {
             let Some(maker) = Self::maker_beneath(class) else { return Ok(None); };
             let Some(word) = self.lang.class_special.get(place) else { return Ok(None); };
@@ -21805,6 +21816,17 @@ impl Engine<'_> {
                     return Ok(pack(vec![reverse.clone(), pack(vec![empty])]));
                 }
                 _ => {}
+            }
+        }
+        if saved.walked.as_deref() == Some("generic_alias_iterator") {
+            if let CursorSource::Items(items, _) = &saved.source {
+                if let Some(Value::Object(unpacked)) = items.first() {
+                    let mut fields = unpacked.fields.borrow().clone();
+                    for (key, flag) in &mut fields { if key == "__unpacked__" { *flag = Value::Flag(false); } }
+                    self.made += 1;
+                    let alias = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: unpacked.class_now().clone(), fields: RefCell::new(fields), mark: self.made }));
+                    return Ok(pack(vec![iter, pack(vec![alias])]));
+                }
             }
         }
         let (maker, inputs, position) = match &saved.source {

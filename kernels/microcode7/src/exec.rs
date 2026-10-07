@@ -13817,6 +13817,21 @@ impl<'a> Machine<'a> {
     }
 
     fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+        if self.table.flag("ext.stmt.type_parameters") && index == 15 {
+            let reader = self.appointment(subject, index);
+            let mut display = None;
+            if let Value::Thing(object) = subject {
+                if let Some(kind) = Self::native_word(&object.blueprint()) {
+                    if ["Union", "TypeVar", "ParamSpec", "ParamSpecArgs", "ParamSpecKwargs"].contains(&kind.as_str()) {
+                        display = Some(format!("typing.{kind}"));
+                    } else if kind == "SimpleNamespace" { display = Some("types.SimpleNamespace".to_owned()); }
+                }
+            }
+            if matches!(reader, Some(Value::Nil)) || (reader.is_none() && display.is_some()) {
+                let name = display.unwrap_or_else(|| subject.kind_word());
+                return Err(self.core_complaint("core.uniterable", &name));
+            }
+        }
         if let Value::Blueprint(class) = subject {
             let factory = Self::builder_over(class);
             if let Some(factory) = factory {
@@ -26310,6 +26325,19 @@ impl Machine<'_> {
                 _ => None,
             };
             if let Some(sequence) = empty { return Ok(tuple(vec![constructor, tuple(vec![sequence])])); }
+        }
+        if snapshot.walks.as_deref() == Some("generic_alias_iterator") {
+            let original = match &snapshot.kind {
+                IteratorKind::Stored { entries, .. } => entries.first(),
+                _ => None,
+            };
+            if let Some(Value::Thing(spread)) = original {
+                let mut holds = spread.holds.borrow().clone();
+                if let Some(entry) = holds.iter_mut().find(|entry| entry.0 == "__unpacked__") { entry.1 = Value::Flag(false); }
+                self.made += 1;
+                let normal = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: spread.blueprint().clone(), holds: RefCell::new(holds), turn: self.made }));
+                return Ok(tuple(vec![constructor, tuple(vec![normal])]));
+            }
         }
         let mut state = None;
         let parameters = match &snapshot.kind {

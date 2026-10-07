@@ -88,6 +88,16 @@ impl<'a> Engine<'a> {
                 hooks.push((name, Self::adapter(124, vec![Value::Small(mode)])));
             }
         }
+        if self.lang.type_parameters {
+            let entries: &[(&str, &str)] = match word {
+                "GenericAlias" => &[("__getitem__", "substitute"), ("__hash__", "alias_hash"), ("__reduce__", "alias_reduce"), ("__reduce_ex__", "alias_reduce")],
+                "Union" => &[("__getitem__", "substitute"), ("__hash__", "union_hash"), ("__eq__", "union_equal"), ("__reduce__", "union_reduce"), ("__reduce_ex__", "union_reduce")],
+                "NoDefaultType" => &[("__reduce__", "no_default_reduce"), ("__reduce_ex__", "no_default_reduce")],
+                "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" => &[("__reduce__", "parameter_reduce"), ("__reduce_ex__", "parameter_reduce")],
+                _ => &[],
+            };
+            hooks.extend(entries.iter().map(|(name, function)| (name.to_string(), Self::adapter(158, vec![Value::text(function)]))));
+        }
         if word == "SimpleNamespace" {
             for (name, mode) in [(self.class_word("allocate").to_string(), 0), (self.lang.constructor.clone().unwrap_or_default(), 1),
                                  ("__repr__".to_string(), 2), ("__eq__".to_string(), 3), ("__ne__".to_string(), 4),
@@ -96,7 +106,14 @@ impl<'a> Engine<'a> {
             }
             hooks.push(("__hash__".to_string(), Value::Null));
         }
-        let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
+        // Extension types publish the module which defines their public identity.
+        let module = match word {
+            "SimpleNamespace" | "GenericAlias" => Some("types"),
+            "Union" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "ParamSpecArgs" | "ParamSpecKwargs" => Some("typing"),
+            _ => None,
+        };
+        if let Some(module) = module { hooks.push((self.class_word("module").to_owned(), Value::text(module))); }
+        let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: ancestry, base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
@@ -1587,6 +1604,11 @@ impl<'a> Engine<'a> {
                 77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
                     Ok(args.remove(0))
                 }
+                158 => {
+                    let module = self.import_module("_typing_runtime")?;
+                    let callable = self.class_get(module, &w.1[0].plain(), false)?;
+                    self.class_apply(callable, args)
+                }
                 157 if args.len() == 2 => {
                     let variable = matches!(args[0].contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVar"));
                     if w.1[0].is_true() { args.swap(0, 1); }
@@ -2587,7 +2609,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 180 | 155 | 156 | 157 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 180 | 155 | 156 | 157 | 158 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -2725,7 +2747,7 @@ impl<'a> Engine<'a> {
                 let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.iter().cloned()).collect();
                 if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
                     for class in &order[start + 1..] {
-                        if name == self.class_word("allocate") {
+                        if name == self.class_word("allocate") && Self::own_class_value(class, name).is_none() {
                             if let Some(word) = Self::own_kind(class) {
                                 if word != self.class_word("root") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
                             }
@@ -3249,7 +3271,26 @@ impl<'a> Engine<'a> {
                     }
                 }
 
+                if Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias") {
+                    if ["__module__", "__name__", "__qualname__", "__doc__"].contains(&name) {
+                        let origin = o.fields.borrow().iter().find(|(key, _)| key == "__origin__").unwrap().1.clone();
+                        return self.class_get(origin, name, true);
+                    }
+                    if name == "__typing_unpacked_tuple_args__" {
+                        let fields = o.fields.borrow();
+                        let unpacked = fields.iter().any(|(key, value)| key == "__unpacked__" && value.is_true());
+                        let origin = fields.iter().find(|(key, _)| key == "__origin__").unwrap().1.clone();
+                        if unpacked && origin.kind_it_names().as_deref() == Some("tuple") {
+                            return Ok(fields.iter().find(|(key, _)| key == "__args__").unwrap().1.clone());
+                        }
+                        return Ok(Value::Null);
+                    }
+                }
+                if Self::own_kind(&o.class_now()).as_deref() == Some("NoDefaultType") && name == "__module__" {
+                    return Err(self.member_amiss(&subject, name).into());
+                }
                 if Self::own_kind(&o.class_now()).as_deref() == Some("Union") {
+                    if name == "__name__" || name == "__qualname__" { return Ok(Value::text("Union")); }
                     if name == "__origin__" { return Ok(Value::Class(self.kind_class("Union"))); }
                     if name == "__parameters__" {
                         let items = o.fields.borrow().iter().find(|(key, _)| key == "__args__").unwrap().1.clone();
@@ -3268,6 +3309,9 @@ impl<'a> Engine<'a> {
                 }
                 if name == "__parameters__" && o.class_now().name == "TypeAliasType" {
                     return Ok(o.fields.borrow().iter().find(|(key, _)| key == "__type_params__").map(|(_, value)| value.clone()).unwrap_or_else(|| Value::tuple(Vec::new())));
+                }
+                if o.class_now().name == "TypeVar" && name == "__typing_prepare_subst__" {
+                    return Ok(Self::adapter(3, vec![Self::adapter(158, vec![Value::text("typevar_prepare")]), subject.clone()]));
                 }
                 let substitution = match (o.class_now().name.as_str(), name) {
                     ("TypeVar", "__typing_subst__") => Some("_typevar_subst"),
@@ -4548,7 +4592,7 @@ impl<'a> Engine<'a> {
     pub(super) fn weak_layout(&self, c: &Class) -> bool {
         if let Some(layout) = c.weak_storage.get() { return layout; }
         if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
-        if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "set" | "frozenset"); }
+        if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "set" | "frozenset" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "Union" | "GenericAlias"); }
         if c.direct.is_empty() { return false; }
         match Self::own_class_value(c, self.class_word("slots")) {
             None => true,
@@ -5176,7 +5220,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|155..=157))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|154..=158))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
@@ -5393,7 +5437,10 @@ impl<'a> Engine<'a> {
             // constructing in silence, and answers its kind's methods
             // through the worth the thing keeps.
             if let Some(word)=Self::own_kind(c) {
-                if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
+                if name == self.class_word("allocate") {
+                    let allocator = Self::own_class_value(c, name).unwrap_or_else(|| Self::adapter(14, vec![Value::text(&word)]));
+                    return self.class_apply(allocator, args);
+                }
                 if word == "module" && self.lang.class_special.get(1).is_some_and(|key| key == name) { return self.module_repr_value(subject); }
                 if self.lang.constructor.as_deref()==Some(name){
                     if word == "module" { return self.initialise_module(subject, args); }
@@ -5552,6 +5599,12 @@ impl<'a> Engine<'a> {
         let receiver = given.remove(0);
         if operation == 0 {
             let Value::Class(class) = receiver else { return Err(self.class_refusal()); };
+            let mut expanded = Vec::new();
+            for (key, value) in self.call_items(given)? {
+                if key.is_some() { return Err("TypeError: GenericAlias() takes no keyword arguments".into()); }
+                expanded.push(value);
+            }
+            given = expanded;
             if given.len() != 2 { return Err("TypeError: GenericAlias expected 2 arguments".into()); }
             let args = match given[1].contents() { Value::Tuple(_) => given[1].clone(), value => Value::tuple(vec![value]) };
             let mut parameters: Vec<Value> = Vec::new();
@@ -5575,6 +5628,7 @@ impl<'a> Engine<'a> {
         let origin = self.class_get(receiver.clone(), "__origin__", true)?;
         let args = self.class_get(receiver.clone(), "__args__", true)?;
         match operation {
+            1 if self.lang.type_parameters => self.class_apply(Self::adapter(158, vec![Value::text("alias_repr")]), vec![receiver]),
             1 => {
                 let mut parts = Vec::new();
                 for arg in self.comprehension_items(&args)? {
