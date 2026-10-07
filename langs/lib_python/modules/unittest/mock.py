@@ -224,6 +224,16 @@ class MagicMock(Mock):
         return self._magic['__exit__'](kind, value, traceback)
 
 
+def _is_module(target):
+    import types
+    return isinstance(target, types.ModuleType)
+
+
+def _builtin_names():
+    import builtins
+    return frozenset(name for name in dir(builtins) if not name.startswith('_'))
+
+
 class _Patch:
     def __init__(self, target, attribute, new, create, made):
         self.target = target
@@ -235,6 +245,12 @@ class _Patch:
         self.held = DEFAULT
 
     def start(self):
+        if (not self.create and not hasattr(self.target, self.attribute)
+                and _is_module(self.target) and self.attribute in _builtin_names()):
+            # A builtin a module reaches through the builtin namespace
+            # rather than keeping itself, such as `open`, is stood over
+            # where it is no attribute of the module at all.
+            self.create = True
         if hasattr(self.target, self.attribute):
             self.held = getattr(self.target, self.attribute)
         elif not self.create:
