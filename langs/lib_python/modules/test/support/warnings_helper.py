@@ -75,3 +75,12 @@ def check_no_warnings(testcase, message='', category=Warning, force_gc=False):
         if force_gc:
             gc_collect()
     testcase.assertEqual(warns, [])
+
+
+@contextlib.contextmanager
+def save_restore_warnings_filters():
+    old_filters = warnings.filters[:]
+    try:
+        yield
+    finally:
+        warnings.filters[:] = old_filters
