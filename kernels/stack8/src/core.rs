@@ -270,6 +270,10 @@ impl Value {
                 }
                 Some(if h == u64::MAX { 1546275796 } else { h as i64 })
             }
+            // A cursor walks a row, a span or a walk of the kernel's
+            // own; it hashes by where it lies, as the reference hashes
+            // an iterator by its place, so two names for one walk agree.
+            Value::Cursor(state) => Some((std::rc::Rc::as_ptr(state) as usize >> 4) as i64),
             _ => None,
         }
     }

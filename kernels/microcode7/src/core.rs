@@ -310,6 +310,10 @@ impl Value {
                 }
                 code
             }
+            // An iterator is known by where it lies, as the reference
+            // hashes one by its place, so two names for the same walk
+            // give back the same number.
+            Self::Iterator(cell) => (std::rc::Rc::as_ptr(cell) as usize / 16) as i64,
             _ => return None,
         };
         Some(if raw == -1 { -2 } else { raw })

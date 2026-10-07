@@ -742,6 +742,15 @@ impl<'a> Engine<'a> {
         if let Some(cell) = class_cell { let word = self.class_word("cell.contents").to_owned(); self.class_write(cell, &word, Some(Value::Class(c.clone())), true)?; }
 
         self.furnish_slots(&c)?;
+        // A class that says how its things are equal and names no hash of
+        // its own makes things that cannot be keys: the reference writes
+        // the hash as nothing into the dictionary, so a class asking its
+        // line for `__hash__` finds it and finds it empty.
+        if let (Some(hash), Some(eq)) = (self.lang.class_special.get(8).cloned(), self.lang.class_special.get(2)) {
+            if Self::own_class_value(&c, &hash).is_none() && Self::own_class_value(&c, eq).is_some() {
+                c.shared.borrow_mut().push((hash, Value::Null));
+            }
+        }
         if Self::own_class_value(&c, self.class_word("doc")).is_none() { c.shared.borrow_mut().push((self.class_word("doc").into(), Value::Null)); }
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -2936,6 +2945,17 @@ impl<'a> Engine<'a> {
                         pairs.push((Value::text(key), member.clone()));
                     }
                 }
+                // A class whose things no key can hold says so in its own
+                // dictionary: the hash stands there as nothing, so a class
+                // asking its line which methods it carries is told the
+                // hash exists and is empty.
+                if let Some(hash) = self.lang.class_special.get(8) {
+                    if !pairs.iter().any(|(name, _)| name.plain() == *hash) {
+                        if let Some(member) = self.class_value(&kind, hash) {
+                            pairs.push((Value::text(hash), member));
+                        }
+                    }
+                }
                 return Ok(Value::View(Rc::new((Value::Map(Rc::new(pairs.into())),"mapping".to_string()))));
             }
         }
@@ -3117,7 +3137,40 @@ impl<'a> Engine<'a> {
                     }
                     // A class standing for a builtin kind holds no
                     // members of its own; what it names are the ones a
-                    // value of the kind answers to.
+                    // value of the kind answers to. The root is the one
+                    // exception: the methods every object inherits are
+                    // its own, and its directory must list them as the
+                    // directory word already does, so a class standing
+                    // only on the root -- every plain class -- answers
+                    // `__hash__` there when its kinds are asked which
+                    // methods they carry.
+                    if Rc::ptr_eq(c, &self.root_class()) {
+                        let names: Vec<String> = self.lang.class_details.get("root.members").cloned().unwrap_or_default();
+                        let listed: Vec<(Value, Value)> = names.iter()
+                            .filter_map(|name| self.root_member(name, Some(c)).map(|member| (Value::text(name), member)))
+                            .collect();
+                        return Ok(Value::View(Rc::new((Value::Map(Rc::new(listed.into())), "mapping".to_string()))));
+                    }
+                    // A class standing for a native kind holds what a
+                    // value of the kind answers to, the hash among them:
+                    // a kind whose values no key can hold names the hash
+                    // as nothing, so a class asking its line which
+                    // methods it carries is told the hash is there and
+                    // empty.
+                    if Self::own_kind(c).is_some() {
+                        if let Some(hash) = self.lang.class_special.get(8) {
+                            if Self::own_class_value(c, hash).is_none() {
+                                if let Some(member) = self.class_value(c, hash) {
+                                    let mut entries: Vec<(Value, Value)> = c.shared.borrow().iter()
+                                        .filter(|(key, _)| !key.starts_with(['\0', '#']))
+                                        .map(|(key, value)| (Value::text(key), value.clone()))
+                                        .collect();
+                                    entries.push((Value::text(hash), member));
+                                    return Ok(Value::View(Rc::new((Value::Map(Rc::new(entries.into())), "mapping".to_string()))));
+                                }
+                            }
+                        }
+                    }
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
