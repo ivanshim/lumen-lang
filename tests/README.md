@@ -25,6 +25,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `python-3.14.8/test_zipfile/`, `test/archiver_tests.py`, `archivetestdata/{exe_with_z64,exe_with_zip,testtar.tar,zip_cp437_header.zip,zipdir.zip,zipdir_backslash.zip}` | `Lib/test/test_zipfile/` (all 11 files), `Lib/test/archiver_tests.py`, and archive fixtures, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
 The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
