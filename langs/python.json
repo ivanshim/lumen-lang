@@ -3083,6 +3083,9 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.abc.instancecheck": [
+    "__abc_instancecheck"
+  ],
   "ext.builtin.namespace_type": [
     "__namespace_type"
   ],

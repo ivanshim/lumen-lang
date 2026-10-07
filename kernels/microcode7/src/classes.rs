@@ -3403,6 +3403,11 @@ impl<'a> Machine<'a> {
             let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|32|60,_));
             if binds && key==self.detail("descriptor.get"){return Ok(Self::wrap(31,vec![value]));}
             if let Value::Wrapped(32,parts)=&value {
+                if self.names_in_calls && matches!(parts.get(2), Some(Value::Small(-1))) {
+                    let metadata = if key == self.detail("name") { Some(0) }
+                        else if key == "__objclass__" { Some(1) } else { None };
+                    if let Some(at) = metadata { return Ok(parts[at].clone()); }
+                }
                 if key==self.detail("descriptor.set"){return Ok(Self::wrap(33,parts.as_ref().clone()));}
                 if key==self.detail("descriptor.delete"){return Ok(Self::wrap(34,parts.as_ref().clone()));}
             }
@@ -5300,6 +5305,30 @@ impl<'a> Machine<'a> {
         if matches!(op, 24 | 25) && values.len() == 1 {
             let function = Self::wrap(44, vec![values[0].settled()]);
             return if op == 24 { Ok(function) } else { self.apply_class_member(function, vec![Value::Small(1)]) };
+        }
+        // Ask subclass hooks from the calling ABC frame, matching the C helper.
+        if op == 26 {
+            let (arguments, keywords) = self.open_arguments(values)?;
+            if !keywords.is_empty() || arguments.len() != 2 {
+                return Err(String::from("TypeError: _abc_instancecheck() takes two positional arguments").into());
+            }
+            let target = arguments[0].settled();
+            let space = self.load_namespace("_abc")?;
+            let resolve = self.read_class_member(space, "_prepare_instancecheck", false)?;
+            let state = self.apply_class_member(resolve, vec![target.clone(), arguments[1].clone()])?;
+            let Value::Tuple(rows) = state.settled() else { return Err(String::from("TypeError: invalid ABC instance-check state").into()); };
+            let cached = rows[0].settled();
+            if !matches!(cached, Value::Nil) { return Ok(cached); }
+            let Value::Tuple(types) = rows[1].settled() else { return Err(String::from("TypeError: invalid ABC instance-check state").into()); };
+            let word = self.rules.specials[77].clone();
+            let mut remaining = types.len();
+            for kind in types.iter() {
+                let checker = self.read_class_member(target.clone(), &word, false)?;
+                let response = self.apply_class_member(checker, vec![kind.clone()])?;
+                remaining -= 1;
+                if remaining == 0 || self.object_truth(&response)? { return Ok(response); }
+            }
+            return Ok(Value::Flag(false));
         }
         if op == 23 {
             let (mut positional, options) = self.open_arguments(values)?;

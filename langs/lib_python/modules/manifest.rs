@@ -1,6 +1,7 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("_abc", include_str!("_abc.py"), "_abc.py"),
     ("_bisect", include_str!("_bisect.py"), "_bisect.py"),
     ("_blake2", include_str!("_blake2.py"), "_blake2.py"),
     ("_buffer", include_str!("_buffer.py"), "_buffer.py"),
@@ -143,6 +144,8 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("os", include_str!("os.py"), "os.py"),
     ("pathlib", include_str!("pathlib/__init__.py"), "pathlib/__init__.py"),
     ("pathlib._os", include_str!("pathlib/_os.py"), "pathlib/_os.py"),
+    ("pathlib._local", include_str!("pathlib/_local.py"), "pathlib/_local.py"),
+    ("pathlib.types", include_str!("pathlib/types.py"), "pathlib/types.py"),
     ("pdb", include_str!("pdb.py"), "pdb.py"),
     ("pickle", include_str!("pickle.py"), "pickle.py"),
     ("pkgutil", include_str!("pkgutil.py"), "pkgutil.py"),
@@ -244,9 +247,15 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("unittest.util", include_str!("unittest/util.py"), "unittest/util.py"),
     ("unittest", include_str!("unittest.py"), "unittest/__init__.py"),
     ("urllib.parse", include_str!("urllib/parse.py"), "urllib/parse.py"),
+    ("urllib.request", include_str!("urllib/request.py"), "urllib/request.py"),
+    ("urllib.error", include_str!("urllib/error.py"), "urllib/error.py"),
+    ("urllib.response", include_str!("urllib/response.py"), "urllib/response.py"),
     ("urllib", include_str!("urllib.py"), "urllib/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("zipfile", include_str!("zipfile/__init__.py"), "zipfile/__init__.py"),
+    ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
+    ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 

@@ -2,7 +2,7 @@
 # Lib/operator.py stays unchanged; native index conversion ignores int subclass overrides.
 
 __doc__ = 'Operator accelerator supplied by the Python runtime.'
-__all__ = ['index']
+__all__ = ['index', 'add']
 
 def index(a):
     if isinstance(a, int):
@@ -56,3 +56,17 @@ class _DigestComparison:
         return _native_compare(2, a, b)
 
 _compare_digest = _DigestComparison()
+
+
+class _Addition:
+    """Provide the non-binding callable supplied by the operator accelerator."""
+    __name__ = 'add'
+    __qualname__ = 'add'
+    __module__ = '_operator'
+
+    # Add operands through their ordinary Python arithmetic dispatch.
+    def __call__(self, a, b, /):
+        return a + b
+
+
+add = _Addition()
