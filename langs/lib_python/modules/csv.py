@@ -1,4 +1,3 @@
-# Source: CPython Lib/csv.py at v3.14.8 / 8e6e75d9102e; PSF License.
 
 r"""
 CSV parsing and writing.

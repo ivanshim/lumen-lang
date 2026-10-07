@@ -1,4 +1,3 @@
-# Source: CPython Lib/contextlib.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Utilities for with-statement contexts.  See PEP 343."""
 import abc
 import os

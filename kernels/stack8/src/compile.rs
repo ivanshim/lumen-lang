@@ -514,6 +514,37 @@ pub(crate) fn private_name(owner: &str, name: &str) -> String {
     }
 }
 
+// A soft case identifier is a pattern introducer only in a match suite.
+fn match_suite_at(words: &[Token], arm: usize, lang: &Lang) -> bool {
+    let mut finished_blocks = 0usize;
+    let mut opening = None;
+    for place in (0..arm).rev() {
+        match words[place].shape {
+            Shape::Close => finished_blocks += 1,
+            Shape::Open if finished_blocks != 0 => finished_blocks -= 1,
+            Shape::Open => { opening = Some(place); break; }
+            _ => {}
+        }
+    }
+    let Some(mut end) = opening else { return false };
+    while end != 0 && words[end - 1].shape == Shape::LineEnd { end -= 1; }
+    if end == 0 || words[end - 1].shape != Shape::Sign || !lang.block_intros.contains(&words[end - 1].lexeme) { return false; }
+    let mut enclosed = 0usize;
+    for place in (0..end - 1).rev() {
+        if words[place].shape == Shape::Sign {
+            match words[place].lexeme.as_str() {
+                ")" | "]" | "}" => enclosed += 1,
+                "(" | "[" | "{" => enclosed = enclosed.saturating_sub(1),
+                _ => {}
+            }
+        }
+        if enclosed == 0 && matches!(words[place].shape, Shape::LineEnd | Shape::Open | Shape::Close) {
+            return words.get(place + 1).map_or(false, |head| lang.match_words.contains(&head.lexeme));
+        }
+    }
+    words.first().map_or(false, |head| lang.match_words.contains(&head.lexeme))
+}
+
 fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
     let mut result = source.to_vec();
     if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return result; }
@@ -542,16 +573,36 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
         while source.get(begin).map_or(false, |t| t.shape == Shape::LineEnd) { begin += 1; }
         let indented = source.get(begin).map_or(false, |t| t.shape == Shape::Open);
         let mut depth = 0usize;
+        let mut in_pattern = false;
+        let mut pattern_depth = 0usize;
         for i in begin..source.len() {
             match source[i].shape {
                 Shape::Open => depth += 1,
                 Shape::Close => { depth = depth.saturating_sub(1); if depth == 0 { break; } }
                 Shape::LineEnd if !indented => break,
                 Shape::Finish => break,
+                // A case begins a pattern, whose keyword names are not
+                // names of the class and so are never mangled.
+                Shape::Instr if !in_pattern && lang.match_cases.contains(&source[i].lexeme)
+                    && i > 0 && matches!(source[i - 1].shape, Shape::LineEnd | Shape::Open | Shape::Close)
+                    && source.get(i + 1).map_or(false, |next| !matches!(next.shape, Shape::LineEnd | Shape::Finish) && !lang.assign_words.contains(&next.lexeme))
+                    && match_suite_at(source, i, lang) => { in_pattern = true; pattern_depth = 0; },
+                Shape::Instr if in_pattern && lang.match_guards.contains(&source[i].lexeme) => in_pattern = false,
+                Shape::Sign if in_pattern => {
+                    match source[i].lexeme.as_str() {
+                        "(" | "[" | "{" => pattern_depth += 1,
+                        ")" | "]" | "}" => pattern_depth = pattern_depth.saturating_sub(1),
+                        _ if pattern_depth == 0 && lang.block_intros.contains(&source[i].lexeme) => in_pattern = false,
+                        _ => {}
+                    }
+                },
                 // A private builtin's spelling is no class's private
                 // name: it keeps its own spelling wherever it is written.
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
-                Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
+                Shape::Instr => {
+                    let keyword = in_pattern && source.get(i + 1).map_or(false, |next| lang.assign_words.contains(&next.lexeme));
+                    if !keyword { result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme); }
+                }
                 _ => {}
             }
         }
@@ -1072,6 +1123,19 @@ impl<'a> Compiler<'a> {
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
+        // A unit that declared the class's kind word `nonlocal` reads
+        // the hidden cell the declaration named, exactly as it writes
+        // it.
+        if let Some(cell) = self.class_cell_written(name) {
+            if self.lang.closes_over && !self.discovering {
+                if let Some(found) = self.enclosing_cell(self.pieces.len() - 1, &cell) { return Cell { moving, ..found }; }
+            }
+        }
+        // The class's kind word where the unit holds no name of its own
+        // for it is the hidden cell an enclosing unit closes over.
+        if !self.piece().idents.iter().any(|named| named == name) {
+            if let Some(cell) = self.class_cell_read(name) { return Cell { moving, ..cell }; }
+        }
         if self.lang.closes_over && !self.discovering {
             if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return Cell { moving, ..cell }; }
         }
@@ -1091,6 +1155,14 @@ impl<'a> Compiler<'a> {
     /// block's own, forgotten on leaving.
     fn cell_to_write(&mut self, name: &str) -> Cell {
         if !self.importing { self.note_seen(name, SEEN_WRITTEN); }
+        // A unit that declared the class's kind word `nonlocal` writes
+        // the hidden cell the declaration named, before any member or
+        // name of its own is thought of.
+        let declared;
+        let name = match self.class_cell_written(name) {
+            Some(cell) => { declared = cell; declared.as_str() }
+            None => name,
+        };
         // A name a class body knows is written where the body keeps
         // it, as it is read from there: so the loops, imports and
         // handlers of a body bind members by the ordinary writes.
@@ -1290,7 +1362,17 @@ impl<'a> Compiler<'a> {
                     Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false }
                 } else { self.cell_to_read(name, false) };
                 if slot.near.is_empty() && !self.registry.program_bound.contains(name) {
-                    self.constant(Value::Native(native, Rc::from(name)));
+                    if matches!(native, Builtin::Bytes(0 | 1)) {
+                        // The two byte kinds are read in a class body the
+                        // very way they are read at the top of the unit,
+                        // as their kind markers, so two readings of one
+                        // are one value.
+                        let mutable = native == Builtin::Bytes(1);
+                        let words = &self.lang.byte_words["ext.system.bytes.type"];
+                        self.constant(Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1]))));
+                    } else {
+                        self.constant(Value::Native(native, Rc::from(name)));
+                    }
                 } else { self.put(Instr::Read(slot)); }
                 return;
             }
@@ -1320,6 +1402,49 @@ impl<'a> Compiler<'a> {
         self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len())
     }
 
+    /// The hidden cell a `nonlocal` of the class's kind word reaches:
+    /// the cell of the class whose body holds this method, or, said in
+    /// a class body itself, the cell of the class around that one. The
+    /// cell is marked as wanted, so the class made fills it. Any other
+    /// name, or the word said where no such class stands, has none.
+    fn class_cell_declared(&mut self, name: &str) -> Option<String> {
+        let words = self.lang.class_details.get("kind")?;
+        if self.lang.class_builder.is_empty() || !words.iter().any(|word| word == name) { return None; }
+        let back = if self.in_class_body() { 2 } else { 1 };
+        let at = self.gathered.len().checked_sub(back)?;
+        self.gathered[at].needs_class_cell = true;
+        self.gathered[at].class_cell_protocol = true;
+        Some(self.gathered[at].class_cell.clone())
+    }
+
+    /// The hidden cell a write of the class's kind word reaches, where
+    /// the unit declared that word `nonlocal`: the declaration turned
+    /// the name into the cell's own, so the write goes where the cell
+    /// is kept rather than to a member or a name of the unit's own.
+    fn class_cell_written(&self, name: &str) -> Option<String> {
+        let words = self.lang.class_details.get("kind")?;
+        if self.lang.class_builder.is_empty() || !words.iter().any(|word| word == name) { return None; }
+        let unit = self.pieces.last()?;
+        self.gathered.iter().rev().map(|held| held.class_cell.clone())
+            .find(|cell| unit.nonlocals.iter().any(|named| named == cell))
+    }
+
+    /// The hidden cell a class body's own read of the class's kind word
+    /// reaches: the cell of the class around the body, so a class
+    /// nested in a method reads the very `__class__` the methods of
+    /// that class carry, however many functions stand between. A method
+    /// never reaches here: the parent word's own arm reads it first.
+    fn class_cell_read(&mut self, name: &str) -> Option<Cell> {
+        let words = self.lang.class_details.get("kind")?;
+        if self.lang.class_builder.is_empty() || !self.lang.closes_over || self.discovering || !words.iter().any(|word| word == name) { return None; }
+        if !self.in_class_body() { return None; }
+        let at = self.gathered.len().checked_sub(2)?;
+        self.gathered[at].needs_class_cell = true;
+        self.gathered[at].class_cell_protocol = true;
+        let cell = self.gathered[at].class_cell.clone();
+        self.enclosing_cell(self.pieces.len() - 1, &cell)
+    }
+
     /// Whether a named expression written in the comprehension now
     /// being read would land in a class body: the reference lets a
     /// comprehension bind a name in the function or program around it,
@@ -1343,6 +1468,7 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.last().expect("a unit");
         unit.globals.iter().any(|(named, _)| named == name) || unit.nonlocals.iter().any(|named| named == name)
+            || self.class_cell_written(name).is_some()
     }
 
     /// A map built from the class body's own names, bound so far, each
@@ -2650,10 +2776,12 @@ impl<'a> Compiler<'a> {
             }
             if word == "case" && self.look_ahead(1).lexeme != ":" {
                 let mut depth = 0usize;
-                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| {
+                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).find_map(|item| {
                     match item.lexeme.as_str() { "(" | "[" | "{" => depth += 1, ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {} }
-                    item.lexeme == ":" && depth == 0
-                });
+                    if depth != 0 { return None; }
+                    if self.lang.assign_words.contains(&item.lexeme) || self.lang.compound.contains_key(&item.lexeme) { return Some(false); }
+                    (item.lexeme == ":").then_some(true)
+                }).unwrap_or(false);
                 if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
             }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
@@ -2892,6 +3020,10 @@ impl<'a> Compiler<'a> {
                     // is kept where any other's is, and a write of the
                     // name within the body goes there rather than to a
                     // member, exactly as a name declared `global` does.
+                    // Said of the class's own kind word, the declaration
+                    // names the hidden cell that class keeps, so a write
+                    // of the name fills the class's very place.
+                    let name = self.class_cell_declared(&name).unwrap_or(name);
                     self.piece().nonlocals.push(name.clone());
                     if self.in_class_body() { self.piece().class_nonlocals.push(name.clone()); }
                     if lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
@@ -4355,6 +4487,7 @@ impl<'a> Compiler<'a> {
         self.skip_seps();
         let mut ends = Vec::new();
         let mut count = 0;
+        let mut unreachable = false;
         while self.look().shape != Shape::Close && !self.exhausted() {
             if !self.on_keyword(&self.lang.match_cases) {
                 if !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "=" {
@@ -4362,9 +4495,18 @@ impl<'a> Compiler<'a> {
                 }
                 return Err(self.pattern_fault());
             }
+            // A case whose test fits everything leaves no subject for a
+            // later case, which the reference refuses to read.
+            if unreachable { return Err(self.pattern_fault()); }
+            if !self.lang.trace_native.is_empty() {
+                let row = (self.look().row as u32).saturating_sub(self.before);
+                self.put(Instr::Line(row));
+                self.piece().line = row;
+            }
             self.take();
             self.pattern_values = 0;
             let pattern = self.case_pattern()?;
+            let falls_through = Self::irrefutable_pattern(&pattern);
             let names = pattern.bindings().map_err(|_| self.pattern_fault())?;
             self.read(&subject);
             // The values the pattern read ahead stand under the subject.
@@ -4386,6 +4528,9 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 Some(self.skip())
             } else { None };
+            // A guard keeps a case that fits everything from leaving the
+            // later cases with nothing to fit.
+            unreachable = falls_through && guarded.is_none();
             if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
             let inline = !matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish);
             self.body()?;
@@ -4475,12 +4620,37 @@ impl<'a> Compiler<'a> {
         else { Ok(crate::code::Pattern::Capture(name)) }
     }
 
+    /// Whether a case test fits every subject: a capture or a wildcard,
+    /// or an alternative of such. Such a test leaves nothing for a later
+    /// alternative or a later case to fit.
+    /// Whether two literal mapping keys are the same key. A flag is the
+    /// number it stands for, as a map's own keying has it.
+    fn key_alike(a: &Value, b: &Value) -> bool {
+        let plain = |v: &Value| match v { Value::Flag(flag) => Value::Small(i64::from(*flag)), other => other.clone() };
+        plain(a).equals(&plain(b))
+    }
+
+    fn irrefutable_pattern(pattern: &crate::code::Pattern) -> bool {
+        use crate::code::Pattern;
+        match pattern {
+            Pattern::Any | Pattern::Capture(_) => true,
+            Pattern::Bound(inner, _) => Self::irrefutable_pattern(inner),
+            Pattern::Alternatives(choices) => choices.iter().any(Self::irrefutable_pattern),
+            _ => false,
+        }
+    }
+
     fn pattern_part(&mut self) -> Res<crate::code::Pattern> {
         use crate::code::Pattern;
         let mut choices = vec![self.pattern_atom()?];
         while self.on_any(&self.lang.match_ors) {
             self.take();
             choices.push(self.pattern_atom()?);
+        }
+        // An alternative that fits everything leaves no subject for the
+        // alternatives after it, which the reference refuses to read.
+        if choices.len() > 1 && choices[..choices.len() - 1].iter().any(Self::irrefutable_pattern) {
+            return Err(self.pattern_fault());
         }
         let mut pattern = if choices.len() == 1 { choices.pop().unwrap() } else { Pattern::Alternatives(choices) };
         if self.on_keyword(&self.lang.match_as) {
@@ -4551,18 +4721,68 @@ impl<'a> Compiler<'a> {
         "SyntaxError: cannot use expression as pattern target".into()
     }
 
+    /// A signed number in a pattern, answering whether the numeral names
+    /// an imaginary part. A minus in front of an imaginary part is kept
+    /// as a complex of its own, which the shared arithmetic will not
+    /// make: the two real parts are turned one by one.
+    fn pattern_numeral(&mut self) -> Res<(Value, bool)> {
+        let lang = self.lang;
+        let below = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Sub));
+        if below { self.take(); }
+        if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
+        let token = self.take();
+        let imaginary = token.lexeme.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c));
+        let number = parse_number(&token.lexeme, lang)?;
+        if !below { return Ok((number, imaginary)); }
+        let turned = if imaginary {
+            let (real, sole) = crate::complex::parts(&number).ok_or_else(|| self.pattern_fault())?;
+            crate::complex::made(lang, -real, -sole)
+        } else {
+            arith::calculate(arith::Operation::Minus, &Value::Small(0), &number).ok_or_else(|| self.pattern_fault())??
+        };
+        Ok((turned, imaginary))
+    }
+
+    /// The imaginary part of a complex literal: a numeral with no sign
+    /// of its own, the sign before it being the one that joins it to the
+    /// real part. `case 1 + -2j` is no pattern at all.
+    fn pattern_imaginary(&mut self) -> Res<Value> {
+        let lang = self.lang;
+        if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
+        let token = self.take();
+        if !token.lexeme.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c)) {
+            return Err(self.pattern_fault());
+        }
+        parse_number(&token.lexeme, lang)
+    }
+
     fn pattern_atom(&mut self) -> Res<crate::code::Pattern> {
         use crate::code::Pattern;
         let lang = self.lang;
         let token = self.look().clone();
         if token.shape == Shape::Numeral || lang.dyadic.get(token.spelling()).map_or(false, |op| matches!(op.action, Action::Sub)) {
-            self.take();
-            let value = if token.shape == Shape::Numeral { parse_number(&token.lexeme, lang)? } else {
-                if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
-                let positive = parse_number(&self.take().lexeme, lang)?;
-                arith::calculate(arith::Operation::Minus, &Value::Small(0), &positive).ok_or_else(|| self.pattern_fault())??
-            };
-            return Ok(Pattern::Literal(value));
+            let (mut number, mut imaginary) = self.pattern_numeral()?;
+            // A real part met by a plus or a minus and an imaginary part
+            // makes a complex literal; every other pairing is refused.
+            while lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Add | Action::Sub)) {
+                if imaginary { return Err(self.pattern_fault()); }
+                let below = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Sub));
+                self.take();
+                let part = self.pattern_imaginary()?;
+                let (real, _) = crate::complex::parts(&number).ok_or_else(|| self.pattern_fault())?;
+                let (_, sole) = crate::complex::parts(&part).ok_or_else(|| self.pattern_fault())?;
+                number = crate::complex::made(lang, real, if below { -sole } else { sole });
+                imaginary = true;
+            }
+            return Ok(Pattern::Literal(number));
+        }
+        if token.shape == Shape::Bytes {
+            let mut octets = Vec::new();
+            while self.look().shape == Shape::Bytes {
+                octets.extend(self.take().lexeme.chars().map(|c| c as u8));
+            }
+            return Ok(Pattern::Literal(Value::Bytes(Rc::new(std::cell::RefCell::new(octets)), false,
+                Rc::from(lang.byte_words["ext.system.bytes.repr"][0].as_str()))));
         }
         if matches!(token.shape, Shape::Quote | Shape::Codepoints) {
             let mut points = Vec::new();
@@ -4619,6 +4839,14 @@ impl<'a> Compiler<'a> {
                     } else {
                         let key = self.pattern_atom()?;
                         if !matches!(key, Pattern::Literal(_) | Pattern::Value(_)) { return Err(self.pattern_fault()); }
+                        // A key a literal already written down equals is
+                        // refused as a duplicate; a key read ahead is left
+                        // to be checked when the pattern is fitted.
+                        if let Pattern::Literal(value) = &key {
+                            for (old, _) in &pairs {
+                                if matches!(old, Pattern::Literal(prev) if Self::key_alike(prev, value)) { return Err(self.pattern_fault()); }
+                            }
+                        }
                         self.want_sign(lang.pair_mark.as_deref().unwrap_or_default(), "between a key and its pattern")?;
                         pairs.push((key, self.pattern_part()?));
                     }
@@ -4975,6 +5203,8 @@ impl<'a> Compiler<'a> {
     /// two. The condition is read once to find the body, discarded, and
     /// read again after it.
     fn while_stmt(&mut self) -> Res<()> {
+        let loop_row = (self.look().row as u32).saturating_sub(self.before);
+        if !self.lang.trace_native.is_empty() && matches!(self.piece().instrs.last(), Some(Instr::Line(line)) if *line == loop_row) { self.piece().instrs.pop(); }
         self.take();
         let cond_at = self.pos;
         // Skip the condition's tokens for now: parse it once, discard.
@@ -4990,6 +5220,7 @@ impl<'a> Compiler<'a> {
         let after = self.pos;
         let test = self.mark();
         self.land(to_test);
+        if !self.lang.trace_native.is_empty() { self.put(Instr::Line(loop_row)); }
         self.pos = cond_at;
         self.expr(0)?;
         self.pos = after;
@@ -9890,7 +10121,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
@@ -10031,6 +10262,16 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling())
                 && self.builtin_shadowed(&tok.lexeme) => {
                 self.take();
+                // A method that names the parent word at all carries
+                // the class's hidden cell, however the word was shadowed.
+                if lang.class_details.get("root").map_or(false, |v| !v.is_empty()) && !self.in_class_body() && !self.gathered.is_empty() {
+                    self.gathering().needs_class_cell = true;
+                    self.gathering().class_cell_protocol = true;
+                    if !self.discovering {
+                        let cell = self.gathering().class_cell.clone();
+                        self.enclosing_cell(self.pieces.len() - 1, &cell);
+                    }
+                }
                 if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
                     self.take();
                     let count = self.arguments_of(&tok.lexeme, &call)?;
@@ -10054,8 +10295,21 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.spelling())
                 && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
                 && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
+                // Standing alone the parent word is a name like another:
+                // the program's own `super`, where it gave the name one,
+                // is what the reading finds. A method that names it at
+                // all carries the class's hidden cell, as the reference
+                // has every naming of the word count as a use of it.
                 self.take();
-                self.constant(PARENT_CALLABLE.with(Clone::clone));
+                if !self.in_class_body() && !self.gathered.is_empty() {
+                    self.gathering().needs_class_cell = true;
+                    self.gathering().class_cell_protocol = true;
+                    if !self.discovering {
+                        let cell = self.gathering().class_cell.clone();
+                        self.enclosing_cell(self.pieces.len() - 1, &cell);
+                    }
+                }
+                self.read(&tok.lexeme);
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling()) => {
                 self.take();
@@ -10066,9 +10320,58 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
-                if extra > 0 && lang.class_details.get("root").map_or(false, |v| !v.is_empty()) {
-                    self.constant(PARENT_CALLABLE.with(Clone::clone));
-                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                if lang.class_details.get("root").map_or(false, |v| !v.is_empty()) {
+                    // Python: the parent word is a name the program may
+                    // have given a meaning of its own, so it is read
+                    // where names are read. Only the parent class itself
+                    // is handed the class cell and the first argument a
+                    // call with none written takes from the frame, and
+                    // those two are read without complaint so the call
+                    // can say which one was not there to give.
+                    if extra > 0 {
+                        if !self.in_class_body() && !self.gathered.is_empty() {
+                            self.gathering().needs_class_cell = true;
+                            self.gathering().class_cell_protocol = true;
+                            if !self.discovering {
+                                let cell = self.gathering().class_cell.clone();
+                                self.enclosing_cell(self.pieces.len() - 1, &cell);
+                            }
+                        }
+                        self.read(&tok.lexeme);
+                        self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                        return self.indexing(from);
+                    }
+                    self.read(&tok.lexeme);
+                    match self.piece().parameters.first().cloned() {
+                        Some(this) if !self.gathered.is_empty() => {
+                            self.gathering().needs_class_cell = true;
+                            self.gathering().class_cell_protocol = true;
+                            self.constant(Value::Small(0));
+                            let cell = self.gathering().class_cell.clone();
+                            let held = self.cell_to_read(&cell, false);
+                            self.put(Instr::Glance(held.clone()));
+                            let taken = self.cell_to_read(&this, false);
+                            self.put(Instr::Glance(taken.clone()));
+                            if let Some(at) = held.near.first() { self.put(Instr::Missing(*at)); } else { self.constant(Value::Flag(false)); }
+                            if let Some(at) = taken.near.first() { self.put(Instr::Missing(*at)); } else { self.constant(Value::Flag(false)); }
+                        }
+                        Some(this) => {
+                            self.constant(Value::Small(1));
+                            self.constant(Value::Null);
+                            let taken = self.cell_to_read(&this, false);
+                            self.put(Instr::Glance(taken.clone()));
+                            self.constant(Value::Flag(false));
+                            if let Some(at) = taken.near.first() { self.put(Instr::Missing(*at)); } else { self.constant(Value::Flag(false)); }
+                        }
+                        None => {
+                            self.constant(Value::Small(2));
+                            self.constant(Value::Null);
+                            self.constant(Value::Null);
+                            self.constant(Value::Flag(false));
+                            self.constant(Value::Flag(false));
+                        }
+                    }
+                    self.act(Action::Superless, 6);
                     return self.indexing(from);
                 }
                 for _ in 0..extra { self.discard(); }
@@ -10117,9 +10420,14 @@ impl<'a> Compiler<'a> {
                 let book = self.gathering().book.clone().expect("class namespace prepared");
                 self.read(&book);
             }
-            Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
+            // The class's kind word stands for the hidden cell only
+            // where no function around has given the name a binding of
+            // its own: an explicit `__class__` anywhere outward keeps
+            // its ordinary meaning.
+            Shape::Instr if !self.in_class_body() && !self.writing_place && !self.gathered.is_empty()
                 && lang.class_details.get("kind").map_or(false, |words| words.iter().any(|w| w == tok.spelling()))
                 && !self.piece().idents.contains(&tok.lexeme)
+                && !(1..self.pieces.len()).any(|depth| self.pieces[depth].idents.iter().any(|named| named == &tok.lexeme))
                 && !self.comprehension_names.iter().any(|(name, _)| name == &tok.lexeme) => {
                 self.take();
                 self.gathering().needs_class_cell = true;

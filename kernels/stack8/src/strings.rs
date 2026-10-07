@@ -217,6 +217,35 @@ pub(crate) fn recase(s: &str, op: TextOp) -> String {
     answer
 }
 
+/// The same case changes `recase` makes, walked over a text that is a
+/// row of code units rather than a `&str`. A unit no `char` can hold
+/// is carried through as itself, while the scalars around it are cased
+/// with the very context `recase` gives them, final sigma included.
+pub(crate) fn recase_units(units: &[u32], op: TextOp) -> Vec<u32> {
+    let stand: Vec<char> = units.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect();
+    let mut prior = false;
+    let mut answer = Vec::with_capacity(units.len());
+    for (at, &unit) in units.iter().enumerate() {
+        let Some(c) = char::from_u32(unit) else { answer.push(unit); prior = false; continue };
+        let bits = unicode::bits(c);
+        let kind = match op {
+            TextOp::Casefold => 3, TextOp::Upper => 1, TextOp::Lower => 0,
+            TextOp::Capitalize => if at == 0 { 2 } else { 0 },
+            TextOp::Title => if prior { 0 } else { 2 },
+            _ if bits & 128 != 0 => 1,
+            _ if bits & 64 != 0 => 0,
+            _ => { answer.push(unit); prior = bits & 16 != 0; continue; }
+        };
+        if kind == 0 && c == '\u{3a3}' && final_sigma(&stand, at) {
+            answer.push('\u{3c2}' as u32);
+        } else {
+            answer.extend(unicode::change(c, kind).chars().map(|x| x as u32));
+        }
+        prior = bits & 16 != 0;
+    }
+    answer
+}
+
 fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     if args.len() == 1 {
         let Value::Map(pairs) = &args[0] else { return Err("TypeError: if you give only one argument to maketrans it must be a dict".into()); };
@@ -253,6 +282,25 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     Ok(Value::Map(Rc::new(pairs.into())))
 }
 
+/// Split a text or a row of stowed code units on a separator of
+/// either kind, validating the cut count the way CPython does.
+fn split_units_text(args: &[Value], reverse: bool, lang: &Lang) -> Result<Value, String> {
+    if args.len() > 3 { return Err(fault(lang, "arguments")); }
+    let units = args[0].text_codes().ok_or_else(|| fault(lang, "receiver"))?;
+    let separator = match args.get(1).map(Value::contents) {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.text_codes().ok_or_else(|| fault(lang, "arguments"))?),
+    };
+    let raw = match args.get(2) {
+        None => -1i64,
+        Some(v) => integer(v, lang)?,
+    };
+    let limit = if raw < 0 { usize::MAX } else { raw as usize };
+    let pieces = crate::methods::split_units(&units, separator.as_deref(), limit, reverse)
+        .map_err(|_| fault(lang, "separator"))?;
+    Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true))
+}
+
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
     let opened: Vec<Value> = args.iter().map(Value::contents).collect();
     let args = opened.as_slice();
@@ -265,7 +313,83 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         if args.len() != 1 { return Err(fault(lang,"arguments")); }
         return Ok(Value::text(&repr(&args[0],words)));
     }
-    if let Some(Value::Codepoints(codes)) = args.first() {
+    if args.iter().any(|value| matches!(value, Value::Codepoints(_)) || matches!(value, Value::Tuple(row) if row.iter().any(|item| matches!(item, Value::Codepoints(_))))) {
+        let codes=match args.first(){Some(Value::Codepoints(row))=>row.clone(),Some(Value::Text(word))=>Rc::new(word.chars().map(u32::from).collect()),_=>return Err(fault(lang,"receiver"))};
+        let code_row=|value:&Value| -> Result<Vec<u32>,String> {match value {Value::Text(text)=>Ok(text.chars().map(u32::from).collect()),Value::Codepoints(row)=>Ok(row.to_vec()),_=>Err(format!("TypeError: must be str, not {}",value.core_kind()))}};
+        if matches!(op, Strip | Lstrip | Rstrip) {
+            let word = match op { Strip => "strip", Lstrip => "lstrip", _ => "rstrip" };
+            if args.len() > 2 { return Err(format!("TypeError: {word} expected at most 1 argument, got {}", args.len() - 1)); }
+            let chosen = match args.get(1) { None | Some(Value::Null) => None, Some(value) => Some(code_row(value).map_err(|_| format!("TypeError: {word} arg must be None or str"))?) };
+            let discarded = |number: u32| chosen.as_ref().map_or_else(|| char::from_u32(number).is_some_and(|letter| letter.is_whitespace() || matches!(letter, '\u{1c}'..='\u{1f}')), |row| row.contains(&number));
+            let mut start = 0; let mut end = codes.len();
+            if op != Rstrip { while start < end && discarded(codes[start]) { start += 1; } }
+            if op != Lstrip { while end > start && discarded(codes[end - 1]) { end -= 1; } }
+            return Ok(Value::from_codes(codes[start..end].to_vec()));
+        }
+        if matches!(op, Count | Find | Rfind | Index | Rindex | Startswith | Endswith) {
+            if !(2..=4).contains(&args.len()) { return Err(fault(lang, "arguments")); }
+            let adjust = |value: Option<&Value>, default: i64| -> Result<usize, String> {
+                let n = match value { None | Some(Value::Null) => default, Some(v) => integer(v, lang)? };
+                Ok(if n < 0 { (codes.len() as i64).saturating_add(n).max(0) as usize } else { n as usize })
+            };
+            let start = adjust(args.get(2), 0)?;
+            let end = adjust(args.get(3), codes.len() as i64)?.min(codes.len());
+            let valid = start <= end;
+            let window = if valid { &codes[start..end] } else { &[] };
+            if matches!(op, Startswith | Endswith) {
+                let choices = match &args[1] { Value::Tuple(row) => row.to_vec(), Value::Words(row, true) => row.iter().map(|word| Value::text(word)).collect(), v @ (Value::Text(_) | Value::Codepoints(_)) => vec![v.clone()], other => return Err(format!("TypeError: {} first arg must be str or a tuple of str, not {}", if op == Startswith { "startswith" } else { "endswith" }, other.core_kind())) };
+                for choice in choices { let wanted = code_row(&choice).map_err(|_| format!("TypeError: tuple for {} must only contain str, not {}", if op == Startswith { "startswith" } else { "endswith" }, choice.core_kind()))?; if valid && if op == Startswith { window.starts_with(&wanted) } else { window.ends_with(&wanted) } { return Ok(Value::Flag(true)); } }
+                return Ok(Value::Flag(false));
+            }
+            let word = match op { Count => "count", Find => "find", Rfind => "rfind", Index => "index", _ => "rindex" };
+            let needle = code_row(&args[1]).map_err(|_| format!("TypeError: {word}() argument 1 must be str, not {}", args[1].core_kind()))?;
+            let positions: Vec<usize> = if valid && needle.len() <= window.len() { (0..=window.len() - needle.len()).filter(|at| window[*at..].starts_with(&needle)).collect() } else { Vec::new() };
+            if op == Count {
+                let mut next = 0; let mut count = 0;
+                for at in positions { if at >= next { count += 1; next = at + needle.len().max(1); } }
+                return Ok(Value::Small(count));
+            }
+            let found = if matches!(op, Rfind | Rindex) { positions.last() } else { positions.first() };
+            if found.is_none() && matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
+            return Ok(Value::Small(found.map_or(-1, |at| (start + at) as i64)));
+        }
+        if op==Length && args.len()==1{return Ok(Value::Small(codes.len() as i64))}
+        if op==Replace {
+            if !(3..=4).contains(&args.len()){return Err(fault(lang,"arguments"))}
+            let old=code_row(&args[1])?;let new=code_row(&args[2])?;
+            let limit=if args.len()==4{integer(&args[3],lang)?}else{-1};
+            let mut output=Vec::new();let mut cursor=0;let mut replaced=0i64;
+            loop {
+                let allowed=limit<0||replaced<limit;
+                if allowed && cursor+old.len()<=codes.len() && codes[cursor..].starts_with(&old) {
+                    output.extend_from_slice(&new);replaced+=1;
+                    if !old.is_empty(){cursor+=old.len();continue}
+                }
+                if cursor==codes.len(){break}
+                output.push(codes[cursor]);cursor+=1;
+            }
+            return Ok(Value::from_codes(output));
+        }
+        if matches!(op,Split|Rsplit) && args.len()<=3 {
+            let separator=match args.get(1){None|Some(Value::Null)=>None,Some(value)=>Some(code_row(value)?)};
+            if separator.as_ref().is_some_and(Vec::is_empty){return Err("ValueError: empty separator".into())}
+            let limit=args.get(2).map_or(Ok(-1),|value|integer(value,lang))?;
+            let reversed=op==Rsplit;let mut source=codes.to_vec();let mut separator=separator;
+            if reversed {source.reverse();if let Some(row)=separator.as_mut(){row.reverse();}}
+            let whitespace=|number:u32|char::from_u32(number).is_some_and(char::is_whitespace);
+            let mut at=0;let mut begin=0;let mut cuts=0i64;let mut rows=Vec::new();
+            if separator.is_none(){while at<source.len()&&whitespace(source[at]){at+=1;}begin=at;}
+            while at<source.len() && (limit<0||cuts<limit) {
+                let size=match &separator{Some(row) if source[at..].starts_with(row)=>row.len(),None if whitespace(source[at])=>1,_=>0};
+                if size==0{at+=1;continue}
+                rows.push(source[begin..at].to_vec());at+=size;
+                if separator.is_none(){while at<source.len()&&whitespace(source[at]){at+=1;}}
+                begin=at;cuts+=1;
+            }
+            if separator.is_some()||begin<source.len(){rows.push(source[begin..].to_vec());}
+            if reversed {for row in &mut rows{row.reverse();}rows.reverse();}
+            return Ok(Value::array(rows.into_iter().map(Value::from_codes).collect()));
+        }
         if op == Getnewargs {
             if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }
             return Ok(Value::tuple(vec![Value::from_codes(codes.to_vec())]));
@@ -275,6 +399,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let mut supplied = args.to_vec(); supplied[0] = Value::text(&clean);
             let result = run(op, _name, &supplied, lang, words)?;
             return Ok(if op == Isascii { Value::Flag(false) } else { result });
+        }
+        if matches!(op, Split | Rsplit) {
+            return split_units_text(args, op == Rsplit, lang);
         }
     }
     let Some(Value::Text(source)) = args.first() else { return Err(fault(lang,"receiver")); };
@@ -382,6 +509,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         Split | Rsplit => {
             let limit=number(1,-1)?; let cap=if limit<0 {usize::MAX} else {limit as usize};
+            if matches!(params.first(), Some(Value::Codepoints(_))) {
+                return split_units_text(args, op == Rsplit, lang);
+            }
             let sep=match params.first() {None|Some(Value::Null)=>None,Some(v)=>Some(text(v,lang)?)};
             let backward=op==Rsplit; let mut parts=Vec::new();
             if let Some(sep)=sep {

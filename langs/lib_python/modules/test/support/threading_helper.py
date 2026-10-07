@@ -1,14 +1,59 @@
-
-# Derived from CPython v3.14.8 Lib/test/support; PSF License.
+import _thread
 import contextlib
 import functools
+import sys
 import threading
 import time
-import sys
 import unittest
+
 from test import support
 
-can_start_thread = False
+
+#=======================================================================
+# Threading support to prevent reporting refleaks when running regrtest.py -R
+
+# NOTE: we use thread._count() rather than threading.enumerate() (or the
+# moral equivalent thereof) because a threading.Thread object is still alive
+# until its __bootstrap() method has returned, even after it has been
+# unregistered from the threading module.
+# thread._count(), on the other hand, only gets decremented *after* the
+# __bootstrap() method has returned, which gives us reliable reference counts
+# at the end of a test run.
+
+
+def threading_setup():
+    return _thread._count(), len(threading._dangling)
+
+
+def threading_cleanup(*original_values):
+    orig_count, orig_ndangling = original_values
+
+    timeout = 1.0
+    for _ in support.sleeping_retry(timeout, error=False):
+        # Copy the thread list to get a consistent output. threading._dangling
+        # is a WeakSet, its value changes when it's read.
+        dangling_threads = list(threading._dangling)
+        count = _thread._count()
+
+        if count <= orig_count:
+            return
+
+    # Timeout!
+    support.environment_altered = True
+    support.print_warning(
+        f"threading_cleanup() failed to clean up threads "
+        f"in {timeout:.1f} seconds\n"
+        f"  before: thread count={orig_count}, dangling={orig_ndangling}\n"
+        f"  after: thread count={count}, dangling={len(dangling_threads)}")
+    for thread in dangling_threads:
+        support.print_warning(f"Dangling thread: {thread!r}")
+
+    # The warning happens when a test spawns threads and some of these threads
+    # are still running after the test completes. To fix this warning, join
+    # threads explicitly to wait until they complete.
+    #
+    # To make the warning more likely, reduce the timeout.
+
 
 def reap_threads(func):
     """Use this function when threads are being used.  This will
@@ -22,6 +67,41 @@ def reap_threads(func):
         finally:
             threading_cleanup(*key)
     return decorator
+
+
+@contextlib.contextmanager
+def wait_threads_exit(timeout=None):
+    """
+    bpo-31234: Context manager to wait until all threads created in the with
+    statement exit.
+
+    Use _thread.count() to check if threads exited. Indirectly, wait until
+    threads exit the internal t_bootstrap() C function of the _thread module.
+
+    threading_setup() and threading_cleanup() are designed to emit a warning
+    if a test leaves running threads in the background. This context manager
+    is designed to cleanup threads started by the _thread.start_new_thread()
+    which doesn't allow to wait for thread exit, whereas thread.Thread has a
+    join() method.
+    """
+    if timeout is None:
+        timeout = support.SHORT_TIMEOUT
+    old_count = _thread._count()
+    try:
+        yield
+    finally:
+        start_time = time.monotonic()
+        for _ in support.sleeping_retry(timeout, error=False):
+            support.gc_collect()
+            count = _thread._count()
+            if count <= old_count:
+                break
+        else:
+            dt = time.monotonic() - start_time
+            msg = (f"wait_threads() failed to cleanup {count - old_count} "
+                   f"threads after {dt:.1f} seconds "
+                   f"(count: {count}, old count: {old_count})")
+            raise AssertionError(msg)
 
 
 def join_thread(thread, timeout=None):
@@ -136,6 +216,27 @@ class catch_threading_exception:
         del self.thread
 
 
+def _can_start_thread() -> bool:
+    """Detect whether Python can start new threads.
+
+    Some WebAssembly platforms do not provide a working pthread
+    implementation. Thread support is stubbed and any attempt
+    to create a new thread fails.
+
+    - wasm32-wasi does not have threading.
+    - wasm32-emscripten can be compiled with or without pthread
+      support (-s USE_PTHREADS / __EMSCRIPTEN_PTHREADS__).
+    """
+    if sys.platform == "emscripten":
+        return sys._emscripten_info.pthreads
+    elif sys.platform == "wasi":
+        return False
+    else:
+        # assume all other platforms have working thread support.
+        return True
+
+can_start_thread = _can_start_thread()
+
 def requires_working_threading(*, module=False):
     """Skip tests or modules that require working threading.
 
@@ -182,20 +283,3 @@ def run_concurrently(worker_func, nthreads=None, args=(), kwargs={}):
         # If a worker thread raises an exception, re-raise it.
         if cm.exc_value is not None:
             raise cm.exc_value
-
-
-# There is one live thread and no native _thread counter or dangling registry.
-def threading_setup():
-    return threading.active_count() - 1, 0
-
-def threading_cleanup(*original_values):
-    if threading.active_count() - 1 > original_values[0]:
-        raise AssertionError('threads remain after cleanup')
-
-@contextlib.contextmanager
-def wait_threads_exit(timeout=None):
-    original = threading_setup()
-    try:
-        yield
-    finally:
-        threading_cleanup(*original)

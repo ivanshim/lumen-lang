@@ -13,14 +13,23 @@ _repr_running = set()
 def _no_subclass(cls, **kwargs):
     raise TypeError("type '_contextvars." + cls.__bases__[0].__name__ + "' is not an acceptable base type")
 
+def _no_pickle(self):
+    raise TypeError("cannot pickle '" + type(self).__module__ + "." + type(self).__qualname__ + "' object")
+
 class ContextVar:
     __module__ = '_contextvars'
     __slots__ = ('_handle', '_name', '_default')
     __init_subclass__ = classmethod(_no_subclass)
+    __reduce__ = _no_pickle
 
     def __init__(self, *args, **kwargs):
-        if len(args) != 1:
-            raise TypeError('ContextVar() takes exactly 1 positional argument (' + str(len(args)) + ' given)')
+        count = len(args)
+        if count == 0:
+            raise TypeError('ContextVar() takes exactly 1 positional argument (0 given)')
+        if count == 2:
+            raise TypeError('ContextVar() takes at most 1 positional argument (2 given)')
+        if count > 2:
+            raise TypeError('ContextVar() takes at most 2 arguments (' + str(count) + ' given)')
         if not isinstance(args[0], str):
             raise TypeError('context variable name must be a str')
         for key in kwargs:
@@ -78,6 +87,7 @@ class Token:
     __module__ = '_contextvars'
     __slots__ = ('_handle',)
     __init_subclass__ = classmethod(_no_subclass)
+    __reduce__ = _no_pickle
     MISSING = _missing
 
     def __new__(cls, *args, **kwargs):
@@ -111,6 +121,7 @@ class Context:
     __slots__ = ('_handle',)
     __hash__ = None
     __init_subclass__ = classmethod(_no_subclass)
+    __reduce__ = _no_pickle
 
     def __init__(self, *args, **kwargs):
         if args or kwargs:

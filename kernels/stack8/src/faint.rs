@@ -267,7 +267,7 @@ pub fn walk_departing(dying: &mut Generator) {
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(),
+                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
@@ -493,7 +493,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
             out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
-            out.extend(c.lineage.iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
+            out.extend(c.lineage.borrow().iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {

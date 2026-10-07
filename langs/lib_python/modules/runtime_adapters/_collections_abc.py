@@ -17,3 +17,6 @@ _mutable_mapping_pop.__doc__ = MutableMapping.pop.__doc__
 _mutable_mapping_pop.__name__ = 'pop'
 _mutable_mapping_pop.__qualname__ = 'MutableMapping.pop'
 MutableMapping.pop = _mutable_mapping_pop
+
+# Mark the native dict as a mapping for structural patterns.
+Mapping.register(dict)

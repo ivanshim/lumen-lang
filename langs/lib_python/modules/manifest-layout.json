@@ -15,11 +15,25 @@
     "operator": "runtime_adapters/operator.py",
     "json": "runtime_adapters/json.py",
     "statistics": "runtime_adapters/statistics.py",
+    "pickle": "runtime_adapters/pickle.py",
     "inspect": "runtime_adapters/inspect.py",
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
+    "abc": "runtime_adapters/abc.py",
     "test": "runtime_adapters/test.py"
+  },
+  "replacements": {
+    "annotationlib": "runtime_adapters/native_annotationlib.py",
+    "inspect": "runtime_adapters/native_inspect.py",
+    "test.support": "runtime_adapters/native_test_support.py",
+    "test.support.os_helper": "runtime_adapters/native_test_support_os_helper.py",
+    "http.client": "runtime_adapters/native_http_client.py",
+    "socket": "runtime_adapters/native_socket.py",
+    "test.support.import_helper": "runtime_adapters/native_test_support_import_helper.py",
+    "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",
+    "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
+    "warnings": "runtime_adapters/native_warnings.py"
   },
   "exclude": [
     "unittest.py"

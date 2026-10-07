@@ -505,6 +505,40 @@ pub(crate) fn member_spelling(class: &str, ident: &str) -> String {
     ident.to_owned()
 }
 
+// Locate the suite containing a case word before treating it as a clause.
+fn inside_matching_arm(input: &[Token], position: usize, table: &Table) -> bool {
+    let mut skipped = 0i32;
+    let mut cursor = position;
+    let entrance = loop {
+        if cursor == 0 { return false; }
+        cursor -= 1;
+        if input[cursor].shape == Shape::Close { skipped += 1; }
+        else if input[cursor].shape == Shape::Open {
+            if skipped == 0 { break cursor; }
+            skipped -= 1;
+        }
+    };
+    cursor = entrance;
+    while cursor > 0 && input[cursor - 1].shape == Shape::LineEnd { cursor -= 1; }
+    let Some(ending) = cursor.checked_sub(1) else { return false };
+    if input[ending].shape != Shape::Sign || !table.spells("block.intro", &input[ending].lexeme) { return false; }
+    cursor = ending;
+    let mut punctuation = 0i32;
+    while cursor > 0 {
+        cursor -= 1;
+        let item = &input[cursor];
+        if item.shape == Shape::Sign {
+            if [")", "]", "}"].contains(&item.lexeme.as_str()) { punctuation += 1; }
+            else if ["(", "[", "{"].contains(&item.lexeme.as_str()) { punctuation -= 1; }
+        }
+        if punctuation == 0 && [Shape::LineEnd, Shape::Open, Shape::Close].contains(&item.shape) {
+            cursor += 1;
+            break;
+        }
+    }
+    input.get(cursor).map_or(false, |head| table.spells("ext.stmt.match", &head.lexeme))
+}
+
 /// Give each class suite its lexical names before collecting scope bindings.
 /// An inner suite replaces the enclosing prefix, including in nested functions.
 fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
@@ -537,15 +571,39 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
         suites.push((start, stop, class.lexeme.as_str()));
     }
     for (begin, end, owner) in suites {
+        let mut in_pattern = false;
+        let mut pattern_nesting = 0i32;
         for offset in begin..end {
-            if input[offset].shape == Shape::Bare {
+            let shape = input[offset].shape;
+            // A case opens a pattern, whose keyword names are not names of
+            // the class and so are never mangled; the guard or the opening
+            // of the case's body closes it.
+            let begins_arm = !in_pattern && shape == Shape::Bare
+                && table.spells("ext.stmt.match.case", &input[offset].lexeme)
+                && offset.checked_sub(1).and_then(|prior| input.get(prior))
+                    .map_or(false, |prior| [Shape::LineEnd, Shape::Open, Shape::Close].contains(&prior.shape))
+                && input.get(offset + 1).map_or(false, |after| after.shape != Shape::LineEnd && after.shape != Shape::Finish && !table.spells("stmt.assign", &after.lexeme))
+                && inside_matching_arm(input, offset, table);
+            if begins_arm {
+                in_pattern = true;
+                pattern_nesting = 0;
+            } else if in_pattern && shape == Shape::Bare && table.spells("ext.stmt.match.guard", &input[offset].lexeme) {
+                in_pattern = false;
+            } else if in_pattern && shape == Shape::Sign {
+                let sign = input[offset].lexeme.as_str();
+                if ["(", "[", "{"].contains(&sign) { pattern_nesting += 1; }
+                else if [")", "]", "}"].contains(&sign) { pattern_nesting -= 1; }
+                else if pattern_nesting == 0 && table.spells("block.intro", sign) { in_pattern = false; }
+            }
+            if shape == Shape::Bare {
                 // A name the table spells for a builtin is that builtin
                 // in a class body as out of one: the private-name
                 // mangling does not reach it.
                 let word = &input[offset].lexeme;
                 let named = word.starts_with("__") && !word.ends_with("__")
                     && crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
-                if !named {
+                let keyword = in_pattern && input.get(offset + 1).map_or(false, |next| next.shape == Shape::Sign && table.spells("stmt.assign", &next.lexeme));
+                if !named && !keyword {
                     output[offset].lexeme = member_spelling(owner, word);
                 }
             }
@@ -1290,6 +1348,19 @@ impl<'a> Builder<'a> {
         self.mark_met(name, MET_READ);
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
+        // A routine that said the class's kind word `nonlocal` reads
+        // the hidden cell the declaration named, exactly as it writes
+        // it.
+        if let Some(hidden) = self.class_cell_written(name) {
+            if self.table.flag("ext.stmt.function.closes_over") && !self.survey {
+                if let Some(slot) = self.lexical_address(&hidden, false) { return slot; }
+            }
+        }
+        // The class's kind word where the routine keeps no name of its
+        // own for it is the hidden cell a class around closes over.
+        if !self.layers.last().map_or(false, |layer| layer.idents.iter().any(|named| named == name)) {
+            if let Some(slot) = self.class_cell_read(name) { return slot; }
+        }
         if let Some(slot) = self.aliased(name) {
             return slot;
         }
@@ -1350,6 +1421,14 @@ impl<'a> Builder<'a> {
     /// top level makes the name if it has none, a block makes its own.
     fn address_to_write(&mut self, name: &str) -> Address {
         if !self.importing { self.mark_met(name, MET_WRITTEN); }
+        // A routine that said the class's kind word `nonlocal` writes
+        // the hidden cell the declaration named, before a member or a
+        // name of its own is ever thought of.
+        let declared;
+        let name = match self.class_cell_written(name) {
+            Some(hidden) => { declared = hidden; declared.as_str() }
+            None => name,
+        };
         // A name a class body knows is written into the place the body
         // keeps it in, as it is read out of there: the loops, imports
         // and handlers of a body bind members by ordinary writes.
@@ -1475,6 +1554,50 @@ impl<'a> Builder<'a> {
         }
         self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)
             .map_or(false, |layer| layer.aliases.iter().any(|(named, _)| named == name) || layer.borrowed.iter().any(|named| named == name))
+            || self.class_cell_written(name).is_some()
+    }
+
+    /// The hidden cell a `nonlocal` said of the class's own kind word
+    /// declares: the cell of the class whose body holds this routine,
+    /// or, said in a class body itself, of the class standing around
+    /// that body. The class is marked as keeping the cell, so the
+    /// making fills it. Any other word, or the word said where no such
+    /// class stands, declares nothing hidden.
+    fn class_cell_declared(&mut self, name: &str) -> Option<String> {
+        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        let back = if self.in_class_body() { 2 } else { 1 };
+        let at = self.under_way.len().checked_sub(back)?;
+        self.under_way[at].needs_class_cell = true;
+        self.under_way[at].class_cell_protocol = true;
+        Some(self.under_way[at].completed_class.ident.to_string())
+    }
+
+    /// The hidden cell a write of the class's kind word lands in where
+    /// the routine said that word `nonlocal`: the declaration put the
+    /// cell's own name where nonlocals are kept, so the write goes
+    /// where the cell is kept rather than to a member or a name of the
+    /// routine's own.
+    fn class_cell_written(&self, name: &str) -> Option<String> {
+        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        let scope = self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)?;
+        self.under_way.iter().rev().map(|held| held.completed_class.ident.to_string())
+            .find(|hidden| scope.borrowed.iter().any(|named| named == hidden))
+    }
+
+    /// The hidden cell a class body's own read of the class's kind word
+    /// reaches: the cell of the class standing around the body, so a
+    /// class nested in a routine reads the very cell that class keeps,
+    /// however many routines stand between. The survey pass wires
+    /// nothing: the plan of bindings it draws would take the read for a
+    /// name of the body's own.
+    fn class_cell_read(&mut self, name: &str) -> Option<Address> {
+        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        if !self.table.flag("ext.stmt.function.closes_over") || self.survey || !self.in_class_body() { return None; }
+        let at = self.under_way.len().checked_sub(2)?;
+        self.under_way[at].needs_class_cell = true;
+        self.under_way[at].class_cell_protocol = true;
+        let hidden = self.under_way[at].completed_class.ident.to_string();
+        self.lexical_address(&hidden, false)
     }
 
     /// The parts gathered so far of the class whose body is being read.
@@ -1739,6 +1862,17 @@ impl<'a> Builder<'a> {
                 } else { self.address_to_read(name) };
                 let global_depth = self.layers.iter().skip(1).filter(|layer| layer.holds != Holds::Nothing).count();
                 if address.up == global_depth && !self.named_in_program.iter().any(|word| word == name) {
+                    if matches!(operation, Prim::Octets(0 | 1)) {
+                        // The two byte kinds are read in a class body the
+                        // very way they are read at the top of the unit,
+                        // as their kind markers, so two readings of one
+                        // are one value.
+                        let words = self.table.strings("ext.system.bytes.type");
+                        return constant(Value::OctetKind {
+                            changeable: operation == Prim::Octets(1),
+                            shown: Rc::from(format!("{}{}{}", words[0], name, words[1])),
+                        });
+                    }
                     return constant(Value::Intrinsic(operation, Rc::from(name)));
                 }
                 return Form::Read(address);
@@ -2679,8 +2813,9 @@ impl<'a> Builder<'a> {
         }
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
+            let while_loop = self.table.has_any("ext.builtin.trace_native") && self.key("stmt.while");
             let made = self.plain_or_kind()?;
-            return Ok(Form::OnLine(row, 0, Box::new(made)));
+            return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
         }
         self.plain_or_kind()
     }
@@ -2774,11 +2909,15 @@ impl<'a> Builder<'a> {
             }
             if self.look().spelling() == "case" && self.glance(1).lexeme != ":" {
                 let mut nested = 0usize;
-                let arm = self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|token| {
+                let mut arm = false;
+                for token in self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)) {
                     if ["(", "[", "{"].contains(&token.lexeme.as_str()) { nested += 1; }
                     else if [")", "]", "}"].contains(&token.lexeme.as_str()) { nested = nested.saturating_sub(1); }
-                    token.lexeme == ":" && nested == 0
-                });
+                    if nested == 0 {
+                        if self.table.spells("stmt.assign", &token.lexeme) || self.table.compound.contains_key(&token.lexeme) { break; }
+                        if token.lexeme == ":" { arm = true; break; }
+                    }
+                }
                 if arm { return Err("SyntaxError: case statement must be inside match statement".to_owned()); }
             }
             if self.look().spelling() == "lazy" && ["import", "from"].contains(&self.glance(1).spelling()) {
@@ -2951,6 +3090,10 @@ impl<'a> Builder<'a> {
                 self.advance();
                 loop {
                     let word = self.need_word("after the nonlocal keyword")?;
+                    // Said of the class's own kind word, the declaration
+                    // names the hidden cell that class keeps, so a write
+                    // of the word fills the class's very place.
+                    let word = self.class_cell_declared(&word).unwrap_or(word);
                     // A class body pushes no layer of its own, so the
                     // layer around it is the very one a name declared
                     // `nonlocal` there means to reach: the declaration
@@ -2999,12 +3142,14 @@ impl<'a> Builder<'a> {
                 return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true, otherwise: None });
             }
             if self.key("stmt.while") {
+                let loop_row = self.look().row.saturating_sub(self.before);
                 self.advance();
                 let test_at = self.pos;
                 return self.cycle(
                     move |r| {
                         r.pos = test_at;
-                        r.expr(0)
+                        let test = r.expr(0)?;
+                        Ok(if r.table.has_any("ext.builtin.trace_native") { Form::OnLine(loop_row, 0, Box::new(test)) } else { test })
                     },
                     |r| r.body(),
                     None::<fn(&mut Self) -> Res<Form>>,
@@ -4907,6 +5052,49 @@ impl<'a> Builder<'a> {
         false
     }
 
+    /// A parent call written with no argument: the word read as a name,
+    /// then how much of the frame the call may take — the class cell and
+    /// the first parameter where a class stands around the routine, the
+    /// first parameter alone where none does, nothing where the routine
+    /// takes no parameter at all. Each of the two is read without
+    /// complaint, with a flag saying whether it was there, so the working
+    /// can say which one was not there to give.
+    fn parent_without_arguments(&mut self, word: &str) -> Form {
+        let mut given = vec![self.read(word)];
+        let first = self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)
+            .and_then(|layer| layer.formal_slots.first().and_then(|&at| layer.idents.get(at)).cloned());
+        match first {
+            Some(this) if !self.under_way.is_empty() => {
+                self.parts().needs_class_cell = true;
+                self.parts().class_cell_protocol = true;
+                given.push(constant(Value::Small(0)));
+                let hidden = self.parts().completed_class.ident.to_string();
+                let cell = self.address_to_read(&hidden);
+                let held = self.address_to_read(&this);
+                given.push(Form::Glance(cell.clone()));
+                given.push(Form::Glance(held.clone()));
+                given.push(Form::Missing(cell));
+                given.push(Form::Missing(held));
+            }
+            Some(this) => {
+                given.push(constant(Value::Small(1)));
+                given.push(constant(Value::Nil));
+                let held = self.address_to_read(&this);
+                given.push(Form::Glance(held.clone()));
+                given.push(constant(Value::Flag(false)));
+                given.push(Form::Missing(held));
+            }
+            None => {
+                given.push(constant(Value::Small(2)));
+                given.push(constant(Value::Nil));
+                given.push(constant(Value::Nil));
+                given.push(constant(Value::Flag(false)));
+                given.push(constant(Value::Flag(false)));
+            }
+        }
+        prim_call(Prim::Parentless, given)
+    }
+
     fn class_not_ready(&self) -> Form {
         let said = self.table.single("ext.stmt.class.unready").unwrap_or("This class form cannot run yet");
         prim_call(Prim::Raise, vec![constant(Value::text(said))])
@@ -6119,6 +6307,7 @@ impl<'a> Builder<'a> {
         if self.look().shape != Shape::Open { return Err(self.bad_case()); }
         self.advance();
         let mut arms = Vec::new();
+        let mut unreachable = false;
         loop {
             self.skip_line_ends();
             if self.look().shape == Shape::Close { self.advance(); break; }
@@ -6128,6 +6317,10 @@ impl<'a> Builder<'a> {
                 }
                 return Err(self.bad_case());
             }
+            // A case whose test fits everything leaves no subject for a
+            // later case, which the reference refuses to read.
+            if unreachable { return Err(self.bad_case()); }
+            let case_row = (self.look().row as u32).saturating_sub(self.before);
             self.advance();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
@@ -6148,6 +6341,7 @@ impl<'a> Builder<'a> {
             }
             if starts_wide && !separated { return Err(self.bad_case()); }
             let pattern = if separated { crate::form::CaseTest::Series { members, spread } } else { members.pop().unwrap() };
+            let falls_through = Self::irrefutable_case(&pattern);
             let names = pattern.names().map_err(|_| self.bad_case())?;
             let slots = names.into_iter().map(|name| {
                 let address = self.address_to_write(&name);
@@ -6155,11 +6349,16 @@ impl<'a> Builder<'a> {
             }).collect();
             let kinds = std::mem::take(&mut self.pattern_kinds);
             let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple, kinds };
+            let mut has_guard = false;
             if self.key("ext.stmt.match.guard") {
                 self.advance();
                 let guard = self.expr(0)?;
                 fits = self.choose(fits, guard, constant(Value::Flag(false)));
+                has_guard = true;
             }
+            // A guard keeps a case that fits everything from leaving the
+            // later cases with nothing to fit.
+            unreachable = falls_through && !has_guard;
             if !self.on_any("block.intro") { return Err(self.bad_case()); }
             let same_line = self.glance(1).row == self.look().row;
             let mut statements = vec![self.body()?];
@@ -6170,6 +6369,7 @@ impl<'a> Builder<'a> {
                     statements.push(self.stmt()?);
                 }
             }
+            if self.table.has_any("ext.builtin.trace_native") { fits = Form::OnLine(case_row, 0, Box::new(fits)); }
             arms.push((fits, sequence(statements)));
         }
         if arms.is_empty() { return Err(self.bad_case()); }
@@ -6230,6 +6430,26 @@ impl<'a> Builder<'a> {
         Ok(CaseTest::Keep(word))
     }
 
+    /// Whether a case test fits every subject: a capture or a wildcard,
+    /// or an alternative of such. Such a test leaves nothing for a later
+    /// alternative or a later case to fit.
+    /// Whether two literal mapping keys are the same key. A flag is the
+    /// number it stands for, as a map's own keying has it.
+    fn key_alike(a: &Value, b: &Value) -> bool {
+        let plain = |v: &Value| match v { Value::Flag(flag) => Value::Small(i64::from(*flag)), other => other.clone() };
+        plain(a).equals(&plain(b))
+    }
+
+    fn irrefutable_case(test: &crate::form::CaseTest) -> bool {
+        use crate::form::CaseTest;
+        match test {
+            CaseTest::Ignore | CaseTest::Keep(_) => true,
+            CaseTest::Also { test, .. } => Self::irrefutable_case(test),
+            CaseTest::AnyOf(arms) => arms.iter().any(Self::irrefutable_case),
+            _ => false,
+        }
+    }
+
     fn pattern_choice(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let first = self.pattern_single()?;
@@ -6239,6 +6459,11 @@ impl<'a> Builder<'a> {
                 self.advance();
                 alternatives.push(self.pattern_single()?);
                 if !self.on_any("ext.stmt.match.or") { break; }
+            }
+            // An alternative that fits everything leaves no subject for
+            // the alternatives after it, which the reference refuses.
+            if alternatives[..alternatives.len() - 1].iter().any(Self::irrefutable_case) {
+                return Err(self.bad_case());
             }
             CaseTest::AnyOf(alternatives)
         } else { first };
@@ -6305,19 +6530,66 @@ impl<'a> Builder<'a> {
         (end, last.end_row.max(last.row))
     }
 
+    /// A signed numeral in a pattern, answering whether it names an
+    /// imaginary part. A minus before an imaginary part is a complex of
+    /// its own, so both coordinates are turned apart.
+    fn pattern_number(&mut self) -> Res<(Value, bool)> {
+        let table = self.table;
+        let below = self.on_any("op.sub");
+        if below { self.advance(); }
+        if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+        let text = self.advance().lexeme;
+        let letters = table.letters("ext.lexical.number.imaginary");
+        let imaginary = text.chars().next_back().map_or(false, |c| letters.contains(&c));
+        let number = numeral(&text, table)?;
+        if !below { return Ok((number, imaginary)); }
+        let turned = if imaginary {
+            let (real, sole) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
+            crate::complex::pair(table, -real, -sole)
+        } else {
+            math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??
+        };
+        Ok((turned, imaginary))
+    }
+
+    /// The imaginary part of a complex literal: a numeral with no sign
+    /// of its own, the sign before it being the one that joins it to the
+    /// real part. `case 1 + -2j` is no pattern at all.
+    fn pattern_imaginary(&mut self) -> Res<Value> {
+        let table = self.table;
+        if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
+        let text = self.advance().lexeme;
+        let letters = table.letters("ext.lexical.number.imaginary");
+        if !text.chars().next_back().map_or(false, |c| letters.contains(&c)) { return Err(self.bad_case()); }
+        numeral(&text, table)
+    }
+
     fn pattern_single(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let table = self.table;
         if self.look().shape == Shape::Numeral || self.on_any("op.sub") {
-            let negative = self.on_any("op.sub");
-            if negative { self.advance(); }
-            if self.look().shape != Shape::Numeral { return Err(self.bad_case()); }
-            let text = self.advance().lexeme;
-            let mut number = numeral(&text, table)?;
-            if negative {
-                number = math::compute(math::Calc::Minus, &Value::Small(0), &number).ok_or_else(|| self.bad_case())??;
+            let (mut number, mut imaginary) = self.pattern_number()?;
+            // A real part met by a plus or a minus and an imaginary part
+            // makes a complex literal; every other pairing is refused.
+            while self.on_any("op.add") || self.on_any("op.sub") {
+                if imaginary { return Err(self.bad_case()); }
+                let below = self.on_any("op.sub");
+                self.advance();
+                let part = self.pattern_imaginary()?;
+                let (real, _) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
+                let (_, sole) = crate::complex::coordinates(&part).ok_or_else(|| self.bad_case())?;
+                number = crate::complex::pair(table, real, if below { -sole } else { sole });
+                imaginary = true;
             }
             return Ok(CaseTest::Equal(number));
+        }
+        if self.look().shape == Shape::ByteQuote {
+            let mut octets = Vec::new();
+            while self.look().shape == Shape::ByteQuote {
+                octets.extend(self.advance().lexeme.chars().map(|c| c as u8));
+            }
+            return Ok(CaseTest::Equal(Value::Octets { cell: Rc::new(std::cell::RefCell::new(octets)), changeable: false,
+                lead: Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()) }));
         }
         if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
             let mut numbers = Vec::new();
@@ -6376,6 +6648,13 @@ impl<'a> Builder<'a> {
                 } else {
                     let key = self.pattern_single()?;
                     if !matches!(key, CaseTest::Equal(_) | CaseTest::Worth(_)) { return Err(self.bad_case()); }
+                    // A key a literal already written down equals is refused
+                    // as a duplicate; a key read ahead is left to the fit.
+                    if let CaseTest::Equal(value) = &key {
+                        for (old, _) in &pairs {
+                            if matches!(old, CaseTest::Equal(prev) if Self::key_alike(prev, value)) { return Err(self.bad_case()); }
+                        }
+                    }
                     self.need_sign(table.single("syntax.map.pair").unwrap_or_default(), "between a key and its pattern")?;
                     pairs.push((key, self.pattern_choice()?));
                 }
@@ -9461,9 +9740,9 @@ impl<'a> Builder<'a> {
         }
         if table.spells("ext.stmt.class.special.stop", &t.spelling()) && !table.spells("ext.builtin.exceptions", &t.spelling()) {
             self.advance();
-            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
-                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), type_names: std::cell::RefCell::new(None),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None),
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
@@ -9598,6 +9877,14 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling())
                 && self.uses_bound_callable(&t.lexeme) => {
                 self.advance();
+                // A method that names the parent word at all carries
+                // the class's hidden cell, however the word was bound.
+                if table.has_any("ext.stmt.class.detail.root") && !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                    self.parts().needs_class_cell = true;
+                    self.parts().class_cell_protocol = true;
+                    let hidden = self.parts().completed_class.ident.to_string();
+                    self.lexical_address(&hidden, false);
+                }
                 let target = self.read(&t.lexeme);
                 if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
                     self.advance();
@@ -9618,10 +9905,21 @@ impl<'a> Builder<'a> {
                 self.advance();
                 self.read(&t.lexeme)
             }
+            // Standing alone the parent word is a name like another:
+            // the program's own `super`, where it gave the name one, is
+            // what the reading finds. A method that names it at all
+            // carries the class's hidden cell, as the reference has
+            // every naming of the word count as a use of it.
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.spelling())
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
                 self.advance();
-                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone()).into()))
+                if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                    self.parts().needs_class_cell = true;
+                    self.parts().class_cell_protocol = true;
+                    let hidden = self.parts().completed_class.ident.to_string();
+                    self.lexical_address(&hidden, false);
+                }
+                self.read(&t.lexeme)
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling()) => {
                 self.advance();
@@ -9636,7 +9934,7 @@ impl<'a> Builder<'a> {
                 // the definition asks for that form, the parent word
                 // answers with the stand-in that reads that class's
                 // forebears on that thing, their members bound to it.
-                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") {
+                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") && !table.has_any("ext.stmt.class.detail.root") {
                     let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
                     return self.subscript(invoke(parent_word, extra));
                 }
@@ -9644,8 +9942,23 @@ impl<'a> Builder<'a> {
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (false, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
-                        let callable = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
-                        invoke(callable, extra)
+                        // The parent word is a name the program may have
+                        // given a meaning of its own, so it is read where
+                        // names are read and what it stands for is called
+                        // with the arguments written. A method that names
+                        // it at all carries the class's hidden cell.
+                        if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
+                            self.parts().needs_class_cell = true;
+                            self.parts().class_cell_protocol = true;
+                            let hidden = self.parts().completed_class.ident.to_string();
+                            self.lexical_address(&hidden, false);
+                        }
+                        let callable = self.read(&t.lexeme);
+                        return self.subscript(invoke(callable, extra));
+                    }
+                    (true, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
+                        let made = self.parent_without_arguments(&t.lexeme);
+                        return self.subscript(made);
                     }
                     // Resolve zero-argument super through its defining class, including method calls.
                     (true, Some(_), Some(receiver), _) if !self.under_way.is_empty() => {
@@ -9687,9 +10000,13 @@ impl<'a> Builder<'a> {
                 let book = self.parts().book.clone().expect("class namespace prepared");
                 self.read(&book.ident.to_string())
             }
-            Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
+            Shape::Bare if !self.in_class_body() && self.place_depth == 0 && !self.under_way.is_empty()
                 && table.spells("ext.stmt.class.detail.kind", &t.spelling())
                 && !self.layers.last().unwrap().idents.contains(&t.lexeme)
+                // An explicit `__class__` anywhere outward keeps its
+                // ordinary meaning; only where nothing has bound it does
+                // the word stand for the hidden cell.
+                && !(1..self.layers.len()).any(|depth| self.layers[depth].idents.iter().any(|named| named == &t.lexeme))
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
                 self.parts().needs_class_cell = true;

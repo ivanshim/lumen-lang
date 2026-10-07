@@ -392,6 +392,8 @@ pub enum Prim {
     ZlibNative,
     BinaryFormat,
     BinaryAscii,
+    NamespaceRead,
+    TraceBridge,
     HeapNative,
     ContextStore,
     ReduceNative,
@@ -487,6 +489,12 @@ pub enum Prim {
     /// Call a method of a named class: what it is for, the class, the
     /// name, then the arguments.
     Bid,
+    /// A parent call with no argument written: the callable the parent
+    /// word read, how much of the frame it may take, then the class cell
+    /// and the first parameter, each read without complaint, and a flag
+    /// for each saying whether it was there. The parent class itself is
+    /// made of the two; any other callable is called with no arguments.
+    Parentless,
     /// Whether the first is a thing of the class named second.
     Akin,
     /// The name of the class of a thing, or of a class.
@@ -961,6 +969,73 @@ impl Form {
             Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
                 left.number_instructions(next);
                 right.number_instructions(next);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn instruction_listing(&self, next: &mut usize, mut coordinates: (u32, u32, u32, u32), output: &mut Vec<Value>) {
+        *next += 1;
+        if let Self::OnLine(row, _, _) = self { coordinates = (*row, u32::MAX, u32::MAX, u32::MAX); }
+        if let Self::Located(bounds, _, _) = self { coordinates = *bounds; }
+        let display = format!("{self:?}");
+        let tag = if matches!(self, Self::Apply(Callee::Prim(Prim::Choose, _), _)) { "Choose" } else { display.split(['(', ' ', '{']).next().unwrap_or("") };
+        let branches = matches!(self, Self::Cycle { .. } | Self::Apply(Callee::Prim(Prim::Choose, _), _));
+        output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), Value::Nil, Value::Flag(branches),
+            Value::tuple([coordinates.0, coordinates.1, coordinates.2, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
+        match self {
+            Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
+                inner.instruction_listing(next, coordinates, output);
+            }
+            Self::Const(Value::Routine(body)) if body.frameless => {
+                body.body.instruction_listing(next, coordinates, output);
+            }
+            Self::Write(_, inner) | Self::Tie(_, inner)
+            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
+            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
+            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
+            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => inner.instruction_listing(next, coordinates, output),
+            Self::Apply(callee, args) => {
+                if let Callee::Code(target) = callee { target.instruction_listing(next, coordinates, output); }
+                for argument in args { argument.instruction_listing(next, coordinates, output); }
+            }
+            Self::Dyad { a, b, .. } => {
+                for input in [a, b] {
+                    if let Input::Form(form) = input { form.instruction_listing(next, coordinates, output); }
+                }
+            }
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                test.instruction_listing(next, coordinates, output);
+                body.instruction_listing(next, coordinates, output);
+                for child in [step, otherwise].into_iter().flatten() { child.instruction_listing(next, coordinates, output); }
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                body.instruction_listing(next, coordinates, output);
+                for clause in clauses {
+                    if let Some(choices) = &clause.choices { for choice in choices { choice.instruction_listing(next, coordinates, output); } }
+                    clause.body.instruction_listing(next, coordinates, output);
+                }
+                for child in [otherwise, last].into_iter().flatten() { child.instruction_listing(next, coordinates, output); }
+            }
+            Self::Class { values, .. } => {
+                for value in values { value.instruction_listing(next, coordinates, output); }
+            }
+            Self::Assert { condition, message } => {
+                condition.instruction_listing(next, coordinates, output);
+                message.instruction_listing(next, coordinates, output);
+            }
+            Self::Fits { value, kinds, .. } => {
+                value.instruction_listing(next, coordinates, output);
+                for kind in kinds { kind.instruction_listing(next, coordinates, output); }
+            }
+            Self::SharePlace(_, keys) => { for key in keys { key.instruction_listing(next, coordinates, output); } }
+            Self::ShareWithin(value, keys) => {
+                value.instruction_listing(next, coordinates, output);
+                for key in keys { key.instruction_listing(next, coordinates, output); }
+            }
+            Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
+                left.instruction_listing(next, coordinates, output);
+                right.instruction_listing(next, coordinates, output);
             }
             _ => {}
         }

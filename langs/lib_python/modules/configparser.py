@@ -1,4 +1,3 @@
-# Source: CPython Lib/configparser.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Configuration file parser.
 
 A configuration file consists of sections, lead by a "[section]" header,

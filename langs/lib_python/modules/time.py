@@ -43,6 +43,13 @@ def monotonic_ns():
 def perf_counter_ns():
     return __clock(True, False)
 
+struct_time = _host_clock('struct_time')
+
+def localtime(seconds=None):
+    return _host_clock('localtime', seconds)
+
+def gmtime(seconds=None):
+    return _host_clock('gmtime', seconds)
 # The host stands in the UTC zone, so the zone's figures are the
 # meridian's own: no offset, no daylight time, one name.
 timezone = 0
@@ -101,47 +108,6 @@ def _ord2ymd(ordinal):
         before -= _DAYS_IN_MONTH[month] + (1 if month == 2 and leap else 0)
     return (year, month, remaining - before + 1)
 
-class struct_time(tuple):
-    # The nine sequence fields of the C library's struct tm, Monday as
-    # weekday zero and the day of the year counting from one. The zone
-    # name and offset the host knows stand beside them as attributes,
-    # never as sequence fields, which is what the three class figures
-    # say.
-    n_fields = 11
-    n_sequence_fields = 9
-    n_unnamed_fields = 0
-
-    def __new__(cls, fields=(), zone=None, offset=None):
-        parts = list(fields)
-        if len(parts) == 11:
-            zone = parts[9]
-            offset = parts[10]
-            parts = parts[:9]
-        elif len(parts) != 9:
-            raise TypeError('time.struct_time() takes a 9 or 11-sequence (' + str(len(parts)) + '-sequence given)')
-        self = tuple.__new__(cls, parts)
-        self._zone = zone
-        self._offset = offset
-        return self
-
-    def __repr__(self):
-        words = ('tm_year', 'tm_mon', 'tm_mday', 'tm_hour', 'tm_min',
-                 'tm_sec', 'tm_wday', 'tm_yday', 'tm_isdst')
-        inside = ', '.join(words[at] + '=' + repr(self[at]) for at in range(9))
-        return 'time.struct_time(' + inside + ')'
-
-    tm_year = property(lambda self: self[0])
-    tm_mon = property(lambda self: self[1])
-    tm_mday = property(lambda self: self[2])
-    tm_hour = property(lambda self: self[3])
-    tm_min = property(lambda self: self[4])
-    tm_sec = property(lambda self: self[5])
-    tm_wday = property(lambda self: self[6])
-    tm_yday = property(lambda self: self[7])
-    tm_isdst = property(lambda self: self[8])
-    tm_zone = property(lambda self: self._zone)
-    tm_gmtoff = property(lambda self: self._offset)
-
 def _break_down(seconds):
     # divmod floors here, so a moment before the epoch lands on the
     # right day rather than the one across midnight.
@@ -158,18 +124,6 @@ def _break_down(seconds):
     day_of_year = _days_before_month(year, month) + day
     return (year, month, day, int(hours), int(minutes), int(secs),
             weekday, day_of_year, 0)
-
-def gmtime(seconds=None):
-    if seconds is None:
-        seconds = time()
-    # The meridian's own breakdown is named GMT, as the C library names it.
-    return struct_time(_break_down(seconds), 'GMT', 0)
-
-def localtime(seconds=None):
-    # The host's zone being UTC, the local breakdown is the meridian's.
-    if seconds is None:
-        seconds = time()
-    return struct_time(_break_down(seconds), 'UTC', 0)
 
 def mktime(fields):
     parts = list(fields)

@@ -370,6 +370,29 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Err(String::from("TypeError: argument must be str")),
         };
     }
+    if action == 11 {
+        let supplied = input.get(1).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
+        let codes = supplied.type_text().character_numbers().ok_or_else(|| {
+            let kind = match supplied.settled() { Value::Nil => "None".to_string(), other => other.kind_word() };
+            format!("TypeError: normalize() argument 2 must be str, not {kind}")
+        })?;
+        // A stowed half is passed through as it stands; only the run
+        // of real characters around it is folded.
+        let mut folded: Vec<u32> = Vec::with_capacity(codes.len());
+        let mut plain = String::new();
+        for number in codes {
+            if let Some(letter) = char::from_u32(number) { plain.push(letter); continue; }
+            folded.extend(crate::unicode::collated(&plain).chars().map(|c| c as u32));
+            plain.clear();
+            folded.push(number);
+        }
+        folded.extend(crate::unicode::collated(&plain).chars().map(|c| c as u32));
+        return Ok(Value::characters(folded));
+    }
+    if action == 12 {
+        let point = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
+        return Ok(Value::text(&crate::unicode::decomposition(point)));
+    }
     if !matches!(action, 0 | 7 | 8) {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {
