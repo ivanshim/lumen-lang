@@ -2124,6 +2124,13 @@ impl<'a> Engine<'a> {
             if !positional.is_empty() || !keywords.is_empty() { return Err("TypeError: NoDefaultType takes no arguments".into()); }
             return Ok(self.no_type_default());
         }
+        if matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple") {
+            if let Some(index) = keywords.iter().position(|(key, _)| key == "name") {
+                let (_, supplied_name) = keywords.remove(index);
+                if !positional.is_empty() { return Err(format!("TypeError: argument for {}() given by name ('name') and position (1)", class.name.to_lowercase()).into()); }
+                positional.push(supplied_name);
+            }
+        }
         if class.name == "TypeVar" && positional.len() == 2 { return Err("TypeError: A single constraint is not allowed".into()); }
         if matches!(class.name.as_str(), "ParamSpec" | "TypeVarTuple") && positional.len() > 1 { return Err(format!("TypeError: {}() takes exactly 1 positional argument ({} given)", class.name.to_lowercase(), positional.len()).into()); }
         let Some(Value::Text(name)) = positional.first().map(Value::contents) else {
@@ -2142,10 +2149,7 @@ impl<'a> Engine<'a> {
                 ("__contravariant__".into(), Value::Flag(false)), ("__infer_variance__".into(), Value::Flag(false))]);
         }
         if class.name == "TypeVarTuple" { fields.retain(|(key, _)| !matches!(key.as_str(), "__bound__" | "__constraints__" | "__covariant__" | "__contravariant__" | "__infer_variance__")); }
-        if class.name == "ParamSpec" {
-            fields.retain(|(key, _)| key != "__constraints__");
-            if let Some((_, bound)) = fields.iter_mut().find(|(key, _)| key == "__bound__") { *bound = Value::Class(self.kind_class("NoneType")); }
-        }
+        if class.name == "ParamSpec" { fields.retain(|(key, _)| key != "__constraints__"); }
         for (key, value) in keywords {
             let attribute = match key.as_str() {
                 "bound" => "__bound__", "default" => "__default__", "covariant" => "__covariant__",
@@ -2154,7 +2158,7 @@ impl<'a> Engine<'a> {
             };
             let value = if matches!(key.as_str(), "covariant" | "contravariant" | "infer_variance") {
                 self.class_apply(Value::Native(Builtin::Bool, Rc::from("bool")), vec![value])?
-            } else if key == "bound" && (class.name == "ParamSpec" || !matches!(value.contents(), Value::Null)) {
+            } else if key == "bound" && class.name == "TypeVar" && !matches!(value.contents(), Value::Null) {
                 let module = self.import_module("typing")?;
                 let check = self.class_get(module, "_type_check", false)?.contents();
                 self.class_apply(check, vec![value, Value::text("Bound must be a type.")])?

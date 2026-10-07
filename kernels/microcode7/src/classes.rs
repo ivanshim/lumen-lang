@@ -2243,10 +2243,18 @@ impl<'a> Machine<'a> {
         }
     }
     fn make_type_parameter(&mut self, kind: Rc<Blueprint>, input: Vec<Value>) -> Res {
-        let (values, options) = self.open_arguments(input)?;
+        let (mut values, mut options) = self.open_arguments(input)?;
         if kind.name == "NoDefaultType" {
             if !values.is_empty() || !options.is_empty() { return Err(String::from("TypeError: NoDefaultType takes no arguments").into()); }
             return Ok(self.absent_type_default());
+        }
+        let has_keyword_name = matches!(kind.name.as_str(), "TypeVarTuple" | "ParamSpec" | "TypeVar");
+        if has_keyword_name {
+            if let Some(at) = options.iter().position(|entry| entry.0 == "name") {
+                let name = options.remove(at).1;
+                if values.is_empty() { values.push(name); }
+                else { return Err(format!("TypeError: argument for {}() given by name ('name') and position (1)", kind.name.to_lowercase()).into()); }
+            }
         }
         if kind.name == "TypeVar" && values.len() == 2 { return Err(String::from("TypeError: A single constraint is not allowed").into()); }
         if (kind.name == "ParamSpec" || kind.name == "TypeVarTuple") && values.len() > 1 { return Err(format!("TypeError: {}() takes exactly 1 positional argument ({} given)", kind.name.to_lowercase(), values.len()).into()); }
@@ -2270,10 +2278,8 @@ impl<'a> Machine<'a> {
         }
         match kind.name.as_str() {
             "TypeVarTuple" => attributes.retain(|entry| !matches!(entry.0.as_str(), "__bound__" | "__constraints__" | "__covariant__" | "__contravariant__" | "__infer_variance__")),
-            "ParamSpec" => {
-                attributes.retain(|entry| entry.0 != "__constraints__");
-                if let Some(entry) = attributes.iter_mut().find(|entry| entry.0 == "__bound__") { entry.1 = Value::Blueprint(self.native_kind("NoneType")); }
-            }, _ => {},
+            "ParamSpec" => attributes.retain(|entry| entry.0 != "__constraints__"),
+            _ => {},
         }
         for (option, value) in options {
             let destination = match option.as_str() {
@@ -2283,7 +2289,7 @@ impl<'a> Machine<'a> {
             };
             let value = match option.as_str() {
                 "covariant" | "contravariant" | "infer_variance" => self.apply_class_member(Value::Intrinsic(Prim::Truthful, Rc::from("bool")), vec![value])?,
-                "bound" if kind.name == "ParamSpec" || !matches!(value.settled(), Value::Nil) => {
+                "bound" if kind.name == "TypeVar" && !matches!(value.settled(), Value::Nil) => {
                     let typing = self.load_namespace("typing")?;
                     let validate = self.read_class_member(typing, "_type_check", false)?.settled();
                     self.apply_class_member(validate, vec![value, Value::text("Bound must be a type.")])?
