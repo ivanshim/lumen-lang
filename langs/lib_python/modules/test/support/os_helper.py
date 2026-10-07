@@ -1,4 +1,5 @@
 import os
+import stat as _stat
 import warnings
 from contextlib import contextmanager
 from shutil import rmtree as _rmtree
@@ -6,9 +7,58 @@ from shutil import rmtree as _rmtree
 # The name CPython's tests give the one scratch file they write.
 TESTFN = '@test'
 
-def rmtree(path):
+
+def _force(path, func, *args):
+    # CPython's test.support._force_run: a filesystem call that a
+    # read-only entry refuses is tried again once its owner bits are
+    # opened up, since a test that chmods a tree read-only still has to
+    # be able to take it away afterwards.
+    try:
+        return func(*args)
+    except FileNotFoundError:
+        raise
+    except OSError:
+        os.chmod(path, _stat.S_IRWXU)
+        return func(*args)
+
+
+def _clearing_rmtree(path):
     try:
         _rmtree(path)
+        return
+    except OSError:
+        pass
+
+    def inner(here):
+        if hasattr(os, 'chflags'):
+            try:
+                os.chflags(here, 0)
+            except OSError:
+                pass
+        for name in _force(here, os.listdir, here):
+            full = os.path.join(here, name)
+            try:
+                mode = os.lstat(full).st_mode
+            except OSError:
+                mode = 0
+            if hasattr(os, 'lchflags'):
+                try:
+                    os.lchflags(full, 0)
+                except OSError:
+                    pass
+            if _stat.S_ISDIR(mode):
+                inner(full)
+                _force(here, os.rmdir, full)
+            else:
+                _force(here, os.unlink, full)
+
+    inner(path)
+    os.rmdir(path)
+
+
+def rmtree(path):
+    try:
+        _clearing_rmtree(path)
     except FileNotFoundError:
         pass
 
