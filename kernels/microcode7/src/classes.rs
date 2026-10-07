@@ -6940,7 +6940,7 @@ impl<'a> Machine<'a> {
         let lookup_order = Self::resolution_order(&actual);
         for base in &lookup_order {
             if passed {
-                if key == self.detail("allocate") {
+                if Self::own_entry(base, key).is_none() && key == self.detail("allocate") {
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                         return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
                     }

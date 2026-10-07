@@ -143,7 +143,8 @@ def _kind_name(kind):
 
 # A kind named with the kinds it was given, as list[int] is.
 class GenericAlias:
-    def __init__(self, origin, args):
+    def __new__(cls, origin, args, /):
+        self = object.__new__(cls)
         self.__origin__ = origin
         if isinstance(args, tuple):
             self.__args__ = args
@@ -157,6 +158,10 @@ class GenericAlias:
                     parameters.append(parameter)
         self.__parameters__ = tuple(parameters)
         self.__unpacked__ = False
+        return self
+
+    def __init__(self, origin, args, /):
+        pass
 
     def __call__(self, *args, **keywords):
         return self.__origin__(*args, **keywords)

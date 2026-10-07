@@ -6474,7 +6474,7 @@ impl<'a> Engine<'a> {
         let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
         let root_class = self.root_class();
         for class in &order[start + 1..] {
-            if name == self.class_word("allocate") {
+            if name == self.class_word("allocate") && Self::own_class_value(class, name).is_none() {
                 if let Some(word) = Self::own_kind(class) {
                     if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
                 }
