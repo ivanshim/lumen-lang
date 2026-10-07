@@ -11208,7 +11208,7 @@ impl<'a> Engine<'a> {
                 if self.exception_class(&class) {
                     // A subclass that writes its own maker is made through
                     // it; the builtin classes still make themselves here.
-                    if self.class_value(&class, self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(_))) {
+                    if self.class_value(&class, self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(entry) if entry.0 != 4 && entry.0 != 5)) {
                         let made = self.class_construct(class, args)?;
                         self.data.push(made);
                         return Ok(());
