@@ -561,6 +561,7 @@ pub struct KeyedPairs {
     pub revision: u64,
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     names: RefCell<Option<Box<NameLookup>>>,
+    compiled_names: RefCell<Vec<Option<(Rc<str>, usize)>>>,
 }
 
 impl std::fmt::Debug for KeyedPairs {
@@ -601,6 +602,25 @@ impl KeyedPairs {
             NameLookup::Fixed(positions) => Ok(positions.get(name).copied()),
             NameLookup::Mutable => Err(()),
         }
+    }
+
+    /// Find a compiled name without hashing it again on every load or store.
+    /// Row mutations discard these addresses; value replacements preserve them.
+    pub fn compiled_row(&self, name: &str, binding: usize) -> Result<Option<usize>, ()> {
+        let known = self.compiled_names.borrow();
+        let prior = known.get(binding).and_then(Option::as_ref);
+        if let Some((_, row)) = prior.filter(|(spelling, _)| spelling.as_ref() == name) {
+            return Ok(Some(*row));
+        }
+        drop(known);
+        let row = self.named_row(name)?;
+        if let Some(position) = row {
+            let mut compiled = self.compiled_names.borrow_mut();
+            let needed = compiled.len().max(binding + 1);
+            compiled.resize_with(needed, || None);
+            compiled[binding] = Some((Rc::from(name), position));
+        }
+        Ok(row)
     }
 
     /// A namespace write used to borrow the rows mutably, advancing the
@@ -667,6 +687,7 @@ impl KeyedPairs {
         let at = self.rows.len();
         self.revision = next_map_revision();
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         self.rows.push((key, value));
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
@@ -674,7 +695,7 @@ impl KeyedPairs {
 
 impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
-        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 }
 
@@ -683,7 +704,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 }
 
@@ -703,6 +724,7 @@ impl std::ops::DerefMut for KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         &mut self.rows
     }
 }

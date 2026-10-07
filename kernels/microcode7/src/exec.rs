@@ -510,6 +510,7 @@ struct ExecutionRules<'a> {
     lone_system_real_render: Option<&'a str>,
     specials: &'a [String],
     trace_words: &'a [String],
+    builtin_namespace_words: &'a [String],
 }
 
 pub struct Machine<'a> {
@@ -1963,6 +1964,7 @@ impl<'a> Machine<'a> {
                 lone_system_real_render: table.lone("system.real.render"),
                 specials: table.strings("ext.stmt.class.special"),
                 trace_words: table.strings("ext.builtin.exceptions.traceback"),
+                builtin_namespace_words: table.strings("ext.system.module.builtins"),
             },
             fault_kinds,
             library_sources: HashMap::new(),
@@ -12193,6 +12195,14 @@ impl<'a> Machine<'a> {
     }
 
     fn invoke_body(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        // Internal branch arms already use the caller frame and take no arguments.
+        // Keep normal drive checkpoints without building a temporary callable.
+        if program.frameless && !program.generator && program.taking.is_none()
+            && program.formals.is_empty() && program.least == 0 && program.gather_from.is_none()
+            && args.is_empty() && self.written_over.is_empty() {
+            if self.reads_handed { self.pending.clear(); }
+            return self.drive(program, env);
+        }
         let callable = Value::Bound(program.clone(), env.clone());
         let (program, env) = self.as_now_written(program, env);
         let titles = if program.generator {
@@ -25404,20 +25414,32 @@ fn spells_key(key: &Value, name: &str) -> bool {
 
 /// The value a dictionary in a cell keeps under a name.
 fn looked_up(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
+    looked_up_slot(book, name, None)
+}
+
+/// Read through a namespace's structural index when the compiler gave a slot.
+fn looked_up_slot(book: &Rc<RefCell<Value>>, name: &str, slot: Option<usize>) -> Option<Value> {
     if let Value::Attributes(space) = &*book.borrow() {
         return space.holds.borrow().iter().find(|(word, _)| word == name).map(|(_, kept)| kept.clone());
     }
     let Value::Dict(entries) = &*book.borrow() else { return None };
-    let position = entries.namespace_position(name).unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
+    let indexed = match slot { Some(at) => entries.namespace_slot_position(at, name), None => entries.namespace_position(name) };
+    let position = indexed.unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
     position.map(|at| entries[at].1.clone())
 }
 
 /// Set a value down under a name in such a dictionary; given nothing,
 /// strike the name out.
 fn set_down(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>) {
+    set_down_slot(book, name, worth, None);
+}
+
+/// Locate a compiled namespace store without retaining the value it replaces.
+fn set_down_slot(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>, slot: Option<usize>) {
     let Value::Dict(entries) = &mut *book.borrow_mut() else { return };
     let entries = Rc::make_mut(entries);
-    let place = entries.namespace_position(name).unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
+    let indexed = match slot { Some(at) => entries.namespace_slot_position(at, name), None => entries.namespace_position(name) };
+    let place = indexed.unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
     match (place, worth) {
         (Some(place), Some(worth)) => entries.overwrite_namespace(place, worth),
         (Some(place), None) => { entries.remove(place); }
@@ -25441,6 +25463,9 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
+        if self.namespace_books.is_empty() && self.readings.is_empty() {
+            return (self.world_book.is_some() && Self::visible_name(self.idents.get(at)?)).then_some(Held::World);
+        }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {
@@ -25483,7 +25508,7 @@ impl<'a> Machine<'a> {
         match self.book_holding(at)? {
             Held::Namespace(index) => {
                 if !Self::visible_name(name) { return None; }
-                let found = looked_up(&self.namespace_books[index].1, name);
+                let found = looked_up_slot(&self.namespace_books[index].1, name, Some(at));
                 if let Some(found) = found {
                     if let Value::Shared(place) = &found {
                         let world = self.outermost.cells.borrow();
@@ -25502,7 +25527,7 @@ impl<'a> Machine<'a> {
             }
             Held::World => {
                 let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up(book, name) {
+                if let Some(worth) = looked_up_slot(book, name, Some(at)) {
                     if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
                 }
@@ -25576,8 +25601,8 @@ impl<'a> Machine<'a> {
     /// Write a slot's name into the dictionary it lives in, or strike it out.
     fn booked_write(&mut self, at: usize, name: &str, worth: Option<Value>) {
         match self.book_holding(at) {
-            Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down(&self.namespace_books[index].1, name, worth) },
-            Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },
+            Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down_slot(&self.namespace_books[index].1, name, worth, Some(at)) },
+            Some(Held::World) => if let Some(book) = &self.world_book { set_down_slot(book, name, worth, Some(at)) },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];
                 let goes_to = match &book.outer {
@@ -25601,7 +25626,7 @@ impl<'a> Machine<'a> {
 
     /// Whether this word is the name the definition gives the builtins.
     fn names_the_builtins(&self, word: &str) -> bool {
-        self.table.strings("ext.system.module.builtins").iter().any(|given| given == word)
+        self.rules.builtin_namespace_words.iter().any(|given| given == word)
     }
 
     /// Whether a value read from a book is the kernel's own dictionary
