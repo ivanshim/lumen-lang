@@ -200,18 +200,22 @@ class _BufferedIOBase(_IOBase):
         raise UnsupportedOperation('write')
     def detach(self):
         raise UnsupportedOperation('detach')
-    def readinto(self, b):
+    def _readinto_with(self, b, name):
         with memoryview(b) as view:
             target = view.cast('B')
             if target.readonly:
                 raise TypeError('readinto() argument must be read-write bytes-like object')
-            data = self.read(target.nbytes)
-            if data is None:
-                return None
+            data = getattr(self, name)(target.nbytes)
+            if not isinstance(data, bytes):
+                raise TypeError('read() should return bytes')
+            if len(data) > target.nbytes:
+                raise ValueError('read() returned too much data: %d bytes requested, %d returned' % (target.nbytes, len(data)))
             target[:len(data)] = data
             return len(data)
+    def readinto(self, b):
+        return self._readinto_with(b, 'read')
     def readinto1(self, b):
-        return self.readinto(b)
+        return self._readinto_with(b, 'read1')
 
 class _TextIOBase(_IOBase):
     @property
