@@ -9856,7 +9856,7 @@ impl<'a> Machine<'a> {
                 return Ok(if name == "isascii" { Value::Flag(false) } else { result });
             }
         }
-        if matches!(&actual, Value::Text(_)) {
+        if matches!(&actual, Value::Text(_)) || name == "count" && matches!(&actual, Value::Unpaired(_)) {
             let key = format!("ext.builtin.text.{}", name);
             if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
@@ -17636,6 +17636,14 @@ impl<'a> Machine<'a> {
             Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
+                // Convert explicit code-unit search endpoints through __index__.
+                if work == crate::text::Work::COUNT && values.iter().take(2).any(|value| matches!(value, Value::Unpaired(_))) {
+                    let mut slot = 2;
+                    while slot < values.len() {
+                        if let Some(whole) = self.stood_for_whole(&values[slot])? { values[slot] = whole; }
+                        slot += 1;
+                    }
+                }
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {
                     if let Value::Thing(instance) = &values[0] {
                         if instance.blueprint().name == "frozendict" {

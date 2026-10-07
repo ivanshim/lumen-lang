@@ -16432,7 +16432,7 @@ impl<'a> Engine<'a> {
             let task = Self::byte_working(operation).filter(|task| changeable || !Self::BYTE_CHANGES.contains(task));
             if let Some(task) = task { let mut given = vec![contents]; given.extend(args); return self.builtin_call(Builtin::Bytes(task), operation, given.into_iter().map(|v| (None,v)).chain(named.into_iter().map(|(k,v)| (Some(k),v))).collect()); }
         }
-        if matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Text(_)) || operation == "count" && matches!(&contents, Value::Codepoints(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
                 let working = crate::strings::operation(operation);
@@ -18277,6 +18277,12 @@ impl<'a> Engine<'a> {
             }
             Builtin::Text(op) => {
                 let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                // Search bounds use the index protocol even for lone-surrogate text.
+                if op == crate::strings::TextOp::Count && normalized.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+                    for bound in normalized.iter_mut().skip(2) {
+                        if let Some(index) = self.special_index(bound)? { *bound = index; }
+                    }
+                }
                 if op == crate::strings::TextOp::Maketrans && normalized.len() == 1 {
                     if matches!(&normalized[0], Value::Object(o) if o.class_now().name == "frozendict") {
                         if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }

@@ -265,6 +265,30 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         if args.len() != 1 { return Err(fault(lang,"arguments")); }
         return Ok(Value::text(&repr(&args[0],words)));
     }
+    if op == Count && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+        if args.len() < 2 { return Err("TypeError: count expected at least 1 argument, got 0".into()); }
+        if args.len() > 4 { return Err(format!("TypeError: count expected at most 3 arguments, got {}", args.len() - 1)); }
+        let source = args[0].text_codes().ok_or_else(|| fault(lang, "receiver"))?;
+        let needle = args[1].text_codes().ok_or_else(|| format!("TypeError: count() argument 1 must be str, not {}", args[1].core_kind()))?;
+        let length = source.len();
+        let offset = |at: usize, fallback: i64| -> Result<usize, String> {
+            let n = match args.get(at) { None | Some(Value::Null) => fallback, Some(v) => integer(v, lang).map_err(|_| "TypeError: slice indices must be integers or None or have an __index__ method".to_string())? };
+            Ok(if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length.saturating_add(1)) })
+        };
+        let left = offset(2, 0)?;
+        let right = offset(3, length as i64)?.min(length);
+        if left > right { return Ok(Value::Small(0)); }
+        if needle.is_empty() { return Ok(Value::Small((right - left + 1) as i64)); }
+        let mut position = left;
+        let mut count = 0;
+        while needle.len() <= right.saturating_sub(position) {
+            if source[position..position + needle.len()] == needle {
+                count += 1;
+                position += needle.len();
+            } else { position += 1; }
+        }
+        return Ok(Value::Small(count));
+    }
     if let Some(Value::Codepoints(codes)) = args.first() {
         if op == Getnewargs {
             if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }

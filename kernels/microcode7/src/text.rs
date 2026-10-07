@@ -244,6 +244,37 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
+    if work == COUNT && input.iter().take(2).any(|item| matches!(item, Value::Unpaired(_))) {
+        match input.len() {
+            0 | 1 => return Err(String::from("TypeError: count expected at least 1 argument, got 0")),
+            amount if amount > 4 => return Err(format!("TypeError: count expected at most 3 arguments, got {}", amount - 1)),
+            _ => {}
+        }
+        let units = |item: &Value| match item {
+            Value::Text(word) => Some(word.chars().map(u32::from).collect::<Vec<_>>()),
+            Value::Unpaired(row) => Some(row.to_vec()),
+            _ => None,
+        };
+        let haystack = units(&input[0]).ok_or_else(|| complaint(table, "receiver"))?;
+        let sought = units(&input[1]).ok_or_else(|| format!("TypeError: count() argument 1 must be str, not {}", input[1].kind_word()))?;
+        let size = haystack.len();
+        let endpoint = |slot: usize, usual: i64| -> Result<usize, String> {
+            let supplied = match input.get(slot) { None | Some(Value::Nil) => usual, Some(value) => count(value, table).map_err(|_| String::from("TypeError: slice indices must be integers or None or have an __index__ method"))? };
+            let adjusted = if supplied.is_negative() { (size as i64).saturating_add(supplied).max(0) } else { supplied };
+            Ok((adjusted as usize).min(size.saturating_add(1)))
+        };
+        let begin = endpoint(2, 0)?;
+        let end = endpoint(3, size as i64)?.min(size);
+        let answer = if begin > end { 0 } else if sought.is_empty() { end - begin + 1 } else {
+            let mut next = 0;
+            haystack[begin..end].windows(sought.len()).enumerate().filter(|(at, window)| {
+                if *at < next || *window != sought.as_slice() { return false; }
+                next = *at + sought.len();
+                true
+            }).count()
+        };
+        return Ok(Value::Small(answer as i64));
+    }
     if let Some(Value::Unpaired(numbers)) = input.first() {
         if work == NEWARGS {
             if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
