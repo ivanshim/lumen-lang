@@ -427,6 +427,21 @@ def _docstring_of_module(names):
 
 # ---------------------------------------------------------------- running
 
+def _reference_module(namespace):
+    """The name the reference suite gives the module a test file stands for.
+
+    The suite is run one file at a time from its own directory, so the file's
+    own name is the only module identity there is; the reference runner would
+    import the same file under its package name instead. Only the exception
+    line needs that name, so it is worked out here rather than by writing a
+    borrowed `__name__` into the examples' namespace, which would misname
+    every class the examples define."""
+    path = namespace.get('__file__', '') or ''
+    if '/tests/python/test_' in path and path.endswith('.py'):
+        return 'test.' + path.rsplit('/', 1)[-1][:-3]
+    return None
+
+
 def _exception_detail(error, message, namespace=None):
     """The last line of a traceback: the kind and, after it, the message."""
     if isinstance(error, BaseException):
@@ -434,7 +449,7 @@ def _exception_detail(error, message, namespace=None):
         detail = kind.__name__
         module = kind.__module__
         if module == '__main__' and namespace is not None:
-            module = namespace.get('__name__', module)
+            module = _reference_module(namespace) or namespace.get('__name__', module)
         if module != 'builtins' and module != '__main__':
             detail = module + '.' + detail
         text = str(error)
@@ -786,12 +801,6 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
-    if module is None and globs is None:
-        names = __program_namespace()
-        path = names.get('__file__', '')
-        if '/tests/python/test_' in path and path.endswith('.py'):
-            globs = _copy_dict(names)
-            globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
