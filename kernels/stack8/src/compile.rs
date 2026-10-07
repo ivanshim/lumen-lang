@@ -10112,6 +10112,10 @@ impl<'a> Compiler<'a> {
                     self.constant(PARENT_CALLABLE.with(Clone::clone));
                     self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), 3);
                 } else if let (0, Some(base), Some(this), Some(mark)) = (extra, parent, self.method_self.clone(), member) {
+                    if !self.gathered.is_empty() {
+                        self.gathering().needs_class_cell = true;
+                        self.gathering().class_cell_protocol = true;
+                    }
                     self.want_sign(&mark, "after the parent call")?;
                     let named = self.want_name("as the parent's member")?;
                     self.read(&this);

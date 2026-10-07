@@ -3431,6 +3431,14 @@ impl<'a> Engine<'a> {
 
     /// The name the outermost names go by, where the language gives
     /// them one: the module a routine written there belongs to.
+    pub(super) fn parameter_module(&self) -> Value {
+        if let Some(reading) = self.reading_in.and_then(|at| self.text_books.get(at)) {
+            return book_entry(reading.outer.as_ref().unwrap_or(&reading.near), "__name__").unwrap_or(Value::Null);
+        }
+        if let Some(book) = &self.outer_book { return book_entry(book, "__name__").unwrap_or(Value::Null); }
+        self.module_named().map_or(Value::Null, |name| Value::text(&name))
+    }
+
     fn module_named(&self) -> Option<String> {
         if let Some((_, module)) = self.module_slots.get(&self.source) { return Some(module.clone()); }
         let word = self.lang.module_names.first()?;
@@ -6526,6 +6534,7 @@ impl<'a> Engine<'a> {
     /// and that same module for the bytes table-maker, whose own home
     /// the reference gives back for it.
     fn callable_home(&self, op: &Builtin, word: &str) -> Value {
+        if self.lang.type_parameters && *op == Builtin::ClassTool(23) { return Value::text("_typing"); }
         if !word.contains('.') { return Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)); }
         match op { Builtin::Bytes(40) => Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)), _ => Value::Null }
     }
@@ -6960,6 +6969,10 @@ impl<'a> Engine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(held) = &held {
+            if self.lang.type_parameters && name == "cr_code" {
+                let program = held.try_borrow().ok().and_then(|state| state.program.clone()).filter(|program| program.code_flags & 128 != 0);
+                if let Some(program) = program { return Ok(Some(self.routine_code(&program))); }
+            }
             if self.is_async_generator(&Value::Generator(held.clone())) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
                     if index == 2 { return Ok(Some(Value::Flag(self.async_generator_running(&Value::Generator(held.clone()))))); }
@@ -24340,6 +24353,15 @@ impl Engine<'_> {
                 Err(fault) => return Err(fault),
             }
         } else { Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true) };
+        let mapping = match namespace.contents() {
+            Value::Object(object) => self.class_value(&object.class_now(), "__getitem__").is_some() || Self::kind_beneath(&object.class_now()).is_some_and(|kind| matches!(kind.as_str(), "dict" | "list" | "tuple" | "str" | "bytes" | "bytearray" | "range")),
+            Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Bytes(..) | Value::View(_) => true,
+            _ => false,
+        };
+        if !mapping {
+            let owner = match &factory { Some(Value::Class(class)) => class.name.as_str(), _ => "<metaclass>" };
+            return Err(format!("TypeError: {owner}.__prepare__() must return a mapping, not {}", namespace.core_kind()).into());
+        }
         let previous = self.class_body_capture.replace((program.clone(), Some(namespace)));
         let call = self.class_apply(Value::Routine(program), Vec::new());
         let captured = self.class_body_capture.take().and_then(|(_, namespace)| namespace);

@@ -240,3 +240,17 @@ def union_repr(union):
 
 def reject_union_new(*args, **kwargs):
     raise TypeError("cannot create 'typing.Union' instances")
+
+# Initial specialization records arguments; subsequent substitution uses their hooks.
+def type_alias_subscribe(alias, arguments):
+    from types import GenericAlias
+    return GenericAlias(alias, arguments)
+
+# GenericAlias calls attach their actual specialization when the result permits it.
+def alias_call(alias, packed):
+    result = alias.__origin__(*packed)
+    try:
+        result.__orig_class__ = alias
+    except (AttributeError, TypeError):
+        pass
+    return result

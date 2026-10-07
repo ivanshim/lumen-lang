@@ -9682,6 +9682,10 @@ impl<'a> Builder<'a> {
                         invoke(parent_word, args)
                     }
                     (true, Some(base), Some(receiver), Some(_)) => {
+                        if let Some(body) = self.under_way.last_mut() {
+                            body.class_cell_protocol = true;
+                            body.needs_class_cell = true;
+                        }
                         self.advance();
                         let called = self.need_word("as the parent's member")?;
                         let parent = if table.has_any("ext.stmt.class.detail.root") {constant(Value::text(&base))} else {self.read(&base)};

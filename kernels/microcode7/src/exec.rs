@@ -8558,6 +8558,9 @@ impl<'a> Machine<'a> {
     /// that same module for the bytes table-maker, whose own home the
     /// reference hands back for it.
     fn intrinsic_home(&self, op: &Prim, word: &str) -> Value {
+        if matches!(op, Prim::ClassWork(23)) && self.table.flag("ext.stmt.type_parameters") {
+            return Value::text("_typing");
+        }
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
@@ -8689,6 +8692,10 @@ impl<'a> Machine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(state) = value {
+            if name == "cr_code" && self.table.flag("ext.stmt.type_parameters") {
+                let code = state.try_borrow().ok()?.of.clone()?;
+                if code.flags & 128 != 0 { return Some(self.code_handle(&code)); }
+            }
             if self.is_async_generator(value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == name) {
                     if index == 2 { return Some(Value::Flag(self.async_running(value))); }
@@ -11298,6 +11305,17 @@ impl<'a> Machine<'a> {
 
     /// The name the outermost names go by, where the language gives
     /// them one: the namespace a routine written there belongs to.
+    pub(super) fn type_parameter_home(&self) -> Value {
+        let namespace = self.reading_now.and_then(|index| self.readings.get(index));
+        match namespace {
+            Some(names) => looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil),
+            None => match &self.world_book {
+                Some(book) => looked_up(book, "__name__").unwrap_or(Value::Nil),
+                None => self.namespace_named().map_or(Value::Nil, |name| Value::text(&name)),
+            },
+        }
+    }
+
     fn namespace_named(&self) -> Option<String> {
         if let Some(space) = self.loaded_spaces.get(&self.written_in) { return Some(space.clone()); }
         let word = self.rules.words_ext_system_module_name.first()?;
@@ -24817,6 +24835,18 @@ impl<'a> Machine<'a> {
                 Err(fault) => return Err(fault),
             }
         } else { Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true) };
+        let valid = match namespace.settled() {
+            Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Octets { .. } | Value::Window(..) => true,
+            Value::Thing(instance) => {
+                let owner = instance.blueprint();
+                self.inherited_entry(&owner, "__getitem__").is_some() || Self::native_beneath(&owner).is_some_and(|word| ["dict", "list", "tuple", "str", "bytes", "bytearray", "range"].contains(&word.as_str()))
+            }
+            _ => false,
+        };
+        if !valid {
+            let label = factory.as_ref().and_then(|kind| match kind { Value::Blueprint(class) => Some(class.name.as_str()), _ => None }).unwrap_or("<metaclass>");
+            return Err(format!("TypeError: {label}.__prepare__() must return a mapping, not {}", namespace.kind_word()).into());
+        }
         let old_capture = self.body_namespace.replace((body.clone(), Some(namespace)));
         let result = self.invoke(body, environment, Vec::new());
         let namespace = self.body_namespace.take().and_then(|(_, value)| value);
