@@ -4093,7 +4093,16 @@ impl<'a> Machine<'a> {
             };
         }
 
-        if let Value::Generator(inner) = walk { return self.resume(inner, sent); }
+        if let Value::Generator(inner) = walk {
+            // A delegation stands one frame deeper, as the reference
+            // counts it: a chain of sleeping bodies is a chain of
+            // frames, so a self-delegating one meets the limit rather
+            // than running on past it.
+            self.deeper()?;
+            let outcome = self.resume(inner, sent);
+            self.standing -= 1;
+            return outcome;
+        }
         match self.next_value(walk) {
             Ok(item) => Ok(item),
             Err(words) => Err(match self.got_away.take() { Some(escape) => escape, None => Escape::Error(words) }),
