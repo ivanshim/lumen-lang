@@ -17431,7 +17431,7 @@ impl<'a> Engine<'a> {
                     match self.special_index(&length) {
                         Ok(found) => found,
                         Err(fault) => {
-                            if !self.forget_type_error() { return Err(fault); }
+                            if !self.forget_type_error(&fault) { return Err(fault); }
                             None
                         }
                     }
@@ -17449,7 +17449,7 @@ impl<'a> Engine<'a> {
             }
             Ok(None) => {}
             Err(fault) => {
-                if !self.forget_type_error() { return Err(fault); }
+                if !self.forget_type_error(&fault) { return Err(fault); }
             }
         }
         match self.special_call(value, 78, Vec::new()) {
@@ -17469,18 +17469,33 @@ impl<'a> Engine<'a> {
             }
             Ok(None) => Ok(()),
             Err(fault) => {
-                if !self.forget_type_error() { return Err(fault); }
+                if !self.forget_type_error(&fault) { return Err(fault); }
                 Ok(())
             }
         }
     }
 
-    /// Forget a pending TypeError, the one fault the reference swallows
-    /// when it asks for a length. Any other fault is left standing.
-    fn forget_type_error(&mut self) -> bool {
-        let type_error = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false));
-        if type_error { self.carried = None; }
-        type_error
+    /// Forget a fault the reference swallows when it asks for a length:
+    /// a TypeError, whether it was thrown or merely worded by the
+    /// kernel. Any other fault is left standing.
+    fn forget_type_error(&mut self, fault: &str) -> bool {
+        if matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false)) {
+            self.carried = None;
+            return true;
+        }
+        self.carried.is_none() && self.worded_type_error(fault)
+    }
+
+    /// Whether a fault the kernel worded for itself is one the language
+    /// classes as a TypeError. Such a fault carries no thrown value, so
+    /// it is read by the class its words name, against the kind the
+    /// language calls a fault of the kernel's own.
+    fn worded_type_error(&self, told: &str) -> bool {
+        let Some(name) = self.class_for(told) else { return false };
+        let Some(kind) = self.lang.fault_kind.as_deref() else { return false };
+        if name == kind { return true; }
+        let (Some(Value::Class(actual)), Some(Value::Class(wanted))) = (self.native_exceptions.get(&name), self.native_exceptions.get(kind)) else { return false };
+        Self::exception_beneath(actual, wanted)
     }
 
     /// A whole number a row of bytes is handed as a place. CPython

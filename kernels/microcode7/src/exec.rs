@@ -12478,7 +12478,7 @@ impl<'a> Machine<'a> {
                         match self.stood_for_whole(&length) {
                             Ok(found) => found,
                             Err(complaint) => {
-                                if !self.forget_type_error() { return Err(complaint); }
+                                if !self.forget_type_error(&complaint) { return Err(complaint); }
                                 None
                             }
                         }
@@ -12496,7 +12496,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(None) => {}
                 Err(complaint) => {
-                    if !self.forget_type_error() { return Err(complaint); }
+                    if !self.forget_type_error(&complaint) { return Err(complaint); }
                 }
             }
         }
@@ -12518,18 +12518,33 @@ impl<'a> Machine<'a> {
             }
             Ok(None) => Ok(()),
             Err(complaint) => {
-                if !self.forget_type_error() { return Err(complaint); }
+                if !self.forget_type_error(&complaint) { return Err(complaint); }
                 Ok(())
             }
         }
     }
 
-    /// Forget a pending TypeError, the one fault the reference swallows
-    /// when it asks for a length. Any other fault is left standing.
-    fn forget_type_error(&mut self) -> bool {
-        let type_error = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thing))) if thing.blueprint().goes_by("TypeError", false));
-        if type_error { self.got_away = None; }
-        type_error
+    /// Forget a fault the reference swallows when it asks for a length:
+    /// a TypeError, whether it was thrown or merely worded by the
+    /// machine. Any other fault is left standing.
+    fn forget_type_error(&mut self, fault: &str) -> bool {
+        if matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thing))) if thing.blueprint().goes_by("TypeError", false)) {
+            self.got_away = None;
+            return true;
+        }
+        self.got_away.is_none() && self.worded_type_error(fault)
+    }
+
+    /// Whether a fault the machine worded for itself is one the language
+    /// classes as a TypeError. Such a fault carries no thrown value, so
+    /// it is read by the class its words name, against the kind the
+    /// language calls a fault of the machine's own.
+    fn worded_type_error(&self, told: &str) -> bool {
+        let Some(name) = self.class_of_fault(told) else { return false };
+        let Some(kind) = self.table.strings("ext.system.fault.class.kind").first().cloned() else { return false };
+        if name == kind { return true; }
+        let (Some(Value::Blueprint(actual)), Some(Value::Blueprint(wanted))) = (self.fault_kinds.get(&name), self.fault_kinds.get(&kind)) else { return false };
+        Self::fault_descends(actual, wanted)
     }
 
     fn octet_gathered(&self, source: &Value, iterable: bool, whole_row: bool) -> Result<Vec<u8>, String> {
