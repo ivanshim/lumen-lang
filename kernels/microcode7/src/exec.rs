@@ -530,6 +530,10 @@ pub struct Machine<'a> {
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
+    /// Whether the program's own world dictionary has been written
+    /// through since it was handed out: a name it gained then stands
+    /// over a builtin of the same spelling.
+    world_globals_changed: bool,
     loaded_spaces: HashMap<Rc<str>, String>,
     namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
@@ -1945,6 +1949,7 @@ impl<'a> Machine<'a> {
             namespace_places: RefCell::new(None),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
+            world_globals_changed: false,
             loaded_spaces: HashMap::new(),
             namespace_books: Vec::new(),
             within_spare: false,
@@ -5595,11 +5600,11 @@ impl<'a> Machine<'a> {
     }
 
     fn has_wildcard_imports(&self) -> bool {
-        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() { return false; }
+        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() && !self.world_globals_changed { return false; }
         if let Some((source, answer)) = self.wildcard_source.borrow().as_ref() {
             if Rc::ptr_eq(source, &self.written_in) { return *answer; }
         }
-        let answer = self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
+        let answer = self.world_globals_changed || self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
         *self.wildcard_source.borrow_mut() = Some((self.written_in.clone(), answer));
         answer
     }
@@ -23773,6 +23778,18 @@ impl Machine<'_> {
     }
 
     fn spread_value(&self, word: &str) -> Option<Value> {
+        // A name written into the world dictionary after globals() handed
+        // it out stands over a builtin of that spelling, as a name the
+        // text itself had bound would.
+        if self.world_globals_changed {
+            if let Some(book) = &self.world_book {
+                let found = match &*book.borrow() {
+                    Value::Dict(rows) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
+                    _ => None,
+                };
+                if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
+            }
+        }
         if self.revised_namespaces.contains(&self.written_in) {
             let namespace = self.loaded_spaces.get(&self.written_in).and_then(|id| self.imported.get(id));
             if let Some(Value::Thing(module)) = namespace {
@@ -24873,8 +24890,16 @@ impl<'a> Machine<'a> {
     }
     // Shared namespace cells are writable through their dictionary too.
     fn space_callable_changed(&mut self, cell: &Rc<RefCell<Value>>) {
-        let Some(owner) = self.book_space_of(cell) else { return };
         if !self.rules.names_shadow_builtins { return; }
+        // The program's own world dictionary is not filed as any loaded
+        // space's, but a write into it can still stand a name over a
+        // builtin; reading a name consults it while this stands.
+        if self.world_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
+            self.world_globals_changed = true;
+            self.wildcard_source.borrow_mut().take();
+            return;
+        }
+        let Some(owner) = self.book_space_of(cell) else { return };
         if self.rules.words_ext_system_names_module.first().is_some_and(|word| word == &owner) {
             self.displaced_primitives.extend(self.table.prims.keys().cloned());
         }
