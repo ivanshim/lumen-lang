@@ -7969,3 +7969,25 @@
 {"t":"2026-10-07T23:00:07Z","event":"finished","job":"dsflash-ucn","exit_time":"2026-10-07T22:56:40Z"}
 {"t":"2026-10-07T23:00:07Z","event":"review-queued","job":"dsflash-ucn","review":"review-auto-dsflash-ucn-2300"}
 {"t":"2026-10-07T23:00:11Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T23:04:40Z","event":"resumed","job":"dsflash-robotparser","model":"deepseek-flash","session":"ses_ee95eb8e5ffectlU612cQedS4J"}
+{"t":"2026-10-07T23:05:20Z","event":"exited","job":"review-auto-dsflash-shelve-dbm-sol-2244","code":0}
+{"t":"2026-10-07T23:09:40Z","event":"review-started","job":"dsflash-stringprep","review":"review-auto-dsflash-stringprep-2249"}
+{"t":"2026-10-07T23:12:29Z","event":"exited","job":"review-auto-dsflash-stringprep-2249","code":0}
+{"t":"2026-10-07T23:13:34Z","event":"accepted","job":"dsflash-stringprep","review":"review-auto-dsflash-stringprep-2249","batch":"21e","commit":"9276e41a9","branch":"fix/dsflash-stringprep","note":"test_stringprep absent->1/1 both kernels; clean final check 1194/0; byte-exact test + stringprep.py vs 3.14.8; new _unicodedata_320 (UCD 3.2 normalization); overlaps 21d unicodedata.py/manifest/README, 21e stdlib-codecs unicodedata.py (reconcile, do not overwrite); follow-ups: UCD 3.2 arg validation/name/lookup/is_normalized"}
+{"t":"2026-10-07T23:13:34Z","event":"returned","job":"claude-pstats","review":"review-auto-claude-pstats-2234","commit":"3e4afa626","round":1,"note":"(1st; implicit staticmethod/classmethod adapters made on every class-dict read (identity unstable, post-creation assignments wrapped) both kernels; _lsprof getstats/snapshot pops live contexts; subcalls/builtins options dropped; test_pstats 0->12/13 both kept; conflicts 21d kernels + 21e dsflash-dynamic) -> Sonnet resume when the Sonnet slot frees (claude-deque running; held-resumes)"}
+{"t":"2026-10-07T23:13:34Z","event":"returned","job":"dsflash-shelve-dbm-sol","review":"review-auto-dsflash-shelve-dbm-sol-2244","commit":"0eea6c4da","round":1,"note":"(Sol hand-over, 1st; protocol-2 __getnewargs_ex__ UnboundLocalError candidate on mc7 vs OK stack8, protocol-3 kernel disagreement; dbm_dumb 26/26, shelve 182/182, enum +1, functools +2 kept; overlaps 21d stdlib-pickle, 21e copyreg/minicompat/dynamic/pkg) -> Sol queue (resume)"}
+{"t":"2026-10-07T23:13:34Z","event":"queued","job":"dsflash-shelve-dbm-sol","model":"gpt-6.1-sol","line":"sol-resume dsflash-shelve-dbm-sol"}
+{"t":"2026-10-07T23:13:39Z","event":"exited","job":"dsflash-type-aliases","code":0}
+{"t":"2026-10-07T23:14:41Z","event":"review-started","job":"dsflash-ucn","review":"review-auto-dsflash-ucn-2300"}
+{"t":"2026-10-07T23:15:29Z","event":"finished","job":"dsflash-type-aliases","exit_time":"2026-10-07T23:13:39Z"}
+{"t":"2026-10-07T23:15:29Z","event":"review-queued","job":"dsflash-type-aliases","review":"review-auto-dsflash-type-aliases-2315"}
+{"t":"2026-10-07T23:15:33Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T23:15:52Z","event":"queued","job":"dsflash-bufio","model":"deepseek-flash","line":"ds-new dsflash-bufio deepseek-flash","note":"DS Flash slot fed (9/12 running + source-encoding queued): test_bufio (library, not-yet, small), fresh worktree on main 589a950a9"}
+{"t":"2026-10-07T23:15:52Z","event":"queued","job":"dsflash-charmapcodec","model":"deepseek-flash","line":"ds-new dsflash-charmapcodec deepseek-flash","note":"DS Flash slot fed: test_charmapcodec + test/testcodec.py (library, not-yet, small), fresh worktree on main 589a950a9"}
+{"t":"2026-10-07T23:16:17Z","event":"quota","codex_week_used":47,"codex_credits":0,"claude_week_used":4,"claude_5h_used":4,"kimi_5h_used":0,"kimi_month_used":0.9343,"kimi_code_used":0,"deepseek_usd":320.59}
+{"t":"2026-10-07T23:16:22Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":47,"expected":47.5,"gap":-0.5,"status":"ok"}
+{"t":"2026-10-07T23:16:32Z","event":"checkin","status":"done","actions":"accepted dsflash-stringprep (9276e41a9, 21e; stringprep absent->1/1 both); returned claude-pstats (1st; class-dict descriptor identity, _lsprof snapshot pops live contexts, subcalls/builtins options) -> held for the Sonnet slot (claude-deque running); returned dsflash-shelve-dbm-sol (Sol 1st; protocol-2 __getnewargs_ex__ mc7 UnboundLocalError + protocol-3 kernel disagreement) -> sol-resume queued; prune-merged 0 MB, removed target/ of accepted dsflash-stringprep (box disk 89->88%); DS Flash slots fed: dsflash-bufio, dsflash-charmapcodec (briefs + worktrees at 589a950a9, queued)","notes":"box disk 88% (Mac 82%); PR #539 (21d) CI pending, merge watcher running; luna 22:57Z 3 turns in known OpenClaw relay session, meter gap -0.5 ok"}
+{"t":"2026-10-07T23:17:35Z","event":"exited","job":"review-auto-dsflash-ucn-2300","code":0}
+{"t":"2026-10-07T23:19:43Z","event":"review-started","job":"dsflash-type-aliases","review":"review-auto-dsflash-type-aliases-2315"}
+{"t":"2026-10-07T23:22:09Z","event":"exited","job":"kimi-module","code":0}
+{"t":"2026-10-07T23:22:33Z","event":"exited","job":"review-auto-dsflash-type-aliases-2315","code":0}
