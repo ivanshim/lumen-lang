@@ -101,6 +101,12 @@ def _ord2ymd(ordinal):
         before -= _DAYS_IN_MONTH[month] + (1 if month == 2 and leap else 0)
     return (year, month, remaining - before + 1)
 
+_missing = object()
+_STRUCT_TM_ITEMS = 11
+_TM_SEQUENCE_FIELDS = ('tm_year', 'tm_mon', 'tm_mday', 'tm_hour', 'tm_min',
+                       'tm_sec', 'tm_wday', 'tm_yday', 'tm_isdst')
+_TM_EXTRA_FIELDS = ('tm_zone', 'tm_gmtoff')
+
 class struct_time(tuple):
     # The nine sequence fields of the C library's struct tm, Monday as
     # weekday zero and the day of the year counting from one. The zone
@@ -110,25 +116,56 @@ class struct_time(tuple):
     n_fields = 11
     n_sequence_fields = 9
     n_unnamed_fields = 0
+    __match_args__ = _TM_SEQUENCE_FIELDS
 
-    def __new__(cls, fields=(), zone=None, offset=None):
-        parts = list(fields)
-        if len(parts) == 11:
-            zone = parts[9]
-            offset = parts[10]
-            parts = parts[:9]
-        elif len(parts) != 9:
-            raise TypeError('time.struct_time() takes a 9 or 11-sequence (' + str(len(parts)) + '-sequence given)')
-        self = tuple.__new__(cls, parts)
-        self._zone = zone
-        self._offset = offset
+    def __new__(cls, sequence=(), dict=_missing):
+        parts = list(sequence)
+        if dict is not _missing and not isinstance(dict, type({})):
+            raise TypeError('time.struct_time() takes a dict as second arg, if any')
+        if len(parts) < 9:
+            raise TypeError('time.struct_time() takes an at least 9-sequence (' + str(len(parts)) + '-sequence given)')
+        if len(parts) > 11:
+            raise TypeError('time.struct_time() takes an at most 11-sequence (' + str(len(parts)) + '-sequence given)')
+        row = list(parts[:11])
+        extra = {} if dict is _missing else dict
+        found = 0
+        for at in range(9, 11):
+            if at < len(row):
+                continue
+            name = _TM_EXTRA_FIELDS[at - 9]
+            if name in extra:
+                row.append(extra[name])
+                found += 1
+            else:
+                row.append(None)
+        if len(extra) > found:
+            raise TypeError('time.struct_time() got duplicate or unexpected field name(s)')
+        self = tuple.__new__(cls, row[:9])
+        self._zone = row[9]
+        self._offset = row[10]
         return self
 
     def __repr__(self):
-        words = ('tm_year', 'tm_mon', 'tm_mday', 'tm_hour', 'tm_min',
-                 'tm_sec', 'tm_wday', 'tm_yday', 'tm_isdst')
-        inside = ', '.join(words[at] + '=' + repr(self[at]) for at in range(9))
+        inside = ', '.join(_TM_SEQUENCE_FIELDS[at] + '=' + repr(self[at]) for at in range(9))
         return 'time.struct_time(' + inside + ')'
+
+    def __reduce__(self):
+        return (type(self), (tuple(self), {'tm_zone': self._zone, 'tm_gmtoff': self._offset}))
+
+    def __replace__(self, **changes):
+        extra = {}
+        values = {}
+        for name in _TM_SEQUENCE_FIELDS:
+            values[name] = changes.pop(name) if name in changes else getattr(self, name)
+        for name in _TM_EXTRA_FIELDS:
+            extra[name] = changes.pop(name) if name in changes else getattr(self, name)
+        if changes:
+            raise TypeError('Got unexpected field name(s): ' + repr(list(changes)))
+        fields = [values[name] for name in _TM_SEQUENCE_FIELDS]
+        return type(self)(fields, extra)
+
+    def _readonly(self, value):
+        raise AttributeError('readonly attribute')
 
     tm_year = property(lambda self: self[0])
     tm_mon = property(lambda self: self[1])
@@ -139,8 +176,8 @@ class struct_time(tuple):
     tm_wday = property(lambda self: self[6])
     tm_yday = property(lambda self: self[7])
     tm_isdst = property(lambda self: self[8])
-    tm_zone = property(lambda self: self._zone)
-    tm_gmtoff = property(lambda self: self._offset)
+    tm_zone = property(lambda self: self._zone, _readonly)
+    tm_gmtoff = property(lambda self: self._offset, _readonly)
 
 def _break_down(seconds):
     # divmod floors here, so a moment before the epoch lands on the
@@ -163,13 +200,13 @@ def gmtime(seconds=None):
     if seconds is None:
         seconds = time()
     # The meridian's own breakdown is named GMT, as the C library names it.
-    return struct_time(_break_down(seconds), 'GMT', 0)
+    return struct_time(_break_down(seconds), {'tm_zone': 'GMT', 'tm_gmtoff': 0})
 
 def localtime(seconds=None):
     # The host's zone being UTC, the local breakdown is the meridian's.
     if seconds is None:
         seconds = time()
-    return struct_time(_break_down(seconds), 'UTC', 0)
+    return struct_time(_break_down(seconds), {'tm_zone': 'UTC', 'tm_gmtoff': 0})
 
 def mktime(fields):
     parts = list(fields)

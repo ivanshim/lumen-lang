@@ -81,6 +81,18 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
             let row = std::env::vars_os().map(|(k,v)| (bytes(k.as_bytes().to_vec()), bytes(v.as_bytes().to_vec()))).collect::<Vec<_>>();
             Ok(Value::Map(Rc::new(row.into())))
         },
+        "times" => {
+            let mut spent: libc::tms = std::mem::zeroed();
+            let clock = libc::times(&mut spent);
+            if clock < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else {
+                let rate = libc::sysconf(libc::_SC_CLK_TCK) as f64;
+                let rate = if rate > 0.0 { rate } else { 100.0 };
+                let seconds = |amount: libc::clock_t| crate::value::real_of(amount as f64 / rate, 17);
+                Ok(Value::tuple(vec![seconds(spent.tms_utime), seconds(spent.tms_stime),
+                    seconds(spent.tms_cutime), seconds(spent.tms_cstime), seconds(clock)]))
+            }
+        },
         "stat_mode" => {
             let offered = a[0].as_big()?;
             if offered < 0.into() { return Err("OverflowError: can't convert negative value to unsigned int".into()); }
