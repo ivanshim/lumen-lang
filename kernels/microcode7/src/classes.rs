@@ -259,6 +259,7 @@ impl<'a> Machine<'a> {
             names.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
             names.extend(self.rules.specials.get(72).cloned());
         }
+        if class.is_some_and(|kind| Self::native_beneath(kind).as_deref() == Some("GenericAlias")) { names.push(String::from("__parameters__")); }
         names.sort_unstable();names.dedup();Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()))
     }
 
@@ -895,6 +896,11 @@ impl<'a> Machine<'a> {
         if let Some(name) = native_name { fixed.push(("\0native-name".to_string(), name)); }
         if let Some(owner) = builder { fixed.push(("\0metaclass".to_owned(), Value::Blueprint(owner))); }
         let module = entries.iter().find(|(key, _)| key == self.detail("module")).map(|(_, held)| held.bare()).unwrap_or_default();
+        if self.table.flag("ext.stmt.type_parameters") {
+            let eq_written = entries.iter().any(|entry| entry.0 == "__eq__");
+            let hash_written = entries.iter().any(|entry| entry.0 == "__hash__");
+            if eq_written && !hash_written { entries.push((String::from("__hash__"), Value::Nil)); }
+        }
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:primary,parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:fixed,

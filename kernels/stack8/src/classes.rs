@@ -760,6 +760,9 @@ impl<'a> Engine<'a> {
                 constants.push(("\0native-name".to_string(), value.contents()));
             }
         }
+        if self.lang.type_parameters && members.iter().any(|(name, _)| name == "__eq__") && !members.iter().any(|(name, _)| name == "__hash__") {
+            members.push(("__hash__".to_string(), Value::Null));
+        }
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
         // Slot storage is fixed when the class is made, independently of
         // later replacement or mutation of its public declaration.
@@ -5440,6 +5443,7 @@ impl<'a> Engine<'a> {
             names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
             names.extend(self.lang.class_special.get(72).cloned());
         }
+        if class.is_some_and(|kind| Self::kind_beneath(kind).as_deref() == Some("GenericAlias")) { names.push("__parameters__".to_owned()); }
         names.sort();names.dedup();Value::array(names.iter().map(|n|Value::text(n)).collect())
     }
 

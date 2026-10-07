@@ -8320,6 +8320,7 @@ impl<'a> Engine<'a> {
     /// in-place method's answer, unless it has none or declined.
     fn settled_in_place(&mut self, op: &Action, held: &Value, by: &Value) -> Res<Option<Value>> {
         let Some(place) = Self::in_place_method(op) else { return Ok(None) };
+        if place == 58 && matches!(Self::view_in(held), Some(Value::View(v)) if v.1 == "mapping") { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
         if place == 49 && self.lang.sequence_values {
             if let Some(repeated) = self.sequence_in_place(true, held, by)? { return Ok(Some(repeated)); }
         }
@@ -8408,6 +8409,8 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::SetWrite(0)) && matches!(Self::view_in(a), Some(Value::View(v)) if v.1 == "mapping") { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
+
         if matches!(op, Action::Eq | Action::Ne) {
             if let Value::View(view) = a { if view.1 == "mapping" { return self.special_dyad(op, &view.0.proxy_dictionary(), b); } }
             if let Value::View(view) = b { if view.1 == "mapping" { return self.special_dyad(op, a, &view.0.proxy_dictionary()); } }
@@ -15536,7 +15539,7 @@ impl<'a> Engine<'a> {
     }
 
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
-        if let Value::View(v) = value { if v.1 == "mapping" && matches!(v.0.contents(), Value::Object(_)) { return self.comprehension_items(&v.0); } }
+        if let Some(Value::View(v)) = Self::view_in(value) { if v.1 == "mapping" && matches!(v.0.contents(), Value::Object(_)) { return self.comprehension_items(&v.0.contents()); } }
 
         if let Some(worth) = self.worth_free_of(value, &[15]) { return self.comprehension_items(&worth); }
         // A thing of the program's own that says how it is walked, by a
@@ -18048,7 +18051,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
-        if args.len() == 1 && matches!(builtin, Builtin::Length | Builtin::Iter | Builtin::Reversed | Builtin::Hash) {
+        if args.len() == 1 && matches!(builtin, Builtin::Length | Builtin::Iter | Builtin::Reversed | Builtin::Hash | Builtin::Sorted) {
             if let Value::View(window) = &args[0] { if window.1 == "mapping" && !matches!(window.0.contents(), Value::Class(_)) {
                 return self.builtin(builtin, name, &mut vec![window.0.clone()]);
             } }
@@ -22705,6 +22708,9 @@ impl Engine<'_> {
         }
         if b == Builtin::Tuple && args.len() == 1 {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && matches!(view.0.contents(), Value::Object(_)) { return self.comprehension_items(&view.0.contents()).map(Value::tuple); } }
+        }
+        if b == Builtin::Sorted && !args.is_empty() {
+            if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && !matches!(view.0.contents(), Value::Class(_)) { args[0] = view.0.contents(); } }
         }
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.

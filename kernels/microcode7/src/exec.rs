@@ -9498,7 +9498,7 @@ impl<'a> Machine<'a> {
                     }
                     return self.value_member(&owner.proxy_pairs(), name, arguments, keywords);
                 }
-                if matches!(owner.as_ref(), Value::Dict(_) | Value::Shared(_)) { return self.value_member(owner, name, arguments, keywords); }
+                if matches!(owner.settled(), Value::Dict(_)) { return self.value_member(owner, name, arguments, keywords); }
                 let method = self.read_class_member(owner.as_ref().clone(), name, false)?;
                 let mut values = arguments;
                 values.extend(keywords.into_iter().map(|(key, value)| Value::Couple(Rc::new((Value::text(&key), value)))));
@@ -16754,6 +16754,18 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if (op == Prim::SetAssign(0) || matches!(op, Prim::Landing(slot) if self.table.landing_working(slot) == Prim::SetAssign(0))) && v.first().and_then(Self::window_inside).is_some_and(|value| matches!(value, Value::Window(_, 'm'))) { return Err(String::from("TypeError: '|=' is not supported by mappingproxy; use '|' instead")); }
+
+        if let (Prim::At, [subject, key]) = (op, v) {
+            if let Some(Value::Window(owner, 'm')) = Self::window_inside(subject) {
+                if matches!(owner.settled(), Value::Thing(_)) {
+                    let method = self.read_class_member(owner.settled(), "__getitem__", false).map_err(|error| self.carried_native_fault(error))?;
+                    return self.apply_class_member(method, vec![key.clone()]).map_err(|error| self.carried_native_fault(error));
+                }
+                return self.prim(Prim::At, name, &[owner.proxy_pairs(), key.clone()]);
+            }
+        }
+
         if let (Prim::HasMember, [subject, word]) = (op, v) {
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(subject) {
                 let read = self.read_class_member(window, &word.bare(), false);
@@ -17314,7 +17326,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::Hashed | Prim::SetCall(14));
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::Hashed | Prim::SetCall(14) | Prim::RenderField | Prim::FormatValue);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
@@ -23000,7 +23012,7 @@ impl<'a> Machine<'a> {
     }
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
-        if let Value::Window(owner, 'm') = source { if matches!(owner.settled(), Value::Thing(_)) { return self.gathered_members(owner); } }
+        if let Some(Value::Window(owner, 'm')) = Self::window_inside(source) { if matches!(owner.settled(), Value::Thing(_)) { return self.gathered_members(&owner.settled()); } }
 
         if let Value::Attributes(owner) = source {
             return Ok(self.attribute_entries(owner).into_iter().map(|(key, _)| match key {
@@ -27189,6 +27201,10 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        if op == Prim::Ordered && !input.is_empty() {
+            if let Some(Value::Window(mapping, 'm')) = Self::window_inside(&input[0]) { if !matches!(mapping.settled(), Value::Blueprint(_)) { input[0] = mapping.settled(); } }
+        }
+
         if matches!(op, Prim::GetMember | Prim::HasAttribute) && input.len() >= 2 {
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(&input[0]) {
                 if let Value::Text(word) = input[1].settled() {
