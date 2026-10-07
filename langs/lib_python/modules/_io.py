@@ -1208,6 +1208,25 @@ class _CheckedRaw:
             raise OSError('raw write() returned invalid length %d (should have been between 0 and %d)' % (count, len(data)))
         return count
 
+class _BufferedLock:
+    # Guard buffered operations against recursive callbacks on this runtime.
+    def __init__(self):
+        self._held = False
+    # Protect the ownership change against an interrupted enter method.
+    def __enter__(self):
+        if self._held:
+            raise RuntimeError('reentrant call inside buffered I/O')
+        try:
+            self._held = True
+            return self
+        except BaseException:
+            self._held = False
+            raise
+    # Clear the guard even when the buffered operation raised.
+    def __exit__(self, kind, value, tb):
+        self._held = False
+        return False
+
 _IMPLS = {}
 
 def _buffered_impl(kind):
@@ -1223,6 +1242,10 @@ def _buffered_impl(kind):
             def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
                 base.__init__(self, raw, buffer_size)
                 self.raw = raw
+                if hasattr(self, '_read_lock'):
+                    self._read_lock = _BufferedLock()
+                if hasattr(self, '_write_lock'):
+                    self._write_lock = _BufferedLock()
             @property
             def closed(self):
                 return self.raw.closed
