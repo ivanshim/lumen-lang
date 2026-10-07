@@ -171,6 +171,15 @@ def _state(value):
 
 
 def _reduce(value, protocol):
+    # A native typing parameter pickles by the name it was written
+    # under, and a native generic alias by the origin and arguments
+    # it was built from, as CPython's own kinds do.
+    native_kind = type(value)
+    if native_kind.__module__ == 'typing' and native_kind.__name__ in (
+            'TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'):
+        return value.__name__
+    if native_kind.__name__ == 'GenericAlias' and hasattr(value, '__origin__') and hasattr(value, '__args__'):
+        return (native_kind, (value.__origin__, value.__args__))
     if type(value) is slice:
         return (slice, (value.start, value.stop, value.step))
     if type(value) is bytearray:
@@ -253,14 +262,15 @@ class _Writer(marshal._Writer):
             return
         reduction = _reduce(value, self.protocol)
         if isinstance(reduction, str):
+            owner = getattr(value, '__module__', None) or '__main__'
             try:
-                existing = _global('__main__', reduction)
+                existing = _global(owner, reduction)
             except (KeyError, AttributeError):
                 raise PicklingError('global name does not refer to the object being pickled')
             if existing is not value:
                 raise PicklingError('global name does not refer to the object being pickled')
             self.pieces.append('G')
-            self.put('__main__')
+            self.put(owner)
             self.put(reduction)
             return
         if not isinstance(reduction, tuple) or not 2 <= len(reduction) <= 6:

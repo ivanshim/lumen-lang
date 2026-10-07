@@ -2064,6 +2064,9 @@ impl<'a> Compiler<'a> {
             let kind = if self.on_any(&lang.carries_pairs) { self.take(); "ParamSpec" }
                 else if self.on_any(&lang.carries_words) { self.take(); "TypeVarTuple" } else { "TypeVar" };
             let name = self.want_name("as a type parameter")?;
+            if names.iter().any(|kept| kept == &name) {
+                return Err(format!("SyntaxError: duplicate type parameter '{name}'").into());
+            }
             names.push(name.clone());
             self.cell_to_write(&name);
             self.constant(Value::text(&name));

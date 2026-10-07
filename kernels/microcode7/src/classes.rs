@@ -81,7 +81,7 @@ impl<'a> Machine<'a> {
         let title = match word { "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => format!("typing.{word}"), "SimpleNamespace" | "GenericAlias" => format!("types.{word}"), "Union" => String::from("typing.Union"), _ => word.to_owned() };
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:ranks,under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(word == "TypeAliasType"), type_names: std::cell::RefCell::new(None)});
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
             kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
             if self.table.prims.get(word) == Some(&Prim::ClassWork(9)) {
@@ -2130,6 +2130,7 @@ impl<'a> Machine<'a> {
     }
     fn make_type_parameter(&mut self, kind: Rc<Blueprint>, input: Vec<Value>) -> Res {
         let (values, options) = self.open_arguments(input)?;
+        if kind.name == "TypeAliasType" { return self.make_type_alias(kind, values, options); }
         if kind.name == "NoDefaultType" {
             if !values.is_empty() || !options.is_empty() { return Err(String::from("TypeError: NoDefaultType takes no arguments").into()); }
             return Ok(self.absent_type_default());
@@ -2192,6 +2193,54 @@ impl<'a> Machine<'a> {
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })))
     }
+    /// A hinting alias made by hand: name and value may be written in
+    /// place or named, and the parameters, where given, are kept after
+    /// the order the reference insists on is checked.
+    fn make_type_alias(&mut self, kind: Rc<Blueprint>, values: Vec<Value>, options: Vec<(String, Value)>) -> Res {
+        if values.len() > 2 { return Err(String::from("TypeError: typealias() takes exactly 2 positional arguments (3 given)").into()); }
+        let mut slots: [Option<Value>; 3] = [None, None, None];
+        for (at, given) in values.into_iter().enumerate() { slots[at] = Some(given); }
+        for (word, given) in options {
+            let at = match word.as_str() { "name" => 0, "value" => 1, "type_params" => 2,
+                _ => return Err(format!("TypeError: TypeAliasType() got an unexpected keyword argument '{word}'").into()) };
+            if slots[at].replace(given).is_some() { return Err(format!("TypeError: TypeAliasType() got multiple values for argument '{word}'").into()); }
+        }
+        let title = match slots[0].as_ref().map(Value::settled) { Some(Value::Text(title)) => title, _ => return Err(String::from("TypeError: name must be a str").into()) };
+        let Some(value) = slots[1].take() else { return Err(String::from("TypeError: TypeAliasType requires a name and a value").into()); };
+        let parameters = match slots[2].take() { None => Value::tuple(Vec::new()), Some(given) => self.checked_type_alias_params(given)? };
+        let origin = self.namespace_named();
+        let attributes = vec![(String::from("__name__"), Value::Text(title.clone())),
+            (String::from("__module__"), origin.map_or(Value::Nil, |word| Value::text(&word))),
+            (String::from("\0type-display"), Value::Text(title)), (String::from("__value__"), value),
+            (String::from("__type_params__"), parameters)];
+        self.made += 1;
+        Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })))
+    }
+    /// The row a hinting alias keeps: each entry a hinting parameter,
+    /// and no parameter without a default after one with a default.
+    fn checked_type_alias_params(&mut self, given: Value) -> Res {
+        let Value::Tuple(items) = given.settled() else { return Err(String::from("TypeError: type_params must be a tuple").into()); };
+        let sentinel = self.absent_type_default();
+        let mut seen_default = false;
+        let mut kept = Vec::new();
+        for item in items.iter() {
+            let Value::Thing(instance) = item.settled() else {
+                return Err(format!("TypeError: Expected a type param, got {}", item.quoted(false)).into());
+            };
+            let kind = Self::native_word(&instance.blueprint());
+            if !matches!(kind.as_deref(), Some("TypeVar" | "ParamSpec" | "TypeVarTuple")) {
+                return Err(format!("TypeError: Expected a type param, got {}", item.quoted(false)).into());
+            }
+            let (has_default, shown) = { let holds = instance.holds.borrow();
+                let has = holds.iter().any(|entry| entry.0 == "\0deferred/__default__")
+                    || holds.iter().find(|entry| entry.0 == "__default__").is_some_and(|entry| !entry.1.selfsame(&sentinel));
+                (has, holds.iter().find(|entry| entry.0 == "\0type-display").map_or(String::new(), |entry| entry.1.bare())) };
+            if has_default { seen_default = true; }
+            else if seen_default { return Err(format!("TypeError: non-default type parameter '{shown}' follows default type parameter").into()); }
+            kept.push(item.clone());
+        }
+        Ok(Value::tuple(kept))
+    }
     fn alias_from_thunk(&mut self, thunk: Value) -> Res {
         let code = match thunk.settled() {
             Value::Routine(code) | Value::Bound(code, _) => code,
@@ -2199,12 +2248,36 @@ impl<'a> Machine<'a> {
         };
         let kind = self.native_kind("TypeAliasType");
         let alias = self.make_type_parameter(kind, vec![Value::text(&code.ident), Value::Nil])?;
+        let home = match &code.globe {
+            Some(globe) => Self::globals_named(globe),
+            None => self.namespace_named(),
+        };
         if let Value::Thing(instance) = &alias {
             let mut attributes = instance.holds.borrow_mut();
+            if let Some(entry) = attributes.iter_mut().find(|entry| entry.0 == "__module__") {
+                entry.1 = home.map_or(Value::Nil, |word| Value::text(&word));
+            }
             attributes.retain(|entry| entry.0 != "__value__");
             attributes.push((String::from("\0deferred/__value__"), thunk));
         }
         Ok(alias)
+    }
+    /// The name a globals mapping gives itself, read through whatever
+    /// cell or module face it is kept behind.
+    fn globals_named(globe: &Value) -> Option<String> {
+        let mut current = globe.settled();
+        loop {
+            match current {
+                Value::Dict(entries) => {
+                    return entries.iter().find(|entry| match entry.0.settled() { Value::Text(word) => word.as_ref() == "__name__", Value::Keyed(held, _) => matches!(held.settled(), Value::Text(word) if word.as_ref() == "__name__"), _ => false }).map(|entry| entry.1.settled().bare());
+                }
+                Value::Mutable(cell, _) | Value::Shared(cell) => current = cell.borrow().settled(),
+                Value::Thing(instance) | Value::Attributes(instance) => {
+                    return instance.holds.borrow().iter().find(|entry| entry.0 == "__name__").map(|entry| entry.1.bare());
+                }
+                _ => return None,
+            }
+        }
     }
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         if Self::native_word(&class).is_some() && matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
@@ -2357,6 +2430,20 @@ impl<'a> Machine<'a> {
         Ok(())
     }
     /// The making itself, as the kind primitive does it: the class
+    /// How a type argument is written in a generic alias's repr: a kind
+    /// by its bare name, a list of arguments in brackets with each of
+    /// them written the same way, and anything else by its own repr.
+    fn type_shown(&mut self, value: &Value) -> Res<String> {
+        let raw = value.settled();
+        if matches!(raw, Value::Nil) { return Ok(String::from("None")); }
+        if let Some(word) = raw.kind_it_names() { return Ok(word); }
+        if matches!(raw, Value::Vector(_)) {
+            let mut names = Vec::new();
+            for item in self.object_members(&raw)? { names.push(self.type_shown(&item)?); }
+            return Ok(format!("[{}]", names.join(", ")));
+        }
+        Ok(self.prim(Prim::Quoted, "repr", &[raw])?.bare())
+    }
     /// allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         self.abstract_turned_away(&class)?;
@@ -2376,7 +2463,12 @@ impl<'a> Machine<'a> {
                 let mut values=vec![Value::Blueprint(class.clone())];values.extend(given.clone());
                 self.class_of_parts(values)?
             },
-            (Some(allocator),_)=>{let mut args=vec![Value::Blueprint(class.clone())];args.extend(given.clone());self.apply_class_member(allocator,args)?},
+            (Some(allocator),_)=>{
+                let (positions, names) = self.open_arguments(given.clone())?;
+                let mut flat: Vec<Value> = positions;
+                for (key, value) in names { flat.push(Value::Couple(Rc::new((Value::text(&key), value)))); }
+                let mut args=vec![Value::Blueprint(class.clone())];args.extend(flat);self.apply_class_member(allocator,args)?
+            },
             (None,Some(word))=>{
                 if matches!(word.as_str(),"str_iterator"|"str_ascii_iterator"){
                     return Err(format!("TypeError: cannot create '{}' instances",word).into());
@@ -3563,6 +3655,16 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            if !key.is_empty() && key == self.detail("module") {
+                if let Some(word) = Self::native_word(b) {
+                    let home = match word.as_str() {
+                        "Union" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => Some("typing"),
+                        "SimpleNamespace" | "GenericAlias" => Some("types"),
+                        _ => None,
+                    };
+                    if let Some(home) = home { return Ok(Value::text(home)); }
+                }
+            }
             let builtin_origin = Self::native_word(b).is_some()
                 || (b.under.is_none() && b.name == self.detail("root"));
             if builtin_origin && !key.is_empty() && key == self.detail("module") {
@@ -3742,8 +3844,20 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })));
             }
             if key == "__parameters__" && t.blueprint().name == "TypeAliasType" {
-                let attributes = t.holds.borrow();
-                return Ok(attributes.iter().find(|entry| entry.0 == "__type_params__").map_or_else(|| Value::tuple(Vec::new()), |entry| entry.1.clone()));
+                let params = t.holds.borrow().iter().find(|entry| entry.0 == "__type_params__").map_or_else(|| Value::tuple(Vec::new()), |entry| entry.1.clone());
+                if let Value::Tuple(items) = &params {
+                    if items.iter().any(|item| matches!(item.settled(), Value::Thing(p) if Self::native_word(&p.blueprint()).as_deref() == Some("TypeVarTuple"))) {
+                        let typing = self.load_namespace("typing")?;
+                        let unpack = self.read_class_member(typing, "Unpack", false)?.settled();
+                        let mut wrapped = Vec::new();
+                        for item in items.iter() {
+                            let variadic = matches!(item.settled(), Value::Thing(p) if Self::native_word(&p.blueprint()).as_deref() == Some("TypeVarTuple"));
+                            wrapped.push(if variadic { self.prim_values(Prim::At, "Unpack", &[unpack.clone(), item.clone()])? } else { item.clone() });
+                        }
+                        return Ok(Value::tuple(wrapped));
+                    }
+                }
+                return Ok(params);
             }
             if let Some(property) = match key {
                 "evaluate_value" => Some("__value__"), "evaluate_default" => Some("__default__"),
@@ -4872,12 +4986,14 @@ impl<'a> Machine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool{
         matches!(value,Value::Nil)
             ||self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(),
+                Some("Union" | "TypeAliasType" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "GenericAlias")))
     }
     /// A kind or union supplies the operator; Nil by itself does not.
     pub(super) fn union_anchor(&self,value:&Value)->bool{
         self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(),
+                Some("Union" | "TypeAliasType" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "GenericAlias")))
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
@@ -5687,9 +5803,7 @@ impl<'a> Machine<'a> {
                 let tuple = self.read_class_member(subject.clone(), "__args__", true)?;
                 let mut names = Vec::new();
                 for parameter in self.gathered_members(&tuple)? {
-                    let name = if matches!(parameter, Value::Nil) { String::from("None") }
-                        else { match parameter.kind_it_names() { Some(name) => name, None => self.prim(Prim::Quoted, "repr", &[parameter])?.bare() } };
-                    names.push(name);
+                    names.push(self.type_shown(&parameter)?);
                 }
                 let prefix = parent.kind_it_names().unwrap_or_else(|| parent.bare());
                 let unpacked = self.read_class_member(subject, "__unpacked__", true)?;

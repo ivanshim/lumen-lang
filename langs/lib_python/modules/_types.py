@@ -250,4 +250,12 @@ class UnionType:
     def __new__(cls, *args, **kwargs):
         raise TypeError("cannot create 'types.UnionType' instances")
 
+# A real runtime keeps these two kinds native; the classes above are
+# only the fallback for one that does not. Rebinding to the native
+# kinds makes isinstance and pickling see the single kind the values
+# actually have, as CPython's C module does.
+GenericAlias = type(list[int])
+UnionType = type(int | str)
+
+
 __all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']

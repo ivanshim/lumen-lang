@@ -9435,6 +9435,50 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The two places a hinting alias answers of its own: reading it at
+    /// a row of arguments lends out a generic alias over it, and walking
+    /// it gives the one packed argument the reference gives.
+    fn type_alias_protocol(&mut self, alias: &Value, name: &str, arguments: &[Value], keywords: &[(String, Value)]) -> Res<Option<Value>> {
+        match name {
+            "__getitem__" => {
+                if !keywords.is_empty() || arguments.len() != 1 { return Ok(None); }
+                let Value::Thing(instance) = alias.settled() else { return Ok(None); };
+                if Self::native_word(&instance.blueprint()).as_deref() != Some("TypeAliasType") { return Ok(None); }
+                let empty = instance.holds.borrow().iter().find(|entry| entry.0 == "__type_params__")
+                    .map_or(true, |entry| matches!(entry.1, Value::Tuple(ref items) if items.is_empty()));
+                if empty { return Err(String::from("TypeError: Only generic type aliases are subscriptable").into()); }
+                let namespace = self.load_namespace("types")?;
+                let constructor = self.namespace_item(&namespace, "types", "GenericAlias")?;
+                return self.apply_class_member(constructor.settled(), vec![alias.clone(), arguments[0].clone()]).map(Some);
+            }
+            "__iter__" => {
+                if !keywords.is_empty() || !arguments.is_empty() { return Ok(None); }
+                let typing = self.load_namespace("typing")?;
+                let unpack = self.read_class_member(typing, "Unpack", false)?.settled();
+                let item = self.prim(Prim::At, "", &[unpack, alias.clone()])?;
+                let entries = Rc::new(vec![item]).into();
+                return Ok(Some(Self::cursor_value_walked(crate::data::IteratorKind::Stored { entries, next: 0 }, None)));
+            }
+            _ => Ok(None),
+        }
+    }
+    /// A union's reading at the equality places: two unions are one
+    /// where their member rows are equal member for member.
+    fn union_protocol(&mut self, union: &Value, name: &str, arguments: &[Value]) -> Res<Option<Value>> {
+        if !matches!(name, "__eq__" | "__ne__") || arguments.len() != 1 { return Ok(None); }
+        let Value::Thing(object) = union.settled() else { return Ok(None); };
+        let left = object.holds.borrow().iter().find(|entry| entry.0 == "__args__").map(|entry| entry.1.clone());
+        let right = match arguments[0].settled() {
+            Value::Thing(other) if Self::native_word(&other.blueprint()).as_deref() == Some("Union") =>
+                other.holds.borrow().iter().find(|entry| entry.0 == "__args__").map(|entry| entry.1.clone()),
+            _ => None,
+        };
+        let same = match (left, right) {
+            (Some(left), Some(right)) => { let answer = self.prim_values(Prim::Eq, "", &[left, right])?; self.object_truth(&answer)? }
+            _ => false,
+        };
+        Ok(Some(Value::Flag(same != (name == "__ne__"))))
+    }
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if let Value::Window(owner, 'm') = receiver {
             if matches!(name, "get" | "keys" | "values" | "items" | "copy") {
@@ -9730,6 +9774,17 @@ impl<'a> Machine<'a> {
             && Self::underlying(receiver).map_or(false, |under| matches!(under.settled(), Value::Dict(_))) {
             if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
             return self.prim(Prim::At, name, &[receiver.clone(), arguments[0].clone()]).map_err(Escape::from);
+        }
+        // A hinting alias, a variadic parameter or a union answers the
+        // few places of its own before the kinds beneath it are asked.
+        if let Value::Thing(item) = receiver.settled() {
+            if let Some(kind) = Self::native_word(&item.blueprint()) {
+                if matches!(kind.as_str(), "TypeAliasType" | "TypeVarTuple") {
+                    if let Some(answer) = self.type_alias_protocol(receiver, name, &arguments, &keywords)? { return Ok(answer); }
+                } else if kind == "Union" {
+                    if let Some(answer) = self.union_protocol(receiver, name, &arguments)? { return Ok(answer); }
+                }
+            }
         }
         // A special member asked for by name on a value of a native
         // kind. Each hands its work to the primitive that already does
@@ -13830,6 +13885,23 @@ impl<'a> Machine<'a> {
             }
             return Ok(None);
         }
+        if let Value::Thing(item) = subject.settled() {
+            if let Some(word) = self.rules.specials.get(index).map(String::as_str) {
+                if let Some(kind) = Self::native_word(&item.blueprint()) {
+                    let found = if matches!(kind.as_str(), "TypeAliasType" | "TypeVarTuple") {
+                        self.type_alias_protocol(subject, word, tail, &[])
+                    } else if kind == "Union" {
+                        self.union_protocol(subject, word, tail)
+                    } else { Ok(None) };
+                    match found {
+                        Ok(Some(answer)) => return Ok(Some(answer)),
+                        Ok(None) => {}
+                        Err(Escape::Error(words)) => return Err(words),
+                        Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+                    }
+                }
+            }
+        }
         if index == 3 && self.appointment(subject, index).is_none() {
             return match self.ask_special(subject, 2, tail)? {
                 None => Ok(None),
@@ -15242,7 +15314,15 @@ impl<'a> Machine<'a> {
                 };
             }
         }
-        if let (Prim::At, [target @ Value::Thing(_), index]) = (operation, operands) {
+        if let (Prim::At, [target @ Value::Thing(t), index]) = (operation, operands) {
+            if Self::native_word(&t.blueprint()).as_deref() == Some("TypeAliasType") {
+                match self.type_alias_protocol(target, "__getitem__", std::slice::from_ref(index), &[]) {
+                    Ok(Some(answer)) => return Ok(Some(answer)),
+                    Ok(None) => {}
+                    Err(Escape::Error(words)) => return Err(words),
+                    Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+                }
+            }
             if self.appointment(target, 11).is_none() {
                 if let Some(worth) = Self::underlying(target) {
                     return self.prim(Prim::At, "", &[worth.settled(), index.clone()]).map(Some);
@@ -17767,6 +17847,10 @@ impl<'a> Machine<'a> {
                     // tuple or list subclass's own — comes apart into
                     // what the worth keeps, the way the walk one asked
                     // of it with iter() goes.
+                    thing @ Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(), Some("TypeAliasType" | "TypeVarTuple")) => {
+                        let walk = self.iterated_value(&thing.clone())?;
+                        self.apart_members(&walk, wanted, star.is_some())?
+                    }
                     thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some()
                         || Self::underlying(thing).map_or(false, |worth| matches!(worth.settled(),
                             Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::TextRow(..) | Value::Octets { .. })) => {
