@@ -9526,7 +9526,7 @@ impl<'a> Machine<'a> {
                     let mut holds = item.holds.borrow_mut();
                     if let Value::Bound(_, environment) = &holds[5].1 {
                         for place in environment.cells.borrow_mut().iter_mut() {
-                            if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
+                            // The environment releases its link; other cell owners retain their value.
                             *place = Value::Unset;
                         }
                     }
@@ -15040,6 +15040,7 @@ impl<'a> Machine<'a> {
         if self.rules.specials.is_empty() { return Ok(None); }
         if let (Prim::Hashed, [held]) = (operation, operands) {
             if let Value::Tuple(sequence) = held {
+                if let Some(saved) = sequence.known_hash() { return Ok(Some(Value::Small(saved))); }
                 let mut accumulator = 2_870_177_450_012_600_261u64;
                 for member in sequence.iter() {
                     let lane = self.prim(Prim::Hashed, "hash", &[member.clone()])?.as_big()?.to_i64().ok_or_else(|| self.bad_answer())? as u64;
@@ -15047,6 +15048,7 @@ impl<'a> Machine<'a> {
                 }
                 accumulator = accumulator.wrapping_add((sequence.len() as u64) ^ (2_870_177_450_012_600_261 ^ 3_527_539));
                 let signed = if accumulator == u64::MAX { 1_546_275_796 } else { accumulator as i64 };
+                sequence.record_hash(signed);
                 return Ok(Some(Value::Small(signed)));
             }
             if let Some(number) = Self::constructor_hash(held) { return Ok(Some(number)); }

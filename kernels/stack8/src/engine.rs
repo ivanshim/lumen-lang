@@ -9048,6 +9048,7 @@ impl<'a> Engine<'a> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         if op == Builtin::Hash && args.len() == 1 {
             if let Value::Tuple(items) = &args[0] {
+                if let Some(hash) = items.cached_hash() { return Ok(Some(Value::Small(hash))); }
                 let mut folded = 2870177450012600261u64;
                 for item in items.iter() {
                     let hash = self.builtin(Builtin::Hash, "hash", &mut vec![item.clone()])?.as_big()?.to_i64().ok_or_else(|| self.special_fault())?;
@@ -9055,7 +9056,9 @@ impl<'a> Engine<'a> {
                     folded = folded.rotate_left(31).wrapping_mul(11400714785074694791);
                 }
                 folded = folded.wrapping_add(items.len() as u64 ^ (2870177450012600261 ^ 3527539));
-                return Ok(Some(Value::Small(if folded == u64::MAX { 1546275796 } else { folded as i64 })));
+                let hash = if folded == u64::MAX { 1546275796 } else { folded as i64 };
+                items.save_hash(hash);
+                return Ok(Some(Value::Small(hash)));
             }
             if let Some(hash) = Self::python_constructor_hash(&args[0]) { return Ok(Some(hash)); }
         }
@@ -16098,11 +16101,7 @@ impl<'a> Engine<'a> {
                         return Ok(Value::Null);
                     }
                     let mut fields = frame.fields.borrow_mut();
-                    if let Value::Tuple(slots) = &fields[5].1 {
-                        for slot in slots.iter() {
-                            if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
-                        }
-                    }
+                    // Drop this frame's cell references without clearing cells shared by closures.
                     fields[5].1 = Value::tuple(Vec::new());
                     fields[3].1 = Value::Null;
                     fields[7].1 = Value::Null;

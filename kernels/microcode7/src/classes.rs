@@ -2739,7 +2739,7 @@ impl<'a> Machine<'a> {
                 self.written_over.remove(&Self::written_key(subject,&self.outermost));
                 return Ok(());
             }
-            if source_code.flags!=code.flags {
+            if (source_code.flags ^ code.flags) & 0x2a0 != 0 {
                 let told=self.table.strings("ext.stmt.class.detail.code.mismatch").first().cloned().unwrap_or_default();
                 self.warn_like(26,&told)?;
             }

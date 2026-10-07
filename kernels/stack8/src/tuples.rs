@@ -17,18 +17,23 @@ thread_local! {
 pub struct Items {
     storage: Rc<Vec<Value>>,
     recycle: bool,
+    hash: Rc<Cell<Option<i64>>>,
 }
 impl From<Rc<Vec<Value>>> for Items {
-    fn from(storage: Rc<Vec<Value>>) -> Self { Self { storage, recycle: false } }
+    fn from(storage: Rc<Vec<Value>>) -> Self { Self { storage, recycle: false, hash: Rc::new(Cell::new(None)) } }
 }
 impl Deref for Items {
     type Target = Rc<Vec<Value>>;
     fn deref(&self) -> &Self::Target { &self.storage }
 }
 impl DerefMut for Items {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.storage }
+    fn deref_mut(&mut self) -> &mut Self::Target { self.hash = Rc::new(Cell::new(None)); &mut self.storage }
 }
 impl Items {
+    /// Read a completed Python tuple hash shared by all aliases.
+    pub fn cached_hash(&self) -> Option<i64> { self.hash.get() }
+    /// Retain only a hash whose element callbacks completed successfully.
+    pub fn save_hash(&self, value: i64) { self.hash.set(Some(value)); }
     pub fn plain(values: Vec<Value>) -> Self { Rc::new(values).into() }
 
     pub fn tuple(parts: Vec<Value>) -> Self {
@@ -46,7 +51,7 @@ impl Items {
             Rc::get_mut(&mut storage).expect("dead tuple storage").extend(parts);
             storage
         } else { Rc::new(parts) };
-        Self { storage, recycle }
+        Self { storage, recycle, hash: Rc::new(Cell::new(None)) }
     }
 }
 impl Drop for Items {
@@ -83,6 +88,22 @@ impl Drop for Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Preserve memoized hashes across aliases and reset them for new storage.
+    #[test]
+    fn tuple_hash_lives_with_its_immutable_row() {
+        let _scope = Scope::enter(true);
+        let original = Items::tuple(vec![Value::Small(1)]);
+        original.save_hash(43);
+        let mut alias = original.clone();
+        assert_eq!(alias.cached_hash(), Some(43));
+        Rc::make_mut(&mut alias).push(Value::Small(2));
+        assert_eq!(alias.cached_hash(), None);
+        assert_eq!(original.cached_hash(), Some(43));
+        drop(alias);
+        drop(original);
+        assert_eq!(Items::tuple(vec![Value::Small(3)]).cached_hash(), None);
+    }
+
     #[test]
     fn final_owner_releases_elements_and_recycles_actual_storage() {
         let _scope = Scope::enter(true);

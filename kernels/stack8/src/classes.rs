@@ -3762,12 +3762,12 @@ impl<'a> Engine<'a> {
         made
     }
     /// Whether a code object written over a routine's own was made of
-    /// another kind of program: the flags the two carry differ, which
-    /// CPython now says is going away.
+    /// another generator/coroutine category. Ordinary flags do not change
+    /// that category and must not emit the deprecation warning.
     fn code_kind_differs(f: &Rc<Routine>, value: Option<&Value>) -> bool {
         let Some(Value::Adapter(code)) = value.map(Value::contents) else { return false };
         let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return false };
-        Self::routine_now(source).code_flags != Self::routine_now(f).code_flags
+        (Self::routine_now(source).code_flags ^ Self::routine_now(f).code_flags) & (0x20 | 0x80 | 0x200) != 0
     }
     /// The routine as it stands once the program writes its spare
     /// arguments, its keyword-only spare arguments or its code over, or

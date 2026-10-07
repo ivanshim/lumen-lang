@@ -10074,8 +10074,8 @@ impl<'a> Compiler<'a> {
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
-                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
-                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
+                // A direct call needs the lexical class cell just as a proxy read does.
+                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty() {
                     self.gathering().needs_class_cell = true;
                     self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();
