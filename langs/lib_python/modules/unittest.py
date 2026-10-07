@@ -82,6 +82,11 @@ class TestCase:
         self._cleanups = []
         self._result = None
 
+    # Represent a case using its real class and selected method.
+    def __repr__(self):
+        cls = type(self)
+        return '<%s.%s testMethod=%s>' % (cls.__module__, cls.__qualname__, self._method)
+
     @classmethod
     def setUpClass(cls):
         pass

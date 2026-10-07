@@ -77,6 +77,7 @@ pub enum Prim {
     ReadMember,
     ProgramNames,
     /// The name of the module the routine a frame runs was written in.
+    ReferenceCount,
     FrameModule,
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
@@ -746,6 +747,7 @@ pub enum Form {
 #[derive(Debug, Clone)]
 pub struct Clause {
     pub source_line: u32,
+    pub reraise_position: Option<Box<Form>>,
     pub classes: Vec<String>,
     pub choices: Option<Vec<Form>>,
     pub grouped: bool,
@@ -939,6 +941,7 @@ impl Form {
                 for clause in clauses {
                     if let Some(choices) = &mut clause.choices { for choice in choices { choice.number_instructions(next); } }
                     clause.body.number_instructions(next);
+                    if let Some(cleanup) = &mut clause.reraise_position { cleanup.number_instructions(next); }
                 }
                 for child in [otherwise, last].into_iter().flatten() { child.number_instructions(next); }
             }
@@ -1005,6 +1008,7 @@ impl Form {
                 for clause in clauses {
                     if let Some(choices) = &clause.choices { for choice in choices { choice.position_rows(entries, current); } }
                     clause.body.position_rows(entries, current);
+                    if let Some(cleanup) = &clause.reraise_position { cleanup.position_rows(entries, current); }
                 }
                 for child in [otherwise, last].into_iter().flatten() { child.position_rows(entries, current); }
             }

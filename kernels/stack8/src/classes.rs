@@ -2455,6 +2455,8 @@ impl<'a> Engine<'a> {
     fn attribute_from_hook(&self, failure: Fault, subject: &Value, name: &str) -> Fault {
         let Fault::Thrown(Value::Object(error)) = &failure else { return failure };
         if !self.attribute_fault(&failure) { return failure; }
+        // An inner attribute lookup already identifies its own receiver.
+        if error.fields.borrow().iter().any(|(key, value)| self.lang.absent_name_member.as_ref() == Some(key) && !matches!(value.contents(), Value::Null)) { return failure; }
         let qualified = match subject {
             Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
             Value::Object(instance) if !self.lang.module_names.is_empty() && Self::kind_beneath(&instance.class_now()).as_deref() == Some("module") => {
@@ -2524,6 +2526,10 @@ impl<'a> Engine<'a> {
         told.into()
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
+        if matches!(&value, Value::Native(Builtin::ClassTool(26), _)) {
+            if let Some(receiver) = subject { return Ok(Value::Descriptor(Rc::new(crate::value::Descriptor::Bound(value, receiver)))); }
+            return Ok(value);
+        }
         if let Value::Adapter(w) = &value {
             if w.0 == 29 && w.1[0].plain() == "type" && subject.is_some() {
                 let name = w.1[1].plain();
@@ -2768,6 +2774,10 @@ impl<'a> Engine<'a> {
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
         let raw = subject.contents();
+        if matches!(&raw, Value::Object(module) if module.fields.borrow().iter().any(|(key, _)| key == "\0module-owner" || key == "\0namespace")
+            && !module.fields.borrow().iter().any(|(key, _)| key == name)) {
+            if let Some(directory) = self.builtin_directory_method(&raw, name) { return Ok(directory); }
+        }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &raw {
                 let owner = instance.class_now();
@@ -5061,6 +5071,41 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 26 && !self.lang.partial_call_words.is_empty() {
+            let mut supplied = Vec::new();
+            let mut keywords = Vec::new();
+            for (key, value) in self.call_items(args)? {
+                if let Some(key) = key { keywords.push((key, value)); } else { supplied.push(value); }
+            }
+            if supplied.is_empty() { return Err("TypeError: descriptor '__call__' requires a 'functools.partial' object".into()); }
+            let partial = supplied.remove(0);
+            let function = self.class_get(partial.clone(), "func", false)?;
+            let stored = self.class_get(partial.clone(), "args", false)?.contents();
+            let Value::Tuple(stored) = stored else { return Err("TypeError: partial arguments must be a tuple".into()); };
+            let count = self.class_get(partial.clone(), "_phcount", false)?;
+            let Value::Small(count) = count.contents() else { return Err(self.class_refusal()); };
+            let mut positional = stored.to_vec();
+            if count > 0 {
+                if supplied.len() < count as usize {
+                    return Err(format!("TypeError: missing positional arguments in 'partial' call; expected at least {count}, got {}", supplied.len()).into());
+                }
+                let merger = self.class_get(partial.clone(), "_merger", false)?;
+                positional.extend(supplied.iter().cloned());
+                let merged = self.class_apply(merger, vec![Value::tuple(positional)])?.contents();
+                let Value::Tuple(merged) = merged else { return Err(self.class_refusal()); };
+                positional = merged.to_vec();
+                positional.extend(supplied.into_iter().skip(count as usize));
+            } else { positional.extend(supplied); }
+            let defaults = self.class_get(partial, "keywords", false)?.contents();
+            let Value::Map(defaults) = defaults else { return Err("TypeError: partial keywords must be a dictionary".into()); };
+            let mut options: Vec<(String, Value)> = defaults.iter().map(|(key, value)| (key.plain(), value.clone())).collect();
+            for (key, value) in keywords {
+                if let Some((_, held)) = options.iter_mut().find(|(word, _)| *word == key) { *held = value; }
+                else { options.push((key, value)); }
+            }
+            positional.extend(options.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
+            return self.class_apply(function, positional);
+        }
         if which == 22 && args.len() == 1 { return Ok(args.remove(0)); }
 
         if (3..=6).contains(&which) && args.len() >= 2 {

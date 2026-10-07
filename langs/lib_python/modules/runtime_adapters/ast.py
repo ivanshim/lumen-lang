@@ -25,6 +25,10 @@ class _Parser(_ExpressionParser):
     # Parse the statement keyword and retain its complete source extent.
     def parse_stmt(self):
         token = self.peek()
+        # Clause headers have no standalone statement form.
+        if token.kind == 'name' and token.text in ('except', 'elif', 'else', 'finally', 'case'):
+            compile(self.source, '<unknown>', 'exec')
+            _syntax('invalid syntax')
         simple = {'pass': Pass, 'break': Break, 'continue': Continue}
         if token.kind != 'name' or token.text not in ('return', 'raise', 'assert', 'pass', 'break', 'continue'):
             # An unfinished compound header is invalid syntax, even when its
@@ -401,6 +405,9 @@ class arguments(AST):
     _fields = ('posonlyargs', 'args', 'vararg', 'kwonlyargs', 'kw_defaults', 'kwarg', 'defaults')
     _attributes = ()
 
+class Lambda(expr):
+    _fields = ('args', 'body')
+
 class FunctionDef(stmt):
     _fields = ('name', 'args', 'body', 'decorator_list', 'returns', 'type_comment', 'type_params')
 
@@ -410,20 +417,23 @@ class AsyncFunctionDef(stmt):
 _ComprehensionParser = _Parser
 
 class _Parser(_ComprehensionParser):
-    def parameter(self):
+    # Parse a parameter; lambda parameters have no annotations.
+    def parameter(self, annotations=True):
         name = self.pop()
         if name.kind != 'name':
             _syntax('invalid syntax')
         start = (name.srow, name.scol)
         end = (name.erow, name.ecol)
         annotation = None
-        if self.at_op(':'):
+        if annotations and self.at_op(':'):
             self.pop()
             annotation, unused, end = self.parse_expr(False)
         return self.positioned(arg, start, end, arg=name.text, annotation=annotation, type_comment=None)
 
-    def function_parameters(self):
-        self.expect_op('(')
+    # Read the shared function/lambda parameter grammar.
+    def function_parameters(self, terminator=')', parenthesized=True, annotations=True):
+        if parenthesized:
+            self.expect_op('(')
         positional = []
         posonly = []
         defaults = []
@@ -431,7 +441,7 @@ class _Parser(_ComprehensionParser):
         kw_defaults = []
         vararg = kwarg = None
         keyword_only = False
-        while not self.at_op(')'):
+        while not self.at_op(terminator):
             if self.at_op('/'):
                 if not positional or posonly or keyword_only:
                     _syntax('invalid syntax')
@@ -439,10 +449,10 @@ class _Parser(_ComprehensionParser):
                 posonly, positional = positional, []
             elif self.at_op('**'):
                 self.pop()
-                kwarg = self.parameter()
+                kwarg = self.parameter(annotations)
                 if self.at_op(','):
                     self.pop()
-                if not self.at_op(')'):
+                if not self.at_op(terminator):
                     _syntax('arguments cannot follow var-keyword argument')
                 break
             elif self.at_op('*'):
@@ -451,9 +461,9 @@ class _Parser(_ComprehensionParser):
                 self.pop()
                 keyword_only = True
                 if not self.at_op(','):
-                    vararg = self.parameter()
+                    vararg = self.parameter(annotations)
             else:
-                parameter = self.parameter()
+                parameter = self.parameter(annotations)
                 default = None
                 has_default = self.at_op('=')
                 if has_default:
@@ -471,14 +481,33 @@ class _Parser(_ComprehensionParser):
             if not self.at_op(','):
                 break
             self.pop()
-        self.expect_op(')')
+        self.expect_op(terminator)
         if keyword_only and vararg is None and not kwonly:
             _syntax('named arguments must follow bare *')
         return arguments(posonlyargs=posonly, args=positional, vararg=vararg,
                          kwonlyargs=kwonly, kw_defaults=kw_defaults,
                          kwarg=kwarg, defaults=defaults)
 
+    # Accept lambda expressions in parenthesized and call-argument entries.
+    def parse_or(self):
+        if self.at_name('lambda'):
+            return self.parse_expr(False)
+        return _ComprehensionParser.parse_or(self)
+
+    # Parse lambdas at expression precedence and preserve their full span.
+    def parse_expr(self, bare_tuple):
+        if not self.at_name('lambda'):
+            return _ComprehensionParser.parse_expr(self, bare_tuple)
+        opening = self.pop()
+        parameters = self.function_parameters(':', False, False)
+        body, unused, end = self.parse_expr(False)
+        start = (opening.srow, opening.scol)
+        return self.positioned(Lambda, start, end, args=parameters, body=body), start, end
+
     def parse_stmt(self):
+        if self.at_name('lambda'):
+            value, start, end = self.parse_expr(False)
+            return self.positioned(Expr, start, end, value=value)
         asynchronous = self.at_name('async') and self.toks[self.at + 1].text == 'def'
         if not self.at_name('def') and not asynchronous:
             return _ComprehensionParser.parse_stmt(self)
@@ -646,3 +675,91 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
                     byte_columns[key] = len(lines[row - 1][:column].encode('utf-8'))
                 setattr(node, column_field, byte_columns[key])
     return tree
+
+class If(stmt):
+    _fields = ('test', 'body', 'orelse')
+    __match_args__ = _fields
+
+_FunctionStatementParser = _Parser
+
+class _Parser(_FunctionStatementParser):
+    # Read an if/elif suite and its optional continuation at the same indent.
+    def conditional_statement(self):
+        opening = self.pop()
+        condition, unused, end = self.parse_expr(False)
+        body = self.suite(opening)
+        saved = self.at
+        while self.peek().kind == 'newline':
+            self.pop()
+        otherwise = []
+        if self.peek().scol == opening.scol and self.at_name('elif'):
+            otherwise = [self.conditional_statement()]
+        elif self.peek().scol == opening.scol and self.at_name('else'):
+            marker = self.pop()
+            otherwise = self.suite(marker)
+        else:
+            self.at = saved
+        last = (otherwise or body)[-1]
+        return self.positioned(If, (opening.srow, opening.scol),
+                               (last.end_lineno, last.end_col_offset),
+                               test=condition, body=body, orelse=otherwise)
+
+    # Route complete if statements through their clause parser.
+    def parse_stmt(self):
+        if self.at_name('if'):
+            return self.conditional_statement()
+        return _FunctionStatementParser.parse_stmt(self)
+
+_BitwiseParser = _Parser
+class _Parser(_BitwiseParser):
+    def parse_arith(self):
+        return self.bitwise_expression(0)
+
+    def bitwise_expression(self, level):
+        tiers = (('|',), ('^',), ('&',), ('<<', '>>'))
+        if level == len(tiers):
+            return _ExpressionParser.parse_arith(self)
+        node, start, end = self.bitwise_expression(level + 1)
+        while self.peek().kind == 'op' and self.peek().text in tiers[level]:
+            sign = self.pop().text
+            right, part_start, end = self.bitwise_expression(level + 1)
+            node = BinOp(left=node, op=_BINOPS[sign](), right=right,
+                         lineno=start[0], col_offset=start[1],
+                         end_lineno=end[0], end_col_offset=end[1])
+        return node, start, end
+
+class ClassDef(stmt):
+    _fields = ('name', 'bases', 'keywords', 'body', 'decorator_list', 'type_params')
+
+_ClassStatementParser = _Parser
+class _Parser(_ClassStatementParser):
+    def parse_stmt(self):
+        if not self.at_name('class'):
+            return _ClassStatementParser.parse_stmt(self)
+        opening = self.pop()
+        name = self.pop()
+        if name.kind != 'name':
+            _syntax('invalid syntax')
+        bases = []
+        options = []
+        if self.at_op('('):
+            self.pop()
+            while not self.at_op(')'):
+                if self.peek().kind == 'name' and self.toks[self.at + 1].text == '=':
+                    key = self.pop()
+                    self.pop()
+                    value, start, end = self.parse_expr(False)
+                    options.append(self.positioned(keyword, (key.srow, key.scol), end, arg=key.text, value=value))
+                else:
+                    value, start, end = self.parse_expr(False)
+                    bases.append(value)
+                if not self.at_op(','):
+                    break
+                self.pop()
+            self.expect_op(')')
+        body = self.suite(opening)
+        last = body[-1]
+        return self.positioned(ClassDef, (opening.srow, opening.scol),
+                               (last.end_lineno, last.end_col_offset),
+                               name=name.text, bases=bases, keywords=options,
+                               body=body, decorator_list=[], type_params=[])

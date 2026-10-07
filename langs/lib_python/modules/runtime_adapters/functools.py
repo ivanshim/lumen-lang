@@ -49,3 +49,6 @@ for _class in (partial, partialmethod, _PlaceholderType, singledispatchmethod,
 
 del _class
 
+
+# Use the native calling protocol with the existing partial construction rules.
+partial.__call__ = __partial_call

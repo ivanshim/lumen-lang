@@ -546,6 +546,8 @@ pub struct Machine<'a> {
     /// has asked for it: from then on those names are read out of it
     /// and written into it, so either side sees the other's writing.
     world_book: Option<Rc<RefCell<Value>>>,
+    /// Prevent fresh imports during the interpreter's final teardown.
+    shutting_down: bool,
     /// Each text read into dictionaries handed over: the slots it was
     /// given, the dictionary its names live in, and the outer one for
     /// what the near one lacks and for its declared globals.
@@ -1949,6 +1951,7 @@ impl<'a> Machine<'a> {
             namespace_books: Vec::new(),
             within_spare: false,
             world_book: None,
+            shutting_down: false,
             readings: Vec::new(),
             reading_now: None,
             natives_book: None,
@@ -2687,6 +2690,29 @@ impl<'a> Machine<'a> {
     /// class names for that, in the order the things were made. One made
     /// while another is being let go is let go in its own turn.
     pub fn let_things_go(&mut self) {
+        self.shutting_down = !self.rules.trace_words.is_empty();
+        if self.shutting_down {
+            let cache = self.table.strings("ext.system.module.cache");
+            if let [namespace, name] = cache {
+                if let Some(Value::Thing(module)) = self.imported.get(namespace) {
+                    if let Some(entry) = module.holds.borrow_mut().iter_mut().find(|entry| &entry.0 == name) {
+                        let cleared = Value::Dict(Rc::new(Vec::new().into()));
+                        if let Value::Shared(cell) | Value::Mutable(cell, _) = &entry.1 { cell.replace(cleared); }
+                        else { entry.1 = cleared; }
+                    }
+                }
+            }
+        }
+        if self.shutting_down {
+            // Suspended walks can retain their frames through recorded globals.
+            // Finish their pending cleanup while their environments still exist.
+            let suspended = self.generator_frames.values().filter_map(Weak::upgrade).collect::<Vec<_>>();
+            for walk in suspended {
+                if let Err(fault) = self.shut_departed_generator(&walk) {
+                    self.report_unraisable(fault, &Value::Generator(walk), "generator");
+                }
+            }
+        }
         self.attend_to_gone();
         if let Some(named) = self.table.strings("ext.stmt.class.destructor").first().map(String::as_str).map(str::to_string).as_deref() {
             // The words a thing says as it goes: the destructor the
@@ -3302,7 +3328,19 @@ impl<'a> Machine<'a> {
                     let absent = self.import_source_not_there(told).map(|module| Value::text(&module));
                     if let Some(absent) = absent { written.push((self.rules.words_ext_builtin_exceptions_name.first().map(String::as_str), absent)); }
                 }
+                let parts = self.table.strings("ext.stmt.import.member.missing");
+                let missing_member = if parts.len() == 3 {
+                    told.trim_start_matches('\0').strip_prefix(parts[0].as_str())
+                        .and_then(|rest| rest.find(parts[1].as_str()).map(|end| Value::text(&rest[..end])))
+                } else { None };
+                let origin = missing_member.as_ref().and_then(|_| self.import_source_not_there(told)).and_then(|module| self.namespace_file_path(&module));
                 let mut holds = object.holds.borrow_mut();
+                if let Some(origin) = origin {
+                    if let Some(entry) = holds.iter_mut().find(|entry| entry.0 == "path") { entry.1 = Value::text(&origin); }
+                }
+                if let Some(member) = missing_member {
+                    if let Some(entry) = holds.iter_mut().find(|entry| entry.0 == "name_from") { entry.1 = member; }
+                }
                 for (key, value) in written {
                     if let Some(entry) = key.and_then(|key| holds.iter_mut().find(|(k, _)| k == key)) { entry.1 = value; }
                 }
@@ -5377,17 +5415,31 @@ impl<'a> Machine<'a> {
                 parents: Vec::new(), ancestry: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) }));
         }
+        // Capture the actual globals while this frame is made. Looking up
+        // globals later would use the formatter's module instead of ours.
+        let supplied = if routine.ident == "<program>" { self.reading_now } else { None };
+        let locals = supplied.map(|n| Value::Shared(self.readings[n].near.clone()));
+        let globals = if let Some(n) = supplied {
+            let reading = &self.readings[n];
+            Value::Shared(reading.outer.as_ref().unwrap_or(&reading.near).clone())
+        } else if let Some(book) = &routine.globe { book.clone() }
+        else if let Some(book) = self.constructor_world(routine) { Value::Shared(book) }
+        else if let Some(Value::Thing(module)) = routine.written_in.as_ref()
+            .and_then(|file| self.loaded_spaces.get(file)).and_then(|name| self.imported.get(name)) {
+            Value::Attributes(module.clone())
+        } else { Value::Shared(self.world_kept()) };
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;
         let mut entries = Vec::with_capacity(6);
         entries.push((words[4].to_string(), Value::Small(routine.declared_on as i64)));
         entries.push((words[5].to_string(), code));
         entries.push((words[11].to_string(), parent.map(Value::Thing).unwrap_or(Value::Nil)));
-        entries.push((words[12].to_string(), Value::Nil));
-        entries.push((words[13].to_string(), Value::Nil));
+        entries.push((words[12].to_string(), locals.clone().unwrap_or(Value::Nil)));
+        entries.push((words[13].to_string(), globals));
         entries.push((String::from("\0environment"), body));
         entries.push((String::from("\0observed"), Value::Nil));
         entries.push((String::from("\0instruction"), Value::Small(-1)));
+        entries.push((String::from("\0supplied-locals"), Value::Flag(locals.is_some())));
         self.made += 1;
         Some(Rc::new(Thing { reclassified: RefCell::new(None), of: self.activation_kind.as_ref().unwrap().clone(), turn: self.made, holds: RefCell::new(entries) }))
     }
@@ -5430,13 +5482,7 @@ impl<'a> Machine<'a> {
                     }
                     return Some(current);
                 }
-                if index == 13 {
-                    if let Value::Bound(program, _) = item.holds.borrow()[5].1.clone() {
-                        let globals = program.globe.clone().unwrap_or_else(|| Value::Shared(self.constructor_world(&program).unwrap_or_else(|| self.book_about(true))));
-                        return Some(globals);
-                    }
-                    return None;
-                }
+                if index == 13 { return Some(item.holds.borrow()[4].1.clone()); }
                 if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
                     return Some(Value::Nil);
                 }
@@ -5450,6 +5496,7 @@ impl<'a> Machine<'a> {
 
     fn update_activation_locals(&self, item: &Rc<Thing>) {
         let kept = item.holds.borrow();
+        if kept.iter().any(|entry| entry.0 == "\0supplied-locals" && matches!(entry.1, Value::Flag(true))) { return; }
         let Value::Bound(body, environment) = &kept[5].1 else { return };
         let mut entries = Vec::new();
         for (word, value) in body.idents.iter().zip(environment.cells.borrow().iter()) {
@@ -6346,7 +6393,14 @@ impl<'a> Machine<'a> {
             }
             Form::Again => {
                 match self.holding_fault.last() {
-                    Some(value) => Err(Escape::Thrown(value.clone())),
+                    Some(value) => {
+                        if let Value::Thing(error) = value {
+                            let mut state = error.holds.borrow_mut();
+                            state.retain(|entry| entry.0 != "\0raised-again");
+                            state.push((String::from("\0raised-again"), Value::Flag(true)));
+                        }
+                        Err(Escape::Thrown(value.clone()))
+                    },
                     None => Err(format!("\0{}", self.table.strings("ext.stmt.throw.empty").first().map(String::as_str).unwrap_or_default()).into()),
                 }
             }
@@ -6883,6 +6937,7 @@ impl<'a> Machine<'a> {
                     };
                         raised
                     };
+                    if let Value::Thing(error) = &raised { error.holds.borrow_mut().retain(|entry| entry.0 != "\0raised-again"); }
                     // Where the table furnishes exceptions and has words
                     // for it, nothing but an instance of one is raised.
                     if let Some(words) = self.table.strings("ext.stmt.throw.invalid").first().map(String::as_str) {
@@ -8550,7 +8605,8 @@ impl<'a> Machine<'a> {
         let directory = words.get(9)?;
         if directory != key { return None; }
         let actual = item.settled();
-        let ordinary = Self::native_mark(&actual).is_some();
+        let ordinary = Self::native_mark(&actual).is_some()
+            || matches!(&actual, Value::Thing(module) if module.holds.borrow().iter().any(|entry| matches!(entry.0.as_str(), "\0loaded-module" | "\0dictionary")));
         if !ordinary && !matches!(actual, Value::Span(_) | Value::Backtrace(_)) { return None; }
         Some(Value::Member(Rc::new(item.clone()), directory.clone()))
     }
@@ -9396,7 +9452,29 @@ impl<'a> Machine<'a> {
             if let Some(place) = &clause.held { self.store(place, frame, Value::Unset)?; }
             match answer {
                 Ok(_) => {}
-                Err(Escape::Thrown(value)) if matches!((&value, &taken), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b)) => sent_back.push(value),
+                Err(Escape::Thrown(value)) if matches!((&value, &taken), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b)) => {
+                    let Value::Thing(error) = &value else { unreachable!() };
+                    let again = {
+                        let mut fields = error.holds.borrow_mut();
+                        let marked = fields.iter().any(|entry| entry.0 == "\0raised-again" && matches!(entry.1, Value::Flag(true)));
+                        fields.retain(|entry| entry.0 != "\0raised-again");
+                        marked
+                    };
+                    if lone && again {
+                        if let (Some(cleanup), Value::Backtrace(trace)) = (&clause.reraise_position, self.traceback_of(&value)) {
+                            if let Form::Located(extent, instruction, _) = cleanup.as_ref() {
+                                let corrected = Value::Backtrace(Rc::new(crate::data::TraceLink {
+                                    instruction: (*instruction as i64).saturating_mul(2), extent: Some(*extent), location: i64::from(extent.0),
+                                    activation: trace.activation.clone(), following: RefCell::new(trace.following.borrow().clone()),
+                                }));
+                                if let Some(word) = self.rules.words_ext_builtin_exceptions_traceback_member.first() {
+                                    if let Some(entry) = error.holds.borrow_mut().iter_mut().find(|entry| &entry.0 == word) { entry.1 = corrected; }
+                                }
+                            }
+                        }
+                    }
+                    sent_back.push(value);
+                },
                 Err(Escape::Thrown(value)) => anew.push(value),
                 Err(Escape::Error(said)) => match self.as_raised(&said) { Some(value) => anew.push(value), None => return Err(Escape::Error(said)) },
                 Err(other) => return Err(other),
@@ -9468,9 +9546,13 @@ impl<'a> Machine<'a> {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
             let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready().into()) };
             let Some(Value::Routine(program) | Value::Bound(program, _)) = parts.first() else { return Err(self.class_unready().into()) };
-            let mut rows = vec![[None; 4]];
             let beginning = (program.declared_on != 0).then_some(program.declared_on);
+            let resume = if beginning.is_some() && !program.generator { [beginning, beginning, Some(0), Some(0)] } else { [None; 4] };
+            let mut rows = vec![resume];
             program.body.position_rows(&mut rows, [beginning, beginning, None, None]);
+            if std::env::var("PYTHONNODEBUGRANGES").ok().and_then(|flag| flag.parse::<i32>().ok()).is_some_and(|flag| flag != 0) {
+                for row in &mut rows { row[2] = None; row[3] = None; }
+            }
             let values = rows.into_iter().map(|coordinates| Value::tuple(coordinates.into_iter().map(|coordinate|
                 if program.lineless { Value::Nil } else { coordinate.map_or(Value::Nil, |number| Value::Small(i64::from(number))) }
             ).collect())).collect();
@@ -10715,6 +10797,10 @@ impl<'a> Machine<'a> {
     }
 
     fn namespace_for(&mut self, path: &str) -> Result<Value, String> {
+        // Native services retain initialized modules during interpreter teardown.
+        if self.shutting_down {
+            if let Some(namespace) = self.imported.get(path) { return Ok(namespace.clone()); }
+        }
         self.load_namespace(path)
     }
 
@@ -11888,6 +11974,9 @@ impl<'a> Machine<'a> {
             suspension.source_reading = self.reading_now;
             suspension.trace_state = self.activation(&program, &frame, None);
             let walk = Rc::new(RefCell::new(suspension));
+            if let Some(activation) = &walk.borrow().trace_state {
+                self.generator_frames.insert(Rc::as_ptr(activation) as usize, Rc::downgrade(&walk));
+            }
             if !self.rules.words_ext_stmt_async_generator_methods.is_empty() && program.flags & 512 != 0 {
                 self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false))));
             }
@@ -18302,7 +18391,27 @@ impl<'a> Machine<'a> {
                         bindings.push((Value::text(word), value.clone()));
                     }
                 }
+                bindings.push((Value::text("__program_finalizing"), Value::Flag(self.shutting_down)));
                 Value::Dict(Rc::new(bindings.into()))
+            }
+            // Read the live owner count without keeping a lasting new owner.
+            Prim::ReferenceCount => {
+                n(1)?;
+                let held = v[0].settled();
+                let owners = match &held {
+                    Value::Thing(object) => Rc::strong_count(object),
+                    Value::Attributes(object) => Rc::strong_count(object),
+                    Value::Backtrace(trace) => Rc::strong_count(trace),
+                    Value::Blueprint(class) => Rc::strong_count(class),
+                    Value::Routine(code) => Rc::strong_count(code),
+                    Value::Bound(code, _) => Rc::strong_count(code),
+                    Value::Text(text) => Rc::strong_count(text),
+                    Value::Dict(pairs) => Rc::strong_count(pairs),
+                    Value::Tuple(items) | Value::Vector(items) => Rc::strong_count(items),
+                    Value::Wrapped(_, items) => Rc::strong_count(items),
+                    _ => return Err(String::from("NotImplementedError: this value has no reference-counted storage")),
+                };
+                Value::Small(owners.checked_sub(1).unwrap_or(0) as i64)
             }
             Prim::FrameModule => {
                 n(1)?;
@@ -23901,6 +24010,9 @@ impl Machine<'_> {
         if let Some(value) = self.imported.get(path) {
             if self.importing.contains(path) || self.import_cache_names(path) { return Ok(value.clone()); }
         }
+        if self.shutting_down {
+            return Err(String::from("ImportError: sys.meta_path is None, Python is likely shutting down"));
+        }
         if path.starts_with('.') {
             let absolute = self.qualified_import(path)?;
             return self.load_namespace(&absolute);
@@ -26097,7 +26209,9 @@ impl<'a> Machine<'a> {
         self.written_in = Rc::from(file.as_str());
         self.frames_named.push(built.program.clone());
         let outer_trace = self.active_trace.take();
+        self.active_trace = self.activation(&built.program, &mine, outer_trace.clone());
         let ran = self.value_of(&built.program.body, &mine);
+        let ran = self.traced_result(ran);
         self.active_trace = outer_trace;
         self.frames_named.pop();
         self.written_in = was_in;
@@ -26186,8 +26300,10 @@ impl<'a> Machine<'a> {
         self.written_in = Rc::from(file);
         let top = self.outermost.clone();
         let prior = self.active_trace.take();
+        self.active_trace = self.activation(&built.program, &top, prior.clone());
         self.frames_named.push(built.program.clone());
         let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
+        let ran = self.traced_result(ran);
         self.frames_named.pop();
         self.active_trace = prior;
         self.written_in = was_in;

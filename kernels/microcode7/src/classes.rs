@@ -2441,6 +2441,9 @@ impl<'a> Machine<'a> {
     fn explain_absence(&self, escaped: Escape, value: &Value, key: &str) -> Escape {
         let Escape::Thrown(Value::Thing(fault)) = &escaped else { return escaped };
         if !self.missing_member_escape(&escaped) { return escaped; }
+        // Do not replace metadata supplied by the lookup inside a hook.
+        let name_word = self.rules.words_ext_builtin_exceptions_name.first();
+        if fault.holds.borrow().iter().any(|entry| name_word == Some(&entry.0) && !matches!(entry.1.settled(), Value::Nil)) { return escaped; }
         let said = match value {
             Value::Blueprint(kind) => format!("type object '{}' has no attribute '{key}'", self.full_class_name(kind)),
             Value::Thing(thing) if !self.rules.words_ext_system_module_name.is_empty() && Self::native_beneath(&thing.blueprint()).as_deref() == Some("module") => {
@@ -2512,6 +2515,10 @@ impl<'a> Machine<'a> {
         told.into()
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
+        if matches!(&entry, Value::Intrinsic(Prim::ClassWork(26), _)) {
+            if let Some(subject) = receiver { return Ok(Self::wrap(3, vec![entry, subject])); }
+            return Ok(entry);
+        }
         if let Value::Wrapped(60, parts) = &entry {
             let key = parts[1].bare();
             if parts[0].bare() == "type" && receiver.is_some() && (key == self.detail("namespace") || key == self.detail("mro")) {
@@ -3105,6 +3112,12 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        let source_module = matches!(value.settled(), Value::Thing(module)
+            if module.holds.borrow().iter().any(|entry| matches!(entry.0.as_str(), "\0loaded-module" | "\0dictionary"))
+                && module.holds.borrow().iter().all(|entry| entry.0 != key));
+        if source_module {
+            if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
+        }
         let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
         if self.names_in_calls && !key.starts_with("__") {
             let slot = match &value {
@@ -5284,6 +5297,37 @@ impl<'a> Machine<'a> {
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if op == 26 && self.table.has_any("ext.builtin.partial.call") {
+            let (mut actual, overriding) = self.open_arguments(values)?;
+            if actual.len() == 0 { return Err(String::from("TypeError: descriptor '__call__' requires a 'functools.partial' object").into()); }
+            let object = actual.remove(0);
+            let callee = self.read_class_member(object.clone(), "func", false)?;
+            let saved = self.read_class_member(object.clone(), "args", false)?.settled();
+            let Value::Tuple(saved) = saved else { return Err(String::from("TypeError: partial arguments must be a tuple").into()); };
+            let holes = self.read_class_member(object.clone(), "_phcount", false)?.settled();
+            let Value::Small(holes) = holes else { return Err(self.class_unready()); };
+            let mut given = saved.to_vec();
+            if holes > 0 {
+                let required = holes as usize;
+                if actual.len() < required { return Err(format!("TypeError: missing positional arguments in 'partial' call; expected at least {holes}, got {}", actual.len()).into()); }
+                let arrange = self.read_class_member(object.clone(), "_merger", false)?;
+                given.extend(actual.iter().cloned());
+                let arranged = self.apply_class_member(arrange, vec![Value::tuple(given)])?.settled();
+                given = if let Value::Tuple(row) = arranged { row.to_vec() } else { return Err(self.class_unready()); };
+                given.extend(actual.drain(required..));
+            } else { given.append(&mut actual); }
+            let saved_names = self.read_class_member(object, "keywords", false)?.settled();
+            let Value::Dict(saved_names) = saved_names else { return Err(String::from("TypeError: partial keywords must be a dictionary").into()); };
+            let mut named: Vec<_> = saved_names.iter().map(|pair| (pair.0.bare(), pair.1.clone())).collect();
+            for (name, held) in overriding {
+                match named.iter_mut().find(|pair| pair.0 == name) {
+                    Some(pair) => pair.1 = held,
+                    None => named.push((name, held)),
+                }
+            }
+            given.extend(named.into_iter().map(|pair| Value::Couple(Rc::new((Value::text(&pair.0), pair.1)))));
+            return self.apply_class_member(callee, given);
+        }
         if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op == 13 { return self.class_from_function(values); }

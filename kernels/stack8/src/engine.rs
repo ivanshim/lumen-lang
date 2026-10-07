@@ -133,6 +133,8 @@ pub struct Engine<'a> {
     /// to once the program has asked for it: what the program writes
     /// into the dictionary the names then show, and the other way about.
     outer_book: Option<Rc<RefCell<Value>>>,
+    /// Whether module teardown has begun after the exit callbacks.
+    finalizing: bool,
     /// Text read into dictionaries handed over: each keeps the slots it
     /// was given, the dictionary its names live in and, where two were
     /// handed over, the outer one its declared globals go to.
@@ -1591,6 +1593,7 @@ impl<'a> Engine<'a> {
             reaching: 0,
             reading_amiss: None,
             outer_book: None,
+            finalizing: false,
             text_books: Vec::new(),
             reading_in: None,
             text_within: None,
@@ -1910,6 +1913,20 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
+        if !self.lang.trace_fields.is_empty() {
+            self.finalizing = true;
+            // CPython clears the import cache before module-owned finalizers.
+            // Existing references to a module continue to own its dictionary.
+            if let [owner, member] = self.lang.module_cache.as_slice() {
+                if let Some(Value::Object(module)) = self.modules.get(owner) {
+                    let mut fields = module.fields.borrow_mut();
+                    if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == member) {
+                        let empty = Value::Map(Rc::new(Vec::new().into()));
+                        match value { Value::Bond(cell) | Value::Collection(cell, _) => { *cell.borrow_mut() = empty; }, _ => *value = empty }
+                    }
+                }
+            }
+        }
         self.settle_departed();
         if let Some(named) = self.lang.destructor.clone().as_deref() {
             // The words an object says as it goes: the destructor the
@@ -2558,7 +2575,19 @@ impl<'a> Engine<'a> {
                 if self.stands_on(&object.class_now(), 42) {
                     if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
                 }
+                let import_name = self.lang.import_member_missing.as_slice();
+                let from_name = if let [head, middle, _] = import_name {
+                    told.trim_start_matches('\0').strip_prefix(head.as_str())
+                        .and_then(|tail| tail.split_once(middle.as_str())).map(|pair| Value::text(pair.0))
+                } else { None };
+                let source_path = from_name.as_ref().and_then(|_| self.absent_import(told)).and_then(|module| self.module_file_path(&module));
                 let mut fields = object.fields.borrow_mut();
+                if let Some(path) = source_path {
+                    if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "path") { *value = Value::text(&path); }
+                }
+                if let Some(name) = from_name {
+                    if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "name_from") { *value = name; }
+                }
                 for (key, held) in filled {
                     if let Some(place) = key.as_ref().and_then(|key| fields.iter_mut().find(|(n, _)| n == key)) { place.1 = held; }
                 }
@@ -4749,7 +4778,26 @@ impl<'a> Engine<'a> {
             match outcome {
                 Ok(Passage::Along(at)) if at == arm.body.1 => {}
                 Ok(other) => return Ok(other),
-                Err(Fault::Thrown(value)) if value.identical(&taken) => kept_back.push(value),
+                Err(Fault::Thrown(value)) if value.identical(&taken) => {
+                    let bare = if let Value::Object(error) = &value {
+                        let mut fields = error.fields.borrow_mut();
+                        let bare = fields.iter().any(|(key, held)| key == "\0bare-reraise" && matches!(held, Value::Flag(true)));
+                        fields.retain(|(key, _)| key != "\0bare-reraise");
+                        bare
+                    } else { false };
+                    if alone && bare {
+                        if let (Some(position), Value::Trace(trace), Value::Object(error)) = (arm.reraise_position, self.trace_of(&value), &value) {
+                            if let Instr::Location(start, column, end, stop) = instrs[position] {
+                                let updated = Value::Trace(Rc::new(crate::value::Traceback { instruction: (position as i64) * 2,
+                                    location: Some((start, column, end, stop)), line: i64::from(start), frame: trace.frame.clone(), next: RefCell::new(trace.next.borrow().clone()) }));
+                                if let Some(key) = &self.lang.traceback_member {
+                                    if let Some((_, held)) = error.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *held = updated; }
+                                }
+                            }
+                        }
+                    }
+                    kept_back.push(value);
+                },
                 Err(Fault::Thrown(value)) => afresh.push(value),
                 Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => afresh.push(value), None => return Err(Fault::Note(words)) },
                 Err(other) => return Err(other),
@@ -5287,6 +5335,18 @@ impl<'a> Engine<'a> {
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let keys = self.lang.trace_fields.clone();
+        // Retain the namespaces of this activation, before formatting enters
+        // another module. Dynamic code uses its supplied locals mapping.
+        let dynamic = self.reading_in.filter(|_| program.ident == "<program>");
+        let local_book = dynamic.map(|at| Value::Bond(self.text_books[at].near.clone()));
+        let global_book = dynamic.map(|at| {
+            let book = &self.text_books[at];
+            Value::Bond(book.outer.clone().unwrap_or_else(|| book.near.clone()))
+        }).or_else(|| program.globe.clone()).or_else(|| self.constructor_book(program).map(Value::Bond))
+            .or_else(|| program.written_in.as_ref().and_then(|file| self.module_slots.get(file))
+                .and_then(|(_, owner)| self.modules.get(owner)).and_then(|value| match value {
+                    Value::Object(module) => Some(Value::Fields(module.clone())), _ => None,
+                })).unwrap_or_else(|| Value::Bond(self.outer_book_made()));
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
@@ -5304,11 +5364,12 @@ impl<'a> Engine<'a> {
             (keys[4].clone(), Value::Small(program.declared_on as i64)),
             (keys[5].clone(), code),
             (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
-            (keys[12].clone(), Value::Null), (keys[13].clone(), Value::Null),
+            (keys[12].clone(), local_book.clone().unwrap_or(Value::Null)), (keys[13].clone(), global_book),
             ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if name.starts_with('#') && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
+            ("\0mapping-locals".into(), Value::Flag(local_book.is_some())),
         ]) }))
     }
 
@@ -5327,8 +5388,7 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            let routine = match object.fields.borrow()[6].1.clone() { Value::Routine(body) => body, _ => return None };
-            return Some(routine.globe.clone().unwrap_or_else(|| Value::Bond(self.constructor_book(&routine).unwrap_or_else(|| self.outer_book_made()))));
+            return Some(object.fields.borrow()[4].1.clone());
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);
@@ -5340,6 +5400,7 @@ impl<'a> Engine<'a> {
 
     fn refresh_frame(&mut self, object: &Rc<Instance>) {
         let fields = object.fields.borrow();
+        if fields.iter().any(|(key, value)| key == "\0mapping-locals" && matches!(value, Value::Flag(true))) { return; }
         let Value::Routine(program) = &fields[6].1 else { return };
         let Value::Tuple(slots) = &fields[5].1 else { return };
         let mut pairs: Vec<(Value, Value)> = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
@@ -6854,7 +6915,8 @@ impl<'a> Engine<'a> {
         let word = self.lang.class_details.get("root.members")?.get(9)?;
         if name != word { return None; }
         let held = value.contents();
-        if Self::native_family(&held).is_none() && !matches!(held, Value::Slice(_) | Value::Trace(_)) { return None; }
+        let source_module = matches!(&held, Value::Object(module) if module.fields.borrow().iter().any(|(key, _)| key == "\0module-owner" || key == "\0namespace"));
+        if !source_module && Self::native_family(&held).is_none() && !matches!(held, Value::Slice(_) | Value::Trace(_)) { return None; }
         Some(Value::ValueMethod(Rc::new((value.clone(), word.clone()))))
     }
 
@@ -12103,6 +12165,11 @@ impl<'a> Engine<'a> {
                 let Some(value) = self.caught.last().cloned() else {
                     return Err(format!("\0{}", self.lang.throw_empty.as_deref().unwrap_or_default()).into());
                 };
+                if let Value::Object(error) = &value {
+                    let mut fields = error.fields.borrow_mut();
+                    fields.retain(|(key, _)| key != "\0bare-reraise");
+                    fields.push(("\0bare-reraise".into(), Value::Flag(true)));
+                }
                 return Err(Fault::Thrown(value));
             }
             Action::AssertFault => {
@@ -12148,6 +12215,7 @@ impl<'a> Engine<'a> {
                 }
                     raised
                 } else { self.prepare_raised(value)? };
+                if let Value::Object(error) = &value { error.fields.borrow_mut().retain(|(key, _)| key != "\0bare-reraise"); }
                 // Where exceptions are furnished and the language has words
                 // for it, nothing but an instance of one may be raised.
                 if let Some(words) = &self.lang.throw_invalid {
@@ -16049,6 +16117,7 @@ impl<'a> Engine<'a> {
             let Some(Value::Routine(body)) = handle.1.first() else { return Err(self.special_fault()) };
             let mut row = body.declared_on;
             let mut extent = None;
+            let suppress_columns = std::env::var("PYTHONNODEBUGRANGES").is_ok_and(|flag| flag.parse::<i32>().is_ok_and(|n| n != 0));
             let mut positions = Vec::with_capacity(body.instrs.len());
             for instruction in body.instrs.iter() {
                 match instruction {
@@ -16057,9 +16126,15 @@ impl<'a> Engine<'a> {
                     _ => {}
                 }
                 let span = if body.lineless || row == 0 { vec![Value::Null; 4] }
-                    else if let Some((end, column, stop)) = extent {
+                    else if positions.is_empty() && body.declared_on > 0 && !body.generator {
+                        vec![Value::Small(i64::from(body.declared_on)), Value::Small(i64::from(body.declared_on)), Value::Small(0), Value::Small(0)]
+                    } else if let Some((end, column, stop)) = extent {
                         vec![Value::Small(i64::from(row)), Value::Small(i64::from(end)), Value::Small(i64::from(column)), Value::Small(i64::from(stop))]
                     } else { vec![Value::Small(i64::from(row)), Value::Small(i64::from(row)), Value::Null, Value::Null] };
+                let mut span = span;
+                if suppress_columns {
+                    span[2] = Value::Null; span[3] = Value::Null;
+                }
                 positions.push(Value::tuple(span));
             }
             return self.iterator(Value::tuple(positions)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
@@ -19461,15 +19536,35 @@ impl<'a> Engine<'a> {
                     return Ok(current);
                 }
                 arity(0)?;
-                Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
+                let mut namespace: Vec<_> = self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
                     if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }
                     else { Some((Value::text(name), value.clone())) }
-                }).collect()))
+                }).collect();
+                namespace.push((Value::text("__program_finalizing"), Value::Flag(self.finalizing)));
+                Value::Map(Rc::new(namespace.into()))
             }
             // The module the routine running `depth` frames up the call
             // chain answers as its own: the same walk the
             // program-namespace builtin makes, answered as the routine's
             // own `__module__` member would answer.
+            // Report actual strong owners of reference-backed runtime values.
+            Builtin::ReferenceCount => {
+                if args.len() != 1 || self.lang.reference_count_words.is_empty() { return Err(self.core_fault("core.arity", name)); }
+                let value = args[0].contents();
+                let count = match &value {
+                    Value::Object(v) | Value::Fields(v) => Rc::strong_count(v),
+                    Value::Trace(v) => Rc::strong_count(v),
+                    Value::Class(v) => Rc::strong_count(v),
+                    Value::Routine(v) => Rc::strong_count(v),
+                    Value::Adapter(v) => Rc::strong_count(v),
+                    Value::Text(v) => Rc::strong_count(v),
+                    Value::Tuple(v) => Rc::strong_count(v),
+                    Value::Map(v) => Rc::strong_count(v),
+                    Value::Array(v) => Rc::strong_count(v),
+                    _ => return Err("NotImplementedError: this value has no reference-counted storage".into()),
+                };
+                return Ok(Value::Small(count.saturating_sub(1) as i64));
+            }
             Builtin::FrameModule => {
                 if let [Value::Small(depth)] = args.as_slice() {
                     let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
@@ -23484,6 +23579,9 @@ impl Engine<'_> {
         // `sys.path` under a name used before this run needs to.
         if let Some(held) = self.modules.get(path) {
             if self.importing.contains(path) || self.module_cache_names(path) { return Ok(held.clone()); }
+        }
+        if self.finalizing {
+            return Err("ImportError: sys.meta_path is None, Python is likely shutting down".into());
         }
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a

@@ -47,7 +47,9 @@
   "ext.builtin.posix": [
     "__posix"
   ],
-  "ext.builtin.loader.source": ["__loader_source"],
+  "ext.builtin.loader.source": [
+    "__loader_source"
+  ],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -4109,5 +4111,9 @@
     "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."
   ],
   "ext.builtin.iter.stop_value": [],
-  "ext.builtin.iter.stop_exception": []
+  "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.partial.call": ["__partial_call"],
+  "ext.builtin.system.refcount": [
+    "__reference_count"
+  ]
 }

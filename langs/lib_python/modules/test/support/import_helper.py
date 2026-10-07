@@ -36,13 +36,18 @@ def forget(modname):
     except ImportError:
         cache_from_source = None
     else:
-        cache_from_source = importlib.util.cache_from_source
+        # No bytecode cache name exists when this implementation has no tag.
+        cache_from_source = importlib.util.cache_from_source if sys.implementation.cache_tag is not None else None
     for dirname in sys.path:
         source = os.path.join(dirname, modname + '.py')
-        unlink(source + 'c')
+        # Delete only real cache files; absent paths can lie on read-only mounts.
+        if os.path.lexists(source + 'c'):
+            unlink(source + 'c')
         if cache_from_source is not None:
             for opt in ('', 1, 2):
-                unlink(cache_from_source(source, optimization=opt))
+                cached = cache_from_source(source, optimization=opt)
+                if os.path.lexists(cached):
+                    unlink(cached)
 
 @contextlib.contextmanager
 def _ignore_deprecated_imports(ignore=True):

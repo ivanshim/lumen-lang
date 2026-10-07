@@ -4830,6 +4830,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.partial.call` | - | - | `__partial_call` | - | - | - | - | - | - | - |
 | `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
@@ -4934,6 +4935,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
+| `ext.builtin.system.refcount` | - | - | `__reference_count` | - | - | - | - | - | - | - |
 | `ext.builtin.text.capitalize` | - | - | `capitalize` `str.capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.text.casefold` | - | - | `casefold` `str.casefold` | - | - | - | - | - | - | - |
 | `ext.builtin.text.center` | - | - | `center` `str.center` | - | - | - | - | - | - | - |
@@ -6089,3 +6091,9 @@ class descriptor cycles are candidates for the existing cycle collector.
 Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
+
+Python's `ext.builtin.system.refcount` exposes the live strong-owner count of
+reference-backed values for `sys.getrefcount`; values without reference-counted
+storage report that limitation instead of inventing a count.
+
+`ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.

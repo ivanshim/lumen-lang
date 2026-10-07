@@ -3354,7 +3354,7 @@ impl<'a> Compiler<'a> {
             let name = self.want_name("as a binding target")?;
             self.read(&name);
         }
-        self.called_on_value()?;
+        self.called_on_value(None)?;
         // Whether the chain so far ends on a call. What a call gave back
         // is no place a binding can reach, but a member of it is: the
         // mark is carried along and only the last step decides.
@@ -3366,7 +3366,7 @@ impl<'a> Compiler<'a> {
                 keyed.clear();
                 let member = self.want_name("after the member mark")?;
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
-                self.called_on_value()?;
+                self.called_on_value(None)?;
                 on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
@@ -3494,13 +3494,15 @@ impl<'a> Compiler<'a> {
         while self.on_any(&lang.decorator_words) {
             self.take();
             if !self.may_adorn() { return Err(amiss()); }
+            let source = self.pos;
             self.expr_at(0, false)?;
+            let extent = self.expression_location(source);
             if self.look().shape != Shape::LineEnd {
                 return Err(amiss());
             }
             let name = self.gensym("decorator");
             self.write(&name);
-            held.push(name);
+            held.push((name, extent));
             while self.look().shape == Shape::LineEnd {
                 self.take();
             }
@@ -3524,7 +3526,7 @@ impl<'a> Compiler<'a> {
             self.function(name.clone(), gives_cell)?;
             name
         };
-        for decorator in held.into_iter().rev() {
+        for (decorator, extent) in held.into_iter().rev() {
             let bound = if lang.routines_outermost && !a_class {
                 Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
             } else {
@@ -3532,6 +3534,7 @@ impl<'a> Compiler<'a> {
             };
             self.put(Instr::Read(bound.clone()));
             self.read_taking(&decorator);
+            if !lang.trace_fields.is_empty() { self.put(extent); }
             self.act(Action::Invoke(Rc::from(lang.decorator_words[0].as_str())), 2);
             self.put(Instr::Write(bound));
         }
@@ -5027,7 +5030,7 @@ impl<'a> Compiler<'a> {
         let first = &self.tokens[left];
         let last = &self.tokens[right];
         Instr::Location((first.row as u32).saturating_sub(self.before), first.byte_column.max(first.column).saturating_sub(1) as u32,
-            (last.end_row as u32).saturating_sub(self.before), last.byte_end_column.max(last.end_column).saturating_sub(1) as u32)
+            (if last.end_row == 0 { last.row as u32 } else { last.end_row as u32 }).saturating_sub(self.before), (if last.end_column == 0 { last.byte_column.max(last.column) + last.lexeme.len() } else { last.byte_end_column.max(last.end_column) }).saturating_sub(1) as u32)
     }
 
     fn for_stmt(&mut self) -> Res<()> {
@@ -5392,7 +5395,19 @@ impl<'a> Compiler<'a> {
                 let last = (clause_at..self.pos).rev().find(|i| !matches!(self.tokens[*i].shape, Shape::LineEnd | Shape::Close | Shape::Open)).unwrap_or(clause_at);
                 default_span = Some((clause_at, last));
             }
-            clauses.push(Taking { line: self.tokens[clause_at].row.saturating_sub(self.before as usize) as u32, kinds, held, body: arm, grouped, bare });
+            // A naked exception reraised by except* acquires the handler's
+            // cleanup span, which includes the header and its entire suite.
+            let reraise_position = if grouped && !lang.trace_fields.is_empty() {
+                let opening = &self.tokens[clause_at];
+                let ending = self.tokens[clause_at..self.pos].iter().rev()
+                    .find(|token| !matches!(token.shape, Shape::LineEnd | Shape::Open | Shape::Close)).unwrap_or(opening);
+                let bounds = (opening.row.saturating_sub(self.before as usize) as u32, opening.byte_column.saturating_sub(1) as u32,
+                    ending.end_row.saturating_sub(self.before as usize) as u32, ending.byte_end_column.saturating_sub(1) as u32);
+                let position = self.mark();
+                self.put(Instr::Location(bounds.0, bounds.1, bounds.2, bounds.3));
+                Some(position)
+            } else { None };
+            clauses.push(Taking { line: self.tokens[clause_at].row.saturating_sub(self.before as usize) as u32, reraise_position, kinds, held, body: arm, grouped, bare });
             self.skip_seps();
         }
         // Grouped clauses go together or not at all, and each names
@@ -6258,6 +6273,7 @@ impl<'a> Compiler<'a> {
     fn python_class(&mut self, generic: bool) -> Res<bool> {
         let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let lang = self.lang;
+        let declaration_start = self.pos;
         self.act(Action::Builtin(Builtin::ClassTool(14), Rc::from("")), 0);
         let builder = self.gensym("class_builder"); self.write(&builder);
         self.take();
@@ -6291,6 +6307,7 @@ impl<'a> Compiler<'a> {
         let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
         self.read(&builder); self.constant(Value::Routine(Rc::new(body)));
         self.constant(Value::text(&original_name)); self.read(&header);
+        if !lang.trace_fields.is_empty() { self.put(self.expression_location(declaration_start)); }
         self.act(Action::Builtin(Builtin::ClassTool(16), Rc::from("")), 4);
         if self.in_class_body() {
             let private = self.gensym("class"); self.write(&private);
@@ -8662,6 +8679,7 @@ impl<'a> Compiler<'a> {
 
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
+        let name_origin = self.pos.saturating_sub(2);
         // The target came out as a load; turn it into a store.
         let mut target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
         // A target kept quiet is a store kept quiet: the marks come off
@@ -8792,6 +8810,7 @@ impl<'a> Compiler<'a> {
                     if !self.lang.syntax_members.is_empty() { self.unsee_last_read(&name); }
                     self.stood_before();
                     self.addend()?;
+                    if !self.lang.trace_fields.is_empty() { self.put(self.expression_location(name_origin)); }
                     self.compound_act(op);
                     self.kept(keep);
                     self.write(&name);
@@ -9468,7 +9487,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
-                if !lang.scope_unready.is_empty() { self.indexing(from)?; }
+                if !lang.scope_unready.is_empty() { self.indexing(from, begins)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
@@ -9597,7 +9616,7 @@ impl<'a> Compiler<'a> {
     fn position_expression_action(&mut self, begin: usize, from: usize) {
         if !self.lang.trace_fields.is_empty() && !self.writing_place {
             let at = self.mark().saturating_sub(1);
-            if matches!(self.piece().instrs.get(at), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Grab(_) | Action::At, _))) {
+            if !matches!(self.piece().instrs.get(at.saturating_sub(1)), Some(Instr::Location(..))) && matches!(self.piece().instrs.get(at), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Grab(_) | Action::At, _))) {
                 let location = self.expression_location(begin);
                 for instruction in &mut self.piece().instrs[from..] {
                     let shift = |target: &mut usize| { if *target >= at { *target += 1; } };
@@ -9674,7 +9693,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("after the pipe")?;
         if let Some(operation) = self.lang.value_methods.get(&name).cloned() {
             self.act(Action::BindValueMethod(Rc::from(operation)), 1);
-            return self.indexing(left);
+            return self.indexing(left, self.pos);
         }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace))
@@ -9816,6 +9835,7 @@ impl<'a> Compiler<'a> {
     fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
+        let origin = self.pos;
         let tok = self.look().clone();
         if self.yield_operand && lang.dyadic.get(tok.spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
@@ -9941,24 +9961,24 @@ impl<'a> Compiler<'a> {
         if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.spelling()) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
-            return self.indexing(from);
+            return self.indexing(from, origin);
         }
         if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
             self.take();
             let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
-            return self.indexing(from);
+            return self.indexing(from, origin);
         }
         if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.spelling()) {
             self.take();
             self.constant(Value::Ellipsis);
-            return self.indexing(from);
+            return self.indexing(from, origin);
         }
         // The value a method declines an operation with, written by name.
         if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.spelling()) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
-            return self.indexing(from);
+            return self.indexing(from, origin);
         }
         // Only the bare word opens a lambda; the same letters between
         // quotes are a string, as when handed to print.
@@ -10028,7 +10048,7 @@ impl<'a> Compiler<'a> {
                 self.take();
                 self.naming()?;
                 self.act(Action::Named, 1);
-                return self.indexing(from);
+                return self.indexing(from, origin);
             }
             if Lang::spells(&lang.hush_words, &tok.spelling()) {
                 // Whatever the piece under the mark has to say about
@@ -10117,14 +10137,14 @@ impl<'a> Compiler<'a> {
                 let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
                 if !self.at_symbol(&call.open) {
                     self.class_cannot_run();
-                    return self.indexing(from);
+                    return self.indexing(from, origin);
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
                 if extra > 0 && lang.class_details.get("root").map_or(false, |v| !v.is_empty()) {
                     self.constant(PARENT_CALLABLE.with(Clone::clone));
                     self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
-                    return self.indexing(from);
+                    return self.indexing(from, origin);
                 }
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
@@ -10326,7 +10346,19 @@ impl<'a> Compiler<'a> {
                                 if matches!(native, Some(Builtin::Bytes(_))) && self.arg_names.contains_key(&tok.lexeme) {
                                     self.read_callee(&tok.lexeme);
                                     self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
-                                } else { self.call(&tok.lexeme, argc)?; }
+                                } else {
+                                    if !lang.trace_fields.is_empty() && native.is_none() {
+                                        let row = (tok.row as u32).saturating_sub(self.before);
+                                        let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
+                                        self.put(Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32));
+                                        self.read_callee(&tok.lexeme);
+                                        self.put(self.expression_location(origin));
+                                        self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
+                                    } else {
+                                        if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
+                                        self.call(&tok.lexeme, argc)?;
+                                    }
+                                }
                             }
                         }
                         // A word standing for all the outermost bindings
@@ -10359,7 +10391,14 @@ impl<'a> Compiler<'a> {
                             self.expr(0)?;
                             self.call(&named, 1)?;
                         }
-                        _ => self.read(&tok.lexeme),
+                        _ => {
+                            if !lang.trace_fields.is_empty() && !self.writing_place && (self.reading_annotation || self.annotation_target.is_none()) && !lang.member_mark.as_ref().is_some_and(|mark| self.at_symbol(mark)) && !Lang::spells(&lang.expression_assign, &self.look().spelling()) {
+                                let row = (tok.row as u32).saturating_sub(self.before);
+                                let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
+                                self.put(Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32));
+                            }
+                            self.read(&tok.lexeme);
+                        },
                     }
                 }
             }
@@ -10395,8 +10434,8 @@ impl<'a> Compiler<'a> {
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         }
-                        self.called_on_value()?;
-                        return self.indexing(from);
+                        self.called_on_value(Some(origin))?;
+                        return self.indexing(from, origin);
                     }
                 }
                 if let Some(array) = lang.array_brackets.clone() {
@@ -10408,7 +10447,7 @@ impl<'a> Compiler<'a> {
                             let count = self.elements(&array)?;
                         self.act(Action::MakeArray, count);
                         }
-                        return self.indexing(from);
+                        return self.indexing(from, origin);
                     }
                 }
                 if let Some(map) = lang.map_brackets.clone() {
@@ -10420,7 +10459,7 @@ impl<'a> Compiler<'a> {
                             let count = self.elements(&map)?;
                         self.act(Action::MakeMap, count);
                         }
-                        return self.indexing(from);
+                        return self.indexing(from, origin);
                     }
                 }
                 // The words a language puts before whatever stopped the
@@ -10433,7 +10472,7 @@ impl<'a> Compiler<'a> {
             }
             _ => return Err("Expected an expression".to_string()),
         }
-        self.indexing(from)
+        self.indexing(from, origin)
     }
 
     /// The name a class is filed under. Where a language knows a class
@@ -10557,7 +10596,7 @@ impl<'a> Compiler<'a> {
             }
             let from = self.mark();
             self.awkward_place = false;
-            if targets { self.block_place()?; self.called_on_value()?; } else { self.expr(0)?; }
+            if targets { self.block_place()?; self.called_on_value(None)?; } else { self.expr(0)?; }
             if targets && !self.lang.syntax_members.is_empty() {
                 if let [Instr::Read(cell)] = &self.piece().instrs[from..] {
                     let named = cell.ident.to_string();
@@ -11124,7 +11163,7 @@ impl<'a> Compiler<'a> {
     /// and one call after another, `(f)(x)(y)`. What is called is held
     /// aside while the arguments are worked out, since a call wants what
     /// it calls above them.
-    fn called_on_value(&mut self) -> Res<()> {
+    fn called_on_value(&mut self, origin: Option<usize>) -> Res<()> {
         let Some(call) = self.lang.calling.clone() else { return Ok(()) };
         while self.at_symbol(&call.open) {
             let callee = self.gensym("callee");
@@ -11133,6 +11172,7 @@ impl<'a> Compiler<'a> {
             let argc = self.arguments(&call)?;
             self.read(&callee);
             self.let_go(&callee);
+            if !self.lang.trace_fields.is_empty() { if let Some(start) = origin { self.put(self.expression_location(start)); } }
             self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
         }
         Ok(())
@@ -11192,11 +11232,11 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn indexing(&mut self, from: usize) -> Res<()> {
+    fn indexing(&mut self, from: usize, origin: usize) -> Res<()> {
         let lang = self.lang;
-        if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
+        if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value(Some(origin))?; }
         loop {
-            if !lang.lambda_words.is_empty() { self.called_on_value()?; }
+            if !lang.lambda_words.is_empty() { self.called_on_value(Some(origin))?; }
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {
@@ -11260,6 +11300,7 @@ impl<'a> Compiler<'a> {
                 }
                 continue;
             }
+            let member_at = self.pos;
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
             if member && lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(named.as_str())) {
@@ -11281,6 +11322,7 @@ impl<'a> Compiler<'a> {
             }
             let annotated = self.annotation_target == Some(beyond);
             if member && lang.member_pipes && !Lang::spells(&lang.format_method, &named) && (call.is_some() || !self.writing_place && !self.on_writing() && !annotated) {
+                let member_range = self.expression_location(if self.tokens[origin].row == self.tokens[member_at].row { origin } else { member_at });
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
@@ -11294,6 +11336,7 @@ impl<'a> Compiler<'a> {
                 self.read(&held);
                 self.let_go(&held);
                 if let Some(brackets) = &call {
+                    if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
                     self.act(Action::Grab(named.as_str().into()), 1);
                     let callee = self.gensym("method_value");
                     self.write(&callee);
@@ -11301,8 +11344,9 @@ impl<'a> Compiler<'a> {
                     let argc = self.arguments_of(&named, brackets)?;
                     self.read(&callee);
                     self.let_go(&callee);
+                    if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                     self.act(Action::Invoke(named.as_str().into()), argc + 1);
-                } else { self.act(Action::Grab(named.as_str().into()), 1); }
+                } else { if !lang.trace_fields.is_empty() { self.put(member_range.clone()); } self.act(Action::Grab(named.as_str().into()), 1); }
                 let finish = self.leap();
                 self.land(fallback);
                 self.pos = resume;
@@ -11354,12 +11398,14 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 } else if native.is_none() && call.is_none() && lang.member_amiss.is_some() {
+                    if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
                     self.act(Action::Grab(Rc::from(named.as_str())), 1);
                 } else if native.is_none() && lang.member_amiss.is_some() {
                     // The receiver's kind answers to no such name, and a
                     // definition wording that complaint has no pipe to
                     // fall into: the value is told it has no such
                     // member, whatever a name of that spelling holds.
+                    if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
                     self.act(Action::MemberAmiss(Rc::from(named.as_str())), argc + 1);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
@@ -11450,6 +11496,7 @@ impl<'a> Compiler<'a> {
             }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
+            if !lang.trace_fields.is_empty() && !self.writing_place { self.put(self.expression_location(origin)); }
             self.act(Action::At, 2);
             stepped = true;
         }
@@ -11468,14 +11515,14 @@ impl<'a> Compiler<'a> {
                 self.read(&callee);
                 self.let_go(&callee);
                 self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
-                return self.indexing(from);
+                return self.indexing(from, origin);
             }
         }
         // An index may be followed by more members: `$a[0]->b`.
         let more = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m))
             || lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
         if stepped && more {
-            return self.indexing(from);
+            return self.indexing(from, origin);
         }
         Ok(())
     }
