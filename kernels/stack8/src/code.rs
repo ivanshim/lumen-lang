@@ -178,6 +178,7 @@ pub enum Action {
     Delegate,
     MakeTuple,
     Adorn(u8),
+    ContextExit,
     ContextEnter,
     AsyncContextEnter,
     SettleObjects,

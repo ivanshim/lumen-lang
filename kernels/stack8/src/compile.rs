@@ -3121,12 +3121,16 @@ impl<'a> Compiler<'a> {
                     self.act(Action::AsyncContext(false), 1);
                     leaving
                 } else {
+                    let leaving = self.gensym("leaving");
+                    self.read(&manager);
+                    self.act(Action::ContextExit, 1);
+                    self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::ContextEnter, 1);
-                    manager
+                    leaving
                 };
                 let cell = self.cell_to_write(&watched);
-                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: false, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
+                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: asynchronous, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
                 watchers.push(mark);
             }
             if self.on_keyword(&lang.with_as_words) {
@@ -10085,7 +10089,7 @@ impl<'a> Compiler<'a> {
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
                 if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
-                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
+                    && (!lang.class_builder.is_empty() || member.is_none() || self.look_ahead(2).lexeme != call.open) {
                     self.gathering().needs_class_cell = true;
                     self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();

@@ -4441,12 +4441,6 @@ impl<'a> Engine<'a> {
                 };
         if let Some(cell) = &plan.context {
             let object = self.load_cell(cell, frame)?;
-            // The watched place holds the manager or, for an asynchronous
-            // block, its leaving method already bound to it.
-            let leaving_bound = matches!(object, Value::Method(..));
-            if !matches!(object, Value::Object(_)) && !leaving_bound {
-                return ending.map(|end| match end { Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after), other => other });
-            }
             if matches!(&ending, Err(Fault::Note(_))) || matches!(&ending, Err(Fault::Thrown(value)) if !matches!(value, Value::Object(_))) {
                 return Err(self.lang.special_unready.first().cloned().unwrap_or_default().into());
             }
@@ -4454,13 +4448,7 @@ impl<'a> Engine<'a> {
                 Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class_now().clone()), value.clone(), self.trace_of(value)],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
-            let (method, receiver) = match &object {
-                Value::Method(o, p, _) => (p.clone(), Value::Object(o.clone())),
-                _ => (self.special_method(&object, 34).ok_or_else(|| self.special_fault())?, object.clone()),
-            };
             let kept = self.data.len();
-            let mut given = vec![receiver];
-            given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
             if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
@@ -4471,14 +4459,7 @@ impl<'a> Engine<'a> {
                 self.location = context_location;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
-            let left = self.invoke(&method, given).and_then(|()| {
-                if leaving_bound {
-                    let value = self.drop_top()?;
-                    let answer = self.await_value(value)?;
-                    self.data.push(answer);
-                }
-                Ok(())
-            });
+            let left = self.class_apply(object, args).map(|answer|self.data.push(answer));
             let left = self.raised_of_note(left);
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;
@@ -8897,7 +8878,7 @@ impl<'a> Engine<'a> {
                     // gives way, so the handler that catches it sees the
                     // very object with its own arguments and not the
                     // words the class and its message would spell.
-                    return match self.class_apply(method, vec![a.clone(), b.clone()]) {
+                    return match self.bind_class_value(method, Some(a.clone()), o.class_now()).and_then(|bound| self.class_apply(bound, vec![b.clone()])) {
                         Ok(value) => Ok(value),
                         Err(Fault::Note(words)) => Err(words),
                         Err(fled) => { self.carried = Some(fled); Err(String::new()) }
@@ -9396,7 +9377,7 @@ impl<'a> Engine<'a> {
                 Value::array(items).held(true)
             }
             Builtin::List if args.len() == 1 => {
-                let row = Value::array(self.special_items(&args[0])?);
+                let row = Value::array(self.list_items(&args[0], true)?);
                 // What a cursor hands out is quoted as a window's members are.
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { row.held(true) } else { row }
             },
@@ -9956,7 +9937,25 @@ impl<'a> Engine<'a> {
         if !extra.is_empty() { fields.push(("\0keys".to_string(), Value::Map(Rc::new(extra.into())))); }
     }
 
-    fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+    fn list_hint(&mut self, value:&Value)->Res<()> {
+        for slot in [10,78] {
+            let outcome=self.special_call(value,slot,Vec::new());
+            let hint=match outcome {
+                Ok(None)=>continue,
+                Ok(Some(Value::Declined(_))) if slot==78=>return Ok(()),
+                Ok(Some(number))=>number.contents(),
+                Err(error) if error.starts_with("TypeError:")=>continue,
+                Err(error)=>return Err(error),
+            };
+            let whole=match hint {Value::Flag(bit)=>Value::Small(i64::from(bit)),other=>other};
+            if !matches!(whole,Value::Small(_)|Value::Huge(_)){return Err("TypeError: length hint must be an integer".into());}
+            if whole.as_big()? < 0.into(){return Err("ValueError: length hint must be non-negative".into());}
+            return Ok(());
+        }
+        Ok(())
+    }
+    fn special_items(&mut self, value:&Value)->Res<Vec<Value>> {self.list_items(value,false)}
+    fn list_items(&mut self, value: &Value, hint:bool) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
             return Ok(self.fields_entries(o).into_iter().map(|(key, _)| match key {
                 Value::Hashed(pair) => pair.0.clone(), plain => plain,
@@ -9969,11 +9968,12 @@ impl<'a> Engine<'a> {
             return Ok(tail);
         }
         if let Some(iterator) = self.special_call(value, 15, Vec::new())? {
+            if hint {self.list_hint(value)?;}
             let mut items = Vec::new();
             while let Some(item) = self.special_step(&iterator)? { items.push(item); }
             return Ok(items);
         }
-        if let Some(places) = self.indexed_walk(value) { return self.core_members(&places); }
+        if let Some(places) = self.indexed_walk(value) { if hint {self.list_hint(value)?;} return self.core_members(&places); }
         self.comprehension_items(value)
     }
 
@@ -10024,10 +10024,10 @@ impl<'a> Engine<'a> {
                     let singleton = self.drop_top()?.contents();
                     Some(self.class_get(singleton, name, false)?)
                 },
-                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool | Builtin::ClassTool(11), _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool | Builtin::ClassTool(9..=11), _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
-                Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
+                Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(self.what_it_spells(v.clone()), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::Native(Builtin::ClassTool(9..=11),_))) => {self.drop_top()?; Some(Value::Flag(true))},
                 Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     if *builtin == Builtin::SortOf {
@@ -10475,7 +10475,7 @@ impl<'a> Engine<'a> {
                     self.data.push(answer);
                     return Ok(());
                 }
-                let v = Self::worth_of(&v).filter(|n| matches!(n, Value::Complex(_))).unwrap_or(v);
+                let v = Self::worth_of(&v).filter(|n| matches!(n, Value::Complex(_) | Value::Small(_) | Value::Huge(_) | Value::Real(_))).unwrap_or(v);
                 match v {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
@@ -12250,6 +12250,12 @@ impl<'a> Engine<'a> {
                     let value = told?.ok_or_else(|| self.special_fault())?;
                     self.await_value(value)?
                 }
+            }
+            Action::ContextExit => {
+                let manager=self.drop_top()?.contents();
+                let Value::Object(instance)=&manager else{return Err(self.unmanaged(&manager.core_kind()).into())};
+                let slot=self.special_value(&manager,34).ok_or_else(||self.unmanaged(&instance.class_now().name))?;
+                self.bind_class_value(slot,Some(manager.clone()),instance.class_now())?
             }
             Action::ContextEnter => {
                 let object = self.drop_top()?;
@@ -18343,7 +18349,10 @@ impl<'a> Engine<'a> {
                 }
                 answer
             },
-            Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
+            Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|fault| match fault {
+                Fault::Note(words)=>words,
+                raised=>{self.carried=Some(raised);String::new()},
+            }),
             Builtin::Echo => {
                 arity(1)?;
                 if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
@@ -22420,7 +22429,10 @@ impl Engine<'_> {
         // questions go the one road the class tools use, so that unions,
         // `__class__` overrides and `__bases__` lines answer alike.
         if self.fuller_classes() {
-            return self.beneath(value, kind, false).map_err(|fault| fault.told(&self.wording()));
+            return self.beneath(value, kind, false).map_err(|fault| match fault {
+                Fault::Note(words)=>words,
+                raised=>{self.carried=Some(raised);String::new()},
+            });
         }
         if matches!(kind.contents(), Value::Object(o) if o.class_now().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());

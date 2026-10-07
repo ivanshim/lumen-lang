@@ -9655,7 +9655,7 @@ impl<'a> Builder<'a> {
                         invoke(callable, extra)
                     }
                     (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
-                        && (member.is_none() || self.glance(2).lexeme != open) => {
+                        && (table.has_any("ext.stmt.class.builder") || member.is_none() || self.glance(2).lexeme != open) => {
                         self.parts().needs_class_cell = true;
                         self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();

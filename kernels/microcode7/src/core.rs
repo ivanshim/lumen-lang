@@ -73,6 +73,10 @@ impl Value {
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            Self::Wrapped(32, record) => match record.as_slice() {
+                [Self::Text(field), _] if field.as_ref() != "__weakref__" => "member_descriptor",
+                _ => "getset_descriptor",
+            },
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",

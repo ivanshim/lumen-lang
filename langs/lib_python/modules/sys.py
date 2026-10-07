@@ -354,12 +354,19 @@ def getsizeof(value, default=None):
         if base is object or base in _sizeof_bases:
             break
         if '__sizeof__' in base.__dict__:
-            measured = type(value).__sizeof__(value)
+            method = base.__dict__['__sizeof__']
+            binder = getattr(type(method), '__get__', None)
+            if binder is not None:
+                method = binder(method, value, type(value))
+            try:
+                measured = method()
+            except TypeError:
+                if default is not None:
+                    return default
+                raise
             if not isinstance(measured, int):
                 raise TypeError('__sizeof__() should return int, got ' + type(measured).__name__)
             if measured < 0:
-                if default is not None:
-                    return default
                 raise ValueError('__sizeof__() should return >= 0')
             return measured
     # A rough count of the value's payload and its enclosing record.

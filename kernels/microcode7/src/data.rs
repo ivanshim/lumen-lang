@@ -1511,6 +1511,12 @@ impl Value {
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
             // descriptor that carries it.
+            Value::Wrapped(32, layout) => {
+                if let [Value::Text(field), Value::Blueprint(class), ..] = layout.as_slice() {
+                    let label = match (layout.len(), field.as_ref()) { (2, name) if name != "__weakref__" => "member", _ => "attribute" };
+                    format!("<{label} '{field}' of '{}' objects>", class.name)
+                } else { "<member wrapper>".to_string() }
+            },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1520,8 +1526,8 @@ impl Value {
             },
             // Both wrapper kinds are written as the wrapping builtin
             // around the routine they hold, as CPython writes them.
-            Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
-            Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
+            Value::Wrapped(4, parts) => format!("<staticmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
+            Value::Wrapped(5, parts) => format!("<classmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

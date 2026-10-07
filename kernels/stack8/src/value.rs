@@ -1647,6 +1647,10 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
+            Value::Adapter(w) if w.0 == 16 => match w.1.as_slice() {
+                [Value::Text(name), Value::Class(owner), ..] => format!("<{} '{}' of '{}' objects>", if w.1.len()>2 || name.as_ref()=="__weakref__" {"attribute"} else {"member"}, name, owner.name),
+                _ => "<member wrapper>".to_owned(),
+            },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1657,8 +1661,8 @@ impl Value {
             // A routine wrapped as a static or class method reads as the
             // wrapping builtin around the routine it holds, as CPython
             // writes it.
-            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
-            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
+            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
+            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
                 .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),

@@ -7501,7 +7501,7 @@ impl<'a> Machine<'a> {
                             Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
                                 return self.read_class_member(values[0].settled(), &values[1].bare(), false);
                             },
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful | Prim::ClassWork(11), _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful | Prim::ClassWork(9..=11), _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -10899,8 +10899,7 @@ impl<'a> Machine<'a> {
                     if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
                 }
                 for item in positional.iter() { self.written_surrogate_check(item)?; }
-                let writer = self.attribute(&sink, &route[2])
-                    .ok_or_else(|| self.member_missing(&sink, &route[2]))?;
+                let writer = self.read_class_member(sink.clone(), &route[2], false)?;
                 let mut first = true;
                 for item in positional {
                     if !first { self.apply_held(writer.clone(), vec![Value::text(&join)])?; }
@@ -14816,8 +14815,30 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn object_members(&mut self, subject: &Value) -> Result<Vec<Value>, String> {
-        if let Some(under) = self.underlying_unless(subject, &[15]) { return self.object_members(&under); }
+    fn reserve_hint(&mut self, subject:&Value)->Result<(),String> {
+        let length=self.ask_special(subject,10,&[]);
+        let candidate=match length {
+            Ok(Some(value))=>Some(value),
+            Ok(None)=>None,
+            Err(message) if message.starts_with("TypeError:")=>None,
+            Err(message)=>return Err(message),
+        };
+        let value=if let Some(value)=candidate {value} else {
+            match self.ask_special(subject,78,&[]) {
+                Ok(Some(Value::Refusal(_)))|Ok(None)=>return Ok(()),
+                Ok(Some(value))=>value,
+                Err(message) if message.starts_with("TypeError:")=>return Ok(()),
+                Err(message)=>return Err(message),
+            }
+        }.settled();
+        let value=if let Value::Flag(bit)=value {Value::Small(i64::from(bit))}else{value};
+        if !matches!(value,Value::Small(_)|Value::Huge(_)){return Err("TypeError: length hint must be an integer".to_owned());}
+        if value.as_big()? < 0.into(){return Err("ValueError: length hint must be non-negative".to_owned());}
+        Ok(())
+    }
+    fn object_members(&mut self, subject:&Value)->Result<Vec<Value>,String> {self.list_members(subject,false)}
+    fn list_members(&mut self, subject: &Value, hinted:bool) -> Result<Vec<Value>, String> {
+        if let Some(under) = self.underlying_unless(subject, &[15]) { return self.list_members(&under,hinted); }
         match subject {
             Value::Attributes(t) => {
                 Ok(self.attribute_entries(t).into_iter().map(|(key, _)| match key {
@@ -14831,6 +14852,7 @@ impl<'a> Machine<'a> {
             }
             Value::Thing(_) => {
                 let other = match self.ask_special(subject, 15, &[])? { Some(walk) => walk, None => self.placed_walk(subject).ok_or_else(|| self.bad_answer())? };
+                if hinted {self.reserve_hint(subject)?;}
                 let mut members = Vec::new();
                 while let Some(value) = self.advance_object(&other)? { members.push(value); }
                 Ok(members)
@@ -15242,7 +15264,8 @@ impl<'a> Machine<'a> {
                 // while the subscript answers with words, then lifted
                 // again by the caller, so a handler catches the object
                 // itself with the arguments it was made with.
-                return match self.apply_class_member(method, vec![subject.clone(), key.clone()]) {
+                let called = self.member_binding(method, Some(subject.clone()), t.blueprint());
+                return match called.and_then(|bound| self.apply_class_member(bound, vec![key.clone()])) {
                     Ok(value) => Ok(Some(value)),
                     Err(Escape::Error(words)) => Err(words),
                     Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
@@ -15300,7 +15323,13 @@ impl<'a> Machine<'a> {
         if free_at != [usize::MAX] {
             let mut settled = Vec::with_capacity(operands.len());
             let mut changed = false;
-            for operand in operands {
+            for (position, operand) in operands.iter().enumerate() {
+                // Mapping keys retain subclass hash and equality protocols.
+                let mapping_key = matches!(operation, Prim::At | Prim::Fetch) && position == 1
+                    && matches!(operands[0].settled(), Value::Dict(_))
+                    || matches!(operation, Prim::Contains | Prim::Absent) && position == 0
+                    && operands.get(1).is_some_and(|map| matches!(map.settled(), Value::Dict(_)));
+                if mapping_key { settled.push(operand.clone()); continue; }
                 match self.underlying_unless(operand, free_at) {
                     // Where a kind leads with its own name the thing is
                     // written by its blueprint, so there the worth is
@@ -15416,7 +15445,7 @@ impl<'a> Machine<'a> {
                         None => return Ok(None),
                     },
                     None if index == 41 => match Self::underlying(subject) {
-                        Some(number @ Value::Complex(_)) => number,
+                        Some(number @ (Value::Complex(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_))) => number,
                         _ => return Ok(None),
                     },
                     // Without a __float__, a thing standing for a whole
@@ -15826,7 +15855,7 @@ impl<'a> Machine<'a> {
                 return Ok(None);
             }
             (Prim::Invert, [one]) => Value::Flag(!self.object_truth(one)?),
-            (Prim::Negate, [one]) if self.appointed(one, 25).is_some() => self.ask_special(one, 25, &[])?.unwrap(),
+            (Prim::Negate, [one]) if self.appointment(one, 25).is_some() => self.ask_special(one, 25, &[])?.unwrap(),
             (Prim::Quoted, [one]) => self.converted_string(one, true)?,
             // The ascii builtin writes what the quoting builtin writes
             // and then puts every letter outside ASCII into the escape
@@ -15905,7 +15934,7 @@ impl<'a> Machine<'a> {
             }
             (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
-                let result = Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?));
+                let result = Value::Vector(crate::tuples::Sequence::plain(self.list_members(one,true)?));
                 // Members an iterator hands out are kept quoted, as a window's are.
                 if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_) | Value::Generator(_)) { result.keep(true) } else { result }
             },
@@ -18357,7 +18386,7 @@ impl<'a> Machine<'a> {
                 // A kind read as a class answers for its own making, the
                 // way a class does, whatever word spells the kind.
                 if v[1].bare() == self.rules.detail_allocate && matches!(&v[0], Value::Intrinsic(op, _) if op.names_a_kind()) { return Ok(Value::Flag(true)); }
-                if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
+                if self.has_class_order() && matches!(self.what_it_spells(v[0].clone()),Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)|Value::Intrinsic(Prim::ClassWork(9..=11),_)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
                 if self.integer_attribute(&v[0], &word).is_some()
                     || matches!(v[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.table.spells("ext.builtin.bytes.from_int", &word) {
@@ -27000,7 +27029,8 @@ impl Machine<'_> {
         // questions go the one road the class tools use, so that unions,
         // `__class__` overrides and `__bases__` lines answer alike.
         if self.has_class_order() {
-            return self.is_beneath(item, expected, false).map_err(|e| self.suspension_fault(e));
+            let membership=self.is_beneath(item, expected, false);
+            return membership.map_err(|escape|self.carried_native_fault(escape));
         }
         if matches!(expected.settled(), Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned());
