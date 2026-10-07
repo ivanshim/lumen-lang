@@ -53,6 +53,11 @@ pub struct Registry {
     pub interactive: bool,
     pub allow_top_level_await: bool,
     pub top_level_coroutine: bool,
+    /// The optimization level the caller asked of `compile`: below one
+    /// keeps docstrings, assertions and `__debug__` as written; one
+    /// drops assertions and settles `__debug__` false; two drops
+    /// docstrings as well.
+    pub optimize: i64,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
@@ -456,6 +461,7 @@ pub fn compile_within(
     if lang.closes_over {
         let mut survey = Registry::default();
         survey.allow_top_level_await = table.allow_top_level_await;
+        survey.optimize = table.optimize;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -1167,6 +1173,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        if name == "__debug__" && self.registry.optimize >= 1 && !self.writing_place {
+            self.constant(Value::Flag(false));
+            return;
+        }
         if let Some((owner, members)) = &self.annotation_namespace {
             if self.reading_annotation && members.contains(name) {
                 let owner = owner.clone();
@@ -1706,7 +1716,7 @@ impl<'a> Compiler<'a> {
             quoted = true;
             literal.push_str(&leading.next().unwrap().lexeme);
         }
-        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
+        let doc = if self.registry.optimize >= 2 { None } else { (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal) };
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -2987,6 +2997,7 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
+                let assert_from = self.mark();
                 if !lang.syntax_members.is_empty() {
                     let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
                     if !named.is_empty() {
@@ -3005,6 +3016,14 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 self.expr(0)?;
+                if self.registry.optimize >= 1 {
+                    if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
+                        self.take();
+                        self.expr(0)?;
+                    }
+                    self.piece().instrs.truncate(assert_from);
+                    return Ok(());
+                }
                 self.act(Action::Not, 1);
                 let passed = self.skip();
                 if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {

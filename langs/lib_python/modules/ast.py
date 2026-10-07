@@ -525,6 +525,37 @@ class Dict(expr):
 class Set(expr):
     _fields = ('elts',)
 
+class Pass(stmt):
+    _fields = ()
+
+class Return(stmt):
+    _fields = ('value',)
+
+class Assert(stmt):
+    _fields = ('test', 'msg')
+
+class If(stmt):
+    _fields = ('test', 'body', 'orelse')
+
+class Try(stmt):
+    _fields = ('body', 'handlers', 'orelse', 'finalbody')
+
+class ExceptHandler(AST):
+    _fields = ('type', 'name', 'body')
+
+class FunctionDef(stmt):
+    _fields = ('name', 'args', 'body', 'decorator_list', 'returns',
+               'type_comment', 'type_params')
+
+class arguments(AST):
+    _fields = ('posonlyargs', 'args', 'vararg', 'kwonlyargs',
+               'kw_defaults', 'kwarg', 'defaults')
+    _attributes = ()
+
+class arg(AST):
+    _fields = ('arg', 'annotation', 'type_comment')
+    _attributes = ()
+
 class expr_context(AST):
     _attributes = ()
 
@@ -1086,28 +1117,55 @@ class _Parser:
         return self.pop()
 
     def parse_module(self):
+        return Module(body=self.parse_block(0), type_ignores=[])
+
+    def parse_block(self, indent):
+        # A block is the run of statements whose first token stands at
+        # the block's own column; a token further left belongs to an
+        # enclosing block, one further right is an error.
         body = []
         while True:
             while self.peek().kind == 'newline':
                 self.pop()
-            if self.peek().kind == 'end':
-                break
-            body.append(self.parse_stmt())
             tok = self.peek()
-            if tok.kind == 'end':
+            if tok.kind == 'end' or tok.scol < indent:
                 break
-            if tok.kind == 'newline':
-                continue
-            if self.at_op(';'):
-                self.pop()
-                continue
-            _syntax('invalid syntax')
-        return Module(body=body, type_ignores=[])
+            if tok.scol > indent:
+                _syntax('unexpected indent')
+            body.append(self.parse_stmt())
+            if not isinstance(body[-1], (If, Try, FunctionDef)):
+                while self.at_op(';'):
+                    self.pop()
+                    if self.peek().kind in ('newline', 'end'):
+                        break
+                    body.append(self.parse_simple_stmt())
+        return body
 
     def parse_stmt(self):
         tok = self.peek()
-        if tok.kind == 'name' and tok.text in _STMT_WORDS:
-            _no_tree()
+        if tok.kind == 'name':
+            word = tok.text
+            if word == 'def':
+                return self.parse_def()
+            if word == 'if':
+                return self.parse_if()
+            if word == 'try':
+                return self.parse_try()
+            if word == 'assert':
+                return self.parse_assert()
+            if word == 'return':
+                return self.parse_return()
+            if word == 'pass':
+                self.pop()
+                return Pass(lineno=tok.srow, col_offset=tok.scol,
+                            end_lineno=tok.erow, end_col_offset=tok.ecol)
+            if word in ('elif', 'else', 'except', 'finally'):
+                _syntax('invalid syntax')
+            if word in _STMT_WORDS:
+                _no_tree()
+        return self.parse_simple_stmt()
+
+    def parse_simple_stmt(self):
         node, ls, le = self.parse_expr(True)
         if self.at_op('='):
             pairs = [(node, ls, le)]
@@ -1125,6 +1183,234 @@ class _Parser:
                           end_lineno=ve[0], end_col_offset=ve[1])
         return Expr(value=node, lineno=ls[0], col_offset=ls[1],
                     end_lineno=le[0], end_col_offset=le[1])
+
+    def expect_name(self, word):
+        tok = self.peek()
+        if tok.kind != 'name' or tok.text != word:
+            _syntax('invalid syntax')
+        return self.pop()
+
+    def tail_of(self, body, fallback):
+        if body:
+            last = body[-1]
+            if getattr(last, 'end_lineno', None) is not None:
+                return (last.end_lineno, last.end_col_offset)
+        return fallback
+
+    def parse_suite(self, parent_col):
+        # The ':' is already read. Either the rest of the line is the
+        # suite -- simple statements alone -- or the suite is the run
+        # of statements one column deeper.
+        if self.peek().kind != 'newline':
+            body = [self.parse_simple_stmt()]
+            while self.at_op(';'):
+                self.pop()
+                if self.peek().kind in ('newline', 'end'):
+                    break
+                body.append(self.parse_simple_stmt())
+            return body
+        while self.peek().kind == 'newline':
+            self.pop()
+        tok = self.peek()
+        if tok.kind == 'end' or tok.scol <= parent_col:
+            _syntax('expected an indented block')
+        return self.parse_block(tok.scol)
+
+    def parse_if(self):
+        tok = self.expect_name('if')
+        test, ts, te = self.parse_expr(False)
+        self.expect_op(':')
+        body = self.parse_suite(tok.scol)
+        orelse = self.parse_else(tok.scol)
+        end = self.tail_of(orelse or body, te)
+        return If(test=test, body=body, orelse=orelse,
+                  lineno=tok.srow, col_offset=tok.scol,
+                  end_lineno=end[0], end_col_offset=end[1])
+
+    def parse_else(self, parent_col):
+        while self.peek().kind == 'newline':
+            self.pop()
+        tok = self.peek()
+        if self.at_name('elif') and tok.scol == parent_col:
+            start = self.pop()
+            test, ts, te = self.parse_expr(False)
+            self.expect_op(':')
+            body = self.parse_suite(parent_col)
+            orelse = self.parse_else(parent_col)
+            end = self.tail_of(orelse or body, te)
+            return [If(test=test, body=body, orelse=orelse,
+                       lineno=start.srow, col_offset=start.scol,
+                       end_lineno=end[0], end_col_offset=end[1])]
+        if self.at_name('else') and tok.scol == parent_col:
+            self.pop()
+            self.expect_op(':')
+            return self.parse_suite(parent_col)
+        return []
+
+    def parse_try(self):
+        tok = self.expect_name('try')
+        self.expect_op(':')
+        body = self.parse_suite(tok.scol)
+        handlers = []
+        orelse = []
+        finalbody = []
+        while True:
+            while self.peek().kind == 'newline':
+                self.pop()
+            head = self.peek()
+            if self.at_name('except') and head.scol == tok.scol:
+                handlers.append(self.parse_except(tok.scol))
+                continue
+            break
+        while self.peek().kind == 'newline':
+            self.pop()
+        if self.at_name('else') and self.peek().scol == tok.scol:
+            self.pop()
+            self.expect_op(':')
+            orelse = self.parse_suite(tok.scol)
+            while self.peek().kind == 'newline':
+                self.pop()
+        if self.at_name('finally') and self.peek().scol == tok.scol:
+            self.pop()
+            self.expect_op(':')
+            finalbody = self.parse_suite(tok.scol)
+        if not handlers and not orelse and not finalbody:
+            _syntax('invalid syntax')
+        end = self.tail_of(finalbody or orelse or body, (tok.erow, tok.ecol))
+        return Try(body=body, handlers=handlers, orelse=orelse,
+                   finalbody=finalbody, lineno=tok.srow, col_offset=tok.scol,
+                   end_lineno=end[0], end_col_offset=end[1])
+
+    def parse_except(self, parent_col):
+        tok = self.expect_name('except')
+        type_ = None
+        name = None
+        if not self.at_op(':'):
+            type_, ts, te = self.parse_expr(False)
+            if self.at_name('as'):
+                self.pop()
+                word = self.pop()
+                if word.kind != 'name':
+                    _syntax('invalid syntax')
+                name = word.text
+        self.expect_op(':')
+        body = self.parse_suite(parent_col)
+        end = self.tail_of(body, (tok.erow, tok.ecol))
+        return ExceptHandler(type=type_, name=name, body=body,
+                             lineno=tok.srow, col_offset=tok.scol,
+                             end_lineno=end[0], end_col_offset=end[1])
+
+    def parse_assert(self):
+        tok = self.expect_name('assert')
+        test, ts, te = self.parse_or()
+        msg = None
+        if self.at_op(','):
+            self.pop()
+            msg, ms, te = self.parse_or()
+        return Assert(test=test, msg=msg, lineno=tok.srow,
+                      col_offset=tok.scol, end_lineno=te[0],
+                      end_col_offset=te[1])
+
+    def parse_return(self):
+        tok = self.expect_name('return')
+        value = None
+        le = (tok.erow, tok.ecol)
+        if self.peek().kind not in ('newline', 'end') and not self.at_op(';'):
+            value, vs, le = self.parse_expr(True)
+        return Return(value=value, lineno=tok.srow, col_offset=tok.scol,
+                      end_lineno=le[0], end_col_offset=le[1])
+
+    def parse_def(self):
+        tok = self.expect_name('def')
+        word = self.pop()
+        if word.kind != 'name':
+            _syntax('invalid syntax')
+        name = word.text
+        self.expect_op('(')
+        args = self.parse_params()
+        self.expect_op(')')
+        returns = None
+        if self.at_op('->'):
+            self.pop()
+            returns, rs, re = self.parse_or()
+        self.expect_op(':')
+        body = self.parse_suite(tok.scol)
+        end = self.tail_of(body, (tok.erow, tok.ecol))
+        return FunctionDef(name=name, args=args, body=body,
+                           decorator_list=[], returns=returns,
+                           type_comment=None, type_params=[],
+                           lineno=tok.srow, col_offset=tok.scol,
+                           end_lineno=end[0], end_col_offset=end[1])
+
+    def parse_params(self):
+        posonlyargs = []
+        args = []
+        kwonlyargs = []
+        kw_defaults = []
+        defaults = []
+        vararg = None
+        kwarg = None
+        current = args
+        seen_star = False
+        while not self.at_op(')'):
+            if self.at_op('/'):
+                self.pop()
+                posonlyargs = current
+                args = []
+                current = args
+                if self.at_op(','):
+                    self.pop()
+                    continue
+                break
+            if self.at_op('*') or self.at_op('**'):
+                star = self.pop()
+                if star.text == '**':
+                    word = self.pop()
+                    if word.kind != 'name':
+                        _syntax('invalid syntax')
+                    kwarg = arg(arg=word.text, annotation=None,
+                                type_comment=None)
+                    if self.at_op(','):
+                        self.pop()
+                        continue
+                    break
+                seen_star = True
+                current = kwonlyargs
+                if self.peek().kind == 'name' and self.peek().text not in _STMT_WORDS:
+                    word = self.pop()
+                    vararg = arg(arg=word.text, annotation=None,
+                                 type_comment=None)
+                if self.at_op(','):
+                    self.pop()
+                    continue
+                break
+            word = self.pop()
+            if word.kind != 'name' or word.text in _STMT_WORDS:
+                _syntax('invalid syntax')
+            node = arg(arg=word.text, annotation=None, type_comment=None,
+                       lineno=word.srow, col_offset=word.scol,
+                       end_lineno=word.erow, end_col_offset=word.ecol)
+            if self.at_op(':'):
+                self.pop()
+                node.annotation = self.parse_or()[0]
+            default = None
+            if self.at_op('='):
+                self.pop()
+                default = self.parse_expr(False)[0]
+            if seen_star:
+                kwonlyargs.append(node)
+                kw_defaults.append(default)
+            else:
+                current.append(node)
+                if default is not None:
+                    defaults.append(default)
+            if self.at_op(','):
+                self.pop()
+                continue
+            break
+        return arguments(posonlyargs=posonlyargs, args=args, vararg=vararg,
+                         kwonlyargs=kwonlyargs, kw_defaults=kw_defaults,
+                         kwarg=kwarg, defaults=defaults)
 
     def set_store(self, node):
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
