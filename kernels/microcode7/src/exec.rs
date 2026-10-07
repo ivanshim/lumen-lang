@@ -508,6 +508,12 @@ pub struct Machine<'a> {
     context_storage: crate::context::Bindings,
     rules: ExecutionRules<'a>,
     active_trace: Option<Rc<Thing>>,
+    /// The program's own tracing hook, set by sys.settrace and called on
+    /// a call, on a line and on a return while it stands.
+    global_trace: Option<Value>,
+    /// Whether a tracing hook is running now: the hook's own frames are
+    /// never handed to it, so the tracing ends where it begins.
+    tracing: bool,
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
@@ -1985,6 +1991,8 @@ impl<'a> Machine<'a> {
             class_children: RefCell::new(HashMap::new()),
             row: 0,
             active_trace: None,
+            global_trace: None,
+            tracing: false,
             gathering_locals: None,
             extent: None,
             activation_kind: None,
@@ -4811,6 +4819,7 @@ impl<'a> Machine<'a> {
                         self.stand_at_instruction(at as i64);
                         self.row = row;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
+                        if self.global_trace.is_some() { self.trace_line()?; }
                         // A statement reached inside a sleeping walk is
                         // an edge all the same: a signal waiting is
                         // taken up here.
@@ -5376,6 +5385,56 @@ impl<'a> Machine<'a> {
         handle
     }
 
+    /// Hand a frame to the program's hook at a call, keeping on the
+    /// frame the local hook the call event answers with.
+    fn trace_enter(&mut self, frame: &Rc<Thing>) -> Res<()> {
+        if self.tracing || self.rules.trace_words.len() <= 15 { return Ok(()); }
+        let Some(hook) = self.global_trace.clone() else { return Ok(()) };
+        let marker = Value::Thing(frame.clone());
+        self.tracing = true;
+        let answer = self.apply_class_member(hook, vec![marker, Value::text("call"), Value::Nil]);
+        self.tracing = false;
+        self.keep_local_trace(frame, answer?);
+        Ok(())
+    }
+
+    /// Hand a line about to run to the hook the frame itself keeps.
+    fn trace_line(&mut self) -> Res<()> {
+        if self.tracing || self.global_trace.is_none() || self.rules.trace_words.len() <= 15 { return Ok(()); }
+        let Some(frame) = self.active_trace.clone() else { return Ok(()) };
+        let Some(hook) = self.local_trace(&frame) else { return Ok(()) };
+        let marker = Value::Thing(frame.clone());
+        self.tracing = true;
+        let answer = self.apply_class_member(hook, vec![marker, Value::text("line"), Value::Nil]);
+        self.tracing = false;
+        answer?;
+        Ok(())
+    }
+
+    /// Hand a routine's answer to the frame's own hook as it leaves.
+    fn trace_return(&mut self, frame: &Rc<Thing>, worth: Value) -> Res<()> {
+        if self.tracing || self.global_trace.is_none() || self.rules.trace_words.len() <= 15 { return Ok(()); }
+        let Some(hook) = self.local_trace(frame) else { return Ok(()) };
+        let marker = Value::Thing(frame.clone());
+        self.tracing = true;
+        let answer = self.apply_class_member(hook, vec![marker, Value::text("return"), worth]);
+        self.tracing = false;
+        answer?;
+        Ok(())
+    }
+
+    fn local_trace(&self, frame: &Rc<Thing>) -> Option<Value> {
+        let held = frame.holds.borrow().iter().find(|(word, _)| word == "\0trace").map(|(_, held)| held.settled()).unwrap_or(Value::Nil);
+        if matches!(held, Value::Nil | Value::Unset) { None } else { Some(held) }
+    }
+
+    fn keep_local_trace(&mut self, frame: &Rc<Thing>, worth: Value) {
+        let worth = worth.settled();
+        let mut holds = frame.holds.borrow_mut();
+        if let Some((_, held)) = holds.iter_mut().find(|(word, _)| word == "\0trace") { *held = worth; }
+        else { holds.push(("\0trace".to_string(), worth)); }
+    }
+
     fn activation(&mut self, routine: &Rc<Routine>, environment: &Rc<Env>, parent: Option<Rc<Thing>>) -> Option<Rc<Thing>> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
@@ -5736,6 +5795,7 @@ impl<'a> Machine<'a> {
                 self.row = *row;
                 if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
                 self.update_watched_locals();
+                if self.global_trace.is_some() { self.trace_line()?; }
                 // A statement reached is a fault gone by: whatever calls
                 // an earlier one was raised under are none of its
                 // business.
@@ -11953,7 +12013,12 @@ impl<'a> Machine<'a> {
         let parent_extent = self.extent;
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
-        if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        if mine {
+            self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) };
+            if self.global_trace.is_some() {
+                if let Some(entered) = self.active_trace.clone() { self.trace_enter(&entered)?; }
+            }
+        }
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
@@ -12087,7 +12152,7 @@ impl<'a> Machine<'a> {
                 body_namespace = Some(Value::tuple(vec![book, cell, Value::Flag(*protocol)]));
             }
         }
-        let outcome = self.traced_result(outcome);
+        let mut outcome = self.traced_result(outcome);
         if outcome.is_ok() && self.body_namespace.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, &program)) {
             let captured = body_namespace.unwrap_or_else(|| {
                 let entries = program.idents.iter().zip(frame.cells.borrow().iter())
@@ -12098,7 +12163,15 @@ impl<'a> Machine<'a> {
             if let Some((_, namespace)) = &mut self.body_namespace { *namespace = Some(captured); }
         }
         self.update_watched_locals();
-        if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
+        if mine {
+            if self.global_trace.is_some() {
+                if let (Some(left_behind), Ok(worth)) = (self.active_trace.clone(), &outcome) {
+                    if let Err(fault) = self.trace_return(&left_behind, worth.clone()) { outcome = Err(fault); }
+                }
+            }
+            self.active_trace = caller_trace;
+            self.extent = parent_extent;
+        }
         self.gathering_locals = earlier_gathering;
         self.update_watched_locals();
         if self.rules.has_any_ext_builtin_exceptions_traceback { self.row = was_on_row; }
@@ -18287,6 +18360,16 @@ impl<'a> Machine<'a> {
                     Some(Value::Bound(code, _)) => self.routine_module(&code),
                     _ => return Err(String::from("ValueError: call stack is not deep enough")),
                 }
+            }
+            Prim::SetTrace => {
+                n(1)?;
+                let wanted = v[0].settled();
+                self.global_trace = if matches!(wanted, Value::Nil | Value::Unset) { None } else { Some(wanted) };
+                Value::Nil
+            }
+            Prim::GetTrace => {
+                n(0)?;
+                self.global_trace.clone().unwrap_or(Value::Nil)
             }
             Prim::ClassSeal => {
                 n(1)?;

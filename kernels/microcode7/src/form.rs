@@ -78,6 +78,8 @@ pub enum Prim {
     ProgramNames,
     /// The name of the module the routine a frame runs was written in.
     FrameModule,
+    SetTrace,
+    GetTrace,
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
     BringModule,

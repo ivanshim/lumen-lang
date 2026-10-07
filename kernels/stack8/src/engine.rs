@@ -97,6 +97,12 @@ fn watch_host_signals() {
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
+    /// The program's own tracing hook, set by sys.settrace and called on
+    /// a call, on a line and on a return while it stands.
+    global_trace: Option<Value>,
+    /// Whether a tracing hook is running now: the hook's own frames are
+    /// never handed to it, so the tracing ends where it begins.
+    tracing: bool,
     running_routine: Option<Rc<Routine>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
@@ -177,10 +183,12 @@ pub struct Engine<'a> {
     wildcard_active: bool,
     changed_builtin_scopes: std::collections::HashSet<Rc<str>>,
     changed_builtins: std::collections::HashSet<String>,
-    /// Whether the program's own globals dictionary has been written
-    /// through since it was handed out: a name it gained then stands
-    /// over a builtin of the same spelling.
-    outer_globals_changed: bool,
+    /// The file the run began from, set once the program's own
+    /// outermost dictionary has been written through. A name that
+    /// dictionary holds stands over a builtin of the same spelling,
+    /// but only for code written in that file, whose globals the
+    /// dictionary is.
+    outer_globals_source: Option<Rc<str>>,
     wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
     module_slots: HashMap<Rc<str>, (usize, String)>,
     module_books: Vec<(String, Rc<RefCell<Value>>)>,
@@ -1551,6 +1559,8 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            global_trace: None,
+            tracing: false,
             running_routine: None,
             inline_comp: None,
             location: None,
@@ -1618,7 +1628,7 @@ impl<'a> Engine<'a> {
             wildcard_active: false,
             changed_builtin_scopes: std::collections::HashSet::new(),
             changed_builtins: std::collections::HashSet::new(),
-            outer_globals_changed: false,
+            outer_globals_source: None,
             native_stack_start: &lang as *const &Lang as usize,
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
@@ -4219,6 +4229,9 @@ impl<'a> Engine<'a> {
         });
         let caller_frame = self.trace_frame.take();
         self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
+        if self.global_trace.is_some() {
+            if let Some(entered) = self.trace_frame.clone() { self.trace_enter(&entered)?; }
+        }
         let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
             caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
         } else { None });
@@ -4269,6 +4282,12 @@ impl<'a> Engine<'a> {
         if outcome.is_ok() && self.class_body_capture.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, program)) {
             let namespace = match body_namespace { Some(namespace) => namespace, None => self.names_about(program, &frame, Builtin::NearNames)? };
             if let Some((_, captured)) = &mut self.class_body_capture { *captured = Some(namespace); }
+        }
+        if outcome.is_ok() && self.global_trace.is_some() {
+            if let Some(left_behind) = self.trace_frame.clone() {
+                let worth = self.data.last().cloned().unwrap_or(Value::Null);
+                if let Err(fault) = self.trace_return(&left_behind, worth) { outcome = Err(fault); }
+            }
         }
         self.trace_frame = caller_frame;
         self.inline_comp = previous_comp;
@@ -5281,6 +5300,56 @@ impl<'a> Engine<'a> {
         Value::Adapter(handle)
     }
 
+    /// Hand a frame to the program's hook at a call, keeping on the
+    /// frame the local hook the call event answers with.
+    fn trace_enter(&mut self, frame: &Rc<Instance>) -> Flow<()> {
+        if self.tracing || self.lang.trace_fields.is_empty() { return Ok(()); }
+        let Some(program) = self.global_trace.clone() else { return Ok(()) };
+        let marker = Value::Object(frame.clone());
+        self.tracing = true;
+        let answer = self.class_apply(program, vec![marker, Value::text("call"), Value::Null]);
+        self.tracing = false;
+        self.keep_local_trace(frame, answer?);
+        Ok(())
+    }
+
+    /// Hand a line about to run to the hook the frame itself keeps.
+    fn trace_line(&mut self) -> Flow<()> {
+        if self.tracing || self.global_trace.is_none() || self.lang.trace_fields.is_empty() { return Ok(()); }
+        let Some(frame) = self.trace_frame.clone() else { return Ok(()) };
+        let Some(program) = self.local_trace(&frame) else { return Ok(()) };
+        let marker = Value::Object(frame.clone());
+        self.tracing = true;
+        let answer = self.class_apply(program, vec![marker, Value::text("line"), Value::Null]);
+        self.tracing = false;
+        answer?;
+        Ok(())
+    }
+
+    /// Hand a routine's answer to the frame's own hook as it leaves.
+    fn trace_return(&mut self, frame: &Rc<Instance>, worth: Value) -> Flow<()> {
+        if self.tracing || self.global_trace.is_none() || self.lang.trace_fields.is_empty() { return Ok(()); }
+        let Some(program) = self.local_trace(frame) else { return Ok(()) };
+        let marker = Value::Object(frame.clone());
+        self.tracing = true;
+        let answer = self.class_apply(program, vec![marker, Value::text("return"), worth]);
+        self.tracing = false;
+        answer?;
+        Ok(())
+    }
+
+    fn local_trace(&self, frame: &Rc<Instance>) -> Option<Value> {
+        let held = frame.fields.borrow().iter().find(|(name, _)| name == "\0trace").map(|(_, held)| held.contents()).unwrap_or(Value::Null);
+        if matches!(held, Value::Blank | Value::Null) { None } else { Some(held) }
+    }
+
+    fn keep_local_trace(&mut self, frame: &Rc<Instance>, worth: Value) {
+        let worth = worth.contents();
+        let mut fields = frame.fields.borrow_mut();
+        if let Some((_, slot)) = fields.iter_mut().find(|(name, _)| name == "\0trace") { *slot = worth; }
+        else { fields.push(("\0trace".to_string(), worth)); }
+    }
+
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let keys = self.lang.trace_fields.clone();
@@ -5897,6 +5966,7 @@ impl<'a> Engine<'a> {
                     }
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                     self.refresh_observed_frame();
+                    if self.global_trace.is_some() { self.trace_line()?; }
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
                     // business.
@@ -19428,6 +19498,18 @@ impl<'a> Engine<'a> {
                     else { Some((Value::text(name), value.clone())) }
                 }).collect()))
             }
+            // The tracing hook and whether one stands: what is set here
+            // is handed to every later frame at its own line.
+            Builtin::SetTrace => {
+                arity(1)?;
+                let wanted = args[0].contents();
+                self.global_trace = if matches!(wanted, Value::Blank | Value::Null) { None } else { Some(wanted) };
+                Value::Null
+            }
+            Builtin::GetTrace => {
+                arity(0)?;
+                self.global_trace.clone().unwrap_or(Value::Null)
+            }
             // The module the routine running `depth` frames up the call
             // chain answers as its own: the same walk the
             // program-namespace builtin makes, answered as the routine's
@@ -23341,17 +23423,24 @@ impl Engine<'_> {
     fn wildcard_in_scope(&mut self) -> bool {
         let changed = self.wildcard_file.as_ref().map_or(true, |file| !Rc::ptr_eq(file, &self.source));
         if changed {
-            self.wildcard_active = self.outer_globals_changed || self.wildcard_slots.contains_key(&self.source) || self.changed_builtin_scopes.contains(&self.source) || !self.changed_builtins.is_empty();
+            self.wildcard_active = self.outer_shadow_applies() || self.wildcard_slots.contains_key(&self.source) || self.changed_builtin_scopes.contains(&self.source) || !self.changed_builtins.is_empty();
             self.wildcard_file = Some(self.source.clone());
         }
         self.wildcard_active
+    }
+
+    /// Whether the code now running is the main program's own, whose
+    /// globals the outermost dictionary is, after that dictionary was
+    /// written through.
+    fn outer_shadow_applies(&self) -> bool {
+        self.outer_globals_source.as_deref() == Some(self.source.as_ref())
     }
 
     fn wildcard_value(&self, name: &str) -> Option<Value> {
         // A name written into the program's own globals dictionary after
         // globals() handed it out stands over a builtin of the same
         // spelling, exactly as a name the text itself had bound would.
-        if self.outer_globals_changed {
+        if self.outer_shadow_applies() {
             if let Some(book) = &self.outer_book {
                 if let Some(held) = book_entry(book, name) {
                     let settled = held.contents();
@@ -24562,7 +24651,10 @@ impl Engine<'_> {
         // module's, but a write into it can still stand a name over a
         // builtin; reading a name consults it while this stands.
         if self.outer_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
-            self.outer_globals_changed = true;
+            // The outermost dictionary is the main program's own,
+            // however far from it the write is made; its reader is the
+            // code written in the file the run began from.
+            self.outer_globals_source = Some(self.root_source.clone());
             self.wildcard_file = None;
             return;
         }
