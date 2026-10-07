@@ -79,6 +79,9 @@ impl Value {
             },
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(slot)) if slot.0 == 29
                 && matches!(slot.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            Value::Adapter(w) if w.0 == 205 => "getset_descriptor",
+            Value::Adapter(w) if w.0 == 206 => "method-wrapper",
+            Value::Adapter(w) if w.0 == 207 => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 129 => "function",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",

@@ -85,6 +85,11 @@ impl<'a> Engine<'a> {
             }
             hooks.push(("__hash__".to_string(), Value::Null));
         }
+        if word == "getset_descriptor" && self.lang.class_details.get("native.getsets").is_some_and(|entries| !entries.is_empty()) {
+            for (mode, part) in ["descriptor.get", "descriptor.set", "descriptor.delete"].iter().enumerate() {
+                hooks.push((self.class_word(part).to_string(), Self::adapter(207, vec![Value::Small(mode as i64)])));
+            }
+        }
         let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: ancestry, base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
@@ -741,6 +746,20 @@ impl<'a> Engine<'a> {
         if !self.lang.weak_refused.is_empty() { crate::faint::remember(crate::faint::Hold::Class(Rc::downgrade(&c))); }
         if let Some(cell) = class_cell { let word = self.class_word("cell.contents").to_owned(); self.class_write(cell, &word, Some(Value::Class(c.clone())), true)?; }
 
+        // Native adapter getters retain their implementation as real data descriptors.
+        if let Some(declarations) = self.lang.class_details.get("native.getsets") {
+            for declaration in declarations.chunks_exact(3) {
+                if declaration[0] != module || declaration[1] != name || !self.module_slots.get(&self.source).is_some_and(|(_, path)| path == &declaration[0]) { continue; }
+                for (word, held) in c.shared.borrow_mut().iter_mut() {
+                    if !declaration[2].split_whitespace().any(|entry| entry == word) { continue; }
+                    if let Value::Object(property) = held.contents() {
+                        if let Some(getter) = Self::property_accessor(&property, "\0fget") {
+                            *held = Self::adapter(205, vec![getter, Value::Class(c.clone()), Value::text(word)]);
+                        }
+                    }
+                }
+            }
+        }
         self.furnish_slots(&c)?;
         if Self::own_class_value(&c, self.class_word("doc")).is_none() { c.shared.borrow_mut().push((self.class_word("doc").into(), Value::Null)); }
         // Each member that asks to be told its name is told it, once the
@@ -1257,12 +1276,12 @@ impl<'a> Engine<'a> {
     pub(super) fn reads_descriptor(&self, subject: &Value, name: &str) -> bool {
         let Value::Object(instance) = subject else { return false };
         self.class_value(&instance.class_now(), name).is_some_and(|entry| {
-            matches!(&entry, Value::Adapter(parts) if matches!(parts.0, 6 | 28) || parts.0 == 16 && parts.1.get(2).is_some_and(|v| v.plain() == "\0module-namespace"))
+            matches!(&entry, Value::Adapter(parts) if matches!(parts.0, 6 | 28 | 205) || parts.0 == 16 && parts.1.get(2).is_some_and(|v| v.plain() == "\0module-namespace"))
                 || self.descriptor_hook(&entry, "descriptor.get").is_some()
         })
     }
     fn takes_writes(&self, member: &Value) -> bool {
-        if let Value::Adapter(w) = member { return matches!(w.0, 6 | 16 | 28); }
+        if let Value::Adapter(w) = member { return matches!(w.0, 6 | 16 | 28 | 205); }
         if self.lang.bind_names && matches!(member, Value::Null | Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Text(_) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) | Value::Bytes(..) | Value::Routine(_) | Value::Method(..)) {
             return false;
         }
@@ -1315,6 +1334,20 @@ impl<'a> Engine<'a> {
                 Some(self.held_kind_descriptor(&word, name))
             })
         })
+    }
+    /// Validate a native data descriptor's receiver before invoking its getter.
+    fn native_getset_read(&mut self, parts: &[Value], subject: Value) -> Flow<Value> {
+        self.native_getset_owner(parts, &subject)?;
+        self.descriptor_apply(parts[0].clone(), vec![subject])
+    }
+    /// Refuse foreign receivers independently of the getter's Python implementation.
+    fn native_getset_owner(&self, parts: &[Value], subject: &Value) -> Flow<()> {
+        let Value::Class(owner) = &parts[1] else { return Err(self.class_refusal()); };
+        if let Value::Object(object) = subject.contents() {
+            let kind = object.class_now();
+            if Rc::ptr_eq(&kind, owner) || kind.lineage.iter().any(|base| Rc::ptr_eq(base, owner)) { return Ok(()); }
+        }
+        Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object", parts[2].plain(), owner.name, Self::type_argument_kind(subject)).into())
     }
     fn closure_title(name: &str) -> &str {
         if name.starts_with("#class_cell") { "__class__" } else { name }
@@ -1722,6 +1755,19 @@ impl<'a> Engine<'a> {
                     let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()) };
                     let Some(callable) = o.fields.borrow().iter().find(|(n, _)| n == "\0callable").map(|(_, v)| v.clone()) else { return Err(self.class_refusal()) };
                     Ok(callable)
+                }
+                207 if !args.is_empty() => {
+                    let descriptor = args.remove(0);
+                    let Value::Small(mode) = w.1[0] else { return Err(self.class_refusal()); };
+                    let Some(part) = ["descriptor.get", "descriptor.set", "descriptor.delete"].get(mode as usize) else { return Err(self.class_refusal()); };
+                    let key = self.class_word(part).to_string();
+                    let operation = self.class_get(descriptor, &key, true)?;
+                    self.class_apply(operation, args)
+                }
+                206 if args.len() == 1 || args.len() == 2 => {
+                    self.native_getset_owner(&w.1, &args[0])?;
+                    let Value::Class(owner) = &w.1[1] else { return Err(self.class_refusal()); };
+                    Err(format!("AttributeError: attribute '{}' of '{}' objects is not writable", w.1[2].plain(), owner.name).into())
                 }
                 204 => {
                     let Value::Class(c) = &w.1[0] else { return Err(self.class_refusal()); };
@@ -2560,10 +2606,11 @@ impl<'a> Engine<'a> {
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
+                205 if subject.is_some() => self.native_getset_read(&w.1, subject.unwrap()),
                 29 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 | 30 | 79..=80 | 200..=203 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                20..=27 | 30 | 79..=80 | 200..=203 | 207 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => self.property_reading(&o, &w.1[0].plain()), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -2956,10 +3003,20 @@ impl<'a> Engine<'a> {
         // A routine, a wrapped routine and a slot each read as a member
         // that binds; the slot writes and removes as well.
         if name == self.class_word("descriptor.get") && !name.is_empty()
-            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16 | 29))) {
+            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16 | 29 | 205))) {
             return Ok(Self::adapter(15, vec![subject]));
         }
         if let Value::Adapter(w) = &subject {
+            if w.0 == 205 && !name.is_empty() {
+                if name == self.class_word("doc") { return self.class_get(w.1[0].clone(), name, plain); }
+                if name == self.class_word("descriptor.set") || name == self.class_word("descriptor.delete") { return Ok(Self::adapter(206, w.1.clone())); }
+                if name == self.class_word("name") { return Ok(w.1[2].clone()); }
+                if name == "__objclass__" { return Ok(w.1[1].clone()); }
+                if name == self.class_word("qualified") {
+                    let Value::Class(owner) = &w.1[1] else { return Err(self.class_refusal()); };
+                    return Ok(Value::text(&format!("{}.{}", owner.name, w.1[2].plain())));
+                }
+            }
             if w.0 == 16 && !name.is_empty() {
                 if name == self.class_word("descriptor.set") { return Ok(Self::adapter(17, w.1.clone())); }
                 if name == self.class_word("descriptor.delete") { return Ok(Self::adapter(18, w.1.clone())); }
@@ -3640,7 +3697,7 @@ impl<'a> Engine<'a> {
         }
         // A builtin accessor answers for the text signature it announces,
         // the word the reference reads to recover its parameters.
-        if name == "__text_signature__" {
+        if !self.class_word("text_signature").is_empty() && name == self.class_word("text_signature") {
             if let Some(text) = self.builtin_text_signature(&subject) { return Ok(Value::text(text)); }
         }
         self.absent_member = Some((name.to_string(), subject.clone()));
@@ -4174,6 +4231,10 @@ impl<'a> Engine<'a> {
                 if let Some(member)=self.class_value(&o.class_now(),name) {
                     if let Value::Adapter(w)=&member {
                         if w.0==16 {return self.slot_write(&subject,&w.1,value);}
+                        if w.0 == 205 {
+                            let mut args = vec![subject.clone()]; args.extend(value);
+                            return self.class_apply(Self::adapter(206, w.1.clone()), args);
+                        }
                         // A property keeps its docstring and assigned name
                         // in private fields that take writes; its accessors do
                         // not, as CPython keeps them read-only.
@@ -5185,7 +5246,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64|180))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|206|207))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

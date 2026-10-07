@@ -219,6 +219,8 @@ pub struct Engine<'a> {
     /// Where the program is written, as the request carried it.
     source: Rc<str>,
     root_source: Rc<str>,
+    /// Whether a statement from the user source has begun.
+    main_started: bool,
     /// Where the language's own pages are kept, as the run was started.
     /// Nothing where the run was started with nowhere named, and then a
     /// complaint about a word of the language points at no page.
@@ -1557,6 +1559,7 @@ impl<'a> Engine<'a> {
             frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
+            main_started: false,
             pages_kept: None,
             calls: Vec::new(),
             under: None,
@@ -5883,6 +5886,7 @@ impl<'a> Engine<'a> {
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                 }
                 Instr::Line(row) => {
+                    if self.source == self.root_source { self.main_started = true; }
                     self.location = None;
                     self.line = *row;
                     // Whatever went away during the last statement is seen
@@ -23905,7 +23909,11 @@ impl Engine<'_> {
         let name = self.registry.idents.get(far)?;
         if !Self::public_name(name.rsplit(':').next().unwrap_or(name)) { return None; }
         if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
-        if self.outer_book.is_some() && Self::public_name(name) { return Some(Kept::Outer); }
+        if self.outer_book.is_some() && Self::public_name(name) {
+            if self.lang.bind_names && !self.main_started && !self.lang.module_doc.contains(name) { return None; }
+            if self.lang.bind_names && !self.registry.program_bound.contains(name) && !self.lang.module_names.iter().any(|word| word == name) && !self.lang.source_bindings.iter().any(|(_, word)| word == name) && !self.lang.module_doc.contains(name) && !self.outer_book.as_ref().is_some_and(|book| book_entry(book, name).is_some()) { return None; }
+            return Some(Kept::Outer);
+        }
         None
     }
 
@@ -24375,6 +24383,7 @@ impl Engine<'_> {
             if !Self::public_name(name) || self.text_books.iter().any(|book| at >= book.from && at < book.upto) { continue; }
             let held = &self.world[at];
             if self.left_out(name, held) { continue; }
+            if self.lang.bind_names && !self.registry.program_bound.contains(name) && !self.lang.module_names.contains(name) && !self.lang.module_doc.contains(name) && !self.lang.source_bindings.iter().any(|(_, word)| word == name) { continue; }
             pairs.push((Value::text(name), held.clone()));
         }
         let natives = self.natives_book();

@@ -88,6 +88,9 @@ impl Value {
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
+            Self::Wrapped(205, _) => "getset_descriptor",
+            Self::Wrapped(206, _) => "method-wrapper",
+            Self::Wrapped(207, _) => "wrapper_descriptor",
             Self::Wrapped(143, _) => "function",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             // The entry __slots__ lays down for a name reads as a
