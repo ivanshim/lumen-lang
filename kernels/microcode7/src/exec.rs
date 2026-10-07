@@ -5430,7 +5430,14 @@ impl<'a> Machine<'a> {
                     }
                     return Some(current);
                 }
-                if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 13 {
+                    let body = match item.holds.borrow()[5].1.clone() {
+                        Value::Bound(program, _) | Value::Routine(program) => Some(program),
+                        _ => None,
+                    };
+                    let Some(body) = body else { return Some(Value::Shared(self.book_about(true))) };
+                    return Some(Value::Shared(self.world_about(&body)));
+                }
                 if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
                     return Some(Value::Nil);
                 }
@@ -24828,6 +24835,23 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The dictionary the routine behind a frame reads its world names
+    /// through: the one handed when it was built, else the one it was
+    /// made beside, else its module's own, else the run's outermost
+    /// names. A frame's globals answer this and never the dictionary of
+    /// whichever module the ask happens to stand in.
+    fn world_about(&mut self, program: &Rc<Routine>) -> Rc<RefCell<Value>> {
+        if let Some(book) = self.constructor_world(program) { return book; }
+        if let Some(held) = &program.globe {
+            match held {
+                Value::Shared(cell) | Value::Mutable(cell, _) => return cell.clone(),
+                Value::Dict(_) | Value::Attributes(_) => return Rc::new(RefCell::new(held.clone())),
+                _ => return self.world_kept(),
+            }
+        }
+        self.space_book_for(program).unwrap_or_else(|| self.world_kept())
+    }
+
     /// Return the text of a namespace key when it is a string. A number
     /// whose spelling matches a name is still a different key.
     fn space_dictionary_name(key: &Value) -> Option<String> {
@@ -24839,7 +24863,15 @@ impl<'a> Machine<'a> {
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
     fn space_book_of(&mut self) -> Option<Rc<RefCell<Value>>> {
-        let program = self.frames_named.last()?;
+        let program = self.frames_named.last()?.clone();
+        self.space_book_for(&program)
+    }
+
+    /// The dictionary the module a named program was read in as keeps
+    /// its own names under, where it was read in as one: the book the
+    /// running program's own answer comes from, asked of a program a
+    /// frame names rather than of the one now running.
+    fn space_book_for(&mut self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
         let path = program.written_in.as_ref().and_then(|file| self.loaded_spaces.get(file.as_ref()))?.to_owned();
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return None };
         if let Some(book) = self.space_books.get(&path).cloned() {

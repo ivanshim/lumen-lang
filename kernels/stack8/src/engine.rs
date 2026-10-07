@@ -5319,7 +5319,12 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            return Some(Value::Bond(self.book_here(true)));
+            // A frame's globals are those of the routine it runs, not
+            // those of wherever the read happens to stand: a function
+            // carried in from another module answers its own module's
+            // names, as its module member does.
+            let routine = match &object.fields.borrow()[6].1 { Value::Routine(body) => body.clone(), _ => return Some(Value::Bond(self.book_here(true))) };
+            return Some(Value::Bond(self.routine_outer(&routine)));
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);
@@ -24475,7 +24480,11 @@ impl Engine<'_> {
             };
             return cell;
         }
-        self.module_book_of(program).unwrap_or_else(|| self.book_here(true))
+        // A routine carried in by no module and holding no dictionary
+        // of its own belongs to the run's own outermost names; reading
+        // them from wherever the ask stands would answer with the
+        // module now running instead.
+        self.module_book_of(program).unwrap_or_else(|| self.outer_book_made())
     }
 
     /// The same, asked from wherever a run now stands: the routine
