@@ -342,7 +342,13 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if lang.args_list.is_some() || lang.args_count.is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        // The path as the run was started with it, not the canonical
+        // whole path, is what sys.argv[0] holds: a program reached
+        // through a directory or a relative name names that, the way
+        // the reference names it.
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "given")
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
+            .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(name) = &lang.args_count {

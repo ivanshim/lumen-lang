@@ -951,21 +951,25 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 let path = module.replace('.', "/");
                 let mut found = None;
-                for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
-                    if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                for (at, candidate) in [format!("{path}.py"), format!("{path}/__main__.py")].into_iter().enumerate() {
+                    if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source, at == 1)); break; }
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
                     if let Some((_, source, filename)) = embedded_modules::MODULES.iter().find(|(name, _, _)| *name == executable_module)
                         .or_else(|| embedded_modules::MODULES.iter().find(|(name, _, _)| *name == module)) {
-                        found = Some((format!("langs/lib_python/modules/{filename}"), source.to_string()));
+                        found = Some((format!("langs/lib_python/modules/{filename}"), source.to_string(), false));
                     }
                 }
-                let Some((filename, source)) = found else {
+                let Some((filename, source, via_main)) = found else {
                     eprintln!("No module named {module}");
                     process::exit(1);
                 };
-                module_name = Some(if filename.ends_with("/__main__.py") { format!("{module}.__main__") } else { module });
+                // Naming the package finds its __main__.py and runs as
+                // package.__main__; naming package.__main__ itself finds
+                // that same file directly and keeps its own name, so the
+                // module identity is right either way.
+                module_name = Some(if via_main { format!("{module}.__main__") } else { module });
                 file = Some(filename);
                 module_source = Some(source);
                 language = Some(Language::Named("python".to_string()));
@@ -1037,6 +1041,18 @@ fn parse_args(args: &[OsString]) -> Invocation {
     }
 
     let file = file.unwrap_or_else(|| usage(program));
+    // A directory handed as the program is run as the __main__.py inside
+    // it, the way the reference runs it; it keeps its own name as the
+    // program's, so a script asking for sys.argv[0] finds the directory
+    // it was reached through rather than the file that ran, and its
+    // __main__ module names itself __main__ the way the reference's does.
+    if module_source.is_none() && module_name.is_none() && std::path::Path::new(&file).is_dir() {
+        let inside = format!("{file}/__main__.py");
+        if let Ok(source) = fs::read_to_string(&inside) {
+            module_source = Some(source);
+            module_name = Some("__main__".to_string());
+        }
+    }
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
         // the environment, by a host that started this binary again
