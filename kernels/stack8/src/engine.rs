@@ -17361,7 +17361,23 @@ impl<'a> Engine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and anything that can be walked hands
     /// over one byte for each of its members.
+    /// The bytes an object that exports a buffer gives up, as the
+    /// buffer shows them whatever the items are; none for anything that
+    /// exports no buffer.
+    fn buffer_exported(&mut self, value: &Value) -> Res<Option<Vec<u8>>> {
+        let Value::Object(object) = value else { return Ok(None); };
+        if self.class_value(&object.class_now(), "__buffer__").is_none() { return Ok(None); }
+        let namespace = self.route_module("builtins")?;
+        let copier = self.member_of(namespace, "_buffer_bytes")?.ok_or_else(|| self.byte_fault("arguments"))?;
+        let copied = self.call_held(copier, vec![value.clone()])?;
+        match copied {
+            Value::Bytes(row, ..) => Ok(Some(row.borrow().clone())),
+            _ => Ok(None),
+        }
+    }
+
     fn byte_taken(&mut self, value: &Value) -> Res<Vec<u8>> {
+        if let Some(bytes) = self.buffer_exported(&value.contents())? { return Ok(bytes); }
         match &value.contents() {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
             Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
@@ -17654,6 +17670,8 @@ impl<'a> Engine<'a> {
                     };
                     if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
                     result
+                } else if let Some(bytes) = self.buffer_exported(source)? {
+                    self.byte_make(bytes, false)
                 } else { Value::array(self.core_members(source)?) }
             } else {
                 if matches!(source, Value::Text(_) | Value::Codepoints(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
@@ -17685,6 +17703,10 @@ impl<'a> Engine<'a> {
                     row.try_reserve_exact(count).map_err(|_| unready())?;
                     row.resize(count, 0); row
                 }
+                [value] if task == 1 && matches!(value, Value::Object(_)) => match self.buffer_exported(value)? {
+                    Some(bytes) => bytes,
+                    None => self.byte_row(value, false)?,
+                },
                 [value] => self.byte_row(value, task == 0)?,
                 _ => return Err(unready()),
             };
@@ -18278,6 +18300,12 @@ impl<'a> Engine<'a> {
                             }
                             return Ok(answer);
                         }
+                    }
+                }
+                if task == 1 && args.len() == 1 {
+                    if let Some(bytes) = self.buffer_exported(&args[0])? {
+                        let row = self.byte_make(bytes, false);
+                        return self.byte_call(task, &[row]);
                     }
                 }
                 let gathered = matches!(task, 0 | 1) && args.len() == 1

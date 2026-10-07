@@ -7352,6 +7352,9 @@ impl<'a> Machine<'a> {
                             })?;
                             value = Value::Vector(crate::tuples::Sequence::plain(members));
                         }
+                        if matches!(f.cells.borrow()[i].settled(), Value::Octets { .. }) && matches!(value.settled(), Value::Thing(_)) {
+                            if let Some(bytes) = self.buffer_exported(&value)? { value = self.octets(bytes, false); }
+                        }
                         match self.value_cell(&f, i) {
                             Some(cell) => {
                                 let mut row = cell.borrow_mut();
@@ -12444,7 +12447,22 @@ impl<'a> Machine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and a row of numbers or a text hands
     /// over one byte for each of its members.
+    // The bytes an instance that exports a buffer gives up, as the buffer
+    // shows them whatever the items are; none for anything that exports
+    // no buffer.
+    fn buffer_exported(&mut self, value: &Value) -> Result<Option<Vec<u8>>, String> {
+        let Value::Thing(thing) = value.settled() else { return Ok(None); };
+        if self.inherited_entry(&thing.blueprint(), "__buffer__").is_none() { return Ok(None); }
+        let module = self.namespace_for("builtins")?;
+        let routine = self.attribute(&module, "_buffer_bytes").ok_or_else(|| self.octet_error("arguments"))?;
+        match self.apply_within(routine, vec![value.clone()])?.settled() {
+            Value::Octets { cell, .. } => Ok(Some(cell.borrow().to_vec())),
+            _ => Ok(None),
+        }
+    }
+
     fn octet_lengthening(&mut self, source: &Value) -> Result<Vec<u8>, String> {
+        if let Some(bytes) = self.buffer_exported(source)? { return Ok(bytes); }
         match &source.settled() {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
@@ -17368,6 +17386,9 @@ impl<'a> Machine<'a> {
                             }
                         }
                     }
+                }
+                if which == 1 {
+                    if let Some(bytes) = self.buffer_exported(&plain)? { return Ok(self.octets(bytes, true)); }
                 }
                 let already = matches!(plain, Value::Octets { .. } | Value::Vector(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 if !already {
@@ -22366,6 +22387,21 @@ impl<'a> Machine<'a> {
         if let Value::Shared(cell) = handed {
             let contents = cell.borrow().clone();
             return self.span_written(held, bounds, &contents);
+        }
+        // What an object exporting a buffer hands to a row of bytes is
+        // read out before the row is borrowed, since reading it runs code.
+        if matches!(handed.settled(), Value::Thing(_)) {
+            let into_octets = match held {
+                Value::Octets { .. } => true,
+                Value::Mutable(cell, _) | Value::Shared(cell) => matches!(&*cell.borrow(), Value::Octets { .. }),
+                _ => false,
+            };
+            if into_octets {
+                if let Some(bytes) = self.buffer_exported(handed)? {
+                    let row = self.octets(bytes, false);
+                    return self.span_written(held, bounds, &row);
+                }
+            }
         }
         if let Value::Mutable(cell, _) = held { return self.span_written(&mut cell.borrow_mut(), bounds, handed); }
         // A place shared with another name -- a module's own global
