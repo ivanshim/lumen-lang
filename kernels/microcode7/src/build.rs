@@ -3312,6 +3312,11 @@ impl<'a> Builder<'a> {
         }
         let mut writes = Vec::new();
         if taking_names && !enclosed && self.on_any("op.mul") {
+            if future {
+                let mark = &self.tokens[self.pos];
+                self.range_end = Some((mark.column + mark.lexeme.chars().count(), mark.row));
+                return Err(String::from("SyntaxError: future feature * is not defined"));
+            }
             if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(1).any(|scope| scope.holds == Holds::Every)) {
                 return Err(String::from("SyntaxError: import * only allowed at module level"));
             }

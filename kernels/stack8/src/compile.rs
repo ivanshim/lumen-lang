@@ -3561,6 +3561,14 @@ impl<'a> Compiler<'a> {
         Ok(first)
     }
 
+    /// Whether the reading stands at the top of the text it reads:
+    /// a program's own top, or the top of text handed over while a run
+    /// goes, which the reference reads as a module of its own where a
+    /// future import's place is judged.
+    fn at_text_top(&mut self) -> bool {
+        self.piece().outermost || (self.read_in && self.pieces.len() == 1)
+    }
+
     fn future_prefix(&self, end: usize) -> bool {
         let mut at = 0;
         let mut docstring = true;
@@ -3599,7 +3607,7 @@ impl<'a> Compiler<'a> {
             self.take();
         }
         let future = !lang.syntax_members.is_empty() && from && module == "__future__";
-        if future && (!self.piece().outermost || self.in_class_body() || !self.future_prefix(import_at)) {
+        if future && (!self.at_text_top() || self.in_class_body() || !self.future_prefix(import_at)) {
             let last = self.tokens[import_at..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Finish | Shape::Close) && t.lexeme != ";").last().unwrap();
             self.registry.stopped_end = last.column + last.lexeme.chars().count();
             self.registry.stopped_end_row = last.row;
@@ -3615,6 +3623,12 @@ impl<'a> Compiler<'a> {
         }
         let star = from && self.look().shape == Shape::Sign && lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
         if star && group.is_none() {
+            if future {
+                let mark = self.tokens[self.pos].clone();
+                self.registry.stopped_end = mark.column + mark.lexeme.chars().count();
+                self.registry.stopped_end_row = mark.row;
+                return Err("SyntaxError: future feature * is not defined".into());
+            }
             if !lang.syntax_members.is_empty() && (!self.piece().outermost || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
             self.take();
             if lang.import_values {

@@ -23821,7 +23821,7 @@ impl Machine<'_> {
     fn qualified_import(&self, name: &str) -> Result<String, String> {
         let levels = name.bytes().take_while(|&b| b == b'.').count();
         if levels == 0 { return Ok(name.to_owned()); }
-        let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_owned())?;
+        let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| String::from("ImportError: attempted relative import with no known parent package"))?;
         let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
         let parent = if package { caller.as_str() } else { caller.rsplit_once('.').map_or("", |pair| pair.0) };
         let mut prefix = parent.to_owned();
@@ -25691,7 +25691,7 @@ impl<'a> Machine<'a> {
             Some(Value::Small(bits)) => bits,
             _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
         };
-        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        if flags < 0 || flags & 0xEF != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
         }

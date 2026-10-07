@@ -23402,7 +23402,7 @@ impl Engine<'_> {
     fn import_path(&self, written: &str) -> Res<String> {
         if !written.starts_with('.') { return Ok(written.to_string()); }
         let Some((_, owner)) = self.module_slots.get(&self.source) else {
-            return Err(self.lang.import_relative_unready.clone());
+            return Err("ImportError: attempted relative import with no known parent package".into());
         };
         let is_package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
         let mut components: Vec<&str> = owner.split('.').collect();
@@ -25322,7 +25322,7 @@ impl Engine<'_> {
             Some(Value::Small(bits)) => bits,
             _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
         };
-        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        if flags < 0 || flags & 0xEF != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
