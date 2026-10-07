@@ -6081,8 +6081,10 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
             }
         }
-        if matches!(key, Value::Object(_) | Value::Tuple(_)) && !self.lang.class_special.is_empty() {
-            let hash = self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())?;
+        if matches!(key, Value::Object(_) | Value::Tuple(_) | Value::Class(_)) && !self.lang.class_special.is_empty() {
+            let hash = if matches!(key, Value::Class(_)) {
+                self.builtin(Builtin::Hash, "hash", &mut vec![key.clone()])?
+            } else { self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())? };
             return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
         }
         Ok(key.clone())
@@ -9373,7 +9375,11 @@ impl<'a> Engine<'a> {
                 // they hash, or sets the hash method to nothing, has
                 // things that cannot be hashed.
                 if matches!(self.special_value(&args[0], 8), Some(Value::Null)) {
-                    return Err(self.core_fault("core.unhashable", &args[0].core_kind()));
+                    let label = match &args[0] {
+                        Value::Class(class) => Self::maker_beneath(class).map(|meta| meta.name.clone()).unwrap_or_else(|| args[0].core_kind()),
+                        _ => args[0].core_kind(),
+                    };
+                    return Err(self.core_fault("core.unhashable", &label));
                 }
                 if let Some(answer) = self.special_call(&args[0], 8, Vec::new())? {
                     let answer = Self::worth_of(&answer).map_or(answer.clone(), |v| v.contents());
@@ -15175,7 +15181,7 @@ impl<'a> Engine<'a> {
     /// equality may run the program's own code, which may reach the
     /// set.
     fn set_needs_protocol(value: &Value) -> bool {
-        matches!(value, Value::Object(_) | Value::Hashed(_))
+        matches!(value, Value::Object(_) | Value::Class(_) | Value::Hashed(_))
             || matches!(value, Value::Tuple(_)) && value.member_key().is_err()
     }
 
@@ -24800,15 +24806,6 @@ impl Engine<'_> {
     fn names_about(&mut self, program: &Rc<Routine>, frame: &[Value], kind: Builtin) -> Flow<Value> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
-        }
-        if kind == Builtin::OuterNames && self.reading_in.is_none() {
-            let home = self.routine_home(program);
-            if home != self.class_word("main") {
-                if let Some(module) = self.modules.get(&home).cloned() {
-                    let namespace = self.class_word("namespace").to_string();
-                    return self.class_get(module, &namespace, false);
-                }
-            }
         }
         let class_book = program.class_namespace.as_ref().and_then(|(name, _, _)| program.idents.iter().position(|word| word == name)).map(|at| frame[at].clone());
         let book = if kind != Builtin::OuterNames && class_book.is_some() {

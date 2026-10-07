@@ -90,14 +90,17 @@ impl<'a> Engine<'a> {
         }
         if self.lang.type_parameters {
             let entries: &[(&str, &str)] = match word {
-                "GenericAlias" => &[("__getitem__", "substitute"), ("__hash__", "alias_hash"), ("__reduce__", "alias_reduce"), ("__reduce_ex__", "alias_reduce")],
-                "Union" => &[("__getitem__", "substitute"), ("__hash__", "union_hash"), ("__eq__", "union_equal"), ("__reduce__", "union_reduce"), ("__reduce_ex__", "union_reduce")],
+                "GenericAlias" => &[("__getitem__", "substitute"), ("__hash__", "alias_hash"), ("__reduce__", "alias_reduce"), ("__reduce_ex__", "alias_reduce_ex")],
+                "Union" => &[("__getitem__", "substitute"), ("__hash__", "union_hash"), ("__eq__", "union_equal"), ("__reduce__", "union_reduce"), ("__reduce_ex__", "union_reduce"), ("__mro_entries__", "reject_union_base")],
+                "ParamSpecArgs" | "ParamSpecKwargs" => &[("__eq__", "parameter_view_equal"), ("__mro_entries__", "reject_parameter_base")],
                 "NoDefaultType" => &[("__reduce__", "no_default_reduce"), ("__reduce_ex__", "no_default_reduce")],
-                "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" => &[("__reduce__", "parameter_reduce"), ("__reduce_ex__", "parameter_reduce")],
+                "TypeVar" | "ParamSpec" | "TypeVarTuple" => &[("__reduce__", "parameter_reduce"), ("__reduce_ex__", "parameter_reduce"), ("__mro_entries__", "reject_parameter_base")],
+                "TypeAliasType" => &[("__reduce__", "parameter_reduce"), ("__reduce_ex__", "parameter_reduce")],
                 _ => &[],
             };
             hooks.extend(entries.iter().map(|(name, function)| (name.to_string(), Self::adapter(158, vec![Value::text(function)]))));
         }
+        if matches!(word, "ParamSpecArgs" | "ParamSpecKwargs") { hooks.push(("__hash__".into(), Value::Null)); }
         if word == "SimpleNamespace" {
             for (name, mode) in [(self.class_word("allocate").to_string(), 0), (self.lang.constructor.clone().unwrap_or_default(), 1),
                                  ("__repr__".to_string(), 2), ("__eq__".to_string(), 3), ("__ne__".to_string(), 4),
@@ -117,6 +120,7 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: ancestry, base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
+        if self.lang.type_parameters && matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType" | "Union" | "ParamSpecArgs" | "ParamSpecKwargs") { c.sealed.set(true); }
         if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
             if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(9)) {
@@ -2157,6 +2161,20 @@ impl<'a> Engine<'a> {
         Ok(alias)
     }
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if matches!(Self::own_kind(&c).as_deref(), Some("ParamSpecArgs" | "ParamSpecKwargs")) {
+            let items = self.call_items(args)?;
+            if items.len() > 1 {
+                return Err(format!("TypeError: {}() takes at most 1 argument ({} given)", c.name.to_lowercase(), items.len()).into());
+            }
+            let origin = items.into_iter().find_map(|(keyword, value)| {
+                if keyword.as_deref().is_none_or(|word| word == "origin") { Some(value) } else { None }
+            });
+            let origin = origin.ok_or_else(|| format!("TypeError: {}() missing required argument 'origin' (pos 1)", c.name.to_lowercase()))?;
+            let display = self.class_apply(Self::adapter(158, vec![Value::text("parameter_view_display")]), vec![origin.clone(), Value::text(&c.name)])?;
+            self.made += 1;
+            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c, mark: self.made,
+                fields: RefCell::new(vec![("__origin__".into(), origin), ("\0typing_repr".into(), display)]) })));
+        }
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.typing_instance(c, args);
         }
@@ -4069,6 +4087,9 @@ impl<'a> Engine<'a> {
             }
         }
         if let Value::Object(instance) = &subject {
+            if matches!(Self::own_kind(&instance.class_now()).as_deref(), Some("ParamSpecArgs" | "ParamSpecKwargs")) {
+                return Err(if name == "__origin__" { "AttributeError: readonly attribute".into() } else { self.member_amiss(&subject, name).into() });
+            }
             if let Some(kind) = Self::own_kind(&instance.class_now()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if name == "__name__" || (kind == "ParamSpec" && name == "__bound__") { return Err("AttributeError: readonly attribute".into()); }
                 let protected = matches!(name, "__default__" | "__constraints__" | "__bound__" | "__covariant__" | "__contravariant__" | "__infer_variance__") && kind != "TypeVarTuple" || name == "__default__";
@@ -4631,7 +4652,7 @@ impl<'a> Engine<'a> {
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }
         match value.contents() {
             Value::Class(class) if Self::class_sealed(&class) => {
-                let name = if !self.lang.weak_refused.is_empty() && matches!(class.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", class.name) } else { class.name.clone() };
+                let name = if !self.lang.weak_refused.is_empty() && matches!(class.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", class.name) } else if self.lang.type_parameters && Self::own_kind(&class).is_some_and(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Union" | "ParamSpecArgs" | "ParamSpecKwargs")) { format!("typing.{}", class.name) } else { class.name.clone() };
                 Err(format!("TypeError: type '{name}' is not an acceptable base type").into())
             },
             Value::Class(class) => Ok(class),
@@ -5364,6 +5385,13 @@ impl<'a> Engine<'a> {
             return Value::array(names.iter().map(|n|Value::text(n)).collect());
         }
         let mut names=vec![];let class=match one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
+        if let Value::Object(object) = one {
+            match Self::own_kind(&object.class_now()).as_deref() {
+                Some("ParamSpec") => names.extend(["args", "kwargs"].iter().map(|word| word.to_string())),
+                Some("Union") => names.extend(["__origin__", "__parameters__"].iter().map(|word| word.to_string())),
+                _ => {},
+            }
+        }
         if let Some(c)=class {
             for b in std::iter::once(c).chain(c.lineage.iter()) {
                 names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));
@@ -5651,6 +5679,9 @@ impl<'a> Engine<'a> {
             3 if given.len() == 1 => Ok(Value::tuple(vec![origin])),
             4 if given.len() == 1 => {
                 if !matches!(given[0].contents(), Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias")) { return Ok(Value::Declined(Rc::from("NotImplemented"))); }
+                let own_star = self.class_get(receiver.clone(), "__unpacked__", true)?;
+                let other_star = self.class_get(given[0].clone(), "__unpacked__", true)?;
+                if own_star.is_true() != other_star.is_true() { return Ok(Value::Flag(false)); }
                 let other_origin = self.class_get(given[0].clone(), "__origin__", true)?;
                 let other_args = self.class_get(given[0].clone(), "__args__", true)?;
                 let same_origin = self.special_dyad(&Action::Eq, &origin, &other_origin)?;

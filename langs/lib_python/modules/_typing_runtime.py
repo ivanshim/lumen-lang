@@ -3,6 +3,7 @@
 # Substitute each free parameter through its preparation and validation hooks.
 def substitute(alias, supplied):
     from types import GenericAlias
+    from typing import TypeVarTuple
     parameters = alias.__parameters__
     if not parameters:
         raise TypeError(f'{alias} is not a generic class')
@@ -32,8 +33,14 @@ def substitute(alias, supplied):
         else:
             nested = getattr(original, '__parameters__', ())
             if nested:
-                selected = tuple(replacements[p] for p in nested)
-                changed = original[selected]
+                selected = []
+                for parameter in nested:
+                    replacement = replacements[parameter]
+                    if isinstance(parameter, TypeVarTuple):
+                        selected.extend(replacement)
+                    else:
+                        selected.append(replacement)
+                changed = original[tuple(selected)]
             else:
                 changed = original
         if getattr(original, '__typing_is_unpacked_typevartuple__', False):
@@ -62,6 +69,16 @@ def alias_reduce(alias, protocol=None):
     if alias.__unpacked__:
         return next, (iter(GenericAlias(alias.__origin__, alias.__args__)),)
     return type(alias), (alias.__origin__, alias.__args__)
+
+# Protocol-specific reduction still dispatches the subclass reduction hook.
+def alias_reduce_ex(alias, protocol):
+    return alias.__reduce__()
+
+# Parameter views compare only the same view kind and their actual origins.
+def parameter_view_equal(view, other):
+    if type(view) is not type(other):
+        return NotImplemented
+    return view.__origin__ == other.__origin__
 
 # Compare unions as unordered alternatives, with duplicate members already folded.
 def union_equal(union, other):
@@ -122,3 +139,17 @@ def alias_repr(alias):
         return display(value)
     entries = ', '.join(argument(value) for value in alias.__args__) if alias.__args__ else '()'
     return ('*' if alias.__unpacked__ else '') + display(alias.__origin__) + '[' + entries + ']'
+
+# ParamSpec views display their parameter name, or the repr of an arbitrary origin.
+def parameter_view_display(origin, kind):
+    from typing import ParamSpec
+    name = origin.__name__ if isinstance(origin, ParamSpec) else repr(origin)
+    return name + ('.args' if kind == 'ParamSpecArgs' else '.kwargs')
+
+# Parameter objects cannot replace themselves with bases in a class declaration.
+def reject_parameter_base(parameter, bases):
+    raise TypeError(f'Cannot subclass an instance of {type(parameter).__name__}')
+
+# A union of alternatives is also unavailable as a class base.
+def reject_union_base(union, bases):
+    raise TypeError(f'Cannot subclass {union}')

@@ -82,12 +82,20 @@ impl<'a> Machine<'a> {
         }
         if self.table.flag("ext.stmt.type_parameters") {
             let mut bridges = Vec::new();
-            if word == "GenericAlias" { bridges.extend([( "__getitem__", "substitute"), ("__hash__", "alias_hash"), ("__reduce__", "alias_reduce"), ("__reduce_ex__", "alias_reduce")]); }
+            if word == "GenericAlias" { bridges.extend([( "__getitem__", "substitute"), ("__hash__", "alias_hash"), ("__reduce__", "alias_reduce"), ("__reduce_ex__", "alias_reduce_ex")]); }
             if word == "Union" { bridges.extend([("__getitem__", "substitute"), ("__eq__", "union_equal"), ("__hash__", "union_hash"), ("__reduce__", "union_reduce"), ("__reduce_ex__", "union_reduce")]); }
+            if ["ParamSpecArgs", "ParamSpecKwargs"].contains(&word) { bridges.push(("__eq__", "parameter_view_equal")); }
             if word == "NoDefaultType" { bridges.extend([("__reduce__", "no_default_reduce"), ("__reduce_ex__", "no_default_reduce")]); }
             if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType") { bridges.extend([("__reduce__", "parameter_reduce"), ("__reduce_ex__", "parameter_reduce")]); }
+            let base_guard = match word {
+                "Union" => Some("reject_union_base"),
+                "TypeVar" | "TypeVarTuple" | "ParamSpec" | "ParamSpecArgs" | "ParamSpecKwargs" => Some("reject_parameter_base"),
+                _ => None,
+            };
+            if let Some(guard) = base_guard { bridges.push(("__mro_entries__", guard)); }
             for (member, handler) in bridges { protocols.push((member.into(), Self::wrap(158, vec![Value::text(handler)]))); }
         }
+        if word == "ParamSpecArgs" || word == "ParamSpecKwargs" { protocols.push((String::from("__hash__"), Value::Nil)); }
         if word == "SimpleNamespace" {
             let init = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).unwrap_or_default();
             let operations = [self.detail("allocate"), init, "__repr__", "__eq__", "__ne__", "__reduce__", "__replace__"];
@@ -105,6 +113,8 @@ impl<'a> Machine<'a> {
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:ranks,under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
+        let final_parameter = ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "NoDefaultType", "Union", "ParamSpecArgs", "ParamSpecKwargs"].contains(&word);
+        if final_parameter && self.table.flag("ext.stmt.type_parameters") { kind.sealed.set(true); }
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
             kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
             if self.table.prims.get(word) == Some(&Prim::ClassWork(9)) {
@@ -220,6 +230,13 @@ impl<'a> Machine<'a> {
         }
         let mut names=Vec::new();
         let class=match item{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.blueprint())},Value::Blueprint(b)=>Some(b),_=>None};
+        if let Value::Thing(instance) = item {
+            if let Some(kind) = Self::native_word(&instance.blueprint()) {
+                let properties: &[&str] = if kind == "ParamSpec" { &["args", "kwargs"] }
+                    else if kind == "Union" { &["__origin__", "__parameters__"] } else { &[] };
+                names.extend(properties.iter().map(|property| (*property).to_owned()));
+            }
+        }
         if let Some(b)=class {
             for c in std::iter::once(b).chain(b.ancestry.iter()) {
                 names.extend(c.shared.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));
@@ -2270,6 +2287,18 @@ impl<'a> Machine<'a> {
         Ok(alias)
     }
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if Self::native_word(&class).is_some_and(|word| word == "ParamSpecArgs" || word == "ParamSpecKwargs") {
+            let (mut positional, named) = self.open_arguments(given)?;
+            let count = positional.len() + named.len();
+            if count > 1 { return Err(format!("TypeError: {}() takes at most 1 argument ({} given)", class.name.to_lowercase(), count).into()); }
+            let source = positional.pop().or_else(|| named.into_iter().find(|(key, _)| key == "origin").map(|(_, value)| value))
+                .ok_or_else(|| format!("TypeError: {}() missing required argument 'origin' (pos 1)", class.name.to_lowercase()))?;
+            let formatter = Self::wrap(158, vec![Value::text("parameter_view_display")]);
+            let rendered = self.apply_class_member(formatter, vec![source.clone(), Value::text(&class.name)])?;
+            let holds = vec![(String::from("__origin__"), source), (String::from("\0type-display"), rendered)];
+            self.made += 1;
+            return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: class, holds: RefCell::new(holds), turn: self.made })));
+        }
         if Self::native_word(&class).is_some() && matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.make_type_parameter(class, given);
         }
@@ -4291,6 +4320,8 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Thing(object) = &subject {
+            let view = Self::native_word(&object.blueprint()).is_some_and(|word| word == "ParamSpecArgs" || word == "ParamSpecKwargs");
+            if view { return Err(if key == "__origin__" { String::from("AttributeError: readonly attribute").into() } else { self.absent_attribute(&subject, key) }); }
             if let Some(kind) = Self::native_word(&object.blueprint()).filter(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType")) {
                 if key == "__name__" || kind == "ParamSpec" && key == "__bound__" { return Err(String::from("AttributeError: readonly attribute").into()); }
                 let fixed = key == "__default__" || kind != "TypeVarTuple" && ["__bound__", "__constraints__", "__covariant__", "__contravariant__", "__infer_variance__"].contains(&key);
@@ -4824,6 +4855,7 @@ impl<'a> Machine<'a> {
             if Self::sealed(&class) {
                 let qualified = match class.name.as_str() {
                     "ProxyType" | "CallableProxyType" if !self.rules.words_ext_builtin_weak_get.is_empty() => "weakref.".to_owned() + &class.name,
+                    _ if self.table.flag("ext.stmt.type_parameters") && Self::native_word(&class).is_some_and(|word| ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Union", "ParamSpecArgs", "ParamSpecKwargs"].contains(&word.as_str())) => format!("typing.{}", class.name),
                     _ => class.name.clone(),
                 };
                 return Err(format!("TypeError: type '{qualified}' is not an acceptable base type").into());
@@ -5801,6 +5833,9 @@ impl<'a> Machine<'a> {
             4 if rest.len() == 1 => {
                 let other = rest.remove(0);
                 if !matches!(other.settled(), Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref() == Some("GenericAlias")) { return Ok(Value::Refusal(Rc::from("NotImplemented"))); }
+                let starred = self.read_class_member(subject.clone(), "__unpacked__", true)?;
+                let counterpart = self.read_class_member(other.clone(), "__unpacked__", true)?;
+                if self.object_truth(&starred)? != self.object_truth(&counterpart)? { return Ok(Value::Flag(false)); }
                 let a = self.read_class_member(subject, "__args__", true)?;
                 let b = self.read_class_member(other.clone(), "__args__", true)?;
                 let other_parent = self.read_class_member(other, "__origin__", true)?;

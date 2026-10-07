@@ -13381,8 +13381,11 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));
             }
         }
-        if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Thing(_) | Value::Tuple(_)) {
-            let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
+        if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Blueprint(_) | Value::Thing(_) | Value::Tuple(_)) {
+            let hash = match value {
+                Value::Blueprint(_) => self.prim(Prim::Hashed, "hash", &[value.clone()])?,
+                _ => self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?,
+            };
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
         } else { Ok(value.clone()) }
     }
@@ -15866,7 +15869,10 @@ impl<'a> Machine<'a> {
             (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
                 // Equality without a hash method, or the hash method set to
                 // nothing: such a thing cannot be a key.
-                return Err(self.core_complaint("core.unhashable", &one.kind_word()));
+                let kind = if let Value::Blueprint(plan) = one {
+                    Self::builder_over(plan).map_or_else(|| one.kind_word(), |factory| factory.name.to_owned())
+                } else { one.kind_word() };
+                return Err(self.core_complaint("core.unhashable", &kind));
             }
             (Prim::Hashed, [one]) => match self.ask_special(one, 8, &[])? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
@@ -22621,7 +22627,7 @@ impl<'a> Machine<'a> {
     /// may reach the set itself.
     fn needs_set_methods(item: &Value) -> bool {
         match item {
-            Value::Thing(_) | Value::Keyed(..) => true,
+            Value::Blueprint(_) | Value::Thing(_) | Value::Keyed(..) => true,
             Value::Tuple(_) => item.hash_address().is_err(),
             _ => false,
         }
@@ -25095,15 +25101,6 @@ impl<'a> Machine<'a> {
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
-        if op == Prim::WorldBook && self.reading_now.is_none() {
-            let origin = self.frames_named.last().map(|routine| self.routine_home(routine));
-            if let Some(origin) = origin.filter(|name| name != self.detail("main")) {
-                if let Some(namespace) = self.imported.get(&origin).cloned() {
-                    let key = self.detail("namespace").to_owned();
-                    return self.read_class_member(namespace, &key, false).map_err(|error| self.suspension_fault(error));
-                }
-            }
-        }
         let class_book = self.frames_named.last().and_then(|program| program.class_namespace.as_ref().and_then(|(name, _, _)| program.idents.iter().position(|word| word == name))).map(|at| frame.cells.borrow()[at].clone());
         let book = if op != Prim::WorldBook && class_book.is_some() {
             let mut selected = self.what_it_spells(class_book.unwrap());
@@ -25117,13 +25114,6 @@ impl<'a> Machine<'a> {
                     Value::Mutable(cell, _) => break cell,
                     value => break Rc::new(RefCell::new(value)),
                 }
-            }
-        } else if op == Prim::WorldBook && self.reading_now.is_none() {
-            let source = self.frames_named.last().and_then(|code| code.written_in.as_ref());
-            let namespace = source.and_then(|source| self.loaded_spaces.get(source)).and_then(|name| self.imported.get(name));
-            match namespace {
-                Some(Value::Thing(space)) => Rc::new(RefCell::new(Value::Attributes(space.clone()))),
-                _ => self.world_kept(),
             }
         } else if op == Prim::WorldBook {
             self.standing_world()
