@@ -6,6 +6,7 @@ use crate::data::Value;
 
 thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static VACANT: Rc<Vec<Value>> = Rc::new(vec![]);
     static RESERVE: RefCell<Vec<Rc<Vec<Value>>>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -29,6 +30,10 @@ impl Sequence {
 
     pub fn tuple(values: Vec<Value>) -> Self {
         let tuple = ACTIVE.with(Cell::get);
+        if values.is_empty() && tuple {
+            let row = VACANT.with(|saved| saved.clone());
+            return Self { row, tuple: false };
+        }
         let available = if tuple {
             RESERVE.with(|reserve| {
                 let mut reserve = reserve.borrow_mut();
@@ -80,6 +85,14 @@ impl Drop for Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn vacant_tuples_keep_one_allocation_and_vectors_keep_their_own() {
+        let _policy = Scope::enter(true);
+        let tuples = [Sequence::tuple(vec![]), Sequence::tuple(vec![])];
+        let vector = Sequence::plain(vec![]);
+        assert!(Rc::ptr_eq(&tuples[0], &tuples[1]));
+        assert!(!Rc::ptr_eq(&tuples[1], &vector));
+    }
     #[test]
     fn aliases_hold_elements_until_the_reserve_receives_empty_storage() {
         let _scope = Scope::enter(true);
