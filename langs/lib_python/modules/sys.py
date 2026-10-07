@@ -502,3 +502,13 @@ def getfilesystemencoding():
 def getfilesystemencodeerrors():
     return "surrogateescape"
 
+
+# Explicit module runs search the working directory before the embedded
+# library. File runs retain the isolated default search path.
+if __program_namespace().get('__spec__') is not None:
+    _cwd_error, _cwd_bytes = __posix('cwd')
+    if _cwd_error:
+        raise OSError(_cwd_error, 'cannot resolve the working directory')
+    path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
+    flags.isolated = 0
+    flags.safe_path = False

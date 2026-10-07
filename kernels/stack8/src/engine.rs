@@ -17890,10 +17890,12 @@ impl<'a> Engine<'a> {
                 let mut joined = Vec::new();
                 for (at, part) in parts.iter().enumerate() {
                     if at > 0 { joined.extend(cell.borrow().iter().copied()); }
-                    match part {
+                    let settled = part.contents();
+                    let payload = Self::worth_of(&settled).unwrap_or(settled);
+                    match &payload {
                         Value::Bytes(piece, ..) => joined.extend(piece.borrow().iter().copied()),
                         Value::Object(object) if object.class_now().name == "memoryview" => {
-                            let piece = self.bytes_argument(part)?.ok_or_else(|| self.byte_fault("arguments"))?;
+                            let piece = self.bytes_argument(&payload)?.ok_or_else(|| self.byte_fault("arguments"))?;
                             joined.extend(piece);
                         }
                         _ => return Err(self.byte_fault("arguments")),
@@ -24404,18 +24406,30 @@ impl Engine<'_> {
         if main.is_empty() { return; }
         let book = self.outer_book_made();
         if let Ok(name) = std::env::var("LUMEN_RUN_MODULE") {
+            if self.lang.module_path.is_some() {
+                self.module_slots.insert(self.source.clone(), (0, name.clone()));
+            }
             self.made += 1;
             let parent = name.rsplit_once('.').map_or("", |(parent, _)| parent);
             let spec = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None),
                 class: self.root_class(),
                 fields: RefCell::new(vec![("name".into(), Value::text(&name)),
                     ("origin".into(), Value::text(&self.source)), ("parent".into(), Value::text(parent))]), mark: self.made }));
+            for (word, value) in [("__spec__", spec.clone()), ("__package__", Value::text(parent))] {
+                let slot = self.registry.slot(word);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                self.world[slot] = value;
+            }
             let mut contents = book.borrow_mut();
             if let Value::Map(entries) = &*contents {
                 let mut entries = entries.to_vec();
                 let key = Value::text("__spec__");
                 if let Some((_, held)) = entries.iter_mut().find(|(word, _)| word.equals(&key)) { *held = spec; }
                 else { entries.push((key, spec)); }
+                let package_key = Value::text("__package__");
+                if let Some((_, held)) = entries.iter_mut().find(|(word, _)| word.equals(&package_key)) {
+                    *held = Value::text(parent);
+                } else { entries.push((package_key, Value::text(parent))); }
                 *contents = Value::Map(Rc::new(entries.into()));
             }
         }

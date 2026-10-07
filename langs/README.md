@@ -6100,3 +6100,16 @@ The `_py_abc` runtime adapter keeps protocol instance and registration searches
 on the underlying ABC path. Runtime protocols can then inspect data attributes
 through typing's unchanged static instance checks, while explicit subclass
 checks retain the restriction on protocols with data members.
+
+Bytes joins read the stored bytes of subclasses, including ZIP extra-field
+records, without invoking an overridden conversion method. Suspended generators
+in microcode7 use Python truth protocols in loops, conditional expressions and
+short-circuit expressions; stack8 already follows the ordinary truth path.
+Actual `-m` runs bind module metadata in both the main namespace and its cells,
+resolve relative imports against the module's parent, and search the working
+directory. File runs retain their isolated import path.
+
+`time.strptime` delegates to the unchanged CPython 3.14.8 `_strptime` source,
+with `struct_time`'s two named fields preserved. The unittest runtime supports
+class cleanup stacks and class context managers, drains cleanups after failed
+setup as well as normal teardown, and records cleanup exceptions as errors.
