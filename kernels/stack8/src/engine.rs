@@ -4842,18 +4842,31 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Whether two faults carry the same notes, cause, context, husher and
-    /// traceback, as the reference weighs a fault that went back up.
+    /// Whether two faults carry the same traceback, cause and context,
+    /// as the reference weighs a fault that went back up. The reference
+    /// also names a notes field there, but its `add_note` writes the
+    /// `__notes__` attribute into the instance dictionary and never that
+    /// field, so the reference's own notes test is always true and is
+    /// not modelled here; the hushing flag is not weighed either.
     fn metadata_alike(&self, one: &Value, other: &Value) -> bool {
         let (Value::Object(one), Value::Object(other)) = (one, other) else { return false };
-        let keys = [&self.lang.notes_member, &self.lang.exception_cause, &self.lang.exception_context, &self.lang.exception_suppress, &self.lang.traceback_member];
+        let keys = [&self.lang.traceback_member, &self.lang.exception_cause, &self.lang.exception_context];
         let one = one.fields.borrow();
         let other = other.fields.borrow();
         keys.into_iter().flatten().all(|key| {
             let left = one.iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
             let right = other.iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
-            left.identical(&right)
+            Self::field_same_place(&left, &right)
         })
+    }
+
+    /// Whether two metadata fields are the very same thing: the same
+    /// notes list, traceback, cause or context.
+    fn field_same_place(one: &Value, two: &Value) -> bool {
+        match (one, two) {
+            (Value::Trace(_), Value::Trace(_)) => one.identical(two),
+            _ => one.same_place(two),
+        }
     }
 
     /// The part of a gatherer holding just the faults that went back up,

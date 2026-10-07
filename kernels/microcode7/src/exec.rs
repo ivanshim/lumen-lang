@@ -9523,11 +9523,15 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Whether two faults carry the same notes, cause, context, husher and
-    /// traceback, as the reference weighs a fault that went back up.
+    /// Whether two faults carry the same traceback, cause and context,
+    /// as the reference weighs a fault that went back up. The reference
+    /// also names a notes field there, but its `add_note` writes the
+    /// `__notes__` attribute into the instance dictionary and never that
+    /// field, so the reference's own notes test is always true and is
+    /// not modelled here; the hushing flag is not weighed either.
     fn metadata_alike(&self, one: &Value, other: &Value) -> bool {
         let (Value::Thing(one), Value::Thing(other)) = (one.settled(), other.settled()) else { return false };
-        let labels = ["ext.builtin.exceptions.notes", "ext.builtin.exceptions.cause", "ext.builtin.exceptions.context", "ext.builtin.exceptions.suppress", "ext.builtin.exceptions.traceback.member"];
+        let labels = ["ext.builtin.exceptions.traceback.member", "ext.builtin.exceptions.cause", "ext.builtin.exceptions.context"];
         let one = one.holds.borrow();
         let other = other.holds.borrow();
         labels.iter().filter_map(|label| self.table.single(label)).all(|key| {
@@ -9537,12 +9541,15 @@ impl<'a> Machine<'a> {
         })
     }
 
-    /// Whether two faults are the very same thing, by place.
+    /// Whether two metadata fields are the very same thing: the same
+    /// notes list, traceback, cause or context, and never an equal copy.
     fn identity_alike(one: &Value, other: &Value) -> bool {
         match (one.settled(), other.settled()) {
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(&a, &b),
-            (Value::Nil, Value::Nil) => true,
-            (a, b) => a.equals(&b),
+            (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(&a, &b),
+            (Value::Vector(a), Value::Vector(b)) | (Value::Tuple(a), Value::Tuple(b)) => Rc::ptr_eq(&a, &b),
+            (Value::Nil, Value::Nil) | (Value::Unset, Value::Unset) => true,
+            _ => false,
         }
     }
 
