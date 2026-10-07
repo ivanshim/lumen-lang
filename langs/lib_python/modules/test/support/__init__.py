@@ -116,6 +116,13 @@ def linked_to_musl():
     # Stub: no host C library is inspected.
     return None
 
+def control_characters_c0():
+    """Return the C0 control characters as one-character strings.
+
+    C0 covers the byte range 0x00-0x1F, together with 0x7F.
+    """
+    return [chr(c) for c in range(0x00, 0x20)] + ["\x7F"]
+
 def gc_collect():
     gc.collect()
     gc.collect()
