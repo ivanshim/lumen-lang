@@ -224,6 +224,16 @@ class MagicMock(Mock):
         return self._magic['__exit__'](kind, value, traceback)
 
 
+def _is_module(target):
+    import types
+    return isinstance(target, types.ModuleType)
+
+
+def _builtin_names():
+    import builtins
+    return frozenset(name for name in dir(builtins) if not name.startswith('_'))
+
+
 class _Patch:
     def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=Mock):
         if new_callable is not None and new is not DEFAULT:

@@ -318,7 +318,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     if matches!(op, Split | Rsplit) && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
         && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
         return crate::methods::call(&args[0], if op == Rsplit { "rsplit" } else { "split" }, &args[1..], &[], words,
-            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), lang.allow_cycles);
+            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), true);
     }
     if op == Maketrans {
         return translated_table(args,lang);
