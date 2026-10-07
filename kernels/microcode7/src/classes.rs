@@ -3262,7 +3262,7 @@ impl<'a> Machine<'a> {
                             let inherited = self.read_class_member(prototype, key, false);
                             match inherited {
                                 Ok(found) => {
-                                    let bind = matches!(&found, Value::Wrapped(tag, _) if [2, 10, 11, 12, 19, 30, 60, 71].contains(tag));
+                                    let bind = matches!(&found, Value::Wrapped(tag, _) if [2, 10, 11, 12, 19, 30, 60, 71, 73].contains(tag));
                                     return Ok(if bind { Self::wrap(3, vec![found, instance.clone()]) } else { found });
                                 }
                                 Err(escape) if self.missing_member_escape(&escape) => (),

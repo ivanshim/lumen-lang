@@ -2729,7 +2729,7 @@ impl<'a> Engine<'a> {
                         if Self::own_class_value(class, self.class_word("module")).is_none() {
                             let base_value = Self::own_kind(class).and_then(|word| self.spelled_kind(&word)).unwrap_or_else(|| Value::Class(class.clone()));
                             match self.class_get(base_value, name, false) {
-                                Ok(value) => return Ok(if matches!(&value, Value::Adapter(payload) if [2, 10, 11, 12, 19, 29, 30, 41].contains(&payload.0)) { Self::adapter(3, vec![value, receiver.clone()]) } else { value }),
+                                Ok(value) => return Ok(if matches!(&value, Value::Adapter(payload) if [2, 10, 11, 12, 19, 29, 30, 41, 78].contains(&payload.0)) { Self::adapter(3, vec![value, receiver.clone()]) } else { value }),
                                 Err(fault) if self.attribute_fault(&fault) => (),
                                 Err(fault) => return Err(fault),
                             }
