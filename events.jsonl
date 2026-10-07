@@ -7440,3 +7440,24 @@
 {"t":"2026-10-07T14:15:50Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":27,"expected":25.7,"gap":"+1.3","status":"ok"}
 {"t":"2026-10-07T14:16:09Z","event":"checkin","status":"done","actions":"accepted dsflash-strftime (d9d874354, 21e; RETURN was only the known statistics flake, counts re-compared vs 21c); dsflash-dynamic resume held (missed queue at 13:54, DS Flash 12/12 full); removed target/ of idle accepted dsflash-strftime (1.5G); prune-merged freed 0","notes":"box disk 91% (alert already sent today; ~22G probe/ in running _int21d, 10G ~/.debug perf cache, idle target/ of json-speed 3.7G, codecs 2.4G need Ivan OK); Mac disk 81%; box load 3.8, 12.6 GB available; no open PRs; Sol 11 + coroutines review, DS Flash 12, DS Pro 1, Kimi 1, Sonnet 1; luna: no new alerts, meter gap +1.3 ok"}
 {"t":"2026-10-07T14:16:29Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-07T14:18:28Z","event":"finished","job":"kimi-metaclass","exit_time":"2026-10-07T14:14:34Z"}
+{"t":"2026-10-07T14:18:28Z","event":"review-queued","job":"kimi-metaclass","review":"review-auto-kimi-metaclass-1418"}
+{"t":"2026-10-07T14:18:31Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T14:22:28Z","event":"exited","job":"review-auto-stdlib-coroutines-1408","code":0}
+{"t":"2026-10-07T14:23:40Z","event":"review-started","job":"kimi-metaclass","review":"review-auto-kimi-metaclass-1418"}
+{"t":"2026-10-07T14:28:40Z","event":"exited","job":"review-auto-kimi-metaclass-1418","code":0}
+{"t":"2026-10-07T14:29:56Z","event":"exited","job":"dsflash-exceptstar","code":0}
+{"t":"2026-10-07T14:31:34Z","event":"queued","job":"dsflash-dynamic","model":"deepseek-flash","line":"or-resume dsflash-dynamic deepseek-flash ses_eead343f4ffe77BNXANtFi6RLv"}
+{"t":"2026-10-07T14:32:44Z","event":"resumed","job":"dsflash-dynamic","model":"deepseek-flash","session":"ses_eead343f4ffe77BNXANtFi6RLv"}
+{"t":"2026-10-07T14:33:33Z","event":"returned","job":"kimi-metaclass","review":"review-auto-kimi-metaclass-1418","commit":"a08e3fcbd","note":"(1st; custom MRO adoption returns a fresh Rc<Class> after mro() saw the original -> class identity split, both kernels; metaclass 61/73->73/73 both kept; reconcile with 21d stdlib-super) -> Kimi queue (resume)"}
+{"t":"2026-10-07T14:33:33Z","event":"queued","job":"kimi-metaclass","model":"kimi-k3","line":"kimi-metaclass resume"}
+{"t":"2026-10-07T14:33:33Z","event":"returned","job":"stdlib-coroutines","review":"review-auto-stdlib-coroutines-1408","commit":"e156e35b6","note":"(1st; 12 subject tests fail: sys.getrefcount, origin tracking, _warn_unawaited_coroutine hook, asyncio shutdown; anext/aiter do not bind descriptors; coroutines 0->88/100 both kept) -> Sol queue (resume)"}
+{"t":"2026-10-07T14:33:33Z","event":"started","job":"kimi-metaclass","model":"kimi-k3","mode":"resume"}
+{"t":"2026-10-07T14:33:33Z","event":"queued","job":"stdlib-coroutines","model":"gpt-6.1-sol","line":"sol-resume stdlib-coroutines"}
+{"t":"2026-10-07T14:33:45Z","event":"finished","job":"dsflash-exceptstar","exit_time":"2026-10-07T14:29:56Z"}
+{"t":"2026-10-07T14:33:45Z","event":"review-queued","job":"dsflash-exceptstar","review":"review-auto-dsflash-exceptstar-1433"}
+{"t":"2026-10-07T14:33:50Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T14:34:38Z","event":"quota","codex_week_used":27,"codex_credits":0,"claude_week_used":31,"claude_5h_used":14,"kimi_5h_used":0,"kimi_month_used":0.9167,"kimi_code_used":0,"deepseek_usd":335.38}
+{"t":"2026-10-07T14:34:43Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":27,"expected":26.5,"gap":"+0.5","status":"ok"}
+{"t":"2026-10-07T14:34:56Z","event":"checkin","status":"done","actions":"returned kimi-metaclass (1st: custom MRO adoption splits class identity, both kernels) -> returns + kimi-queue resume, kimi-queue.sh restarted; returned stdlib-coroutines (1st: 88/100, getrefcount/origin tracking/unawaited hook/asyncio shutdown missing, anext/aiter descriptor binding) -> returns + sol-resume queued; held-resumes: dsflash-dynamic marked released (resumed 14:32Z); prune-merged freed 0MB","notes":"box load 6.8, 9.9 GB available, disk 92% (no idle accepted target/; alert already sent today; ~/.debug 9.9G is the largest non-worktree item); Mac disk 81%; Sol 11/11 running + codecs-sol and coroutines resume queued; DS Flash 12/12, DS Pro 1, Sonnet 1, Kimi resuming; dsflash-exceptstar finished, review to be queued by review-queue loop; no open PRs; luna: no new alerts, meter gap +0.5 ok; Claude week 31%"}
+{"t":"2026-10-07T14:37:45Z","event":"review-started","job":"dsflash-exceptstar","review":"review-auto-dsflash-exceptstar-1433"}
