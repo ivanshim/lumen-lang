@@ -10790,13 +10790,25 @@ impl<'a> Machine<'a> {
 
     /// Carry signal exceptions through operations whose native result is text.
     fn observe_host_interrupts(&mut self) -> Result<(), String> {
-        self.signals_due_now().map_err(|escape| {
-            if let Escape::Error(note) = escape { note }
-            else {
-                self.got_away = Some(escape);
-                self.argument_fault("ext.builtin.stream.failed", None)
+        let delivered = self.signals_due_now();
+        // Resolve a callback's native bridge before another cleanup call
+        // can consume it. Plain host words become their Python exception
+        // here too, rather than losing its identity at the native boundary.
+        let delivered = match delivered {
+            Err(Escape::Error(words)) => match self.got_away.take() {
+                Some(raised) => Err(raised),
+                None => self.raised_if_error(Err(Escape::Error(words))),
+            },
+            outcome => outcome,
+        };
+        match delivered {
+            Ok(()) => Ok(()),
+            Err(Escape::Error(words)) => Err(words),
+            Err(raised) => {
+                self.got_away = Some(raised);
+                Err(self.argument_fault("ext.builtin.stream.failed", None))
             }
-        })
+        }
     }
 
     /// As `apply_held`, for an operation that answers plain words: an

@@ -1222,10 +1222,9 @@ class _BufferedLock:
         except BaseException:
             self._held = False
             raise
-    # Clear the guard even when the buffered operation raised.
-    def __exit__(self, kind, value, tb):
-        self._held = False
-        return False
+    # Release in one native store, before another Python statement can
+    # deliver a pending signal and interrupt the ownership transition.
+    __exit__ = lambda self, kind, value, tb: setattr(self, '_held', False) or False
 
 _IMPLS = {}
 
