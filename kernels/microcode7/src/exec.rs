@@ -728,6 +728,10 @@ pub struct Machine<'a> {
     /// The routine a value nobody took is handed to, where the program
     /// put one in its way.
     untaken: RefCell<Option<Value>>,
+    /// The routine told of each call and return, where the program put
+    /// one in its way, and whether it is being told one just now.
+    watcher: RefCell<Option<Value>>,
+    watching_now: Cell<bool>,
     /// Whether anything has gone out of the run yet. What is held back
     /// in a piece of output kept aside has not gone out.
     written_out: std::cell::Cell<bool>,
@@ -1794,13 +1798,13 @@ impl<'a> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
         crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
+        crate::data::set_implicit_words([("allocate", 4u8), ("getitem", 5), ("subclass", 5)].iter().filter_map(|(key, manner)| {
+            table.single(&format!("ext.stmt.class.detail.{key}")).map(|word| (word.to_string(), *manner))
+        }).collect());
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
                 let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     name: idents[at].clone(), under: None, answers: Vec::new(),
-        crate::data::set_implicit_words([("allocate", 4u8), ("getitem", 5), ("subclass", 5)].iter().filter_map(|(key, manner)| {
-            table.single(&format!("ext.stmt.class.detail.{key}")).map(|word| (word.to_string(), *manner))
-        }).collect());
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
                 };
@@ -2021,6 +2025,8 @@ impl<'a> Machine<'a> {
             text_caller_book: None,
             hearer: RefCell::new(None),
             untaken: RefCell::new(None),
+            watcher: RefCell::new(None),
+            watching_now: Cell::new(false),
             written_out: std::cell::Cell::new(false),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
@@ -3619,6 +3625,22 @@ impl<'a> Machine<'a> {
         let Value::Bound(p, env) = self.what_it_spells(v) else { return false };
         let _ = self.invoke(p, env, vec![raised]);
         true
+    }
+
+    /// Hands the routine put in the way of calls the frame of a call
+    /// that was just entered or is being left, with what it gave back.
+    /// A call made while the routine is being told is not told again;
+    /// a routine that fails is dropped and its failure goes on up.
+    fn tell_watcher(&mut self, event: &str, standing: &Option<Rc<Thing>>, given: Value) -> Result<(), Escape> {
+        if self.watching_now.get() { return Ok(()); }
+        let Some(frame) = standing else { return Ok(()) };
+        let Some(put) = self.watcher.borrow().clone() else { return Ok(()) };
+        let Value::Bound(listener, env) = self.what_it_spells(put) else { return Ok(()) };
+        self.watching_now.set(true);
+        let told = self.invoke(listener, env, vec![Value::Thing(frame.clone()), Value::text(event), given]);
+        self.watching_now.set(false);
+        if told.is_err() { *self.watcher.borrow_mut() = None; }
+        told.map(|_| ())
     }
 
     pub fn run_main(&mut self, program: &Rc<Routine>) -> Result<(), String> {
@@ -11950,10 +11972,13 @@ impl<'a> Machine<'a> {
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
         if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        let followed = mine && program.ident != "<gathering>" && self.watcher.borrow().is_some();
+        let arrival = if followed { let here = self.active_trace.clone(); self.tell_watcher("call", &here, Value::Nil) } else { Ok(()) };
+        let arrived = followed && arrival.is_ok();
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
-        let outcome: Res = loop {
+        let outcome: Res = if let Err(refused) = arrival { Err(refused) } else { loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
                 Traps::Yields => 1,
@@ -12065,8 +12090,15 @@ impl<'a> Machine<'a> {
                 Err(Escape::Resume(n)) if caught & 4 != 0 => break Err(Escape::Resume(n - 1)),
                 Err(e) => break Err(e),
             }
-        };
+        } };
         let mut outcome = outcome;
+        if arrived {
+            let given = outcome.as_ref().ok().cloned().unwrap_or(Value::Nil);
+            let here = self.active_trace.clone();
+            if let Err(refused) = self.tell_watcher("return", &here, given) {
+                if outcome.is_ok() { outcome = Err(refused); }
+            }
+        }
         let mut body_namespace = None;
         if outcome.is_ok() {
             if let Some((book_name, cell_name, protocol)) = &program.class_namespace {
@@ -20291,6 +20323,12 @@ impl<'a> Machine<'a> {
                 let put = v.first().cloned().unwrap_or(Value::Nil);
                 let none = matches!(put, Value::Nil | Value::Unset);
                 *self.untaken.borrow_mut() = if none { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            Prim::Profile => {
+                let put = v.first().cloned().unwrap_or(Value::Nil);
+                let none = matches!(put, Value::Nil | Value::Unset);
+                *self.watcher.borrow_mut() = if none { None } else { Some(put) };
                 Value::Flag(true)
             }
             Prim::Hearer => {

@@ -468,6 +468,35 @@ def _getframe(depth=0):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
 
+# The routine the kernel tells of each call and return stands between it
+# and whatever function the program gave to setprofile.
+_profile_target = [None]
+
+def _profile_dispatch(frame, event, arg):
+    function = _profile_target[0]
+    if function is None:
+        return
+    # setprofile itself is native in the reference, so the routine
+    # standing here for it is not a call the program made.
+    code = frame.f_code
+    if code.co_name == 'setprofile' and code.co_filename == _profile_home[0]:
+        return
+    try:
+        function(frame, event, arg)
+    except BaseException:
+        # A function that fails is taken away, as the reference does.
+        _profile_target[0] = None
+        raise
+
+def setprofile(function):
+    _profile_target[0] = function
+    __profile(_profile_dispatch if function is not None else None)
+
+_profile_home = [setprofile.__code__.co_filename]
+
+def getprofile():
+    return _profile_target[0]
+
 # Native bridge for CPython Python/sysmodule.c at v3.14.8 / 8e6e75d9102e; PSF License.
 _clear_type_descriptors = __clear_type_descriptors
 # Python audit hooks receive explicit runtime audit events in registration order.

@@ -235,6 +235,10 @@ pub struct Engine<'a> {
     /// The routine a value nobody took is handed to, where the program
     /// put one in its way.
     untaken: RefCell<Option<Value>>,
+    /// The routine told of each call and return, where the program put
+    /// one in its way, and whether it is being told one just now.
+    profiler: RefCell<Option<Value>>,
+    profiling: std::cell::Cell<bool>,
     /// Whether anything has gone out of the run yet. What is held back
     /// in a piece of output kept aside has not gone out.
     written_out: std::cell::Cell<bool>,
@@ -1504,13 +1508,13 @@ impl<'a> Engine<'a> {
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
+        crate::value::implicit_members(["allocate", "getitem", "subclass"].iter().filter_map(|part| {
+            lang.class_details.get(*part).and_then(|list| list.first()).map(|word| (word.clone(), *part == "allocate"))
+        }).collect());
         let mut engine = Engine {
             class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
-        crate::value::implicit_members(["allocate", "getitem", "subclass"].iter().filter_map(|part| {
-            lang.class_details.get(*part).and_then(|list| list.first()).map(|word| (word.clone(), *part == "allocate"))
-        }).collect());
             contexts: crate::context::ContextStore::default(),
             constructor_indices: RefCell::new(HashMap::new()),
             member_words: [
@@ -1565,6 +1569,8 @@ impl<'a> Engine<'a> {
             under: None,
             entering: None,
             untaken: RefCell::new(None),
+            profiler: RefCell::new(None),
+            profiling: std::cell::Cell::new(false),
             written_out: std::cell::Cell::new(false),
             nothing: Value::Null,
             hurled_at: std::cell::Cell::new(0),
@@ -4224,7 +4230,14 @@ impl<'a> Engine<'a> {
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let caller_routine = self.running_routine.replace(program.clone());
-        let outcome = self.run_instrs(program, &mut frame);
+        let watched = !program.body_of_all && program.ident != "<comprehension>" && self.profiler.borrow().is_some();
+        let seen = self.trace_frame.clone();
+        let entered = if watched { self.tell_profiler("call", &seen, Value::Null) } else { Ok(()) };
+        let reported = watched && entered.is_ok();
+        let outcome = match entered {
+            Ok(()) => self.run_instrs(program, &mut frame),
+            Err(fault) => Err(fault),
+        };
         // A signal still left pending as the outermost body's own last
         // statement is done is taken up here, while the body's frame
         // and line still stand: what it raises is the run's ending,
@@ -4246,6 +4259,12 @@ impl<'a> Engine<'a> {
             },
             other => other,
         };
+        if reported {
+            let given = if outcome.is_ok() && program.returns_value && self.data.len() > base { self.data[self.data.len() - 1].clone() } else { Value::Null };
+            if let Err(fault) = self.tell_profiler("return", &seen, given) {
+                if outcome.is_ok() { outcome = Err(fault); }
+            }
+        }
         self.running_routine = caller_routine;
         let mut body_namespace = None;
         if outcome.is_ok() {
@@ -4298,6 +4317,24 @@ impl<'a> Engine<'a> {
         }
         self.data.push(result);
         Ok(())
+    }
+
+    /// Tells the routine put in the way of calls that something happened
+    /// to the call whose frame is given. Nothing is told while it is
+    /// being told already, so its own calls go unseen; a routine that
+    /// fails is let go and the failure passes on to the call it saw.
+    fn tell_profiler(&mut self, event: &str, frame: &Option<Rc<Instance>>, result: Value) -> Flow<()> {
+        if self.profiling.get() { return Ok(()); }
+        let Some(frame) = frame else { return Ok(()) };
+        let Some(put) = self.profiler.borrow().clone() else { return Ok(()) };
+        let Value::Routine(listener) = self.what_it_spells(put) else { return Ok(()) };
+        self.profiling.set(true);
+        let mark = self.data.len();
+        let told = self.invoke(&listener, vec![Value::Object(frame.clone()), Value::text(event), result]);
+        self.profiling.set(false);
+        self.data.truncate(mark);
+        if told.is_err() { *self.profiler.borrow_mut() = None; }
+        told
     }
 
     /// Whether the run has taken longer than the language allowed it.
@@ -20298,6 +20335,12 @@ impl<'a> Engine<'a> {
                 let put = args.first().cloned().unwrap_or(Value::Null);
                 let held = matches!(put, Value::Null | Value::Blank);
                 *self.untaken.borrow_mut() = if held { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            Builtin::Profile => {
+                let put = args.first().cloned().unwrap_or(Value::Null);
+                let held = matches!(put, Value::Null | Value::Blank);
+                *self.profiler.borrow_mut() = if held { None } else { Some(put) };
                 Value::Flag(true)
             }
             Builtin::Complainer => {
