@@ -9524,11 +9524,10 @@ impl<'a> Machine<'a> {
                         return Ok(Value::Nil);
                     }
                     let mut holds = item.holds.borrow_mut();
-                    if let Value::Bound(_, environment) = &holds[5].1 {
-                        for place in environment.cells.borrow_mut().iter_mut() {
-                            // The environment releases its link; other cell owners retain their value.
-                            *place = Value::Unset;
-                        }
+                    if let Value::Bound(body, _) = &holds[5].1 {
+                        // A frame can share its environment with an eval caller.
+                        // Release this frame's ownership without clearing that caller.
+                        holds[5].1 = Value::Bound(body.clone(), Env::make(0, None));
                     }
                     holds[3].1 = Value::Nil;
                     holds[6].1 = Value::Nil;
