@@ -775,11 +775,33 @@ impl<'a> Machine<'a> {
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
         entries.retain(|(_,v)|!matches!(v,Value::Unset));
+        // Convert a function's special class role into its stored descriptor.
+        if self.protocol_spelled() {
+            for entry in &mut entries {
+                if matches!(entry.1.settled(), Value::Routine(_) | Value::Bound(..)) {
+                    if entry.0 == self.detail("allocate") {
+                        entry.1 = Self::wrap(4, vec![entry.1.clone()]);
+                    } else if [self.detail("subclass"), self.detail("getitem")].contains(&entry.0.as_str()) {
+                        entry.1 = Self::wrap(5, vec![entry.1.clone()]);
+                    }
+                }
+            }
+        }
         if !self.table.strings("ext.system.module.cache").is_empty() {
             for (key, value) in &entries {
                 if key == "__abc_tpflags__" && matches!(value.settled(), Value::Small(bits) if bits & 96 == 96) {
                     return Err(format!("TypeError: type {title} has both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING set").into());
                 }
+            }
+        }
+        // A direct parent may occur only once in a Python base tuple.
+        if !self.detail("name").is_empty() {
+            let mut unique = Vec::new();
+            for parent in &parents {
+                if unique.iter().any(|old| Rc::ptr_eq(old, parent)) {
+                    return Err(format!("TypeError: duplicate base class {}", parent.name).into());
+                }
+                unique.push(parent.clone());
             }
         }
         let mut queues=Vec::new();
@@ -797,7 +819,19 @@ impl<'a> Machine<'a> {
                 for other in &queues {if other[1..].iter().any(|c|Rc::ptr_eq(c,&q[0])){continue 'candidate;}}
                 chosen=Some(q[0].clone());break;
             }
-            let next=chosen.ok_or_else(||self.detail("mro.amiss").to_owned())?;
+            let next = match chosen {
+                Some(parent) => parent,
+                None if self.detail("name").is_empty() => return Err(self.detail("mro.amiss").to_owned().into()),
+                None => {
+                    let mut pending: Vec<&Rc<Blueprint>> = Vec::new();
+                    for queue in &queues {
+                        let first = &queue[0];
+                        if pending.iter().all(|seen| !Rc::ptr_eq(seen, first)) { pending.push(first); }
+                    }
+                    let words = pending.into_iter().map(|parent| parent.name.clone()).collect::<Vec<_>>();
+                    return Err(format!("TypeError: Cannot create a consistent method resolution order (MRO) for bases {}", words.join(", ")).into());
+                }
+            };
             if ranks.iter().any(|b|Rc::ptr_eq(b,&next)){return Err(self.detail("mro.amiss").to_owned().into());}
             for q in &mut queues {if Rc::ptr_eq(&q[0],&next){q.remove(0);}}
             ranks.push(next);
@@ -1829,7 +1863,12 @@ impl<'a> Machine<'a> {
                         if !holds_state && kept.get(1).is_some_and(|owner|owner.bare()!=self.detail("root")) {
                             if let Some(native)=values.first().and_then(Self::underlying){values[0]=native.settled();}
                         }
-                        self.root_answers(&named,values)
+                        // Account for native wrappers reentering an object's
+                        // representation slot without making a Python frame.
+                        self.deeper()?;
+                        let answer = self.root_answers(&named, values);
+                        self.standing = self.standing.saturating_sub(1);
+                        answer
                     }
                     // The maker of a native kind: the blueprint to make a
                     // thing of, then what the kind's primitive takes.
@@ -3825,9 +3864,16 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Attributes(t.clone()));
             }
             let from_class=self.inherited_entry(&t.blueprint(),key);
-            // An entry that takes writes is heard before what the thing
-            // holds itself; every other entry after.
-            if from_class.as_ref().map_or(false,|e|self.writes_too(e)){return self.member_binding(from_class.unwrap(),Some(value.clone()),t.blueprint().clone());}
+            // Reading a data descriptor requires a read slot as well as a
+            // write slot. Without one, an instance's dictionary comes first.
+            let read_first = match from_class.as_ref() {
+                Some(Value::Wrapped(6 | 32 | 58, _)) => true,
+                Some(entry) => self.protocol_entry(entry, "descriptor.get").is_some() && self.writes_too(entry),
+                None => false,
+            };
+            if read_first {
+                return self.member_binding(from_class.unwrap(), Some(value.clone()), t.blueprint().clone());
+            }
             let dictionary = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
             if let Some(mapping) = dictionary {
                 // The namespace may be another thing's own holds, shared
@@ -4311,6 +4357,14 @@ impl<'a> Machine<'a> {
         if matches!(subject.settled(), Value::Refusal(_) | Value::Ellipsis) && key==self.detail("kind") {
             return Err(self.detail(if writing{"kind.fixed"}else{"kind.kept"}).to_owned().into());
         }
+        // Prepare the fixed-type refusal before a write consumes its value.
+        let fixed_type_error = if key == self.detail("kind") && !key.is_empty() {
+            Some(match replacement.as_ref() {
+                None => self.detail("kind.kept").to_owned(),
+                Some(next) if !self.stands_for_a_kind(next) => format!("TypeError: __class__ must be set to a class, not '{}' object", next.kind_word()),
+                Some(_) => self.detail("kind.fixed").to_owned(),
+            })
+        } else { None };
         let success=match &subject {
             Value::Thing(t)=>{
                 let named_sequence = t.holds.borrow().iter().any(|entry| entry.0 == "\0named-sequence");
@@ -4715,6 +4769,8 @@ impl<'a> Machine<'a> {
             _=>false,
         };
         if success{return Ok(Value::Nil);}
+        // Native instances cannot replace their fixed type, even with itself.
+        if let Some(message) = fixed_type_error { return Err(message.into()); }
         // A thing whose blueprint names the entries it holds, and a
         // value of a builtin kind, have nowhere to put a new entry.
         // Only a write says so; a taking-away names the member that

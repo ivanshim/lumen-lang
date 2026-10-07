@@ -671,8 +671,27 @@ impl<'a> Engine<'a> {
         // been written. Nothing stands there, and the class keeps no
         // member for it: a name a conditional never bound is no member.
         members.retain(|(_, held)| !matches!(held, Value::Blank));
+        // Type construction installs implicit descriptors for plain functions.
+        // Existing descriptors and other callable values keep their own protocol.
+        if !self.class_word("descriptor.get").is_empty() {
+            for (key, held) in &mut members {
+                if !matches!(held, Value::Routine(_)) { continue; }
+                let tag = if key == self.class_word("allocate") { Some(4) }
+                    else if key == self.class_word("subclass") || key == self.class_word("getitem") { Some(5) }
+                    else { None };
+                if let Some(tag) = tag { *held = Self::adapter(tag, vec![held.clone()]); }
+            }
+        }
         if !self.lang.module_cache.is_empty() && members.iter().any(|(key, value)| key == "__abc_tpflags__" && matches!(value.contents(), Value::Small(flags) if flags & 96 == 96)) {
             return Err(format!("TypeError: type {name} has both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING set").into());
+        }
+        // Reject repeated direct bases before merging their ancestor lists.
+        if !self.class_word("name").is_empty() {
+            for (at, base) in bases.iter().enumerate() {
+                if bases[..at].iter().any(|earlier| Rc::ptr_eq(earlier, base)) {
+                    return Err(format!("TypeError: duplicate base class {}", base.name).into());
+                }
+            }
         }
         let mut lines: Vec<Vec<Rc<Class>>> = bases.iter().map(|b| {
             let mut line = vec![b.clone()]; line.extend(b.lineage.iter().cloned()); line
@@ -682,7 +701,15 @@ impl<'a> Engine<'a> {
         while lines.iter().any(|s| !s.is_empty()) {
             let head = lines.iter().filter_map(|s| s.first()).find(|head|
                 !lines.iter().any(|s| s.iter().skip(1).any(|tail| Rc::ptr_eq(head, tail)))).cloned()
-                .ok_or_else(|| self.class_word("mro.amiss").to_string())?;
+                .ok_or_else(|| {
+                    if self.class_word("name").is_empty() { return self.class_word("mro.amiss").to_string(); }
+                    let mut blocked = Vec::new();
+                    for head in lines.iter().filter_map(|line| line.first()) {
+                        if !blocked.iter().any(|prior| Rc::ptr_eq(prior, head)) { blocked.push(head.clone()); }
+                    }
+                    let names = blocked.iter().map(|base| base.name.as_str()).collect::<Vec<_>>().join(", ");
+                    format!("TypeError: Cannot create a consistent method resolution order (MRO) for bases {names}")
+                })?;
             if lineage.iter().any(|c| Rc::ptr_eq(c, &head)) { return Err(self.class_word("mro.amiss").to_string().into()); }
             for line in &mut lines { if line.first().map_or(false, |c| Rc::ptr_eq(c, &head)) { line.remove(0); } }
             lineage.push(head);
@@ -1746,7 +1773,12 @@ impl<'a> Engine<'a> {
                             if let Some(native) = Self::worth_of(first) { *first = native.contents(); }
                         }
                     }
-                    self.root_work(&operation,args)
+                    // Root wrappers can call overridden slots again without
+                    // entering a function; count that recursion as a call.
+                    self.reaching_further()?;
+                    let result = self.root_work(&operation, args);
+                    self.answered();
+                    result
                 },
                 // The maker of a builtin kind: given the class to make a
                 // thing of and what the kind's builtin takes.
@@ -3312,9 +3344,13 @@ impl<'a> Engine<'a> {
                 if member.is_none() && self.exception_class(&o.class_now()) && self.exception_method_named(name) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
                 }
-                // A member that takes writes speaks before the thing's own
-                // fields; any other member speaks after them.
-                if member.as_ref().map_or(false,|m|self.takes_writes(m)) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class_now().clone());}
+                // A writable descriptor precedes instance fields only when
+                // it also provides a getter; setter-only members yield to them.
+                if member.as_ref().is_some_and(|entry| self.takes_writes(entry)
+                    && (matches!(entry, Value::Adapter(parts) if matches!(parts.0, 6 | 16 | 28))
+                        || self.descriptor_hook(entry, "descriptor.get").is_some())) {
+                    return self.bind_class_value(member.unwrap(), Some(subject.clone()), o.class_now());
+                }
                 let replaced = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                 if let Some(dictionary) = replaced {
                     let raw = Self::worth_of(&dictionary).unwrap_or(dictionary).contents();
@@ -4455,6 +4491,13 @@ impl<'a> Engine<'a> {
             // A value of a builtin kind keeps no namespace: a write
             // says so outright, while a taking-away only reports the
             // member that was never there.
+            _ if name == self.class_word("kind") && !name.is_empty() => {
+                let Some(next) = value.as_ref() else { return Err(self.class_word("kind.kept").to_string().into()); };
+                if !self.stands_for_kind(next) {
+                    return Err(format!("TypeError: __class__ must be set to a class, not '{}' object", next.core_kind()).into());
+                }
+                return Err(self.class_word("kind.fixed").to_string().into());
+            }
             _ if value.is_some() => return Err(self.unwritable_member(&subject,name)),
             _ => return Err(self.missing_member(&subject,name)),
         }

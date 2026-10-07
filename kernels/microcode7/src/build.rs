@@ -7782,7 +7782,20 @@ impl<'a> Builder<'a> {
             if token.lexeme == "[" || token.lexeme == "(" {
                 let carries = inside.iter().any(|scope| *scope);
                 let indexing = index > span.start && self.tokens[index - 1].shape == Shape::Bare;
-                inside.push(carries || indexing);
+                // A grouping followed by a trailer computes the object of
+                // an attribute or subscript target, rather than a target itself.
+                let mut depth = 1;
+                let right = if token.lexeme == "[" { "]" } else { ")" };
+                let mut cursor = index + 1;
+                while cursor < span.end && depth > 0 {
+                    let mark = self.tokens[cursor].lexeme.as_str();
+                    if mark == token.lexeme { depth += 1; }
+                    if mark == right { depth -= 1; }
+                    cursor += 1;
+                }
+                let trailer = depth == 0 && cursor < span.end
+                    && [".", "(", "["].contains(&self.tokens[cursor].lexeme.as_str());
+                inside.push(carries || indexing || trailer);
             } else if token.lexeme == "]" || token.lexeme == ")" {
                 inside.pop();
             } else if token.lexeme == "+" && !inside.iter().any(|scope| *scope) {
@@ -8249,7 +8262,7 @@ impl<'a> Builder<'a> {
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let mut expr = read?;
-        if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
+        if self.on_writing() && self.table.has_any("ext.stmt.class.special") && self.tokens[began].shape == Shape::Bare {
             if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.spelling())) {
                 let assignment = self.pos;
                 self.pos = began;

@@ -91,6 +91,8 @@ def requires_resource(resource):
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):
+    if callable(reason):
+        return reason
     return _identity
 
 def bigmemtest(size, memuse, dry_run=True):

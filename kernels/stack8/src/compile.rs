@@ -8035,7 +8035,21 @@ impl<'a> Compiler<'a> {
                 "[" | "(" => {
                     let nested = protected.last().copied().unwrap_or(false);
                     let attached = at > begin && self.tokens[at - 1].shape == Shape::Instr;
-                    protected.push(nested || attached);
+                    // Arithmetic inside a receiver is read, even when the
+                    // receiver is a parenthesized expression or a display.
+                    let closing = if word.lexeme == "(" { ")" } else { "]" };
+                    let mut level = 0;
+                    let mut receiver = false;
+                    for later in at..end {
+                        if self.tokens[later].lexeme == word.lexeme { level += 1; }
+                        if self.tokens[later].lexeme == closing { level -= 1; }
+                        if level == 0 {
+                            receiver = self.tokens.get(later + 1).filter(|_| later + 1 < end)
+                                .is_some_and(|next| matches!(next.lexeme.as_str(), "." | "[" | "("));
+                            break;
+                        }
+                    }
+                    protected.push(nested || attached || receiver);
                 }
                 "]" | ")" => { protected.pop(); }
                 "+" if !protected.iter().any(|scope| *scope) => return true,
@@ -8406,6 +8420,7 @@ impl<'a> Compiler<'a> {
         self.writing_place = saved_place;
         expression?;
         if !self.lang.class_special.is_empty() && self.on_writing()
+            && self.tokens[target_at].shape == Shape::Instr
             && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.spelling())) {
             let end = self.pos;
             self.piece().instrs.truncate(from);
