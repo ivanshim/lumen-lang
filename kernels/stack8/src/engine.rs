@@ -592,7 +592,7 @@ impl<'a> Engine<'a> {
             // first of them stands on the root, and every line ends
             // there, as the reference's own lines do.
             let base = parents.get(at).copied().flatten().and_then(|i| classes.get(i).and_then(Clone::clone)).or_else(|| Some(root.clone()));
-            let (direct, lineage) = match &base {
+            let (mut direct, mut lineage) = match &base {
                 Some(parent) => {
                     let mut line = vec![parent.clone()];
                     line.extend(parent.lineage().iter().cloned());
@@ -601,6 +601,9 @@ impl<'a> Engine<'a> {
                 }
                 None => (Vec::new(), Vec::new()),
             };
+            if at==38 {
+                if let Some(Some(ordinary))=classes.get(1){direct.push(ordinary.clone());lineage.insert(1,ordinary.clone());}
+            }
             classes[at] = Some(Rc::new(Class { direct: std::cell::RefCell::new(direct), lineage: std::cell::RefCell::new(lineage), outline: None,
                 name: name.clone(), base: std::cell::RefCell::new(base),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
@@ -7605,6 +7608,23 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if let Value::Adapter(binding)=value {
+            if matches!(binding.0,3|131) && value.core_kind()=="method" && binding.1.len()==2 {
+                let callable=binding.1[0].clone();
+                let mut name="?".to_string();
+                for field in ["qualified","name"] {
+                    let word=self.class_word(field).to_owned();
+                    match self.class_get(callable.clone(),&word,false) {
+                        Ok(Value::Text(found))=>{name=found.to_string();break;}
+                        Ok(_)=>break,
+                        Err(fault) if self.attribute_fault(&fault)=>{},
+                        Err(fault)=>{self.carried=Some(fault);return Err(String::new());}
+                    }
+                }
+                let receiver=self.special_text(&binding.1[1],true)?;
+                return Ok(format!("<bound method {name} of {receiver}>"));
+            }
+        }
         // A whole number is written out only where it holds no more
         // figures than the definition allows, whichever conversion --
         // writing, representing or quoting -- asked for the text.
@@ -9089,13 +9109,15 @@ impl<'a> Engine<'a> {
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
             Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
             Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
-            Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
+            Builtin::Power => &[24,32],
+            Builtin::Round | Builtin::Divmod | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
         };
         let mut settled: Vec<Value> = Vec::new();
         let mut changed = false;
-        for value in args {
-            match if places == [usize::MAX] { None } else { self.worth_free_of(value, places) } {
+        for (position,value) in args.iter().enumerate() {
+            let slots=if op==Builtin::Power && position==2 {&[][..]}else{places};
+            match if slots == [usize::MAX] { None } else { self.worth_free_of(value, slots) } {
                 // A kind that names itself before its worth is written
                 // by the thing's own class, so the worth cannot stand
                 // in for the thing where the writing is what is asked.
@@ -11542,7 +11564,9 @@ impl<'a> Engine<'a> {
                     match kept { Some(held) => held, None => Value::Fields(o) }
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
+                subject @ Value::Native(Builtin::Text(_), _) if self.fuller_classes() && (name.as_ref()=="__objclass__" || ["doc","descriptor.get","qualified"].iter().any(|field|name.as_ref()==self.class_word(field))) => self.class_get(subject,name,false)?,
                 Value::Native(Builtin::ValueMethod, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) && self.lang.float_getformat.iter().any(|public| public == word.as_ref()) => Value::text(word.rsplit('.').next().unwrap_or(&word)),
+                Value::Native(Builtin::Text(_), word) if self.lang.class_name.as_deref() == Some(name.as_ref()) && word.starts_with("str.") => Value::text(word.rsplit('.').next().unwrap_or(&word)),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
                 Value::Native(_, word) if name.as_ref() == self.class_word("doc") && Self::builtin_kind_doc(&word).is_some() => {
                     Value::text(Self::builtin_kind_doc(&word).expect("checked"))
@@ -16021,6 +16045,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if !self.lang.class_builder.is_empty() && [24,32].iter().any(|at|self.lang.class_special.get(*at).is_some_and(|word|word==operation)) && matches!(receiver.contents(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) && !(1..=2).contains(&args.len()) {
+            return Err(format!("TypeError: expected 1 or 2 arguments, got {}",args.len()));
+        }
         if let Value::View(view) = receiver {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&operation) {
                 if let Value::Class(_) = &view.0 {
@@ -22356,7 +22383,7 @@ impl Engine<'_> {
     /// A thing with no walk method but a method for reading a place is
     /// walked through its places, from nought until the reading fails.
     fn indexed_walk(&self, value: &Value) -> Option<Value> {
-        (matches!(value, Value::Object(_)) && self.special_method(value, 11).is_some()).then(|| Self::core_cursor(CursorSource::Indexed(value.clone(), BigInt::from(0))))
+        (matches!(value, Value::Object(_)) && self.special_value(value, 11).is_some()).then(|| Self::core_cursor(CursorSource::Indexed(value.clone(), BigInt::from(0))))
     }
 
     fn core_members(&mut self, v: &Value) -> Res<Vec<Value>> {
@@ -22688,6 +22715,9 @@ impl Engine<'_> {
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => {
                 arity(1, 1)?;
+                if matches!(&args[0],Value::Adapter(binding) if matches!(binding.0,3|131)) && args[0].core_kind()=="method" {
+                    return Ok(Value::text(&self.special_text(&args[0],true)?));
+                }
                 // A whole number is quoted only where it holds no more
                 // figures than the definition allows.
                 if matches!(args[0].contents(), Value::Huge(_)) { self.digits_shown(&args[0])?; }
@@ -22721,7 +22751,7 @@ impl Engine<'_> {
                 }
                 if let Some(view) = window {
                     return Ok(Value::text(&if view.1 == "mapping" {
-                        format!("mappingproxy({})", self.special_text(&view.0, true)?)
+                        format!("mappingproxy({})", self.special_text(&view.0.proxy_dictionary(), true)?)
                     } else {
                         format!("dict_{}({})", view.1, args[0].core_repr(self.lang.shortest_reals))
                     }));

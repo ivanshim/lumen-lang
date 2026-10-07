@@ -941,7 +941,7 @@ impl<'a> Machine<'a> {
             // first of them stands on the common ancestor, and every
             // line ends there, as the reference's own lines do.
             let under = parent.and_then(|p| chain.get(p).and_then(Clone::clone)).or_else(|| Some(ancestor.clone()));
-            let (parents, ancestry) = match &under {
+            let (mut parents, mut ancestry) = match &under {
                 Some(forebear) => {
                     let mut line = vec![forebear.clone()];
                     line.extend(forebear.ancestry().iter().cloned());
@@ -950,6 +950,10 @@ impl<'a> Machine<'a> {
                 }
                 None => (Vec::new(), Vec::new()),
             };
+            if number==38 {
+                let ordinary=chain.get(1).and_then(Clone::clone);
+                if let Some(ordinary)=ordinary {parents.push(ordinary.clone());ancestry.splice(1..1,[ordinary]);}
+            }
             let kind = Blueprint { parents: std::cell::RefCell::new(parents), ancestry: std::cell::RefCell::new(ancestry), presentation: None,
                 name: word.clone(), under: std::cell::RefCell::new(under),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
@@ -8445,7 +8449,7 @@ impl<'a> Machine<'a> {
     /// called, as an unbound method is handed one. Nothing where the
     /// word names no native kind, or where that kind carries nothing
     /// under the name.
-    fn kind_entry(&self, word: &str, member: &str) -> Value {
+    pub(super) fn kind_entry(&self, word: &str, member: &str) -> Value {
         let key = (word.to_owned(), member.to_owned());
         self.loose_entries.borrow_mut().entry(key).or_insert_with(|| {
             Value::Wrapped(60, Rc::new(vec![Value::text(word), Value::text(member)]).into())
@@ -9438,6 +9442,10 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        let power_method=self.rules.specials.get(24).is_some_and(|word|word==name)||self.rules.specials.get(32).is_some_and(|word|word==name);
+        if self.has_class_order() && power_method && matches!(receiver.settled(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) {
+            match arguments.len(){1|2=>(),count=>return Err(format!("TypeError: expected 1 or 2 arguments, got {count}").into())}
+        }
         if let Value::Window(owner, 'm') = receiver {
             if matches!(name, "get" | "keys" | "values" | "items" | "copy") {
                 if matches!(owner.as_ref(), Value::Blueprint(_)) {
@@ -13995,6 +14003,22 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if let Value::Wrapped(tag,parts)=subject {
+            if (*tag==3 || *tag==132) && parts.len()==2 && subject.kind_word()=="method" {
+                let mut name=None;
+                for field in ["qualified","name"] {
+                    let key=self.detail(field).to_owned();
+                    match self.read_class_member(parts[0].clone(),&key,false) {
+                        Ok(Value::Text(word))=>{name=Some(word.to_string());break;}
+                        Ok(_)=>break,
+                        Err(escape) if self.missing_member_escape(&escape)=>{},
+                        Err(escape)=>return Err(self.carried_native_fault(escape)),
+                    }
+                }
+                let receiver=self.object_words(&parts[1],true)?;
+                return Ok(format!("<bound method {} of {receiver}>",name.unwrap_or_else(||"?".into())));
+            }
+        }
         // A whole number is written out only where it holds no more
         // figures than the table allows, whichever way of writing it
         // -- plain, quoted or shown within a collection -- asked.
@@ -15306,7 +15330,8 @@ impl<'a> Machine<'a> {
             Prim::AsText => &[0, 1], Prim::Quoted | Prim::Asciied => &[1], Prim::AsInt => &[38], Prim::AsReal => &[39], Prim::Magnitude => &[40],
             Prim::Contains | Prim::Absent => &[14],
             Prim::Iterator | Prim::Listed | Prim::Ordered | Prim::Tupling | Prim::Uniques | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue | Prim::Least | Prim::Greatest => &[15],
-            Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary => &[],
+            Prim::Powered=>&[24,32],
+            Prim::Rounded | Prim::QuotRem | Prim::Hexadecimal | Prim::Octal | Prim::Binary => &[],
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power | Prim::At | Prim::Fetch => &[],
             // The bit workings reach the worth beneath a thing as the
             // arithmetic ones do, the blueprint's own methods for them
@@ -15325,7 +15350,8 @@ impl<'a> Machine<'a> {
                     || matches!(operation, Prim::Contains | Prim::Absent) && position == 0
                     && operands.get(1).is_some_and(|map| matches!(map.settled(), Value::Dict(_)));
                 if mapping_key { settled.push(operand.clone()); continue; }
-                match self.underlying_unless(operand, free_at) {
+                let examined=if operation==Prim::Powered && position>1 {&[][..]}else{free_at};
+                match self.underlying_unless(operand, examined) {
                     // Where a kind leads with its own name the thing is
                     // written by its blueprint, so there the worth is
                     // not allowed to stand in for the thing.
@@ -18452,6 +18478,9 @@ impl<'a> Machine<'a> {
                 // and lays the template out when it is called.
                 if matches!(v[0], Value::Text(_)) && self.table.spells("ext.text.format", &called) {
                     return Ok(Value::Member(Rc::new(v[0].clone()), String::from("format")));
+                }
+                if matches!(&v[0],Value::Intrinsic(Prim::Textual(_),_)) && self.has_class_order() && (called=="__objclass__" || ["doc","descriptor.get","qualified"].iter().any(|field|called==self.detail(field))) {
+                    return self.read_class_member(v[0].clone(),&called,false).map_err(|escape|self.carried_native_fault(escape));
                 }
                 if self.rules.member_pipes {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
@@ -26792,12 +26821,14 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Placed(thing, at) => {
-                    let Some((reader, scope)) = self.appointed_within(thing, 11) else { return Ok(None) };
-                    match self.invoke(reader, scope, vec![thing.clone(), Value::from_big(at.clone())]) {
-                        Ok(item) => { *at += 1; Ok(Some(item)) }
-                        Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
-                        Err(Escape::Error(complaint)) => if self.places_spent(&complaint) { Ok(None) } else { Err(complaint) },
-                        Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+                    match self.ask_special(thing,11,&[Value::from_big(at.clone())]) {
+                        Ok(Some(item))=>{*at+=1;Ok(Some(item))},
+                        Ok(None)=>Ok(None),
+                        Err(message) if self.places_spent(&message)=>{self.got_away.take();Ok(None)},
+                        Err(message)=>{
+                            if matches!(self.got_away.as_ref(),Some(Escape::Thrown(Value::Thing(error))) if self.ends_places(error)) {self.got_away.take();Ok(None)}
+                            else {Err(message)}
+                        },
                     }
                 }
                 IteratorKind::Stepping(walk, at) => {
@@ -26951,7 +26982,7 @@ impl Machine<'_> {
     /// A thing with no walk of its own but a place-reading method is
     /// walked through its places from nought.
     fn placed_walk(&self, subject: &Value) -> Option<Value> {
-        (matches!(subject, Value::Thing(_)) && self.appointed(subject, 11).is_some()).then(|| Self::cursor_value(IteratorKind::Placed(subject.clone(), BigInt::from(0))))
+        (matches!(subject, Value::Thing(_)) && self.appointment(subject, 11).is_some()).then(|| Self::cursor_value(IteratorKind::Placed(subject.clone(), BigInt::from(0))))
     }
 
     fn iterator_has_more(&mut self, iterator: &Value) -> Result<bool, String> {
@@ -27286,10 +27317,13 @@ impl Machine<'_> {
                     let Value::Small(mark) = self.core_primitive(Prim::IdentityOf, name, vec![input[0].clone()], Vec::new())? else { return Err(self.core_complaint("core.unready", name)) };
                     return Ok(Value::text(&format!("<{} object at 0x{:x}>", input[0].kind_word(), mark)));
                 }
+                if matches!(&input[0],Value::Wrapped(3|132,_)) && input[0].kind_word()=="method" {
+                    return Ok(Value::text(&self.object_words(&input[0],true)?));
+                }
                 // A reading of the map itself is quoted as the map is,
                 // under the name CPython gives it.
                 if let Some(owner) = &window_owner {
-                    let rendering = self.object_words(owner, true)?;
+                    let rendering = self.object_words(&owner.proxy_pairs(), true)?;
                     return Ok(Value::text(&format!("mappingproxy({rendering})")));
                 }
                 let quoted = input[0].quoted(self.rules.lone_system_real_render == Some("shortest"));

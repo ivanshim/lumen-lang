@@ -1511,6 +1511,7 @@ impl Value {
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
             // descriptor that carries it.
+            Value::Wrapped(180,record)=>format!("<attribute '{}' of 'type' objects>",record[0].bare()),
             Value::Wrapped(32, layout) => {
                 if let [Value::Text(field), Value::Blueprint(class), ..] = layout.as_slice() {
                     let label = match (layout.len(), field.as_ref()) { (2, name) if name != "__weakref__" => "member", _ => "attribute" };
@@ -1595,6 +1596,11 @@ impl Value {
             || kind == "bytearray" && name == "__release_buffer__" {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
+        if ["dict", "set", "frozenset"].contains(&kind) && name == "__contains__" { return None; }
+        let native=matches!(kind,"bool"|"int"|"complex"|"float"|"bytes"|"str"|"tuple"|"list"|"bytearray"|"set"|"dict"|"range"|"frozenset"|"slice");
+        let numeric=["__add__","__radd__","__sub__","__rsub__","__mul__","__rmul__","__truediv__","__rtruediv__","__floordiv__","__rfloordiv__","__mod__","__rmod__","__divmod__","__rdivmod__","__pow__","__rpow__","__and__","__rand__","__or__","__ror__","__xor__","__rxor__","__lshift__","__rlshift__","__rshift__","__rrshift__","__neg__","__pos__","__abs__","__invert__","__bool__","__int__","__float__","__index__"];
+        let containers=["__repr__","__str__","__eq__","__ne__","__lt__","__le__","__gt__","__ge__","__hash__","__len__","__contains__","__iter__","__setitem__","__delitem__","__iadd__","__imul__"];
+        if native && (numeric.contains(&name)||containers.contains(&name)){return Some(("slot wrapper","wrapper_descriptor"));}
         match kind {
             "type" if matches!(name, "__dict__" | "__mro__") => Some(if name == "__dict__" { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),

@@ -37,6 +37,7 @@ thread_local! {
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
+    assigned_attributes: Vec<String>,
     lexical_members: Vec<String>,
     completed_class: Address,
     needs_class_cell: bool,
@@ -4984,6 +4985,7 @@ impl<'a> Builder<'a> {
 
     fn python_class(&mut self, generic: bool) -> Res<(Form, bool)> {
         let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
+        let defining_line=self.look().row.saturating_sub(self.before) as i64;
         let builder = self.gensym("class_builder");
         let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
         self.advance();
@@ -5009,7 +5011,7 @@ impl<'a> Builder<'a> {
         let mut namespace = None;
         let mut cannot = false;
         let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
-            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone(), &parameters)?;
+            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone(), &parameters, defining_line)?;
             namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
@@ -5024,7 +5026,7 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String]) -> Res<(Form, String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String], defining_line: i64) -> Res<(Form, String, Option<String>, bool, bool)> {
         let table = self.table;
         let parent: Option<Address> = None;
         let cannot = false;
@@ -5046,7 +5048,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { assigned_attributes: Vec::new(), lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // The body uses the metaclass's actual mapping from its first statement.
@@ -5055,6 +5057,9 @@ impl<'a> Builder<'a> {
             setup.push(made);
         }
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+        if let Some(word)=table.single("ext.stmt.class.detail.firstline") {
+            self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::Small(defining_line)));
+        }
         if !parameters.is_empty() {
             let values = parameters.iter().map(|word| self.read(word)).collect();
             self.member_ranked("__type_params__");
@@ -5098,7 +5103,13 @@ impl<'a> Builder<'a> {
         self.class_met.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let parts = self.under_way.pop().expect("class body");
+        let mut parts = self.under_way.pop().expect("class body");
+        if let Some(word)=table.single("ext.stmt.class.detail.static.attributes") {
+            parts.assigned_attributes.sort_unstable();parts.assigned_attributes.dedup();
+            let attributes=Value::tuple(parts.assigned_attributes.iter().map(|attribute|Value::text(attribute)).collect());
+            let target=self.read_to_write(parts.book.as_ref().expect("class namespace").ident.as_ref());
+            setup.push(prim_call(Prim::ClassWork(19),vec![target,constant(Value::text(word)),constant(attributes)]));
+        }
         if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
             let book = parts.book.as_ref().expect("class namespace");
@@ -5249,7 +5260,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { assigned_attributes: Vec::new(), lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -8890,6 +8901,11 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
                 }
                 let thing = args.pop().unwrap();
+                if self.table.has_any("ext.stmt.class.detail.static.attributes") && !self.in_class_body() {
+                    if let (Form::Read(receiver),Form::Const(Value::Text(attribute)))=(&thing,&named) {
+                        if receiver.ident.as_ref()=="self" {if let Some(class)=self.under_way.last_mut(){class.assigned_attributes.push(attribute.to_string());}}
+                    }
+                }
                 prim_call(Prim::Onto, vec![thing, named, value])
             }
             Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {

@@ -70,6 +70,7 @@ impl Value {
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
             Self::Member(_, operation) if matches!(operation.as_str(), "__next__" | "__buffer__" | "__release_buffer__") => "method-wrapper",
+            Self::Member(receiver, operation) if matches!(Self::loose_member_descriptor(&receiver.settled().kind_word(), operation), Some((_, "wrapper_descriptor"))) => "method-wrapper",
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
@@ -77,6 +78,7 @@ impl Value {
                 [Self::Text(field), _] if field.as_ref() != "__weakref__" => "member_descriptor",
                 _ => "getset_descriptor",
             },
+            Self::Wrapped(180,_)=>"getset_descriptor",
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",

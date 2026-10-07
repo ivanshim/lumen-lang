@@ -1647,6 +1647,7 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
+            Value::Adapter(metadata) if metadata.0==205 => format!("<attribute '{}' of 'type' objects>",metadata.1[0].plain()),
             Value::Adapter(w) if w.0 == 16 => match w.1.as_slice() {
                 [Value::Text(name), Value::Class(owner), ..] => format!("<{} '{}' of '{}' objects>", if w.1.len()>2 || name.as_ref()=="__weakref__" {"attribute"} else {"member"}, name, owner.name),
                 _ => "<member wrapper>".to_owned(),
@@ -1682,6 +1683,11 @@ impl Value {
         if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
             || kind == "bytearray" && name == "__release_buffer__" {
             return Some(("slot wrapper", "wrapper_descriptor"));
+        }
+        if name == "__contains__" && matches!(kind, "dict" | "set" | "frozenset") { return None; }
+        if matches!(kind,"int"|"bool"|"float"|"complex"|"str"|"bytes"|"bytearray"|"list"|"tuple"|"dict"|"set"|"frozenset"|"range"|"slice")
+            && matches!(name,"__add__"|"__radd__"|"__sub__"|"__rsub__"|"__mul__"|"__rmul__"|"__truediv__"|"__rtruediv__"|"__floordiv__"|"__rfloordiv__"|"__mod__"|"__rmod__"|"__divmod__"|"__rdivmod__"|"__pow__"|"__rpow__"|"__and__"|"__rand__"|"__or__"|"__ror__"|"__xor__"|"__rxor__"|"__lshift__"|"__rlshift__"|"__rshift__"|"__rrshift__"|"__neg__"|"__pos__"|"__abs__"|"__invert__"|"__bool__"|"__int__"|"__float__"|"__index__"|"__repr__"|"__str__"|"__eq__"|"__ne__"|"__lt__"|"__le__"|"__gt__"|"__ge__"|"__hash__"|"__len__"|"__contains__"|"__iter__"|"__setitem__"|"__delitem__"|"__iadd__"|"__imul__") {
+            return Some(("slot wrapper","wrapper_descriptor"));
         }
         match kind {
             "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
