@@ -265,6 +265,17 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                 let message = CStr::from_ptr(libc::strerror(int(0)? as _)).to_string_lossy();
                 Ok(Value::text(&message))
             }
+            "confstr" => {
+                let which = int(0)? as libc::c_int;
+                let extent = libc::confstr(which, std::ptr::null_mut(), 0);
+                if extent == 0 { Ok(Value::Nil) }
+                else {
+                    let mut landing = vec![0u8; extent];
+                    libc::confstr(which, landing.as_mut_ptr().cast(), extent);
+                    landing.truncate(extent - 1);
+                    Ok(Value::text(&String::from_utf8_lossy(&landing)))
+                }
+            }
             "get_inheritable" | "set_inheritable" => {
             let fd = int(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFD);

@@ -101,6 +101,13 @@ class Popen:
         in_mode = _stream_mode(stdin)
         out_mode = _stream_mode(stdout)
         err_mode = _stream_mode(stderr, True)
+        # A stream of text is asked for by either spelling, and a named
+        # encoding or error handler implies it as well. The decoding is
+        # done here after the bytes are read, because the kernel moves
+        # raw bytes through the pipe.
+        self._text = bool(text or universal_newlines or encoding is not None or errors is not None)
+        self._encoding = encoding or 'utf-8'
+        self._errors = errors
         handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode)
         if handle is False:
             raise OSError(2, 'No such file or directory', argv[0])
@@ -152,6 +159,8 @@ class Popen:
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
         if input is not None:
+            if self._text and isinstance(input, str):
+                input = input.encode(self._encoding, self._errors or 'strict')
             self.stdin.write(input)
         if self.stdin is not None:
             self.stdin.close()
@@ -177,6 +186,11 @@ class Popen:
             err = self.stderr.read() if self.stderr is not None else None
         if self.returncode is None:
             self.returncode = self.wait()
+        if self._text:
+            if isinstance(out, bytes):
+                out = out.decode(self._encoding, self._errors or 'strict')
+            if isinstance(err, bytes):
+                err = err.decode(self._encoding, self._errors or 'strict')
         return (out, err)
 
     def kill(self):
