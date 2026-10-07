@@ -638,6 +638,8 @@ class TextIOWrapper(_TextIOBase):
         self._initialized = False
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
+        if encoding is None:
+            encoding = text_encoding(None)
         if (encoding is not None and '\0' in encoding) or (errors is not None and '\0' in errors):
             raise ValueError('embedded null character')
         line_buffering = bool(_whence(line_buffering))
@@ -1404,6 +1406,11 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+        if encoding is None and sys.flags.warn_default_encoding and isinstance(mode, str) and 'b' not in mode:
+            # The warning is aimed at the line that called open().
+            encoding = text_encoding(None)
+            if encoding == 'locale' and type(file) is str and opener is None and 'r' not in mode:
+                encoding = None
         if isinstance(mode, str):
             # The mode is checked before anything is opened, as the
             # reference checks it: only its own letters, each once, one of

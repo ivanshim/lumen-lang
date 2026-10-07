@@ -972,6 +972,20 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[used..];
                 break;
             }
+            // Code given on the command line, as the reference takes it:
+            // it runs as a program named "<string>", and what stands
+            // after it belongs to the program.
+            Some("-c") if file.is_none() && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")) => {
+                if rest.len() < 2 {
+                    eprintln!("Error: -c requires code");
+                    process::exit(1);
+                }
+                file = Some("<string>".to_string());
+                module_source = Some(said(&rest[1]));
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[2..];
+                break;
+            }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
                     eprintln!("Error: -d requires a setting");
