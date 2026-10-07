@@ -66,7 +66,12 @@ class _IOBase:
         except (AttributeError, ValueError):
             return
         if not closed:
-            self.close()
+            try:
+                notify = getattr(self, '_dealloc_warn', None)
+                if notify is not None:
+                    notify(self)
+            finally:
+                self.close()
     def _checkClosed(self):
         if self.closed:
             raise ValueError('I/O operation on closed file.')
@@ -757,6 +762,33 @@ class FileIO(_RawIOBase):
                 except OSError:
                     pass
             raise
+    def _dealloc_warn(self, source):
+        if getattr(self, '_fd', -1) >= 0 and self._closefd:
+            import warnings
+            import gc
+            prefixes = (__file__,)
+            collector_source = getattr(gc, '__file__', None)
+            if collector_source is not None:
+                prefixes += (collector_source,)
+            warnings.warn('unclosed file %r' % (source,), ResourceWarning,
+                          stacklevel=2, source=source, skip_file_prefixes=prefixes)
+    def __repr__(self):
+        title = type(self).__module__ + '.' + type(self).__qualname__
+        if getattr(self, '_fd', -1) < 0:
+            return '<%s [closed]>' % title
+        if getattr(self, '_repr_running', False):
+            raise RuntimeError('reentrant call inside ' + title + '.__repr__')
+        try:
+            name = self.name
+        except AttributeError:
+            return '<%s fd=%d mode=%r closefd=%r>' % (
+                title, self._fd, self.mode, self._closefd)
+        self._repr_running = True
+        try:
+            return '<%s name=%r mode=%r closefd=%r>' % (
+                title, name, self.mode, self._closefd)
+        finally:
+            self._repr_running = False
     @property
     def closefd(self):
         return self._closefd
@@ -929,6 +961,12 @@ class BufferedReader(_BufferedIOBase):
         if name in ('_implementation', '_raw', '_repr_running', '_detached'):
             raise AttributeError(name)
         return getattr(self._impl, name)
+    def _dealloc_warn(self, source):
+        raw = self.raw
+        if raw is not None:
+            notify = getattr(raw, '_dealloc_warn', None)
+            if notify is not None:
+                notify(source)
     def __repr__(self):
         title = type(self).__module__ + '.' + type(self).__qualname__
         if getattr(self, '_repr_running', False):

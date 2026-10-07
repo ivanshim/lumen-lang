@@ -114,6 +114,7 @@ source exists. Full working measurements are in ignored `probe/`.
 
 | File beneath `langs/lib_python/modules/` | Audit status | Local body SHA-256 after audit | Release SHA-256 |
 |---|---|---|---|
+| `_io.py` | runtime adapter / implementation (native I/O counterpart) | `251fd4dab1a1bd614debf0df46909de7114f58c2f2ec0a1880aa67a04ecce9c0` | - |
 | `_bisect.py` | runtime adapter / implementation | `7be8c113ef9145f3a20417a42cba270c5fa79b4bcf2a777ab705ba4022150826` | `f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999` |
 | `_codec_idna.py` | runtime module; no Lib counterpart | `37a68a2b42648df2875c27ad62c43ebe29ec4c563425b2615daafb1dce2bf02f` | `—` |
 | `_codec_names.py` | runtime module; no Lib counterpart | `e7e67d6d0c9469a30e9a7e4e66a1031a36822c948a029fb68a435aaedaf40773` | `—` |
@@ -326,8 +327,16 @@ The unchanged warnings suite now collects 197 methods on each full kernel,
 with 176 passing, 10 skipped by the existing suite and 11 nonpassing methods
 (11 failures and no errors), compared with zero collected methods before the
 native backend. Remaining cases expose subprocess option/module startup and
-resource finalization. The 13 original semantic probes and ten additional
+resource finalization. The 13 original semantic probes and eleven additional
 native/runtime probes match CPython on both kernels. Signature annotation reads
 honor the requested format and reuse resolved annotation dictionaries; native
 base allocation respects declared allocators, and compatible slotted class
 assignment preserves stored values. No copied test or library body is edited.
+
+Unclosed owned files emit ResourceWarning through the normal warning backend
+before finalizers close them. Buffered objects delegate the notification to
+their raw file, and resource warnings omit the I/O and collector adapter
+frames. Closed and borrowed descriptors remain silent. FileIO representations
+identify the file, mode and descriptor ownership. The four I/O collection
+methods that regressed when the unchanged warning helper gained its real
+assertions now pass on both kernels; the lifecycle probe also matches CPython.
