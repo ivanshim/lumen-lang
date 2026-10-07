@@ -1462,6 +1462,7 @@ impl<'a> Engine<'a> {
         Ok(())
     }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
+        if let Some(missing) = self.annotation_operation(&callable) { return Err(missing.into()); }
         if let Value::Class(class)=&callable { self.validate_class_spreads(class, &args)?; }
         let callable = match callable {
             held @ (Value::Bond(_) | Value::Binding(_)) => self.what_it_spells(held),
@@ -3725,7 +3726,12 @@ impl<'a> Engine<'a> {
                 let annotate_word = self.lang.class_details.get("code.fields").and_then(|row| row.get(10));
                 if annotate_word.is_some_and(|word| word == name) {
                     let public = { let members = c.shared.borrow(); members.iter().find(|(key, _)| key == name).or_else(|| members.iter().find(|(key, _)| key == "__annotate_func__")).map(|(_, own)| own.contents()) };
-                    if let Some(own) = public { return Ok(own); }
+                    if let Some(own) = public {
+                        if matches!(&own, Value::Adapter(parts) if parts.0 == 44 && matches!(parts.1.first(), Some(Value::Array(_)))) {
+                            return Ok(Self::adapter(44, vec![subject.clone()]));
+                        }
+                        return Ok(own);
+                    }
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == crate::code::ANNOTATE_WORD)
                         .is_some_and(|(_, value)| matches!(value.contents(), Value::Array(row) if row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Routine(code)) if !code.postponed_annotation))));
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == "\0annotation_strings").map_or(has_values, |(_, mode)| !mode.is_true());
@@ -4569,9 +4575,41 @@ impl<'a> Engine<'a> {
         c.shared.borrow_mut().push((word,made.clone()));
         Ok(made)
     }
+    pub(super) fn annotation_name(&mut self, name: &str) -> Res<Option<Value>> {
+        if name.starts_with(['#', '\0']) { return Ok(None); }
+        let Some((body, owner, _)) = &self.annotation_scope else { return Ok(None); };
+        if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running)) { return Ok(None); }
+        let owner = owner.clone();
+        let words = self.lang.class_annotations.clone();
+        let namespace = self.import_module(&words[1]).map_err(|fault| fault.told(&self.wording()))?;
+        let constructor = self.class_get(namespace, &words[2], false).map_err(|fault| fault.told(&self.wording()))?;
+        let reference = self.class_apply(constructor, vec![Value::text(name)]).map_err(|fault| fault.told(&self.wording()))?;
+        self.class_write(reference.clone(), &words[3], Some(owner.map_or(Value::Null, Value::Class)), false).map_err(|fault| fault.told(&self.wording()))?;
+        self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false).map_err(|fault| fault.told(&self.wording()))?;
+        if let Value::Object(object) = reference.contents() {
+            if let Some((_, _, names)) = &mut self.annotation_scope { names.push((Rc::downgrade(&object), name.to_owned())); }
+        }
+        Ok(Some(reference))
+    }
+
+    pub(super) fn annotation_operation(&mut self, subject: &Value) -> Option<String> {
+        let (body, _, names) = self.annotation_scope.as_ref()?;
+        if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running)) { return None; }
+        let Value::Object(object) = subject.contents() else { return None; };
+        let missing = names.iter().find_map(|(reference, name)| reference.upgrade().filter(|kept| Rc::ptr_eq(kept, &object))
+            .map(|_| format!("NameError: name '{name}' is not defined")));
+        missing
+    }
+
     fn annotation_value(&mut self, routine: Value, forward: bool, owner: Option<Rc<Class>>) -> Flow<Value> {
         let source = match &routine { Value::Routine(body) | Value::Method(_, body, _) => body.annotation_source.clone(), _ => None };
+        let saved_scope = self.annotation_scope.take();
+        if forward && source.is_some() {
+            let body = match &routine { Value::Routine(body) | Value::Method(_, body, _) => Some(body.clone()), _ => None };
+            self.annotation_scope = body.map(|body| (body, owner.clone(), Vec::new()));
+        }
         let resolved = match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine,Vec::new()),other=>Ok(other)};
+        self.annotation_scope = saved_scope;
         match resolved {
             Err(fault) if forward && source.is_some() && (matches!(&fault, Fault::Note(words) if words.starts_with("NameError:"))
                 || matches!(&fault, Fault::Thrown(Value::Object(error)) if error.class_now().named(&self.lang.exceptions[10], false))) => {
@@ -4580,6 +4618,7 @@ impl<'a> Engine<'a> {
                 let factory = self.class_get(module, &words[2], false)?;
                 let reference = self.class_apply(factory, vec![Value::text(&source.unwrap())])?;
                 self.class_write(reference.clone(), &words[3], Some(owner.clone().map_or(Value::Null, Value::Class)), false)?;
+                self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false)?;
                 Ok(reference)
             }
             other => other,

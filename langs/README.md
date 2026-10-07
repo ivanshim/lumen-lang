@@ -5336,7 +5336,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
-| `ext.stmt.class.annotations` | - | - | `__annotations__` `annotationlib` `ForwardRef` `__owner__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.annotations` | - | - | `__annotations__` `annotationlib` `ForwardRef` `__owner__` `__forward_is_class__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.resolve` | - | - | `__mro_entries__` `__orig_bases__` | - | - | - | - | - | - | - |
@@ -6125,6 +6125,8 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.system.warnings` names the Python native warnings backend and its entry points. The full kernels own filtering, registry versions, caller selection and locking; the public library owns warning formatting and capture hooks.
 
-Python class annotation readers preserve each deferred expression for FORWARDREF format. The class annotation label also names the annotation module, ForwardRef constructor and owner slot; unresolved names retain their original expression and actual class owner. VALUE format still raises the original NameError.
+Python class annotation readers preserve each deferred expression for FORWARDREF format. The class annotation label also names the annotation module, ForwardRef constructor, owner slot and class flag; unresolved names retain their original expression and actual class owner. VALUE format still raises the original NameError.
 
 The Python tracing bridge retains coroutine-origin depth (operations 3/4), reports live heap ownership counters (5), stores async-generator callbacks (6/7/8), and reports interpreter shutdown state (9). Coroutine creation captures the active frame chain at the configured depth; warning finalization calls the unawaited-coroutine hook with the actual coroutine. Inline scalar values have no heap reference counter and report that limitation honestly.
+
+During FORWARDREF evaluation, unresolved annotation names become scoped references while resolved generic constructors keep their real structure. Symbolic name lookup is confined to the annotation thunk; callbacks use their normal name lookup. FORWARDREF format preserves the original expression when evaluation raises NameError.

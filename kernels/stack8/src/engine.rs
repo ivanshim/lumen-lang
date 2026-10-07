@@ -108,6 +108,7 @@ pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
     trace_hook: Value,
     coroutine_depth: usize,
+    annotation_scope: Option<(Rc<Routine>, Option<Rc<Class>>, Vec<(Weak<Instance>, String)>)>,
     async_firstiter: Value,
     async_finalizer: Value,
     finalizing: bool,
@@ -1585,6 +1586,7 @@ impl<'a> Engine<'a> {
             trace_frame: None,
             trace_hook: Value::Null,
             coroutine_depth: 0,
+            annotation_scope: None,
             async_firstiter: Value::Null,
             async_finalizer: Value::Null,
             finalizing: false,
@@ -3028,6 +3030,7 @@ impl<'a> Engine<'a> {
                 // read about to be overwritten anyway.
                 let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
                 if self.lang.closes_over && matches!(value, Value::Blank) {
+                    if let Some(reference) = self.annotation_name(&slot.ident)? { return Ok(reference); }
                     return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
                 }
                 return Ok(value);
@@ -3054,6 +3057,7 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+            if let Some(reference) = self.annotation_name(&slot.ident)? { return Ok(reference); }
             return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
         if let Some(kept) = self.book_of(slot.far) {
@@ -3095,6 +3099,7 @@ impl<'a> Engine<'a> {
         if unbound {
             if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
         }
+        if unbound { if let Some(reference) = self.annotation_name(&slot.ident)? { return Ok(reference); } }
         if empty_cell { return Err(format!("Undefined variable: {}", slot.ident)); }
         let g = &mut self.world[slot.far];
         match g {
@@ -8839,6 +8844,7 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::At) { if let Some(missing) = self.annotation_operation(a) { return Err(missing); } }
         if self.lang.or_maps && matches!(op, Action::BitEither | Action::SetWrite(0)) {
             fn mapping(value: &Value) -> Option<Value> {
                 match value {
@@ -12304,6 +12310,7 @@ impl<'a> Engine<'a> {
             }
             Action::Grab(name) => match {
                 let top = self.drop_top()?;
+                if let Some(missing) = self.annotation_operation(&top) { return Err(missing.into()); }
                 if matches!(&top, Value::Bond(_)) && matches!(top.contents(), Value::Map(_) | Value::Array(_) | Value::Set(_)) {
                     if let Some(bound) = self.builtin_member(&top, name)? { self.data.push(bound); return Ok(()); }
                 }
@@ -25480,6 +25487,11 @@ impl Engine<'_> {
                 // for among the builtins before it is called missing,
                 // exactly as the outer book looks.
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
+                match self.annotation_name(name) {
+                    Ok(Some(reference)) => return Some(Ok(reference)),
+                    Err(fault) => return Some(Err(fault)),
+                    Ok(None) => {},
+                }
                 Some(Err(format!("Undefined variable: {name}")))
             }
             Kept::Outer => {
@@ -25498,6 +25510,11 @@ impl Engine<'_> {
                 if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
                 if self.left_out(name, &self.world[far]) { return None; }
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
+                match self.annotation_name(name) {
+                    Ok(Some(reference)) => return Some(Ok(reference)),
+                    Err(fault) => return Some(Err(fault)),
+                    Ok(None) => {},
+                }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Kept::Text(at) => {
@@ -25563,6 +25580,13 @@ impl Engine<'_> {
                         None => self.kept_by_module(name),
                     },
                 };
+                if found.is_none() {
+                    match self.annotation_name(name) {
+                        Ok(Some(reference)) => return Some(Ok(reference)),
+                        Err(fault) => return Some(Err(fault)),
+                        Ok(None) => {},
+                    }
+                }
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }
         }

@@ -216,6 +216,8 @@ class _GenericAliasIterator:
 
 
 
+GenericAlias = type(list[int])
+
 NoneType = type(None)
 FunctionType = type(lambda: None)
 LambdaType = FunctionType

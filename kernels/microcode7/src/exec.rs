@@ -534,6 +534,7 @@ pub struct Machine<'a> {
     rules: ExecutionRules<'a>,
     active_trace: Option<Rc<Thing>>,
     origin_limit: usize,
+    symbolic_annotation: Option<(Rc<Routine>, Option<Rc<Blueprint>>, Vec<(Weak<Thing>, String)>)>,
     agen_callbacks: (Value, Value),
     shutting_down: bool,
     tracing_function: Value,
@@ -2038,6 +2039,7 @@ impl<'a> Machine<'a> {
             row: 0,
             active_trace: None,
             origin_limit: 0,
+            symbolic_annotation: None,
             agen_callbacks: (Value::Nil, Value::Nil),
             shutting_down: false,
             tracing_function: Value::Nil,
@@ -3916,6 +3918,7 @@ impl<'a> Machine<'a> {
             v = held;
         }
         if matches!(v, Value::Unset) && self.rules.closes_over && !Rc::ptr_eq(&f, &self.outermost) {
+            if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
             let label = if slot.up == 0 { "ext.stmt.function.local.unbound" } else { "ext.stmt.function.free.unbound" };
             return Err(self.argument_fault(label, Some(&slot.ident)));
         }
@@ -3945,6 +3948,7 @@ impl<'a> Machine<'a> {
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
         if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
+        if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
         Err(format!("Undefined variable: {}", slot.ident))
     }
 
@@ -18064,6 +18068,7 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::At { if let Some(subject) = v.first() { if let Some(fault) = self.symbolic_access(subject) { return Err(fault); } } }
         if op == Prim::UnicodeDecomposition { return crate::sre::decompose(v); }
         // Exact machine integers need neither index hooks nor big-integer conversion.
         // Other receivers keep the normal argument and numeric protocol checks.
@@ -18330,6 +18335,7 @@ impl<'a> Machine<'a> {
         // member would stand on a copy, and a write through it would
         // reach no other name for the holder.
         if let (Prim::Of, [subject, word]) = (op, v) {
+            if let Some(fault) = self.symbolic_access(subject) { return Err(fault); }
             let called = word.bare();
             if called == "__getformat__" && matches!(subject.settled(), Value::Frac(_)) {
                 return self.read_class_member(subject.clone(), &called, false).map_err(|fault| self.suspension_fault(fault));
@@ -25944,6 +25950,7 @@ impl<'a> Machine<'a> {
                     // looked for among the builtins, as the world book
                     // looks, before it is called missing.
                     if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
+                    if let Some(result) = self.symbolic_lookup(name) { return Some(result); }
                     Some(Err(format!("Undefined variable: {name}")))
                 }
             }
@@ -25956,6 +25963,7 @@ impl<'a> Machine<'a> {
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
                 if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
+                if let Some(result) = self.symbolic_lookup(name) { return Some(result); }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Held::Reading(which) => {
@@ -26015,6 +26023,9 @@ impl<'a> Machine<'a> {
                         None => self.spare_name(name),
                     },
                 };
+                if let None = found {
+                    if let Some(answer) = self.symbolic_lookup(name) { return Some(answer); }
+                }
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }
         }

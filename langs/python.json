@@ -248,7 +248,7 @@
   ],
   "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
-    "__annotations__", "annotationlib", "ForwardRef", "__owner__"
+    "__annotations__", "annotationlib", "ForwardRef", "__owner__", "__forward_is_class__"
   ],
   "ext.stmt.class.called": [
     "__class_call__"

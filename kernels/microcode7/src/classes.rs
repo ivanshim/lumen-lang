@@ -1534,6 +1534,7 @@ impl<'a> Machine<'a> {
         Ok(())
     }
     pub(super) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
+        if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
         if let Value::Blueprint(class)=&f { self.check_constructor_expansion(class, &values)?; }
         let f = if matches!(f, Value::Shared(_)) { self.what_it_spells(f) } else { f };
         match f {
@@ -3489,9 +3490,56 @@ impl<'a> Machine<'a> {
         b.shared.borrow_mut().push((word, made.clone()));
         Ok(made)
     }
+    pub(super) fn symbolic_name(&mut self, key: &str) -> Result<Option<Value>, String> {
+        if key.chars().next().is_some_and(|initial| matches!(initial, '#' | '\0')) { return Ok(None); }
+        let active = match &self.symbolic_annotation {
+            Some((program, declaring, _)) if self.frames_named.last().is_some_and(|frame| Rc::ptr_eq(frame, program)) => declaring.clone(),
+            _ => return Ok(None),
+        };
+        let options = self.rules.words_ext_stmt_class_annotations.to_vec();
+        let module = self.load_namespace(&options[1])?;
+        let maker = self.read_class_member(module, &options[2], false).map_err(|escape| self.carried_native_fault(escape))?;
+        let symbol = self.apply_class_member(maker, vec![Value::text(key)]).map_err(|escape| self.carried_native_fault(escape))?;
+        self.alter_class_member(symbol.clone(), &options[3], Some(active.map_or(Value::Nil, Value::Blueprint)), false).map_err(|escape| self.carried_native_fault(escape))?;
+        self.alter_class_member(symbol.clone(), &options[4], Some(Value::Flag(true)), false).map_err(|escape| self.carried_native_fault(escape))?;
+        if let Value::Thing(thing) = symbol.settled() {
+            if let Some((_, _, entries)) = self.symbolic_annotation.as_mut() { entries.push((Rc::downgrade(&thing), key.to_owned())); }
+        }
+        Ok(Some(symbol))
+    }
+
+    pub(super) fn symbolic_lookup(&mut self, word: &str) -> Option<Result<Value, String>> {
+        match self.symbolic_name(word) {
+            Ok(Some(value)) => Some(Ok(value)),
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    pub(super) fn symbolic_access(&mut self, value: &Value) -> Option<String> {
+        let scope = self.symbolic_annotation.as_ref()?;
+        if !self.frames_named.last().is_some_and(|caller| Rc::ptr_eq(caller, &scope.0)) { return None; }
+        if let Value::Thing(receiver) = value.settled() {
+            for (saved, word) in &scope.2 {
+                if saved.upgrade().is_some_and(|held| Rc::ptr_eq(&held, &receiver)) {
+                    return Some(format!("NameError: name '{}' is not defined", word));
+                }
+            }
+        }
+        None
+    }
+
     fn annotation_entry(&mut self, worth: Value, symbolic: bool, declaring: Option<Rc<Blueprint>>) -> Res {
         let spelling = match &worth { Value::Routine(code) | Value::Bound(code, _) => code.annotation_spelling.clone(), _ => None };
+        let outer_symbolic = self.symbolic_annotation.take();
+        if symbolic && spelling.is_some() {
+            match &worth {
+                Value::Routine(program) | Value::Bound(program, _) => self.symbolic_annotation = Some((program.clone(), declaring.clone(), Vec::new())),
+                _ => (),
+            }
+        }
         let result = match worth {Value::Routine(_)|Value::Bound(..)=>self.apply_class_member(worth,Vec::new()),other=>Ok(other)};
+        self.symbolic_annotation = outer_symbolic;
         match result {
             Err(away) if symbolic && spelling.is_some() && (matches!(&away, Escape::Error(message) if message.starts_with("NameError:"))
                 || matches!(&away, Escape::Thrown(Value::Thing(fault)) if self.stands_under(&fault.blueprint(), 10))) => {
@@ -3500,6 +3548,7 @@ impl<'a> Machine<'a> {
                 let constructor = self.read_class_member(namespace, &options[2], false)?;
                 let unresolved = self.apply_class_member(constructor, vec![Value::text(spelling.as_deref().unwrap())])?;
                 self.alter_class_member(unresolved.clone(), &options[3], Some(declaring.clone().map_or(Value::Nil, Value::Blueprint)), false)?;
+                self.alter_class_member(unresolved.clone(), &options[4], Some(Value::Flag(true)), false)?;
                 Ok(unresolved)
             }
             outcome => outcome,
@@ -4327,7 +4376,12 @@ impl<'a> Machine<'a> {
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == key) {
-                if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) { return Ok(own.settled()); }
+                if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) {
+                    return Ok(match own.settled() {
+                        Value::Wrapped(44, contents) if matches!(contents.first(), Some(Value::Vector(_))) => Self::wrap(44, vec![value.clone()]),
+                        entry => entry,
+                    });
+                }
                 let present = Self::own_entry(b, crate::data::ANNOTATE_WORD).is_some_and(|value| match value.settled() {
                     Value::Vector(row) => row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Bound(code, _) | Value::Routine(code)) if !code.annotation_is_text)),
                     _ => false,
