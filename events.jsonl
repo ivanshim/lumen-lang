@@ -6755,3 +6755,13 @@
 {"t":"2026-10-07T03:02:49Z","event":"queued","job":"dsflash-dataclasses","model":"deepseek-flash","line":"or-resume dsflash-dataclasses deepseek-flash ses_eedcadda7ffewISzo9z3Xb946E"}
 {"t":"2026-10-07T03:04:55Z","event":"exited","job":"review-auto-dsflash-http-cookies-0302","code":0}
 {"t":"2026-10-07T03:07:33Z","event":"resumed","job":"dsflash-dataclasses","model":"deepseek-flash","session":"ses_eedcadda7ffewISzo9z3Xb946E"}
+{"t":"2026-10-07T03:12:48Z","event":"accepted","job":"dsflash-http-cookies","review":"review-auto-dsflash-http-cookies-0302","batch":"21e","commit":"654b86bae","note":"http.cookies 0->32/33 both kernels; shadowed dotted builtins read real owner (Python-only guard); add/add overlap with 21d stdlib-pickle on http/cookies.py + manifest (same body hash) - keep one copy; coordinator to re-certify calendar/str/decimal/tokenize/io coverage"}
+{"t":"2026-10-07T03:13:31Z","event":"quota","codex_week_used":87,"codex_credits":0,"claude_week_used":26,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.8977,"kimi_code_used":0,"deepseek_usd":349.9}
+{"t":"2026-10-07T03:13:37Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":87,"expected":88.9,"gap":-1.9,"status":"ok"}
+{"t":"2026-10-07T03:13:47Z","event":"quota","codex_week_used":87,"codex_credits":0,"claude_week_used":26,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.8977,"kimi_code_used":0,"deepseek_usd":349.9}
+{"t":"2026-10-07T03:13:53Z","event":"checkin","status":"done","actions":"accepted dsflash-http-cookies -> 21e (654b86bae; http.cookies 0->32/33 both kernels); pruned dsflash-http-cookies target/ 1.9 GB; prune-merged 0 MB; slots full (Sol 7 + review slot idle, DS Flash 8 + json-speed queue-after, DS Pro 1, Kimi 1, Sonnet 1)","notes":"http-cookies add/add overlap with 21d stdlib-pickle on http/cookies.py + manifest (same body) - integration keeps one copy; box disk 85% (23G free), every other target/ belongs to running/queued work; load 2.4, 12.3 GB avail; no open PRs; Codex week 87% (alert at 90%); luna gap -1.9 ok, no new alerts"}
+{"t":"2026-10-07T03:22:27Z","event":"exited","job":"stdlib-typing","code":0}
+{"t":"2026-10-07T03:27:35Z","event":"finished","job":"stdlib-typing","exit_time":"2026-10-07T03:22:27Z"}
+{"t":"2026-10-07T03:27:35Z","event":"review-queued","job":"stdlib-typing","review":"review-auto-stdlib-typing-0327"}
+{"t":"2026-10-07T03:27:35Z","event":"review-started","job":"stdlib-typing","review":"review-auto-stdlib-typing-0327"}
+{"t":"2026-10-07T03:27:36Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
