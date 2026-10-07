@@ -101,6 +101,9 @@ def _ord2ymd(ordinal):
         before -= _DAYS_IN_MONTH[month] + (1 if month == 2 and leap else 0)
     return (year, month, remaining - before + 1)
 
+# The fields a struct_time carries, sequence fields and the two named ones.
+_STRUCT_TM_ITEMS = 11
+
 class struct_time(tuple):
     # The nine sequence fields of the C library's struct tm, Monday as
     # weekday zero and the day of the year counting from one. The zone
@@ -351,3 +354,9 @@ def strftime(format, fields=None):
         else:
             out += '%' + ch
     return out
+
+def strptime(data_string, format="%a %b %d %H:%M:%S %Y"):
+    # The parsing itself is the reference's pure-Python _strptime; it
+    # imports this module, so it is fetched on the first call.
+    import _strptime
+    return _strptime._strptime_time(data_string, format)

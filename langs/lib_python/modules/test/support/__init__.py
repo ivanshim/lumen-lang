@@ -1637,6 +1637,29 @@ def darwin_malloc_err_warning(test_name):
 
 
 
+_buggy_ucrt = None
+def skip_if_buggy_ucrt_strfptime(test):
+    """
+    Skip decorator for tests that use buggy strptime/strftime
+
+    If the UCRT bugs are present time.localtime().tm_zone will be
+    an empty string, otherwise we assume the UCRT bugs are fixed
+
+    See bpo-37552 [Windows] strptime/strftime return invalid
+    results with UCRT version 17763.615
+    """
+    import locale
+    global _buggy_ucrt
+    if _buggy_ucrt is None:
+        if(sys.platform == 'win32' and
+                locale.getencoding() == 'cp65001' and
+                time.localtime().tm_zone == ''):
+            _buggy_ucrt = True
+        else:
+            _buggy_ucrt = False
+    return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
+
+
 def open_urlresource(url, *args, **kwargs):
     if not is_resource_enabled('urlfetch'):
         raise unittest.SkipTest('resource urlfetch is not enabled')

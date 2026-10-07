@@ -12,3 +12,9 @@ def system():
 
 def machine():
     return __host_info()[2]
+
+# The C library is not probed (no executable file is scanned for its
+# version string), so the answer is the one the reference gives when it
+# finds nothing: the arguments it was handed.
+def libc_ver(executable=None, lib='', version='', chunksize=16384):
+    return lib, version
