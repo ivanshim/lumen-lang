@@ -16903,7 +16903,7 @@ impl<'a> Machine<'a> {
                         return answer.map(|entry| Some(match &entry.1 {
                             Value::Shared(binding) if module => binding.borrow().clone(),
                             value => value.clone(),
-                        })).ok_or_else(|| self.bad_answer());
+                        })).ok_or_else(|| self.absent_key(key));
                     }
                 }
                 // The key may be a name of any kind the dictionary can
