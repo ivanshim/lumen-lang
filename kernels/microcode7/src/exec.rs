@@ -27706,6 +27706,12 @@ impl Machine<'_> {
             }
             Rounded => {
                 require(1, 2)?;
+                // A rounding belongs to a number, a boolean, or a value
+                // that answers __round__ itself; any other value is told
+                // it has no such method, not that rounding is unsupported.
+                if !matches!(input[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_)) {
+                    return Err(format!("TypeError: type {} doesn't define __round__ method", input[0].kind_word()));
+                }
                 let ndigits = match input.get(1) { None | Some(Value::Nil) => None, Some(v) => Some(whole(v)?) };
                 // A float past every number, or the one that is not a
                 // number at all, carries no rounding of its own: asked

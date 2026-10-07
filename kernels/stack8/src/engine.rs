@@ -23179,6 +23179,13 @@ impl Engine<'_> {
             }
             Builtin::Round => {
                 arity(1, 2)?;
+                // Only a number, a boolean, or a value whose own class
+                // answers __round__ has a rounding; anything else is told
+                // it has no such method rather than that rounding as a
+                // whole is unsupported.
+                if !matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) {
+                    return Err(format!("TypeError: type {} doesn't define __round__ method", Self::shown_kind(&args[0])));
+                }
                 let ndigits_big: Option<BigInt> = match args.get(1) { None | Some(Value::Null) => None, Some(n) => Some(integer(n)?) };
                 // An infinite or a NaN float carries no rounding to a
                 // places count of its own: rounded to a plain integer it
