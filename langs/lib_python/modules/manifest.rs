@@ -247,6 +247,10 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("urllib", include_str!("urllib.py"), "urllib/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("xml", include_str!("xml/__init__.py"), "xml/__init__.py"),
+    ("xml.dom", include_str!("xml/dom/__init__.py"), "xml/dom/__init__.py"),
+    ("xml.dom.domreg", include_str!("xml/dom/domreg.py"), "xml/dom/domreg.py"),
+    ("xml.dom.minicompat", include_str!("xml/dom/minicompat.py"), "xml/dom/minicompat.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 
