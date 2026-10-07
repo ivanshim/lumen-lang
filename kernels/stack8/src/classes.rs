@@ -2638,6 +2638,12 @@ impl<'a> Engine<'a> {
                 match next { Some(value) => subject = value, None => break }
             }
         }
+        if (self.is_coroutine(&subject) || matches!(&subject, Value::Adapter(parts) if parts.0 == 34))
+            && self.lang.class_details.get("root.members").is_some_and(|names| names.iter().skip(11).take(2).any(|word| word == name)) {
+            let member = self.root_member(name, None).expect("the root reduction descriptor");
+            return Ok(Self::adapter(3, vec![member, subject.clone()]));
+        }
+        if let Some(member) = self.coroutine_member(&subject, name)? { return Ok(member); }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &subject {
                 let class = instance.class_now();
@@ -3556,11 +3562,11 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("defaults") || name == self.class_word("keywords") || name == self.class_word("closure") { return Ok(Value::Null); }
                 if name == self.class_word("kind") { return Ok(Value::Class(self.kind_class("function"))); }
             }
-            Value::Adapter(w) if w.0==32 => {
+            Value::Adapter(w) if matches!(w.0, 32 | 34) => {
                 if ["send", "throw", "close"].contains(&name)
                     || self.lang.class_special.get(15).is_some_and(|word| word == name)
                     || self.lang.class_special.get(16).is_some_and(|word| word == name)
-                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
+                    || w.0 == 32 && self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
                 }
             }
@@ -4418,11 +4424,11 @@ impl<'a> Engine<'a> {
             }
             // A cell takes what it holds, and taking that away leaves it
             // empty; it keeps nothing else.
-            Value::Adapter(w) if w.0==32 => {
+            Value::Adapter(w) if matches!(w.0, 32 | 34) => {
                 let known = ["send", "throw", "close", "__class__", "__doc__"].contains(&name)
                     || self.lang.class_special.get(15).is_some_and(|word| word == name)
                     || self.lang.class_special.get(16).is_some_and(|word| word == name)
-                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name);
+                    || w.0 == 32 && self.lang.async_generator_methods.get(3).is_some_and(|word| word == name);
                 let message = if known { format!("AttributeError: '{}' object attribute '{}' is read-only", subject.core_kind(), name) }
                     else { format!("AttributeError: '{}' object has no attribute '{}' and no __dict__ for setting new attributes", subject.core_kind(), name) };
                 return Err(message.into());
@@ -5242,9 +5248,9 @@ impl<'a> Engine<'a> {
             names.sort();names.dedup();
             return Value::array(names.iter().map(|n|Value::text(n)).collect());
         }
-                if matches!(one, Value::Adapter(parts) if parts.0 == 32) {
+                if matches!(one, Value::Adapter(parts) if matches!(parts.0, 32 | 34)) {
                     let mut names = Vec::new();
-                    names.extend(self.lang.async_generator_methods.iter().skip(3).cloned());
+                    if matches!(one, Value::Adapter(parts) if parts.0 == 32) { names.extend(self.lang.async_generator_methods.get(3).cloned()); }
                     names.extend([15, 16].iter().filter_map(|index| self.lang.class_special.get(*index).cloned()));
                     for words in [&self.lang.yield_send, &self.lang.yield_throw, &self.lang.yield_close] {
                         names.extend(words.iter().cloned());
@@ -5257,6 +5263,12 @@ impl<'a> Engine<'a> {
         // few names a language gives it for stepping it by hand.
         if let Value::Generator(_)=one {
             let mut names=self.kind_member_names(one);
+                    if self.is_coroutine(one) {
+                        names.extend(self.lang.coroutine_fields.iter().cloned());
+                        names.extend(self.lang.async_generator_methods.get(3).cloned());
+                        names.sort(); names.dedup();
+                        return Value::array(names.iter().map(|word| Value::text(word)).collect());
+                    }
                     if self.is_async_generator(one) {
                         names.extend(self.lang.async_generator_methods.iter().take(3).cloned());
                         names.extend(self.lang.async_generator_fields.iter().cloned());

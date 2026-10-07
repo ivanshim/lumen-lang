@@ -89,6 +89,7 @@ impl Value {
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
             Self::Wrapped(143, _) => "function",
+            Self::Wrapped(64, _) => "coroutine_wrapper",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {

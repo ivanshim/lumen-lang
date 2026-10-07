@@ -164,6 +164,8 @@ pub enum Phase {
     /// The last part, with what the try had already come to and how deep
     /// the stack stood before the part began.
     Last(Ending, usize),
+    /// An asynchronous exit keeps the outcome while its awaitable yields.
+    ContextExit(Ending, Value, usize),
 }
 
 /// What a try had come to before its last part ran, kept apart from the
@@ -194,6 +196,7 @@ pub struct Step {
 pub struct Generator {
     pub name: String,
     pub qualified: String,
+    pub coroutine_identity: usize,
     pub trace_frame: Option<Rc<Instance>>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
@@ -230,7 +233,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), coroutine_identity: 0, trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -1622,7 +1625,10 @@ impl Value {
             }),
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Generator(cell) => match cell.try_borrow() {
-                Ok(g) if !g.qualified.is_empty() => format!("<generator object {} at 0x1>", g.qualified),
+                Ok(g) if !g.qualified.is_empty() => {
+                    if g.walked.as_deref() == Some("coroutine") { format!("<coroutine object {} at 0x{:x}>", g.qualified, if g.coroutine_identity == 0 { Rc::as_ptr(cell) as usize } else { g.coroutine_identity }) }
+                    else { format!("<generator object {} at 0x1>", g.qualified) }
+                },
                 _ => "<generator>".to_string(),
             },
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
@@ -1659,6 +1665,7 @@ impl Value {
             // writes it.
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
+            Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
                 .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),

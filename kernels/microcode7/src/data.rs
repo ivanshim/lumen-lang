@@ -1485,6 +1485,9 @@ impl Value {
             Value::Generator(generator) => {
                 if let Ok(state) = generator.try_borrow() {
                     if !state.titles[1].is_empty() {
+                        if state.of.as_ref().is_some_and(|code| code.flags & 128 != 0) {
+                            return format!("<coroutine object {} at 0x{:x}>", state.titles[1], if state.coroutine_address != 0 { state.coroutine_address } else { Rc::as_ptr(generator) as usize });
+                        }
                         return format!("<generator object {} at 0x1>", state.titles[1]);
                     }
                 }
@@ -1522,6 +1525,7 @@ impl Value {
             // around the routine they hold, as CPython writes them.
             Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
             Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
+            Value::Wrapped(64, fields) => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(fields) as usize),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

@@ -158,9 +158,9 @@ impl<'a> Machine<'a> {
             names.sort();names.dedup();
             return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
         }
-            if matches!(item, Value::Wrapped(62, _)) {
+            if matches!(item, Value::Wrapped(62 | 64, _)) {
                 let mut names = Vec::new();
-                names.extend(self.rules.words_ext_stmt_async_generator_methods.iter().skip(3).cloned());
+                if let Value::Wrapped(62, _) = item { names.extend(self.rules.words_ext_stmt_async_generator_methods.get(3).cloned()); }
                 names.extend([15, 16].iter().filter_map(|index| self.rules.specials.get(*index).cloned()));
                 for label in ["ext.stmt.yield.send", "ext.stmt.yield.throw", "ext.stmt.yield.close"] {
                     names.extend(self.table.strings(label).iter().cloned());
@@ -173,6 +173,12 @@ impl<'a> Machine<'a> {
         // language gives it for stepping it by hand.
         if let Value::Generator(_)=item {
             let mut names=self.native_directory(item);
+                if self.native_coroutine(item) {
+                    names.extend(self.table.strings("ext.stmt.async.coroutine.fields").iter().cloned());
+                    names.extend(self.rules.words_ext_stmt_async_generator_methods.get(3).cloned());
+                    names.sort(); names.dedup();
+                    return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|word| Value::text(word)).collect()));
+                }
                 if self.is_async_generator(item) {
                     names.extend(self.rules.words_ext_stmt_async_generator_methods.iter().take(3).cloned());
                     names.extend(self.table.strings("ext.stmt.async.generator.fields").iter().cloned());
@@ -3105,6 +3111,7 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Some(answer) = self.coroutine_attribute(&value.settled(), key)? { return Ok(answer); }
         let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
         if self.names_in_calls && !key.starts_with("__") {
             let slot = match &value {
@@ -3339,7 +3346,7 @@ impl<'a> Machine<'a> {
             if key == self.detail("name") || key == self.detail("qualified") { return Ok(Value::text(&spelling)); }
             if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
         }
-        if matches!(&value, Value::Wrapped(62, _)) {
+        if matches!(&value, Value::Wrapped(62 | 64, _)) {
             if let Some(method) = self.attribute(&value, key) { return Ok(method); }
         }
         if let Value::Wrapped(60, parts) = &value {
