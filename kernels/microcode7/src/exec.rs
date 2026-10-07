@@ -695,6 +695,10 @@ pub struct Machine<'a> {
     /// The member last sought and not found, with what it was sought
     /// on, for the attribute fault that will tell of it.
     sought_in_vain: Option<(String, Value)>,
+    /// What each spelling named, asked of a row of bytes of either kind,
+    /// since the answer comes of the definition alone and finding it
+    /// walks every member of the kind and spells two labels for each.
+    octet_names: [RefCell<HashMap<String, Option<&'static str>, crate::table::FxBuildHasher>>; 2],
     /// The key last found absent, where the words of the fault cannot
     /// carry it: the complaint for a key names the key itself, and a
     /// key of any kind but a text or a whole number is kept here whole
@@ -2009,6 +2013,7 @@ impl<'a> Machine<'a> {
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
             sought_in_vain: None,
+            octet_names: [RefCell::new(HashMap::default()), RefCell::new(HashMap::default())],
             key_in_vain: RefCell::new(None),
             standing: 0,
             would_not_read: None,
@@ -12225,6 +12230,14 @@ impl<'a> Machine<'a> {
     /// ahead of it answers by its bare tail as well, which is the name
     /// a row of bytes keeps the method under.
     pub(super) fn octet_member(&self, spelling: &str, changeable: bool) -> Option<&'static str> {
+        let remembered = &self.octet_names[usize::from(changeable)];
+        if let Some(known) = remembered.borrow().get(spelling) { return *known; }
+        let found = self.octet_member_found(spelling, changeable);
+        remembered.borrow_mut().insert(spelling.to_owned(), found);
+        found
+    }
+
+    fn octet_member_found(&self, spelling: &str, changeable: bool) -> Option<&'static str> {
         let carries = |label: String| self.table.loose_strings(&label).iter()
             .any(|word| word == spelling || word.rsplit('.').next() == Some(spelling));
         let among = self.value_method_named(spelling);
