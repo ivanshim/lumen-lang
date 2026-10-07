@@ -31,7 +31,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 | `langs/lib_python/modules/importlib/resources/` | All eight `Lib/importlib/resources/*.py` files, unchanged beneath PSF provenance headers; `fd_count` from `Lib/test/support/os_helper.py` copied unchanged into the runtime support adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
-| `langs/lib_python/modules/runtime_adapters/codecs.py` | `Codec`, `StreamReader`, and `StreamWriter` class bodies from `Lib/codecs.py`, copied unchanged beneath a PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/codecs.py` | `Codec`, `StreamReader`, and `StreamWriter` class bodies and `getencoder`/`getdecoder` functions from `Lib/codecs.py`, copied unchanged beneath a PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 | `langs/lib_python/modules/_strptime.py` | `Lib/_strptime.py`, unchanged beneath a PSF provenance header; supplies the `time.strptime` adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 

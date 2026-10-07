@@ -1,4 +1,4 @@
-# Source: CPython Lib/codecs.py stream classes at v3.14.8; PSF License.
+# Source: CPython Lib/codecs.py stream classes and lookup helpers at v3.14.8; PSF License.
 
 class Codec:
 
@@ -391,6 +391,29 @@ class StreamReader(Codec):
 
     def __reduce_ex__(self, proto):
         raise TypeError("can't serialize %s" % self.__class__.__name__)
+
+
+def getencoder(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its encoder function.
+
+        Raises a LookupError in case the encoding cannot be found.
+
+    """
+    return lookup(encoding).encode
+
+
+def getdecoder(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its decoder function.
+
+        Raises a LookupError in case the encoding cannot be found.
+
+    """
+    return lookup(encoding).decode
+
 
 
 # Register multibyte codecs through the same search-function interface as

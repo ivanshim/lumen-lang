@@ -1,6 +1,7 @@
 # Shift-JIS uses the existing multibyte mapping embedded from mbstring.php.
 # The hex rows are shared data; no PHP code is evaluated here.
 import codecs
+from builtins import _buffer_view
 
 _rows = None
 _backward = None
@@ -21,9 +22,37 @@ def _tables():
         _backward[0x203e] = b'\x7e'
     return _rows, _backward
 
+def _error_mode(errors, operation):
+    if errors is None:
+        return 'strict'
+    if not isinstance(errors, str):
+        raise TypeError(operation + "() argument 'errors' must be str or None, not " + type(errors).__name__)
+    return errors
+
+def _read_buffer(data):
+    try:
+        with _buffer_view(data, 0) as view:
+            if not view.c_contiguous:
+                raise BufferError('memoryview: underlying buffer is not C-contiguous')
+            return view.tobytes()
+    except TypeError as error:
+        message = str(error)
+        if message.startswith('memoryview: a bytes-like object is required'):
+            raise TypeError(message[len('memoryview: '):]) from None
+        raise
+
+def _incremental_errors(errors, kind):
+    if not isinstance(errors, str):
+        name = 'None' if errors is None else type(errors).__name__
+        raise TypeError(kind + '() argument 1 must be str, not ' + name)
+    return errors
+
 def encode(text, errors='strict'):
+    errors = _error_mode(errors, 'encode')
     if not isinstance(text, str):
-        raise TypeError("encoding with 'shift_jis' codec failed (TypeError: expected a str object)")
+        text = str(text)
+    original = text
+    text = str.__str__(text)
     rows, backward = _tables()
     output = []
     position = 0
@@ -47,7 +76,7 @@ def encode(text, errors='strict'):
                         backward[number] = encoded
                         break
         if encoded is None:
-            replacement, position = codecs._encode_error('shift_jis', text, position, position + 1, 'illegal multibyte sequence', errors)
+            replacement, position = codecs._encode_error('shift_jis', original, position, position + 1, 'illegal multibyte sequence', errors)
             encoded = replacement if isinstance(replacement, bytes) else encode(replacement, 'strict')[0]
         else:
             position += 1
@@ -56,7 +85,8 @@ def encode(text, errors='strict'):
 
 def _decode(data, errors, final):
     rows, backward = _tables()
-    data = bytes(data)
+    data = _read_buffer(data)
+    errors = _error_mode(errors, 'decode')
     result = []
     position = 0
     while position < len(data):
@@ -95,15 +125,17 @@ def decode(data, errors='strict'):
     return _decode(data, errors, True)
 
 class IncrementalEncoder(codecs.IncrementalEncoder):
+    def __init__(self, errors='strict'):
+        super().__init__(_incremental_errors(errors, 'IncrementalEncoder'))
     def encode(self, input, final=False):
         return encode(input, self.errors)[0]
 
 class IncrementalDecoder(codecs.IncrementalDecoder):
     def __init__(self, errors='strict'):
-        super().__init__(errors)
+        super().__init__(_incremental_errors(errors, 'IncrementalDecoder'))
         self.buffer = b''
     def decode(self, input, final=False):
-        data = self.buffer + bytes(input)
+        data = self.buffer + _read_buffer(input)
         text, used = _decode(data, self.errors, final)
         self.buffer = data[used:]
         return text
