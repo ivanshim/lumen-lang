@@ -343,11 +343,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // stands first in it, as the system that started the run counts it.
     if lang.args_list.is_some() || lang.args_count.is_some() {
         // sys.argv[0] is the path the run was started with: the given
-        // path for a script or a directory, but the resolved module file
-        // for -m, which the reference resolves too and which is the path
-        // the module's own __spec__.origin names.
-        let as_module = std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name != "__main__");
-        let wanted = if as_module { "file" } else { "given" };
+        // path for a directory, but the resolved file for a script or
+        // -m, whose co_filename and __spec__.origin already name it; the
+        // two must agree or a module filter keyed on __main__ misses.
+        let as_directory = std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
+        let wanted = if as_directory { "given" } else { "file" };
         let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
             .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
             .map(|(.., v, _)| v.clone());
