@@ -210,7 +210,15 @@ pub fn stirred() -> bool {
     if flags == 0 { return false; }
     if flags & G_POLL != 0 {
         let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
-        if gone_method { anything_departing(); }
+        if gone_method {
+            // The poll found work. Attend now rather than trust the state
+            // read before it, since raising the lost flag happened after
+            // that read; this keeps a wrapped method's callback on the same
+            // step it departed, as reading the stirred flag after polling
+            // did before.
+            anything_departing();
+            return true;
+        }
     }
     if flags & G_STIRRED != 0 { return true; }
     if flags & G_ANCHOR != 0 { return anchor_ready(); }
