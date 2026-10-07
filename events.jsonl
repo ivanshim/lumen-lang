@@ -7921,3 +7921,24 @@
 {"t":"2026-10-07T22:19:30Z","event":"started","job":"dsflash-locale","model":"deepseek-flash","via":"ds-run"}
 {"t":"2026-10-07T22:20:39Z","event":"queued","job":"perf-mc7-overhead","base":"c3f70a51","note":"worktree from batch21d head; brief-perf-mc7-overhead.md"}
 {"t":"2026-10-07T22:21:13Z","event":"exited","job":"stdlib-warnings","code":0}
+{"t":"2026-10-07T22:24:14Z","event":"finished","job":"stdlib-warnings","exit_time":"2026-10-07T22:21:13Z"}
+{"t":"2026-10-07T22:24:14Z","event":"review-queued","job":"stdlib-warnings","review":"review-auto-stdlib-warnings-2224"}
+{"t":"2026-10-07T22:24:15Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T22:24:32Z","event":"resumed","job":"claude-io-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T22:29:32Z","event":"review-started","job":"dsflash-pkg","review":"review-auto-dsflash-pkg-2218"}
+{"t":"2026-10-07T22:29:43Z","event":"exited","job":"claude-pstats","code":0}
+{"t":"2026-10-07T22:32:51Z","event":"exited","job":"review-auto-dsflash-pkg-2218","code":0}
+{"t":"2026-10-07T22:33:26Z","event":"returned","job":"stdlib-pathlib","review":"review-auto-stdlib-pathlib-2143","commit":"1b198bd3b","note":"(Sol 2nd; 4 test_io test_garbage_collection cases fail both kernels: no ResourceWarning on cyclic unclosed-file finalization, exposed by faithful warnings_helper; test_pathlib 739/1139 + submodules 211/230 both kept; builtin 134 from accepted email; overlaps 21d tip/21e) -> Sol queue (resume)"}
+{"t":"2026-10-07T22:33:26Z","event":"queued","job":"stdlib-pathlib","model":"gpt-6.1-sol","line":"sol-resume stdlib-pathlib"}
+{"t":"2026-10-07T22:33:26Z","event":"returned","job":"dspro-argparse-sol","review":"review-auto-dspro-argparse-sol-2148","commit":"3a4af07a6","note":"(Sol 1st; zipfile writestr(str) TypeError, no UTF-8 name flag 0x800, writes after close silently queued; argparse 1893/1894 both, builtin +3, dataclasses +1, reprlib +5 kept; overlaps 21d pickle/sys, 21e kernels/builtin fixture) -> Sol queue (resume)"}
+{"t":"2026-10-07T22:33:26Z","event":"queued","job":"dspro-argparse-sol","model":"gpt-6.1-sol","line":"sol-resume dspro-argparse-sol"}
+{"t":"2026-10-07T22:34:24Z","event":"finished","job":"claude-pstats","exit_time":"2026-10-07T22:29:43Z"}
+{"t":"2026-10-07T22:34:24Z","event":"review-queued","job":"claude-pstats","review":"review-auto-claude-pstats-2234"}
+{"t":"2026-10-07T22:34:30Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T22:34:33Z","event":"started","job":"perf-mc7-overhead","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T22:35:04Z","event":"started","job":"claude-deque","model":"claude-sonnet-5-5","brief":"brief-claude-deque.md","note":"new subject test_deque (library, not-yet), worktree at 589a950a9; Sonnet slot idle while claude-pstats is in review"}
+{"t":"2026-10-07T22:35:04Z","event":"queued","job":"dsflash-robotparser","model":"deepseek-flash","line":"or-resume dsflash-robotparser deepseek-flash ses_ee95eb8e5ffectlU612cQedS4J","note":"released from held-resumes (DS Flash 11/12)"}
+{"t":"2026-10-07T22:35:36Z","event":"quota","codex_week_used":46,"codex_credits":0,"claude_week_used":3,"claude_5h_used":3,"kimi_5h_used":0,"kimi_month_used":0.9335,"kimi_code_used":0,"deepseek_usd":322.24}
+{"t":"2026-10-07T22:35:41Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":46,"expected":45.8,"gap":"+0.2","status":"ok"}
+{"t":"2026-10-07T22:35:47Z","event":"checkin","status":"done","actions":"returned stdlib-pathlib (Sol 2nd; 4 test_io test_garbage_collection cases miss ResourceWarning both kernels) -> sol-resume queued; returned dspro-argparse-sol (Sol 1st; zipfile writestr(str) TypeError + no UTF-8 name flag) -> sol-resume queued; Sonnet slot fed: claude-deque (test_deque, brief + worktree at 589a950a9, started); released held dsflash-robotparser to queue (DS Flash 11/12); claude-pstats review auto-queued; prune-merged freed 0MB (no idle accepted worktrees for target/ cleanup)","notes":"box load 4.4/8, 12.6 GB available, disk 87%; Mac disk 82%; PR #539 (batch21d) CI pending, pr-merge-watch running; luna: no new alerts, meter gap +0.2 ok (Codex week 46%); Claude 5h 2% / week 3%"}
+{"t":"2026-10-07T22:39:34Z","event":"review-started","job":"stdlib-warnings","review":"review-auto-stdlib-warnings-2224"}
