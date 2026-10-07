@@ -530,10 +530,12 @@ pub struct Machine<'a> {
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
-    /// Whether the program's own world dictionary has been written
-    /// through since it was handed out: a name it gained then stands
-    /// over a builtin of the same spelling.
-    world_globals_changed: bool,
+    /// The file the run began from, set once the program's own world
+    /// dictionary has been written through. A name that dictionary
+    /// holds stands over a builtin of the same spelling, but only for
+    /// code written in that same file, whose globals the dictionary
+    /// is.
+    world_globals_source: Option<Rc<str>>,
     loaded_spaces: HashMap<Rc<str>, String>,
     namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
@@ -1949,7 +1951,7 @@ impl<'a> Machine<'a> {
             namespace_places: RefCell::new(None),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
-            world_globals_changed: false,
+            world_globals_source: None,
             loaded_spaces: HashMap::new(),
             namespace_books: Vec::new(),
             within_spare: false,
@@ -5600,11 +5602,11 @@ impl<'a> Machine<'a> {
     }
 
     fn has_wildcard_imports(&self) -> bool {
-        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() && !self.world_globals_changed { return false; }
+        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() { return false; }
         if let Some((source, answer)) = self.wildcard_source.borrow().as_ref() {
             if Rc::ptr_eq(source, &self.written_in) { return *answer; }
         }
-        let answer = self.world_globals_changed || self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
+        let answer = self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
         *self.wildcard_source.borrow_mut() = Some((self.written_in.clone(), answer));
         answer
     }
@@ -6737,7 +6739,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if self.has_wildcard_imports()
+            Form::Apply(Callee::Prim(op, name), args) if (self.has_wildcard_imports() || self.world_shadow_applies())
                 && self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
@@ -23777,14 +23779,21 @@ impl Machine<'_> {
         if fits(&value.settled()) {Ok(value)} else {Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", candidate.kind_word(), value.kind_word()))}
     }
 
+    /// Whether the code now running is the main program's own, whose
+    /// globals the world dictionary is, after that dictionary was
+    /// written through.
+    fn world_shadow_applies(&self) -> bool {
+        self.world_globals_source.as_deref() == Some(self.written_in.as_ref())
+    }
+
     fn spread_value(&self, word: &str) -> Option<Value> {
         // A name written into the world dictionary after globals() handed
-        // it out stands over a builtin of that spelling, as a name the
-        // text itself had bound would.
-        if self.world_globals_changed {
+        // it out stands over a builtin of that spelling for the code of
+        // the source that wrote it, as a name the text had bound would.
+        if self.world_shadow_applies() {
             if let Some(book) = &self.world_book {
-                let found = match &*book.borrow() {
-                    Value::Dict(rows) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
+                let found = match book.try_borrow().ok().as_deref() {
+                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
                     _ => None,
                 };
                 if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
@@ -24895,7 +24904,10 @@ impl<'a> Machine<'a> {
         // space's, but a write into it can still stand a name over a
         // builtin; reading a name consults it while this stands.
         if self.world_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
-            self.world_globals_changed = true;
+            // The world dictionary is the main program's own, however
+            // far from it the write is made; its reader is the code
+            // written in the file the run began from.
+            self.world_globals_source = Some(self.entry_file.clone());
             self.wildcard_source.borrow_mut().take();
             return;
         }
