@@ -7112,3 +7112,29 @@
 {"t":"2026-10-07T09:06:07Z","event":"review-started","job":"dsflash-shelve-dbm","review":"review-auto-dsflash-shelve-dbm-0817"}
 {"t":"2026-10-07T09:08:02Z","event":"exited","job":"review-auto-dsflash-shelve-dbm-0817","code":0}
 {"t":"2026-10-07T09:09:27Z","event":"exited","job":"stdlib-typing-sol","code":0}
+{"t":"2026-10-07T09:14:36Z","event":"exited","job":"stdlib-codecs","code":0}
+{"t":"2026-10-07T09:15:31Z","event":"review-void","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-0817","note":"reviewer could not reach lumenlang2 (SSM TargetNotConnected under box memory pressure); verification hold, not a code finding -> re-review queued as review-auto-dsflash-iterlen-0915"}
+{"t":"2026-10-07T09:15:31Z","event":"review-queued","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-0915"}
+{"t":"2026-10-07T09:15:31Z","event":"returned","job":"dsflash-shelve-dbm","review":"review-auto-dsflash-shelve-dbm-0817","commit":"f79addca2","note":"(1st; test_shelve 181/182 both kernels: test_in_memory_shelf, pickle ignores protocol; dbm_dumb 0->26/26 kept) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T09:15:31Z","event":"queued","job":"dsflash-shelve-dbm","model":"deepseek-flash","line":"or-resume dsflash-shelve-dbm deepseek-flash ses_eeb524721ffeHALNMI916TfnHo"}
+{"t":"2026-10-07T09:17:10Z","event":"review-started","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-0915"}
+{"t":"2026-10-07T09:17:19Z","event":"queued","job":"stdlib-coroutines","model":"gpt-6.1-sol","line":"sol-new stdlib-coroutines","note":"new subject test_coroutines (language, not-yet, large), worktree at 589a950a9"}
+{"t":"2026-10-07T09:17:46Z","event":"quota","codex_week_used":13,"codex_credits":0,"claude_week_used":28,"claude_5h_used":7,"kimi_5h_used":0,"kimi_month_used":0.9052,"kimi_code_used":0,"deepseek_usd":342.07}
+{"t":"2026-10-07T09:17:49Z","event":"finished","job":"stdlib-codecs","exit_time":"2026-10-07T09:14:36Z"}
+{"t":"2026-10-07T09:17:49Z","event":"review-queued","job":"stdlib-codecs","review":"review-auto-stdlib-codecs-0917"}
+{"t":"2026-10-07T09:17:50Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":13,"expected":12.6,"gap":"+0.4","status":"ok"}
+{"t":"2026-10-07T09:17:52Z","event":"finished","job":"stdlib-typing-sol","exit_time":"2026-10-07T09:09:27Z"}
+{"t":"2026-10-07T09:17:52Z","event":"review-queued","job":"stdlib-typing-sol","review":"review-auto-stdlib-typing-sol-0917"}
+{"t":"2026-10-07T09:17:53Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T09:18:14Z","event":"checkin","status":"done","actions":"voided review-auto-dsflash-iterlen-0817 (SSH-blocked hold) -> re-review queued (0915); returned dsflash-shelve-dbm (1st: test_shelve 181/182, pickle protocol) -> or-resume queued; removed target/ of idle accepted dsflash-genericclass (1.9 GB); queued new Sol subject stdlib-coroutines (test_coroutines, worktree at 589a950a9); luna FINDINGS updated","notes":"box memory exhaustion ~09:00-09:14Z (7 concurrent kernel rustc builds, 218 MB available, load 93) made SSM drop (TargetNotConnected): reviews and review-queue passes failed meanwhile; recovered without kills (3.8 GB free 09:14Z); box disk 81%, Mac 80%; luna: 1 gpt-5.6-luna desktop thread_title on MacBook Air (known call site), meter gap +0.4"}
+{"t":"2026-10-07T09:21:22Z","event":"exited","job":"review-auto-dsflash-iterlen-0915","code":0}
+{"t":"2026-10-07T09:22:11Z","event":"review-started","job":"stdlib-codecs","review":"review-auto-stdlib-codecs-0917"}
+{"t":"2026-10-07T09:25:09Z","event":"exited","job":"claude-io","code":0}
+{"t":"2026-10-07T09:27:12Z","event":"review-started","job":"stdlib-typing-sol","review":"review-auto-stdlib-typing-sol-0917"}
+{"t":"2026-10-07T09:28:00Z","event":"finished","job":"claude-io","exit_time":"2026-10-07T09:25:09Z"}
+{"t":"2026-10-07T09:28:00Z","event":"review-queued","job":"claude-io","review":"review-auto-claude-io-0927"}
+{"t":"2026-10-07T09:28:04Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T09:28:24Z","event":"exited","job":"review-auto-stdlib-codecs-0917","code":0}
+{"t":"2026-10-07T09:32:13Z","event":"started","job":"dsflash-minicompat","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T09:33:21Z","event":"returned","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-0915","commit":"f3d0e4765","note":"(2nd; __len__ index-conversion native TypeError escapes the probe on both kernels -> list/extend/bytearray.extend regression; iterlen 13->22/22 both kept; overlaps 21e leftovers) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T09:33:21Z","event":"returned","job":"stdlib-codecs","review":"review-auto-stdlib-codecs-0917","commit":"89901fdb6","note":"(Sol 2nd; resumed work left uncommitted, HEAD unchanged; same 25 ref failures IDNA/multibyte/locale/mock_open+meta_path; 56->248/288 kept) -> Sol queue (resume)"}
