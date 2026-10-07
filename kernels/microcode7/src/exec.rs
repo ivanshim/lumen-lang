@@ -20676,7 +20676,30 @@ impl<'a> Machine<'a> {
                             let entries = hay.borrow().entries.clone();
                             self.set_address(&entries, item)?
                         } else { self.hash_for_set(item)? };
-                        hay.borrow().keys.contains(&address)
+                        if hay.borrow().keys.contains(&address) { true } else {
+                            // A plain item may still agree with a thing
+                            // kept beside its hash: met by the hash they
+                            // share, once the worth road has answered no.
+                            let alike: Vec<Value> = {
+                                let store = hay.borrow();
+                                match store.instances {
+                                    0 => Vec::new(),
+                                    _ if Self::needs_set_methods(item) => Vec::new(),
+                                    _ => match item.hash_number() {
+                                        Some(number) => {
+                                            let opening = format!("instance:{}:", Value::Small(number).bare());
+                                            store.entries.iter().filter(|(kept, _)| kept.starts_with(&opening)).map(|(_, held)| held.clone()).collect()
+                                        }
+                                        None => Vec::new(),
+                                    },
+                                }
+                            };
+                            let mut found = false;
+                            for held in alike {
+                                if self.keys_agree(&held, item)? { found = true; break; }
+                            }
+                            found
+                        }
                     }
                     (item, Value::Octets { cell, .. }) => {
                         let numbers = cell.borrow();
@@ -22613,12 +22636,30 @@ impl<'a> Machine<'a> {
     }
 
     fn set_address(&mut self, entries: &[(String, Value)], item: &Value) -> Result<String, String> {
-        if !Self::needs_set_methods(item) { return self.hash_for_set(item); }
+        if !Self::needs_set_methods(item) {
+            let address = self.hash_for_set(item)?;
+            // A plain item may still meet an agreeing thing among the
+            // entries: where things are kept beside their hashes at
+            // all, the one sharing this item's hash is asked, and an
+            // agreeing one is where the item stands.
+            if !entries.iter().any(|(kept, _)| kept == &address) && entries.iter().any(|(_, held)| matches!(held, Value::Keyed(..))) {
+                if let Some(number) = item.hash_number() {
+                    let opening = format!("instance:{}:", Value::Small(number).bare());
+                    for (kept, held) in entries {
+                        if kept.starts_with(&opening) && self.keys_agree(held, &item)? { return Ok(kept.clone()); }
+                    }
+                }
+            }
+            return Ok(address);
+        }
         let keyed = self.hash_key(item)?;
         let hash = match &keyed { Value::Keyed(_, hash) => hash.bare(), _ => String::new() };
         let opening = format!("instance:{hash}:");
         for (address, held) in entries {
-            if !address.starts_with(&opening) { continue; }
+            // A thing hashing alike is asked, and so is every entry
+            // addressed by its worth alone, whose own hash the asking
+            // itself reckons; a thing hashing otherwise is passed over.
+            if !address.starts_with(&opening) && matches!(held, Value::Keyed(..)) { continue; }
             if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
         }
         let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, _ => 0 }, _ => 0 };
@@ -22635,6 +22676,25 @@ impl<'a> Machine<'a> {
         // for that alone and a store is gathered in a single pass
         // rather than in one pass for every entry it gains.
         if !Self::needs_set_methods(&item) {
+            // A store holding things beside their hashes may already
+            // hold one agreeing with this plain item: met by the hash
+            // they share, the entry already there is the one kept.
+            let alike: Vec<Value> = {
+                let held = store.borrow();
+                match held.instances {
+                    0 => Vec::new(),
+                    _ => match item.hash_number() {
+                        Some(number) => {
+                            let opening = format!("instance:{}:", Value::Small(number).bare());
+                            held.entries.iter().filter(|(address, _)| address.starts_with(&opening)).map(|(_, entry)| entry.clone()).collect()
+                        }
+                        None => Vec::new(),
+                    },
+                }
+            };
+            for entry in alike {
+                if self.keys_agree(&entry, &item)? { return Ok(()); }
+            }
             let address = self.hash_for_set(&item)?;
             store.borrow_mut().put(address, item);
             return Ok(());
@@ -22682,7 +22742,19 @@ impl<'a> Machine<'a> {
             }
             return Ok(false);
         }
-        Ok(other.keys.contains(&self.hash_for_set(item)?))
+        if other.keys.contains(&self.hash_for_set(item)?) { return Ok(true); }
+        // Among entries kept beside their hashes, one may still agree
+        // with this plain item: it is met by the hash they share.
+        if other.instances > 0 {
+            if let Some(number) = item.hash_number() {
+                let opening = format!("instance:{}:", Value::Small(number).bare());
+                for (address, held) in &other.entries {
+                    if !address.starts_with(&opening) { continue; }
+                    if self.keys_agree(held, item)? { return Ok(true); }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether every entry of the one store is found among the other's,
@@ -22837,6 +22909,7 @@ impl<'a> Machine<'a> {
                 let mut contents = target.borrow_mut();
                 contents.entries.clear();
                 contents.keys.clear();
+                contents.instances = 0;
                 Ok(Value::Nil)
             }
             _ => {

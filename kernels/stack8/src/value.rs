@@ -434,16 +434,22 @@ pub struct Members {
     /// sets would otherwise fold its members afresh at every level and
     /// cost what the whole nesting beneath it costs.
     pub folded: std::cell::Cell<Option<i64>>,
+    /// How many of the members are things kept beside their hashes:
+    /// the count that tells a plain value, addressed by its worth
+    /// alone, whether an equal thing could still stand among the
+    /// members and is to be asked for before the value joins them.
+    pub protocol: usize,
 }
 
 impl Members {
     pub fn empty(word: String, fixed: bool) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None) }
+        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None), protocol: 0 }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
         self.folded.set(None);
         if !self.held.contains_key(&key) {
+            if matches!(value, Value::Hashed(_)) { self.protocol += 1; }
             self.row.push(key.clone());
             self.held.insert(key, value);
         }
@@ -452,7 +458,10 @@ impl Members {
     pub fn remove(&mut self, key: &str) -> Option<Value> {
         self.folded.set(None);
         let found = self.held.remove(key);
-        if found.is_some() { self.row.retain(|k| k != key); }
+        if let Some(value) = &found {
+            if matches!(value, Value::Hashed(_)) { self.protocol -= 1; }
+            self.row.retain(|k| k != key);
+        }
         found
     }
 
