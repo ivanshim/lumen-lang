@@ -18269,11 +18269,23 @@ impl<'a> Machine<'a> {
                     return at.map(Value::Thing).ok_or_else(|| String::from("ValueError: call stack is not deep enough"));
                 }
                 n(0)?;
-                let cells = self.outermost.cells.borrow();
                 let mut bindings = Vec::new();
-                for (word, value) in self.idents.iter().zip(cells.iter()) {
-                    if !word.starts_with('\0') && !word.contains('\0') && !matches!(value, Value::Unset) {
-                        bindings.push((Value::text(word), value.clone()));
+                {
+                    let cells = self.outermost.cells.borrow();
+                    for (word, value) in self.idents.iter().zip(cells.iter()) {
+                        if !word.starts_with('\0') && !word.contains('\0') && !matches!(value, Value::Unset) {
+                            bindings.push((Value::text(word), value.clone()));
+                        }
+                    }
+                }
+                // A name the run bound after it started -- through the
+                // dictionary globals() hands out, among others -- is
+                // held only by the outermost book, so the namespace a
+                // reader is handed has to gather it from there as well.
+                let extra = self.world_kept();
+                if let Value::Dict(pairs) = extra.borrow().clone() {
+                    for (key, value) in pairs.iter() {
+                        if !bindings.iter().any(|(kept, _)| kept.equals(key)) { bindings.push((key.clone(), value.clone())); }
                     }
                 }
                 Value::Dict(Rc::new(bindings.into()))

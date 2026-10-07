@@ -19430,10 +19430,22 @@ impl<'a> Engine<'a> {
                     return Ok(current);
                 }
                 arity(0)?;
-                Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
+                let mut rows: Vec<(Value, Value)> = self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
                     if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }
                     else { Some((Value::text(name), value.clone())) }
-                }).collect()))
+                }).collect();
+                // A name bound after the reading -- a write through the
+                // dictionary globals() hands out among them -- lives only
+                // in the outermost dictionary, and a namespace a reader
+                // asks for must carry it too.
+                let book = self.outer_book_made();
+                if let Value::Map(pairs) = book.borrow().clone() {
+                    for (key, value) in pairs.iter() {
+                        let Some(word) = Self::globals_key_word(key) else { continue };
+                        if !rows.iter().any(|(seen, _)| Self::globals_key_word(seen).as_deref() == Some(word.as_str())) { rows.push((key.clone(), value.clone())); }
+                    }
+                }
+                Value::Map(Rc::new(rows.into()))
             }
             // The module the routine running `depth` frames up the call
             // chain answers as its own: the same walk the
