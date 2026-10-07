@@ -1417,7 +1417,7 @@ impl Value {
         let value = self.settled();
         if let Value::Thing(thing) = &value {
             let class = thing.blueprint();
-            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry.borrow().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
@@ -1690,7 +1690,7 @@ pub struct TypeNames {
 pub struct Blueprint {
     /// The mutable names of a Python class, outside its dictionary.
     pub type_names: RefCell<Option<TypeNames>>,
-    pub ancestry: Vec<Rc<Blueprint>>,
+    pub ancestry: RefCell<Vec<Rc<Blueprint>>>,
     pub parents: Vec<Rc<Blueprint>>,
     pub presentation: Option<String>,
     pub name: String,
@@ -1712,6 +1712,13 @@ pub struct Blueprint {
     pub sealed: Cell<bool>,
     /// Instance slot storage established when the class was constructed.
     pub has_slot_storage: bool,
+    /// Whether a builder's own mro supplied the order the class keeps:
+    /// the order is then complete, and no allocation link may add a
+    /// forebear it left out.
+    pub order_supplied: Cell<bool>,
+    // A custom order is separate from layout parents. Other entries remain
+    // alive through ancestry, while this blueprint refers to itself weakly.
+    pub supplied_order: RefCell<Vec<std::rc::Weak<Blueprint>>>,
 }
 
 impl Blueprint {

@@ -1564,7 +1564,7 @@ impl Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
             let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.lineage.borrow().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
@@ -1832,7 +1832,7 @@ pub struct Class {
     /// Python heap-type names, the module label, and the original
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
-    pub lineage: Vec<Rc<Class>>,
+    pub lineage: RefCell<Vec<Rc<Class>>>,
     pub direct: Vec<Rc<Class>>,
     pub outline: Option<String>,
     pub name: String,
@@ -1855,6 +1855,13 @@ pub struct Class {
     pub sealed: std::cell::Cell<bool>,
     /// Instance slot storage established when the class was constructed.
     pub declares_slots: bool,
+    /// Whether a metaclass's own mro supplied the order the class
+    /// keeps: the order is then complete, and no allocation link may
+    /// add a forebear it left out.
+    pub mro_adopted: std::cell::Cell<bool>,
+    // The complete supplied order uses weak links for the owner; lineage
+    // retains its other entries without introducing an owner cycle.
+    pub adopted_order: RefCell<Vec<std::rc::Weak<Class>>>,
 }
 
 impl Class {
