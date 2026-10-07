@@ -6655,3 +6655,29 @@
 {"t":"2026-10-06T23:33:50Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":80,"expected":82.5,"gap":-2.5,"status":"ok"}
 {"t":"2026-10-06T23:33:54Z","event":"checkin","status":"done","actions":"accepted stdlib-cmd-sol (batch 21e); returned dspro-argparse (1st; pickling + program-name/zip paths) -> DS Pro resumed; all slots full","notes":"box load 5.8, 11.4 GB available, disk 70%; no open PRs; luna gap -2.5 ok, no new alerts"}
 {"t":"2026-10-06T23:39:33Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-06T23:49:04Z","event":"slots-changed","model":"gpt-6.1-sol","slots":6,"was":4,"by":"Ivan"}
+{"t":"2026-10-06T23:49:04Z","event":"slots-changed","model":"deepseek-flash","slots":6,"was":4,"by":"Ivan"}
+{"t":"2026-10-06T23:49:07Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-06T23:49:17Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-06T23:50:19Z","event":"resumed","job":"dspro-leftovers-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-06T23:52:03Z","event":"started","job":"dsflash-tomllib","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-06T23:52:03Z","event":"started","job":"dsflash-http-cookies","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-06T23:53:03Z","event":"note","text":"DS Flash 6 slots (Ivan): filled 2 new slots: dsflash-tomllib, dsflash-http-cookies (ds-run, box load 3.2, 12 GB avail)"}
+{"t":"2026-10-06T23:53:15Z","event":"slots-changed","model":"gpt-6.1-sol","slots":8,"was":6,"by":"Ivan"}
+{"t":"2026-10-06T23:53:15Z","event":"slots-changed","model":"deepseek-flash","slots":8,"was":6,"by":"Ivan"}
+{"t":"2026-10-06T23:53:18Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-06T23:53:49Z","event":"resumed","job":"stdlib-typing","model":"gpt-6.1-sol"}
+{"t":"2026-10-06T23:53:50Z","event":"note","text":"dispatch.sh restarted with ds-new queue kind (new DS Flash/OpenCode subjects can be queued)"}
+{"t":"2026-10-06T23:53:57Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-06T23:58:51Z","event":"started","job":"claude-functools-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-06T23:59:17Z","event":"queued","job":"stdlib-codecs","model":"gpt-6.1-sol","note":"test_codecs 0->? (profile 1.0 library not-yet; large)"}
+{"t":"2026-10-06T23:59:34Z","event":"quota","codex_week_used":81,"codex_credits":0,"claude_week_used":24,"claude_5h_used":20,"kimi_5h_used":0,"kimi_month_used":0.894,"kimi_code_used":0,"deepseek_usd":356.55}
+{"t":"2026-10-06T23:59:39Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":81,"expected":83.1,"gap":-2.1,"status":"ok"}
+{"t":"2026-10-06T23:59:46Z","event":"checkin","status":"done","actions":"no verdicts or merges (none pending; no open PRs); Sol slot filled: stdlib-codecs (test_codecs, large) brief + worktree, queued after claude-functools-sol; DS Flash 6 running + 2 queued (mimetypes, rlcompleter)","notes":"box load 4.8, 12.7 GB available, disk 76%; Codex week 81% (alert at 90%); luna: no new alerts, meter gap -2.1 ok"}
+{"t":"2026-10-07T00:03:52Z","event":"started","job":"dsflash-mimetypes","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T00:04:26Z","event":"exited","job":"dsflash-datetime-speed","code":0}
+{"t":"2026-10-07T00:05:17Z","event":"finished","job":"dsflash-datetime-speed","exit_time":"2026-10-07T00:04:26Z"}
+{"t":"2026-10-07T00:05:17Z","event":"review-queued","job":"dsflash-datetime-speed","review":"review-auto-dsflash-datetime-speed-0005"}
+{"t":"2026-10-07T00:05:19Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T00:06:31Z","event":"exited","job":"dsflash-builtin","code":0}
+{"t":"2026-10-07T00:08:53Z","event":"started","job":"dsflash-rlcompleter","model":"deepseek-flash","via":"ds-run"}
