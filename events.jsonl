@@ -7788,3 +7788,30 @@
 {"t":"2026-10-07T20:21:10Z","event":"finished","job":"dsflash-pep646","exit_time":"2026-10-07T20:19:58Z"}
 {"t":"2026-10-07T20:21:10Z","event":"review-queued","job":"dsflash-pep646","review":"review-auto-dsflash-pep646-2021"}
 {"t":"2026-10-07T20:21:14Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T20:21:55Z","event":"review-started","job":"stdlib-codecs-sol","review":"review-auto-stdlib-codecs-sol-2015"}
+{"t":"2026-10-07T20:24:20Z","event":"exited","job":"dsflash-extcall","code":0}
+{"t":"2026-10-07T20:26:07Z","event":"exited","job":"review-auto-stdlib-codecs-sol-2015","code":0}
+{"t":"2026-10-07T20:26:18Z","event":"finished","job":"dsflash-extcall","exit_time":"2026-10-07T20:24:20Z"}
+{"t":"2026-10-07T20:26:18Z","event":"review-queued","job":"dsflash-extcall","review":"review-auto-dsflash-extcall-2026"}
+{"t":"2026-10-07T20:26:23Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T20:26:57Z","event":"review-started","job":"dsflash-pep646","review":"review-auto-dsflash-pep646-2021"}
+{"t":"2026-10-07T20:30:12Z","event":"exited","job":"review-auto-dsflash-pep646-2021","code":0}
+{"t":"2026-10-07T20:31:58Z","event":"review-started","job":"dsflash-extcall","review":"review-auto-dsflash-extcall-2026"}
+{"t":"2026-10-07T20:33:02Z","event":"accepted","job":"dsflash-pep646","review":"review-auto-dsflash-pep646-2021","batch":"21e","commit":"eaa5f3c52","branch":"fix/dsflash-pep646","note":"resumed after return: test_pep646_syntax 0/1->1/1 (117/117 doctests) both kernels; clean final check 1194/0; raw-comma scan removed, lambda star probes match CPython; byte-exact test; overlaps 21d stdlib-super + 21e syntax/codeop/builtin/flufl/exceptstar/dataclasses/metaclass/userstring compiler files; FOLLOW-UPS: coordinator to re-certify bytes/decimal/calendar/tokenize/io coverage; test_typing import gap at async with pre-existing"}
+{"t":"2026-10-07T20:33:02Z","event":"accepted","job":"stdlib-codecs-sol","review":"review-auto-stdlib-codecs-sol-2015","batch":"21e","commit":"cf983fe57","branch":"fix/stdlib-codecs","note":"Sol resume: test_codecs 56->273/288 both kernels (0 err/0 fail, 15 honest skips); clean final check 1194/0; 117 lib bodies + test byte-exact vs 3.14.8; overlaps 21d stdlib-pickle (codecs.py/_codecs adapter), dspro-context, uuid/super mock, 21e kernel/mock files; FOLLOW-UPS: ISO-2022 malformed designation not validated; coordinator to re-certify bytes/decimal/calendar/tokenize/io coverage"}
+{"t":"2026-10-07T20:34:25Z","event":"queued","job":"dsflash-type-aliases","model":"deepseek-flash","line":"or-resume dsflash-type-aliases deepseek-flash ses_ee8fee25bffe3Mny5KuB13xGHH","note":"released from held-resumes: pep646 accepted (merge local fix/dsflash-pep646 eaa5f3c52); DS Flash 10/12"}
+{"t":"2026-10-07T20:35:11Z","event":"exited","job":"review-auto-dsflash-extcall-2026","code":0}
+{"t":"2026-10-07T20:35:29Z","event":"exited","job":"dsflash-colorize","code":0}
+{"t":"2026-10-07T20:35:36Z","event":"queued","job":"dsflash-gettext","model":"deepseek-flash","line":"ds-new dsflash-gettext","note":"new 3.14.8 subject (profile-scope not-yet library, medium): test_gettext + faithful gettext.py; worktree at 589a950a9; fills DS Flash slot 12"}
+{"t":"2026-10-07T20:35:54Z","event":"quota","codex_week_used":41,"codex_credits":0,"claude_week_used":2,"claude_5h_used":11,"kimi_5h_used":0,"kimi_month_used":0.9325,"kimi_code_used":0,"deepseek_usd":325.68}
+{"t":"2026-10-07T20:35:58Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":41,"expected":41.4,"gap":-0.4,"status":"ok"}
+{"t":"2026-10-07T20:36:32Z","event":"finished","job":"dsflash-colorize","exit_time":"2026-10-07T20:35:29Z"}
+{"t":"2026-10-07T20:36:32Z","event":"review-queued","job":"dsflash-colorize","review":"review-auto-dsflash-colorize-2036"}
+{"t":"2026-10-07T20:36:37Z","event":"checkin","status":"done","actions":"accepted dsflash-pep646 (eaa5f3c52, 21e; pep646_syntax 0->1/1 both); accepted stdlib-codecs-sol (cf983fe57, 21e; test_codecs 56->273/288 both); released dsflash-type-aliases from held-resumes (pep646 accepted) -> queue; new DS Flash subject dsflash-gettext (brief + worktree at 589a950a9, ds-new queued); pruned target/ of stdlib-codecs + dsflash-pep646 (box 87->84%); luna FINDINGS appended","notes":"json-speed recert2 still waiting on its 7019875e build (cargo 60 min on loaded box); slots: Sol 11+extcall review, DS Flash 10 + 2 queued, DS Pro tstring, Kimi module, Sonnet pstats; queue also sol-resume zipfile + sol-new yieldfrom-sol (Sol full); disk Mac 81% box 84%; no open PR; luna gap -0.4 ok, codex metered 41%; Claude 5h 11% week 2%"}
+{"t":"2026-10-07T20:36:37Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T20:37:01Z","event":"resumed","job":"dsflash-type-aliases","model":"deepseek-flash","session":"ses_ee8fee25bffe3Mny5KuB13xGHH"}
+{"t":"2026-10-07T20:37:05Z","event":"exited","job":"stdlib-descr","code":0}
+{"t":"2026-10-07T20:41:46Z","event":"finished","job":"stdlib-descr","exit_time":"2026-10-07T20:37:05Z"}
+{"t":"2026-10-07T20:41:46Z","event":"review-queued","job":"stdlib-descr","review":"review-auto-stdlib-descr-2041"}
+{"t":"2026-10-07T20:41:49Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T20:42:02Z","event":"resumed","job":"stdlib-zipfile","model":"gpt-6.1-sol"}
