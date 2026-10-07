@@ -6834,6 +6834,10 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if !self.lang.class_builder.is_empty() && self.lang.constructor.as_deref()==Some(name) && matches!(value.contents(),Value::Bytes(_,true,_)) {
+            let initializer=self.held_kind_descriptor("bytearray",name);
+            return Ok(Some(Self::adapter(3,vec![initializer,value.clone()])));
+        }
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
@@ -11437,7 +11441,7 @@ impl<'a> Engine<'a> {
                 let text_method = matches!(held, Value::Text(_) | Value::Codepoints(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
                 // A row of bytes answers to the methods its kind keeps,
                 // whose words are the ones text goes by.
-                let byte_method = matches!(&held, Value::Bytes(_, changeable, _) if self.byte_member(name, *changeable).is_some());
+                let byte_method = matches!(&held, Value::Bytes(_, changeable, _) if self.byte_member(name, *changeable).is_some() || *changeable && self.lang.constructor.as_deref()==Some(name.as_ref()));
                 // A builtin kind's word has a maker, a name and a line
                 // of forebears, where a class may stand on it.
                 let kind_allocate = name.as_ref() == self.class_word("allocate") && matches!(&held, Value::Native(op, _) if Self::kind_builtin(op));
@@ -11497,7 +11501,7 @@ impl<'a> Engine<'a> {
             // A container asked for one of its special members keeps
             // the cell its names share, so that a write through the
             // member is a write every one of those names sees.
-            Action::Grab(name) if self.data.last().is_some_and(|value| matches!(value.contents(), Value::ByteKind(..)) || matches!(value.contents(), Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || mutable && name.as_ref() == "__release_buffer__")) => {
+            Action::Grab(name) if self.data.last().is_some_and(|value| matches!(value.contents(), Value::ByteKind(..)) || matches!(value.contents(), Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || mutable && (name.as_ref() == "__release_buffer__" || self.lang.constructor.as_deref()==Some(name.as_ref())))) => {
                 let receiver = self.drop_top()?;
                 self.class_get(receiver.contents(), name, false)?
             }
@@ -11970,6 +11974,11 @@ impl<'a> Engine<'a> {
                         self.data.push(answer);
                         return Ok(());
                     }
+                }
+                if self.fuller_classes() && self.lang.constructor.as_deref()==Some(name.as_ref()) && matches!(subject.contents(),Value::Bytes(_,true,_)) {
+                    let bound=self.class_get(subject,name,false)?;
+                    let result=self.class_apply(bound,args)?;self.data.push(result);
+                    return Ok(());
                 }
                 if self.fuller_classes() && (matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(&subject, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
@@ -16045,6 +16054,12 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if !self.lang.class_builder.is_empty() && self.lang.constructor.as_deref()==Some(operation) && matches!(receiver.contents(),Value::Bytes(_,true,_)) {
+            let descriptor=self.held_kind_descriptor("bytearray",operation);
+            let mut supplied=vec![receiver.clone()];supplied.extend(args);
+            supplied.extend(named.into_iter().map(|(key,value)|Value::Tie(Rc::new((Value::text(&key),value)))));
+            return self.class_apply(descriptor,supplied).map_err(|fault|match fault {Fault::Note(message)=>message,other=>{self.carried=Some(other);String::new()}});
+        }
         if !self.lang.class_builder.is_empty() && [24,32].iter().any(|at|self.lang.class_special.get(*at).is_some_and(|word|word==operation)) && matches!(receiver.contents(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) && !(1..=2).contains(&args.len()) {
             return Err(format!("TypeError: expected 1 or 2 arguments, got {}",args.len()));
         }
@@ -24215,7 +24230,11 @@ impl Engine<'_> {
                 Some(Value::Class(mut candidate)) => {
                     for base in &plain {
                         let actual = self.call_held(self.kind_maker_word(), vec![base.clone()])?;
-                        let other = self.type_base(&actual)?;
+                        let other = match actual.contents() {
+                            Value::Class(class) => class,
+                            Value::Native(_, word) => self.kind_class(&word),
+                            _ => self.type_base(&actual)?,
+                        };
                         if Rc::ptr_eq(&candidate, &other) || candidate.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, &other)) { continue; }
                         if other.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, &candidate)) { candidate = other; }
                         else { return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".into()); }

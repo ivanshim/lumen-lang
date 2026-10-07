@@ -280,6 +280,19 @@ impl Value {
             // kind's word and the member's name -- so two readings of the
             // same member, and of the same member on the same kind, hash
             // alike, and one may be a key in a map or a member of a set.
+            Value::Adapter(bound) if bound.0 == 3 && bound.1.len() == 2 => {
+                let owner = &bound.1[1];
+                let identity = match owner {
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Bond(place) | Value::Binding(place) | Value::Collection(place, _) => (std::rc::Rc::as_ptr(place) as usize >> 4) as i64,
+                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Map(book) => (std::rc::Rc::as_ptr(book) as usize >> 4) as i64,
+                    Value::Set(group) => (std::rc::Rc::as_ptr(group) as usize >> 4) as i64,
+                    Value::Bytes(row, ..) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    _ => owner.core_hash()?,
+                };
+                Some(finish(bound.1[0].core_hash()? ^ identity))
+            }
             Value::Adapter(held) => {
                 let mut h = 2870177450012600261u64;
                 for part in held.1.iter() {

@@ -596,10 +596,24 @@ impl Value {
         if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
         if let Value::Blueprint(blueprint) = self {
             let fields = blueprint.shared.borrow();
-            return Value::Dict(Rc::new(fields.iter().filter_map(|(word, held)| {
-                if word.starts_with('\0') || word.starts_with('#') { None }
-                else { Some((Value::text(word), held.clone())) }
-            }).collect()));
+            let mut contents=fields.iter().filter_map(|(word,held)|(!word.starts_with(['\0','#'])).then(||(Value::text(word),held.clone()))).collect::<Vec<_>>();
+            for (internal,value) in fields.iter() {
+                if internal=="\0type-keys" {if let Value::Dict(additions)=value {contents.extend(additions.iter().cloned());}}
+            }
+            let original_order=fields.iter().find_map(|(name,value)|if name=="\0type-order" {Some(value)} else {None});
+            if let Some(Value::Tuple(sequence))=original_order {
+                let mut arranged=Vec::new();
+                for stored in sequence.iter() {
+                    let bare=if let Value::Keyed(key,_) = stored {key.as_ref()} else {stored};
+                    let position=contents.iter().position(|(key,_)| {
+                        let key=if let Value::Keyed(inner,_) = key {inner.as_ref()} else {key};
+                        if let (Value::Text(a),Value::Text(b))=(bare,key) {a==b} else {bare.one_place(key)}
+                    });
+                    if let Some(position)=position {arranged.push(contents.remove(position));}
+                }
+                arranged.append(&mut contents);contents=arranged;
+            }
+            return Value::Dict(Rc::new(contents.into()));
         }
         self.settled()
     }

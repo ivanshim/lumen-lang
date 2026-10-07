@@ -7017,6 +7017,12 @@ impl<'a> Machine<'a> {
                             return self.apply_class_member(member, values);
                         }
                     }
+                    let initializes_octets=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|name|name==&called)
+                        && matches!(subject.settled(),Value::Octets{changeable:true,..});
+                    if self.has_class_order() && initializes_octets {
+                        let method=self.read_class_member(subject,&called,false)?;
+                        return self.apply_class_member(method,values);
+                    }
                     if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Intrinsic(Prim::Truthful, _))) || (!self.rules.words_ext_stmt_class_builder.is_empty() && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.rules.member_pipes {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
@@ -8551,6 +8557,11 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        let constructor=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word|word==name);
+        if constructor && self.has_class_order() && matches!(value.settled(),Value::Octets{changeable:true,..}) {
+            let arguments=Rc::new(vec![self.kind_entry("bytearray",name),value.clone()]);
+            return Some(Value::Wrapped(3,arguments.into()));
+        }
         if name == self.detail("doc") && matches!(value.settled(), Value::Nil) { return Some(Value::text("The type of the None singleton.")); }
         if matches!(value, Value::Window(_, 'm')) && matches!(name, "get" | "keys" | "values" | "items" | "copy") {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
@@ -9442,6 +9453,14 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        let initializing=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word|word==name);
+        if self.has_class_order() && initializing && matches!(receiver.settled(),Value::Octets{changeable:true,..}) {
+            let callable=self.kind_entry("bytearray",name);
+            let mut supplied=Vec::with_capacity(arguments.len()+keywords.len()+1);
+            supplied.push(receiver.clone());supplied.extend(arguments);
+            for (key,value) in keywords {supplied.push(Value::Couple(Rc::new((Value::text(&key),value))));}
+            return self.apply_class_member(callable,supplied);
+        }
         let power_method=self.rules.specials.get(24).is_some_and(|word|word==name)||self.rules.specials.get(32).is_some_and(|word|word==name);
         if self.has_class_order() && power_method && matches!(receiver.settled(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) {
             match arguments.len(){1|2=>(),count=>return Err(format!("TypeError: expected 1 or 2 arguments, got {count}").into())}
@@ -16730,6 +16749,10 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if let (Prim::At, [Value::Window(mapping, 'm'), key]) = (op, v) {
+            let dictionary=mapping.proxy_pairs();
+            return self.prim(op,name,&[dictionary,key.settled()]);
+        }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
@@ -16992,7 +17015,7 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            if matches!(subject.settled(), Value::Octets { changeable, .. } if called == "__buffer__" || changeable && called == "__release_buffer__") {
+            if matches!(subject.settled(), Value::Octets { changeable, .. } if called == "__buffer__" || changeable && (called == "__release_buffer__" || self.rules.words_ext_stmt_class_constructor.first().is_some_and(|name|name==&called))) {
                 return self.read_class_member(subject.settled(), &called, false).map_err(|fault| self.suspension_fault(fault));
             }
             if self.native_member(subject, &called) { return Ok(Value::Member(Rc::new(subject.clone()), called)); }
@@ -18438,7 +18461,7 @@ impl<'a> Machine<'a> {
                 if self.carried_by_kind(&v[0], &word).is_some() { return Ok(Value::Flag(true)); }
                 let native = matches!(v[0], Value::Text(_) | Value::Unpaired(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
                 // A row of bytes answers to the methods its kind keeps.
-                let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some());
+                let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some() || changeable && self.rules.words_ext_stmt_class_constructor.first().is_some_and(|name|name==&word));
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&v[0], Value::Generator(_)) && self.attribute(&v[0], &word).is_some();
@@ -24751,7 +24774,9 @@ impl<'a> Machine<'a> {
             let mut choice = initial.clone();
             for value in plain.iter() {
                 let kind = self.apply_held(self.kind_builder_word(), vec![value.clone()])?;
-                let parent_builder = self.parent_from_type(&kind)?;
+                let parent_builder = if let Value::Blueprint(plan) = kind.settled() { plan }
+                    else if let Value::Intrinsic(_, spelling) = kind.settled() { self.native_kind(&spelling) }
+                    else { self.parent_from_type(&kind)? };
                 let already_covers = Rc::ptr_eq(&choice, &parent_builder) || choice.ancestry().iter().any(|held| Rc::ptr_eq(held, &parent_builder));
                 if !already_covers {
                     if parent_builder.ancestry().iter().any(|held| Rc::ptr_eq(held, &choice)) { choice = parent_builder; }

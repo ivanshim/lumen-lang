@@ -213,7 +213,7 @@ impl Value {
             }
             Self::Member(owner, operation) => {
                 let identity = match owner.as_ref() {
-                    Self::Mutable(place, _) => std::rc::Rc::as_ptr(place) as usize / 16,
+                    Self::Shared(place) | Self::Mutable(place, _) => std::rc::Rc::as_ptr(place) as usize / 16,
                     Self::Vector(row) => std::rc::Rc::as_ptr(row) as usize / 16,
                     Self::Dict(pairs) => std::rc::Rc::as_ptr(pairs) as usize / 16,
                     Self::Set(group) => std::rc::Rc::as_ptr(group) as usize / 16,
@@ -237,9 +237,17 @@ impl Value {
             Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
-            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => {
-                let lies = match parts.get(1) { Some(Self::Thing(thing)) => std::rc::Rc::as_ptr(thing) as usize / 16, Some(other) => other.hash_number()? as usize, None => 0 };
-                parts[0].hash_number()? ^ lies as i64
+            Self::Wrapped(3, parts) if parts.len() == 2 => {
+                let receiver = match &parts[1] {
+                    Self::Thing(thing) => std::rc::Rc::as_ptr(thing) as usize / 16,
+                    Self::Mutable(cell, _) | Self::Shared(cell) => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    Self::Vector(values) => std::rc::Rc::as_ptr(values) as usize / 16,
+                    Self::Dict(values) => std::rc::Rc::as_ptr(values) as usize / 16,
+                    Self::Set(values) => std::rc::Rc::as_ptr(values) as usize / 16,
+                    Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    value => value.hash_number()? as usize,
+                };
+                parts[0].hash_number()? ^ receiver as i64
             }
             Self::Wrapped(9, kept) => (std::rc::Rc::as_ptr(kept) as usize / 16) as i64,
             Self::Nil => 0x9e3779b9,

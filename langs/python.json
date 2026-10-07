@@ -5521,5 +5521,11 @@
   ],
   "ext.stmt.class.detail.static.attributes": [
     "__static_attributes__"
+  ],
+  "ext.stmt.class.detail.namespace.warning": [
+    "warnings",
+    "warn",
+    "RuntimeWarning",
+    "non-string key in the __dict__ of class "
   ]
 }

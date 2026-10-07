@@ -772,9 +772,23 @@ impl Value {
         match self {
             Value::Bond(cell) | Value::Collection(cell, _) | Value::Binding(cell) => cell.borrow().proxy_dictionary(),
             Value::View(proxy) if proxy.1 == "mapping" => proxy.0.proxy_dictionary(),
-            Value::Class(class) => Value::Map(Rc::new(class.shared.borrow().iter()
-                .filter(|(key, _)| !key.starts_with(['\0', '#']))
-                .map(|(key, value)| (Value::text(key), value.clone())).collect())),
+            Value::Class(class) => {
+                let fields=class.shared.borrow();
+                let mut pairs:Vec<_>=fields.iter().filter(|(key,_)|!key.starts_with(['\0','#'])).map(|(key,value)|(Value::text(key),value.clone())).collect();
+                if let Some((_,Value::Map(extra)))=fields.iter().find(|(key,_)|key=="\0type-keys") {pairs.extend(extra.iter().cloned());}
+                if let Some((_,Value::Tuple(order)))=fields.iter().find(|(name,_)|name=="\0type-order") {
+                    let mut ordered=Vec::with_capacity(pairs.len());
+                    for original in order.iter() {
+                        let original=match original {Value::Hashed(pair)=>&pair.0,other=>other};
+                        if let Some(index)=pairs.iter().position(|(candidate,_)| {
+                            let candidate=match candidate {Value::Hashed(pair)=>&pair.0,other=>other};
+                            match (original,candidate) {(Value::Text(left),Value::Text(right))=>left==right,_=>original.same_value(candidate)}
+                        }) {ordered.push(pairs.remove(index));}
+                    }
+                    ordered.extend(pairs);pairs=ordered;
+                }
+                Value::Map(Rc::new(pairs.into()))
+            },
             other => other.contents(),
         }
     }

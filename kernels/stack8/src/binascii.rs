@@ -185,7 +185,8 @@ impl Engine<'_> {
 
     pub(super) fn binary_ascii(&self, values: &[Value]) -> Res<Value> {
         let Value::Text(operation) = values[0].contents() else { return Err("TypeError: binary operation must be a string".into()); };
-        let Value::Bytes(bytes, ..) = values[1].contents() else { return Err("TypeError: binary operation requires bytes".into()); };
+        let supplied=Self::worth_of(&values[1]).unwrap_or_else(||values[1].contents());
+        let Value::Bytes(bytes, ..) = supplied.contents() else { return Err("TypeError: binary operation requires bytes".into()); };
         let input = bytes.borrow();
         let flag = |i: usize| values.get(i).is_some_and(Value::is_true);
         let number = |i: usize| match values.get(i).map(Value::contents) { Some(Value::Small(n)) => n, _ => 0 };
