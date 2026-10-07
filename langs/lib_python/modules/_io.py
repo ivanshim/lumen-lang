@@ -844,25 +844,27 @@ class TextIOWrapper(_TextIOBase):
             self._writeflush()
         function = _TEXT.get('flush') or _text_function('flush')
         return function(self)
+    # Close the backing stream even when finalization warning lookup fails.
     def close(self):
         if self._buffer is None or not self._initialized:
             self._unattached()
-        if self._finalizing:
-            buffer = self._buffer
-            if buffer is not None and not buffer.closed:
-                warn = getattr(buffer, '_dealloc_warn', None)
-                if warn is not None:
-                    warn(self)
         function = _TEXT.get('close') or _text_function('close')
         attached = self._buffer
         try:
-            return function(self)
-        except Exception:
-            # A buffer that was detached from inside its own closed check
-            # leaves nothing to flush or close, which is no error.
-            if attached is not None and self._buffer is None and self._initialized:
-                return None
-            raise
+            if self._finalizing and not attached.closed:
+                warn = getattr(attached, '_dealloc_warn', None)
+                if warn is not None:
+                    warn(self)
+        finally:
+            try:
+                result = function(self)
+            except Exception:
+                # A buffer detached inside its closed check needs no closure.
+                if attached is not None and self._buffer is None and self._initialized:
+                    result = None
+                else:
+                    raise
+        return result
     def detach(self):
         if self._buffer is None or not self._initialized:
             self._unattached()
@@ -1024,11 +1026,13 @@ class FileIO(_RawIOBase):
     def close(self):
         if not self._closed:
             import os
-            if self._finalizing:
-                self._dealloc_warn(self)
             try:
-                # The raw base's close flushes first, as the C stream's does.
-                self.flush()
+                try:
+                    if self._finalizing:
+                        self._dealloc_warn(self)
+                finally:
+                    # Finalization warnings cannot prevent flushing or closure.
+                    self.flush()
             finally:
                 try:
                     if self._closefd:
@@ -1328,16 +1332,19 @@ class BufferedReader(_BufferedIOBase):
             impl = self._impl
         return impl.closed
     def _dealloc_warn(self, source):
-        warn = getattr(self._raw, '_dealloc_warn', None)
+        raw = getattr(self, '_raw', None)
+        warn = getattr(raw, '_dealloc_warn', None)
         if warn is not None:
             warn(source)
     def close(self):
         if self.closed:
             return None
-        if self._finalizing:
-            self._dealloc_warn(self)
         try:
-            self.flush()
+            try:
+                if self._finalizing:
+                    self._dealloc_warn(self)
+            finally:
+                self.flush()
         finally:
             self._impl.raw.close()
     def flush(self):
@@ -1401,6 +1408,15 @@ class BufferedRWPair(BufferedReader):
         import _pyio
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
+    # Forward resource warnings to each actual raw stream of the pair.
+    def _dealloc_warn(self, source):
+        implementation = getattr(self, '_implementation', None)
+        for side in ('reader', 'writer'):
+            stream = getattr(implementation, side, None)
+            raw = getattr(stream, 'raw', None)
+            warn = getattr(raw, '_dealloc_warn', None)
+            if warn is not None:
+                warn(source)
     def close(self):
         return self._impl.close()
 
