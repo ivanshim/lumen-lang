@@ -1142,6 +1142,9 @@ class _Parser:
         return body
 
     def parse_stmt(self):
+        # A word that opens a block of its own is read here; anything
+        # else, the simple statement words included, is left to the
+        # simple-statement reader below.
         tok = self.peek()
         if tok.kind == 'name':
             word = tok.text
@@ -1151,21 +1154,28 @@ class _Parser:
                 return self.parse_if()
             if word == 'try':
                 return self.parse_try()
-            if word == 'assert':
-                return self.parse_assert()
+            if word in ('elif', 'else', 'except', 'finally'):
+                _syntax('invalid syntax')
+        return self.parse_simple_stmt()
+
+    def parse_simple_stmt(self):
+        # An expression, an assignment, or one of the simple statement
+        # words. A word that opens a block of its own is refused: an
+        # inline suite and the run after a semicolon take simple
+        # statements alone.
+        tok = self.peek()
+        if tok.kind == 'name':
+            word = tok.text
             if word == 'return':
                 return self.parse_return()
             if word == 'pass':
                 self.pop()
                 return Pass(lineno=tok.srow, col_offset=tok.scol,
                             end_lineno=tok.erow, end_col_offset=tok.ecol)
-            if word in ('elif', 'else', 'except', 'finally'):
-                _syntax('invalid syntax')
+            if word == 'assert':
+                return self.parse_assert()
             if word in _STMT_WORDS:
                 _no_tree()
-        return self.parse_simple_stmt()
-
-    def parse_simple_stmt(self):
         node, ls, le = self.parse_expr(True)
         if self.at_op('='):
             pairs = [(node, ls, le)]

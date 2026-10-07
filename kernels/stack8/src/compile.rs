@@ -711,9 +711,16 @@ fn compile_pass(
                     _ => None,
                 };
                 if let Some(words) = words {
-                    for name in &lang.module_doc {
-                        a.constant(Value::text(&words));
-                        a.write(name);
+                    if a.registry.optimize >= 2 {
+                        // The second level of optimisation drops a
+                        // program's opening text outright, the value as
+                        // well as the name it would have been kept under.
+                        a.piece().instrs.truncate(from);
+                    } else {
+                        for name in &lang.module_doc {
+                            a.constant(Value::text(&words));
+                            a.write(name);
+                        }
                     }
                 }
             }
@@ -5970,13 +5977,17 @@ impl<'a> Compiler<'a> {
             self.take();
         } else if self.look().shape == Shape::Quote {
             // Text alone at the head of the body is what the class
-            // says about itself; text anywhere else is discarded.
+            // says about itself; text anywhere else is discarded. The
+            // second level of optimisation drops a class's opening text
+            // as well as a program's.
             let words = self.take().lexeme;
-            if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
-                self.constant(Value::text(&words));
-                self.write(&slot);
-                if !lang.class_builder.is_empty() {
-                    if let Some(word) = lang.class_details.get("doc").and_then(|v| v.first()).cloned() { self.mirror_member(&word, &slot)?; }
+            if self.registry.optimize < 2 {
+                if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
+                    self.constant(Value::text(&words));
+                    self.write(&slot);
+                    if !lang.class_builder.is_empty() {
+                        if let Some(word) = lang.class_details.get("doc").and_then(|v| v.first()).cloned() { self.mirror_member(&word, &slot)?; }
+                    }
                 }
             }
         } else if self.on_keyword(&lang.class_words) {

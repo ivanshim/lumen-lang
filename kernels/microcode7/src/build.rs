@@ -703,20 +703,24 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // Text standing alone as the first statement of a program
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
+            let mut opening_text = false;
             if opening && own_line && within.is_none() {
                 let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
-                    for name in table.strings("ext.system.module.doc") {
-                        let slot = r.global_address(name);
-                        if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
-                        stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                    opening_text = true;
+                    if r.optimize < 2 {
+                        for name in table.strings("ext.system.module.doc") {
+                            let slot = r.global_address(name);
+                            if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
+                            stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                        }
                     }
                 }
             }
             if own_line { opening = false; }
             if defines {
                 ahead.push(stmt);
-            } else {
+            } else if !opening_text || r.optimize < 2 {
                 stmts.push(stmt);
             }
             r.skip_line_ends();
@@ -5067,10 +5071,13 @@ impl<'a> Builder<'a> {
             self.parts().attributes.push("__type_params__".into());
             self.parts().held.push(prim_call(Prim::MakeTuple, values));
         }
-        // Seed documentation only when the body starts with a docstring.
-        if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
-            if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
+        // Seed documentation only when the body starts with a docstring
+        // and the second level of optimisation has not dropped it.
+        if self.optimize < 2 {
+            if let Some(word) = table.single("ext.stmt.class.detail.doc") {
+                let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+                if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
+            }
         }
         let book = self.parts().book.clone().expect("class namespace");
         let module_name = table.single("ext.system.module.name").unwrap_or_default();
@@ -5318,7 +5325,7 @@ impl<'a> Builder<'a> {
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            let said = if self.optimize < 2 { self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme)) } else { None };
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
