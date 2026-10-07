@@ -119,6 +119,10 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && word == "function" {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_owned(), Self::adapter(15, vec![])));
         }
+        if self.lang.bind_names && matches!(word, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
+            let get = self.class_word("descriptor.get").to_owned();
+            c.shared.borrow_mut().push((get.clone(), self.held_kind_descriptor(word, &get)));
+        }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for name in self.lang.class_special.iter().enumerate().filter(|(at, _)| *at == 8 || *at == 17 && word != "NoneType").map(|(_, name)| name) {
@@ -169,7 +173,7 @@ impl<'a> Engine<'a> {
             direct: vec![root.clone()], lineage: RefCell::new(vec![root.clone()]), base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
         self.class_maker = Some(c.clone());
-        for detail in ["mro", "namespace", "order"] {
+        for detail in ["mro", "namespace", "order", "name"] {
             let key = self.class_word(detail);
             if !key.is_empty() { c.shared.borrow_mut().push((key.to_string(), self.held_kind_descriptor("type", key))); }
         }
@@ -2196,6 +2200,10 @@ impl<'a> Engine<'a> {
                     let thing = match &args[0] { Value::Null => None, other => Some(other.clone()) };
                     let owner = match (args.get(1), &thing) {
                         (Some(Value::Class(c)), _) => c.clone(),
+                        (Some(native), _) if self.stands_for_kind(native) => {
+                            let word = native.kind_it_names().map(Rc::<str>::from).or_else(|| self.kind_spelled(native)).ok_or_else(|| self.class_refusal())?;
+                            self.kind_class(&word)
+                        }
                         (_, Some(Value::Object(o))) => o.class_now().clone(),
                         (_, Some(_)) => self.root_class(),
                         (_, None) => return Err(self.class_refusal()),
@@ -2914,20 +2922,32 @@ impl<'a> Engine<'a> {
             }
             if w.0 == 29 && w.1[0].plain() == "type" && subject.is_some() {
                 let name = w.1[1].plain();
-                if name == self.class_word("mro") || name == self.class_word("namespace") {
+                if ["mro", "namespace", "name"].iter().any(|part| name == self.class_word(part)) {
                     let target = subject.as_ref().unwrap().contents();
                     let c = match &target {
                         Value::Class(c) => c.clone(),
                         Value::Native(Builtin::SortOf, _) => self.metaclass_root(),
-                        other => match self.kind_spelled(other) {
+                        other => match other.kind_it_names().map(Rc::<str>::from).or_else(|| self.kind_spelled(other)) {
                             Some(word) if self.stands_for_kind(other) => self.kind_class(&word),
                             _ => return Err(self.class_refusal()),
                         },
                     };
+                    if name == self.class_word("name") {
+                        let title = c.python_names.borrow().as_ref().map_or_else(|| c.name.clone(), |names| names.0.plain());
+                        return Ok(Value::text(&title));
+                    }
                     if name == self.class_word("namespace") { return Ok(Value::View(Rc::new((Value::Class(c), "mapping".into())))); }
                     let line = Self::class_order(&c).into_iter().map(|base| self.public_class(base)).collect();
                     return Ok(Value::tuple(line));
                 }
+            }
+            if self.lang.bind_names && w.0 == 29 && subject.is_some() && Value::loose_member_descriptor(&w.1[0].plain(), &w.1[1].plain())
+                .is_some_and(|(form, _)| matches!(form, "attribute" | "member")) {
+                let raw = subject.as_ref().unwrap();
+                let stored = Self::worth_of(raw).unwrap_or_else(|| raw.clone()).contents();
+                let field = w.1[1].plain();
+                if let Some(answer) = self.builtin_member(&stored, &field).map_err(Fault::from)? { return Ok(answer); }
+                return self.class_get(stored, &field, false);
             }
             if w.0 == 29 && w.1[0].plain() == "int" {
                 let receiver = subject.clone().unwrap_or_else(|| Value::Class(class.clone()));

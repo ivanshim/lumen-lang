@@ -76,7 +76,7 @@ struct Beside {
 /// program asking for a signal to be raised sets the same bit. The
 /// engine gathers the bits where one statement gives way to the next,
 /// never in the middle of one.
-static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Whether the host has been asked to note interrupts for this
 /// process: it is asked once, the first time a language that takes
@@ -609,7 +609,7 @@ impl<'a> Engine<'a> {
                 }
                 None => (Vec::new(), Vec::new()),
             };
-            classes[at] = Some(Rc::new(Class { direct, lineage: RefCell::new(lineage), outline: None,
+            classes[at] = Some(Rc::new(Class { direct, lineage: RefCell::new(lineage), outline: Some(format!("<class '{name}'>")),
                 name: name.clone(), base,
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None),
@@ -7053,7 +7053,7 @@ impl<'a> Engine<'a> {
         if word.as_ref() == "dict" && self.lang.value_methods.get(name).map(String::as_str) == Some("fromkeys") {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
         }
-        if word.as_ref() == "type" && [self.class_word("mro"), self.class_word("namespace")].contains(&name) {
+        if word.as_ref() == "type" && [self.class_word("mro"), self.class_word("namespace"), self.class_word("name")].contains(&name) {
             return Some(self.held_kind_descriptor(&word, name));
         }
         if word.as_ref() == "type" && [8, 17].iter().any(|index| self.lang.class_special.get(*index).map_or(false, |slot| slot == name)) {
@@ -9622,7 +9622,15 @@ impl<'a> Engine<'a> {
                 args[2].clone()
             }
             Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
-                let answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
+                let mut answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
+                // Python reads an integer subclass's stored length directly.
+                if self.lang.bool_result.is_some() {
+                    if let Some(stored) = Self::worth_of(&answer) {
+                        let plain = stored.contents();
+                        if matches!(plain, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { answer = plain; }
+                    }
+                    if let Value::Flag(flag) = answer { answer = Value::Small(i64::from(flag)); }
+                }
                 match answer {
                     Value::Small(n) if n >= 0 => Value::Small(n),
                     Value::Huge(ref n) if **n > BigInt::from(i64::MAX) => return Err("OverflowError: cannot fit 'int' into an index-sized integer".into()),
@@ -19881,7 +19889,12 @@ impl<'a> Engine<'a> {
                         let Some((_, Value::Tuple(extra))) = fields.iter().find(|(name, _)| name == "\0structseq") else { return Err("TypeError: a struct sequence is required".into()); };
                         extra.get(as_index(&args[2])?).cloned().ok_or_else(|| "IndexError: tuple index out of range".to_string())?
                     }
-                    _ => crate::posix::call(args)?,
+                    _ => crate::posix::call(args, || {
+                        self.deliver_signals().map_err(|fault| match fault {
+                            Fault::Note(words) => words,
+                            raised => { self.carried = Some(raised); self.special_fault() }
+                        })
+                    })?,
                 }
             },
             Builtin::HostFacts => {
