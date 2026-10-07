@@ -143,12 +143,12 @@ fn codes_split(row: &[u32], divider: Option<&[u32]>, cap: usize, backwards: bool
                     while edge < row.len() && blank(row[edge]) { edge += 1; }
                     if edge >= row.len() { break; }
                 }
-                if pieces.len() == cap { pieces.push(row[..edge].to_vec()); break; }
+                if pieces.len() == cap { pieces.push(if backwards { row[..edge].to_vec() } else { row[edge..].to_vec() }); break; }
                 let found = if backwards { (0..edge).rev().find(|&i| blank(row[i])) } else { (edge..row.len()).find(|&i| blank(row[i])) };
                 match found {
                     Some(at) if backwards => { pieces.push(row[at + 1..edge].to_vec()); edge = at; }
                     Some(at) => { pieces.push(row[edge..at].to_vec()); edge = at; }
-                    None => { pieces.push(row[..edge].to_vec()); break; }
+                    None => { pieces.push(if backwards { row[..edge].to_vec() } else { row[edge..].to_vec() }); break; }
                 }
             }
         }
