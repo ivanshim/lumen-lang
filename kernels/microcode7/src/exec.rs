@@ -5430,7 +5430,13 @@ impl<'a> Machine<'a> {
                     }
                     return Some(current);
                 }
-                if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 13 {
+                    let body = match item.holds.borrow()[5].1.clone() {
+                        Value::Bound(body, _) => body,
+                        _ => return None,
+                    };
+                    return Some(body.globe.clone().unwrap_or_else(|| Value::Shared(self.world_kept())));
+                }
                 if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
                     return Some(Value::Nil);
                 }
@@ -7870,6 +7876,8 @@ impl<'a> Machine<'a> {
 
         let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
+        let getter = self.detail("get");
+        if !getter.is_empty() { gathered.push(getter.to_owned()); }
         if matches!(sample, Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
         }
@@ -7947,6 +7955,7 @@ impl<'a> Machine<'a> {
         let catalogue = (mark, sample.settled().kind_word().to_owned());
         if let Some(found) = self.member_inventories.borrow().get(&catalogue) { return found.to_vec(); }
         let mut gathered = Vec::new();
+        if !self.detail("get").is_empty() { gathered.push(self.detail("get").to_owned()); }
         if matches!(sample.settled(), Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
         }
@@ -8457,6 +8466,10 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
             _ => return None,
         };
+        let reader = self.detail("get");
+        if name == reader && !reader.is_empty() && self.kind_stand_in(&word).is_some() {
+            return Some(self.kind_entry(&word, name));
+        }
         // Carry the buffer slots through the same native descriptor lookup as other methods.
         if self.table.spells("ext.stmt.class.builtin", "bytes") && (matches!(word.as_str(), "bytes" | "bytearray") && name == "__buffer__"
             || word.as_str() == "bytearray" && name == "__release_buffer__") {
@@ -9498,6 +9511,14 @@ impl<'a> Machine<'a> {
             if let Value::Thing(item) = receiver.settled() {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                    let mut ancestor = self.active_trace.clone();
+                    while let Some(activation) = ancestor.take() {
+                        if Rc::ptr_eq(&activation, &item) {
+                            return Err(Escape::Error(String::from("RuntimeError: cannot clear an executing frame")));
+                        }
+                        let parent = activation.holds.borrow().get(2).map(|entry| entry.1.clone());
+                        if let Some(Value::Thing(parent)) = parent { ancestor = Some(parent); }
+                    }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&item) as usize)).and_then(Weak::upgrade) {
                         self.shut_generator(&walk)?;
                         return Ok(Value::Nil);
@@ -15310,7 +15331,9 @@ impl<'a> Machine<'a> {
                 && settled.len() == 2
                 && matches!(settled[0].settled(), Value::Dict(_) | Value::Vector(_) | Value::Tuple(_))
                 && !Self::operand_carries_instance(&settled[1]);
-            if changed && (native_lookup || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
+            // Length observes storage shape, so instance-valued entries are immaterial.
+            let storage_measure = operation == Prim::Length;
+            if changed && (storage_measure || native_lookup || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
@@ -23821,10 +23844,22 @@ impl Machine<'_> {
     fn qualified_import(&self, name: &str) -> Result<String, String> {
         let levels = name.bytes().take_while(|&b| b == b'.').count();
         if levels == 0 { return Ok(name.to_owned()); }
-        let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_owned())?;
-        let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
-        let parent = if package { caller.as_str() } else { caller.rsplit_once('.').map_or("", |pair| pair.0) };
-        let mut prefix = parent.to_owned();
+        let mut prefix = match self.loaded_spaces.get(&self.written_in) {
+            Some(caller) => {
+                let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
+                if package { caller.clone() } else { caller.rsplit_once('.').map_or("", |pair| pair.0).to_owned() }
+            },
+            None if self.written_in == self.entry_file => self.world_book.as_ref().and_then(|book| {
+                let kept = book.borrow();
+                let Value::Dict(entries) = &*kept else { return None; };
+                entries.iter().find_map(|(key, value)| {
+                    if key.bare() != "__package__" { return None; }
+                    if let Value::Text(package) = value.settled() { Some(package.to_string()) } else { None }
+                })
+            }).unwrap_or_default(),
+            None => String::new(),
+        };
+        if prefix.is_empty() { return Err(self.table.strings("ext.stmt.import.relative.unready").first().cloned().unwrap_or_default()); }
         for _ in 1..levels {
             prefix = prefix.rsplit_once('.').map(|(above, _)| above.to_owned()).ok_or_else(|| String::from("ImportError: attempted relative import beyond top-level package"))?;
         }
@@ -24215,7 +24250,10 @@ impl Machine<'_> {
             }
         }
         let fallback = match value {
-            Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()),
+            Value::Thing(space) => space.holds.borrow().iter().find_map(|(name, cell)| {
+                if name != "__getattr__" { return None; }
+                match cell.settled() { Value::Unset => None, callable => Some(callable) }
+            }),
             _ => None,
         };
         if let Some(f) = fallback {
@@ -24773,6 +24811,8 @@ impl<'a> Machine<'a> {
                 else { entries.push((key, spec)); }
                 *held = Value::Dict(Rc::new(entries.into()));
             }
+            drop(held);
+            let _ = self.booked_put(&book, "__package__", Some(Value::text(parent)));
         }
         // A language spelling the word gives the main module a loader
         // of the file the run began from: its get_source reads that
@@ -25531,11 +25571,16 @@ impl<'a> Machine<'a> {
                         },
                     };
                     match package {
-                        Some(named) if !named.is_empty() => return Err(self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_string()),
+                        Some(named) if !named.is_empty() => return Err(String::from("NotImplementedError: relative builtin imports are unavailable")),
                         _ => return Err("ImportError: attempted relative import with no known parent package".to_owned()),
                     }
                 }
-                self.load_namespace(&name)
+                let loaded = self.load_namespace(&name)?;
+                let keep_leaf = match v.get(3) { Some(fromlist) => self.object_truth(fromlist)?, None => false };
+                if !keep_leaf {
+                    if let Some((root, _)) = name.split_once('.') { return self.load_namespace(root); }
+                }
+                Ok(loaded)
             }
             Prim::Prepare => self.text_prepared(name, v),
             _ => self.text_performed(op == Prim::Weigh, name, v),

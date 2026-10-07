@@ -3490,7 +3490,7 @@
   ],
   "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
-    "NotImplementedError: relative imports require a package context"
+    "ImportError: attempted relative import with no known parent package"
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,

@@ -1972,6 +1972,19 @@ impl<'a> Machine<'a> {
                             let mut inputs = vec![subject]; inputs.extend(values);
                             return self.apply_class_member(Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{word}.{entry}"))), inputs);
                         }
+                        if of_own_kind && entry == self.detail("get") {
+                            let (inputs, keywords) = self.open_arguments(values)?;
+                            if !keywords.is_empty() {
+                                return Err(format!("TypeError: wrapper {entry}() takes no keyword arguments").into());
+                            }
+                            match inputs.as_slice() {
+                                [attribute] => match attribute.settled() {
+                                    Value::Text(named) => return self.read_class_member(subject, &named, true),
+                                    other => return Err(format!("TypeError: attribute name must be string, not '{}'", other.kind_word()).into()),
+                                },
+                                _ => return Err(format!("TypeError: expected 1 argument, got {}", inputs.len()).into()),
+                            }
+                        }
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
                             Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
                         } else if of_own_kind{self.attribute(&receiver,&entry)}else{None};
@@ -3924,7 +3937,13 @@ impl<'a> Machine<'a> {
                 }
             }
             if self.namespace_holding(&value).is_some() {
-                let handler = t.holds.borrow().iter().find_map(|(word, held)| if word == "__getattr__" { Some(held.settled()) } else { None });
+                let handler = t.holds.borrow().iter().find_map(|(word, held)| {
+                    if word == "__getattr__" {
+                        let candidate = held.settled();
+                        if !matches!(candidate, Value::Unset) { return Some(candidate); }
+                    }
+                    None
+                });
                 if let Some(handler) = handler { return self.apply_class_member(handler, vec![Value::text(key)]).map(|answer| answer.settled()); }
             }
         }else if let Value::Method(code,t,_)=&value {

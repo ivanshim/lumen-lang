@@ -1871,6 +1871,20 @@ impl<'a> Engine<'a> {
                         let mut inputs = vec![subject]; inputs.extend(args);
                         return self.class_apply(Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.{member}"))), inputs);
                     }
+                    if of_own_kind && member == self.class_word("get") {
+                        let inputs = self.call_items(args)?;
+                        if inputs.iter().any(|(key, _)| key.is_some()) {
+                            return Err(format!("TypeError: wrapper {member}() takes no keyword arguments").into());
+                        }
+                        if inputs.len() != 1 {
+                            return Err(format!("TypeError: expected 1 argument, got {}", inputs.len()).into());
+                        }
+                        let attribute = inputs[0].1.contents();
+                        let Value::Text(attribute) = attribute else {
+                            return Err(format!("TypeError: attribute name must be string, not '{}'", attribute.core_kind()).into());
+                        };
+                        return self.class_get(subject, &attribute, true);
+                    }
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
                         Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
@@ -3390,7 +3404,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if self.module_holding(&subject).is_some() {
-                    let getter = o.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, value)| value.contents());
+                    let getter = o.fields.borrow().iter().find(|(key, _)| key == "__getattr__")
+                        .map(|(_, value)| value.contents()).filter(|value| !matches!(value, Value::Blank));
                     if let Some(getter) = getter { return self.class_apply(getter, vec![Value::text(name)]).map(|value| value.contents()); }
                 }
                 // A native base's reduction slots must not be replaced by

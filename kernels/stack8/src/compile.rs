@@ -3474,7 +3474,8 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let word = self.look().spelling();
         if !lang.keywords.contains(word) { return true; }
-        [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words]
+        [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words,
+            &lang.match_words, &lang.match_cases, &lang.type_alias_words]
             .into_iter().any(|spellings| Lang::spells(spellings, word))
             || lang.monadic.contains_key(word)
     }
@@ -3545,8 +3546,14 @@ impl<'a> Compiler<'a> {
         };
         for part in &parts {
             let mut letters = part.chars();
+            // Python reserves hard keywords; contextual words remain import names.
+            let reserved = if self.lang.reserved_names.is_empty() {
+                self.lang.keywords.contains(*part)
+            } else {
+                Lang::spells(&self.lang.reserved_names, part)
+            };
             if !letters.next().map_or(false, |c| self.lang.begins_name(c))
-                || !letters.all(|c| self.lang.extends_name(c)) || self.lang.keywords.contains(*part) {
+                || !letters.all(|c| self.lang.extends_name(c)) || reserved {
                 return Err(format!("Expected identifier in an import, got '{}'", word));
             }
         }

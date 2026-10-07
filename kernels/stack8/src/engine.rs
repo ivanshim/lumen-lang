@@ -5319,7 +5319,10 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            return Some(Value::Bond(self.book_here(true)));
+            let routine = match object.fields.borrow()[6].1.clone() { Value::Routine(body) => body, _ => return None };
+            if let Some(namespace) = &routine.globe { return Some(namespace.clone()); }
+            let globals = self.module_book_of(&routine).unwrap_or_else(|| self.outer_book_made());
+            return Some(Value::Bond(globals));
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);
@@ -6480,6 +6483,7 @@ impl<'a> Engine<'a> {
         let Some(sample) = self.kind_sample(word) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)
             && (self.lang.class_details.get("native.protocols").is_none_or(|names| names.is_empty()) || self.kind_owns_protocol(word, name))).cloned().collect();
+        if !self.class_word("get").is_empty() { names.push(self.class_word("get").to_owned()); }
         if matches!(word, "bytes" | "bytearray") { names.push("__buffer__".to_string()); }
         if word == "bytearray" { names.push("__release_buffer__".to_string()); }
         names
@@ -6546,6 +6550,7 @@ impl<'a> Engine<'a> {
         let inventory = format!("{}:{}", sample.core_kind(), match family { Kindred::Bytes(true) | Kindred::Set(true) | Kindred::View(true) => 1, _ => 0 });
         if let Some(saved) = self.native_names.borrow().get(&inventory) { return saved.clone(); }
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
+        if !self.class_word("get").is_empty() { names.push(self.class_word("get").to_owned()); }
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
         for (spelling, working) in self.lang.value_methods.iter() {
             if crate::methods::answered(sample, working) { names.push(spelling.clone()); }
@@ -6788,6 +6793,10 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        // Native attribute readers validate their receiver and preserve subclass fields.
+        if !self.class_word("get").is_empty() && name == self.class_word("get") && self.kind_sample(&word).is_some() {
+            return Some(self.held_kind_descriptor(&word, name));
+        }
         // Carry the buffer slots through the same native descriptor lookup as other methods.
         if Lang::spells(&self.lang.builtin_bases, "bytes") && (matches!(word.as_ref(), "bytes" | "bytearray") && name == "__buffer__"
             || word.as_ref() == "bytearray" && name == "__release_buffer__") {
@@ -9123,7 +9132,8 @@ impl<'a> Engine<'a> {
                 None => settled.push(value.clone()),
             }
         }
-        if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
+        // Measuring a native container never calls methods of its elements.
+        if changed && (op == Builtin::Length || !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_)))) {
             // A thing over a real that is not a number hashes as itself,
             // the way CPython's own hash of a NaN does, and not as the
             // worth that stood in for it here.
@@ -16071,6 +16081,14 @@ impl<'a> Engine<'a> {
             if let Value::Object(frame) = receiver.contents() {
                 if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
                     if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    // Clearing any frame on the live call chain would erase running bindings.
+                    let mut active = self.trace_frame.clone();
+                    while let Some(current) = active {
+                        if Rc::ptr_eq(&current, &frame) { return Err("RuntimeError: cannot clear an executing frame".into()); }
+                        active = match current.fields.borrow().get(2).map(|entry| &entry.1) {
+                            Some(Value::Object(parent)) => Some(parent.clone()), _ => None,
+                        };
+                    }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&frame) as usize)).and_then(Weak::upgrade) {
                         let outcome = self.close_generator(&walk);
                         if let Err(fault) = outcome {
@@ -23401,12 +23419,19 @@ impl Engine<'_> {
 
     fn import_path(&self, written: &str) -> Res<String> {
         if !written.starts_with('.') { return Ok(written.to_string()); }
-        let Some((_, owner)) = self.module_slots.get(&self.source) else {
-            return Err(self.lang.import_relative_unready.clone());
-        };
-        let is_package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
-        let mut components: Vec<&str> = owner.split('.').collect();
-        if !is_package { components.pop(); }
+        let parent = if let Some((_, owner)) = self.module_slots.get(&self.source) {
+            let package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
+            if package { owner.clone() } else { owner.rsplit_once('.').map_or("", |(parent, _)| parent).to_owned() }
+        } else if self.source == self.root_source {
+            self.outer_book.as_ref().and_then(|book| match &*book.borrow() {
+                Value::Map(entries) => entries.iter().find(|(key, _)| key.plain() == "__package__").and_then(|(_, value)| match value.contents() {
+                    Value::Text(package) => Some(package.to_string()), _ => None,
+                }),
+                _ => None,
+            }).unwrap_or_default()
+        } else { String::new() };
+        if parent.is_empty() { return Err(self.lang.import_relative_unready.clone()); }
+        let mut components: Vec<&str> = parent.split('.').collect();
         let levels = written.chars().take_while(|c| *c == '.').count();
         if components.len() < levels { return Err("ImportError: attempted relative import beyond top-level package".into()); }
         components.truncate(components.len() - levels + 1);
@@ -23761,7 +23786,8 @@ impl Engine<'_> {
             }
         }
         let hook = if let Value::Object(space) = module {
-            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents())
+            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__")
+                .map(|(_, held)| held.contents()).filter(|held| !matches!(held, Value::Blank))
         } else { None };
         if let Some(callable) = hook {
             match self.class_apply(callable, vec![Value::text(name)]) {
@@ -24412,6 +24438,8 @@ impl Engine<'_> {
                 else { entries.push((key, spec)); }
                 *contents = Value::Map(Rc::new(entries.into()));
             }
+            drop(contents);
+            let _ = self.book_put(&book, "__package__", Some(Value::text(parent)));
         }
         // The main module's namespace answers for a loader of the file
         // the run was started with, as CPython's __main__ answers for a
@@ -25165,11 +25193,15 @@ impl Engine<'_> {
                         },
                     };
                     match package {
-                        Some(named) if !named.is_empty() => return Err(self.lang.import_relative_unready.clone().into()),
+                        Some(named) if !named.is_empty() => return Err("NotImplementedError: relative builtin imports are unavailable".to_owned()),
                         _ => return Err("ImportError: attempted relative import with no known parent package".to_string()),
                     }
                 }
-                match self.import_module(&name) {
+                let from_members = args.get(3).map(|value| self.special_truth(value)).transpose()?.unwrap_or(false);
+                let requested = if from_members { name.as_ref() } else { name.split('.').next().unwrap_or(&name) };
+                match self.import_module(&name).and_then(|module| {
+                    if requested == name.as_ref() { Ok(module) } else { self.import_module(requested) }
+                }) {
                     Ok(module) => Ok(module),
                     Err(Fault::Note(told)) => Err(told),
                     Err(fled) => { self.carried = Some(fled); Err(String::new()) }

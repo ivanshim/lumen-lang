@@ -3244,7 +3244,16 @@ impl<'a> Builder<'a> {
                 (true, Some(mark)) => said.split(mark).collect::<Vec<_>>(),
                 _ => vec![said.as_str()],
             };
-            if pieces.iter().any(|part| !self.table.name_like(part) || self.table.keywords.contains(*part)) {
+            // Use the language's explicit identifier exclusions when supplied.
+            let banned_names = self.table.strings("ext.lexical.identifier.reserved");
+            let invalid = pieces.iter().any(|part| {
+                !self.table.name_like(part) || if banned_names.is_empty() {
+                    self.table.keywords.contains(*part)
+                } else {
+                    banned_names.iter().any(|name| name == part)
+                }
+            });
+            if invalid {
                 return Err(format!("Expected identifier among imported names, got '{}'", said));
             }
             path.extend(pieces.iter().map(|s| s.to_string()));
@@ -3433,7 +3442,8 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let head = self.look().spelling();
         if !table.keywords.contains(head) || table.monadic.contains_key(head) { return true; }
-        ["ext.op.lambda", "ext.op.await", "literal.true", "literal.false", "literal.null", "ext.literal.ellipsis"]
+        ["ext.op.lambda", "ext.op.await", "literal.true", "literal.false", "literal.null", "ext.literal.ellipsis",
+            "ext.stmt.type_alias", "ext.stmt.match.case", "ext.stmt.match"]
             .iter().any(|label| table.spells(label, head))
     }
 
