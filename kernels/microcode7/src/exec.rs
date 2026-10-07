@@ -26218,25 +26218,21 @@ impl<'a> Machine<'a> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
         let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
-        let source = match v[0].settled() {
-            Value::Text(s) => s,
-            Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
-            Value::Thing(tree) => {
-                // A syntax tree the library's ast module hands over
-                // carries the text it was parsed from; compiling the
-                // tree compiles that text.
-                let mut carried = None;
-                for (word, worth) in tree.holds.borrow().iter() {
-                    if word == "_lumen_tree_source" {
-                        carried = Some(worth.settled());
-                    }
-                }
-                match carried {
-                    Some(Value::Text(s)) => s,
-                    _ => return Err(self.source_refused()),
-                }
+        let input = v[0].settled();
+        let source = if let Value::Text(text) = &input { text.clone() }
+        else if let Value::Octets { cell, .. } = &input { self.decode_program(&cell.borrow(), &file)? }
+        else {
+            let saved_text = if let Value::Thing(node) = &input {
+                node.holds.borrow().iter().find_map(|(key, worth)|
+                    (key == "_lumen_tree_source").then(|| worth.settled()))
+            } else { None };
+            match saved_text {
+                Some(Value::Text(text)) => text,
+                _ => match self.numeric_octets(&input)? {
+                    Some(bytes) => self.decode_program(&bytes, &file)?,
+                    None => return Err(String::from("TypeError: compile() arg 1 must be a string, bytes or AST object")),
+                },
             }
-            _ => return Err(self.source_refused()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
         let flags = match v.get(3).map(Value::settled) {

@@ -25831,20 +25831,17 @@ impl Engine<'_> {
         let source = match args[0].contents() {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
-            Value::Object(tree) => {
-                // A tree from the library's ast reader keeps the text it
-                // was read from; compiling the tree compiles that text.
-                let fields = tree.fields.borrow();
-                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source");
-                match held {
-                    Some((_, value)) => match value.contents() {
-                        Value::Text(source) => source,
-                        _ => return Err(self.source_unready()),
-                    },
-                    None => return Err(self.source_unready()),
-                }
+            other => {
+                let tree_source = match &other {
+                    Value::Object(tree) => tree.fields.borrow().iter()
+                        .find(|(word, _)| word == "_lumen_tree_source")
+                        .map(|(_, value)| value.contents()),
+                    _ => None,
+                };
+                if let Some(Value::Text(text)) = tree_source { text }
+                else if let Some(bytes) = self.number_buffer(&other)? { self.source_bytes(&bytes, &file)? }
+                else { return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()); }
             }
-            _ => return Err(self.source_unready()),
         };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
         let flags = match args.get(3).map(Value::contents) {
