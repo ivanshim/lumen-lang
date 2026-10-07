@@ -3196,10 +3196,17 @@ only. The extension labels so far, all from PHP:
   items as positional arguments. Quoted text spelling that sign remains
   text, as does text spelling `ext.syntax.call.spread.pairs`. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
-  `ext.syntax.call.spread.amiss`.
+  `ext.syntax.call.spread.amiss`, which name the thing being called
+  before them and the kind handed over after. A lone spread standing as
+  the only argument in order is worded that way; a spread standing among
+  others is refused in the plainer words of `ext.syntax.call.spread.later`,
+  with no name of the callee.
 - `ext.syntax.call.spread.pairs`: a sign before a call argument handing
-  out a map as keyword arguments. A value which is no map, or a key which
-  is no string, is refused in `ext.syntax.call.spread.pairs.amiss` words.
+  out a map as keyword arguments. Any value whose `keys` member lists
+  its keys may be handed out, and a key which is no string is refused in
+  the words of `ext.syntax.call.spread.pairs.keys`. A value which is no
+  mapping is refused in `ext.syntax.call.spread.pairs.amiss` words,
+  which name the callee and the kind offered.
 - `ext.syntax.call.amiss`: plain words for arguments which do not fit the
   parameter list. `ext.syntax.call.amiss.missing`,
   `ext.syntax.call.amiss.unknown` and `ext.syntax.call.amiss.duplicate`
@@ -5568,9 +5575,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.amiss` | - | - | `TypeError: ` `argument after * must be an iterable, not ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.later` | - | - | `TypeError: Value after * must be an iterable, not ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
-| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: ` `argument after ** must be a mapping, not ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.keys` | - | - | `TypeError: keywords must be strings` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: 'object' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |

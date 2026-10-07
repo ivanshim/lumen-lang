@@ -5825,10 +5825,14 @@ impl<'a> Machine<'a> {
             }
         }
         let callable = stands.clone();
-        let (p, env) = match self.routine_of(stands, target) {
+        let (p, env) = match self.routine_of(stands.clone(), target) {
             Ok(callable) => callable,
             Err(fault) => {
-                self.value_list(args, frame)?;
+                let values = self.value_list(args, frame)?;
+                if values.iter().any(|given| matches!(given, Value::Couple(pair) if !matches!(pair.0, Value::Text(_)))) {
+                    let called = match &stands { Value::Nil => "None".to_string(), other => other.settled().kind_word() };
+                    let _ = self.open_arguments_shown(values, &format!("{called} "))?;
+                }
                 return Err(fault);
             }
         };
@@ -7454,7 +7458,7 @@ impl<'a> Machine<'a> {
                     if *op == Prim::ClassWork(13) { return self.work_on_class(13, values); }
                     if *op == Prim::ClassWork(11) && self.has_class_order() && !self.rules.detail_descriptor_get.is_empty() { return self.work_on_class(11, values); }
                     if self.names_in_calls && self.table.prims.contains_key(name.as_ref()) {
-                        let (mut positions, keywords) = self.open_arguments(values)?;
+                        let (mut positions, keywords) = self.open_arguments_shown(values, &format!("{name}() "))?;
                         if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
                             return Ok(self.collection_cell(answer));
                         }
@@ -7809,8 +7813,8 @@ impl<'a> Machine<'a> {
                 // its tool with them opened; the other class tools keep
                 // their markers and read them as they always have, so
                 // `property(fget=...)` still finds its named member.
-                if which <= 1 && self.names_in_calls {
-                    let (mut positions, names) = self.open_arguments(values)?;
+                if (which <= 1 || which == 8) && self.names_in_calls {
+                    let (mut positions, names) = self.open_arguments_shown(values, &format!("{name}() "))?;
                     if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
                     values = positions;
                 }
@@ -7818,7 +7822,7 @@ impl<'a> Machine<'a> {
             } }
             if op == Prim::ClassWork(11) && self.has_class_order() && !self.rules.detail_descriptor_get.is_empty() { return self.work_on_class(11, values); }
             if matches!(stands, Value::Intrinsic(..) | Value::OctetKind { .. }) && self.names_in_calls {
-                let (mut positions, names) = self.open_arguments(values)?;
+                let (mut positions, names) = self.open_arguments_shown(values, &format!("{name}() "))?;
                 if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
                 values = positions;
             }
@@ -9051,7 +9055,7 @@ impl<'a> Machine<'a> {
                     return Ok(Next::Value(self.make_instance(class.clone(), given)?));
                 }
                 let callable = stands.clone();
-                let (p, env) = match self.routine_of(stands, target) {
+                let (p, env) = match self.routine_of(stands.clone(), target) {
                     Ok(callable) => callable,
                     Err(fault) => {
                         self.value_list(args, frame)?;
@@ -10763,7 +10767,11 @@ impl<'a> Machine<'a> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
-            if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+            if !seen.insert(key) {
+                let words = self.table.strings("ext.syntax.call.amiss.keyword");
+                if words.len() >= 3 { return Err(self.whole_complaint([words[0].as_str(), name, &words[1], key, &words[2]].concat()).into()); }
+                return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into());
+            }
         }
         if op == Prim::ValueMethod && table.spells("ext.builtin.method.getformat", name) {
             let class = Value::Intrinsic(Prim::AsReal, Rc::from("float"));
@@ -11186,6 +11194,16 @@ impl<'a> Machine<'a> {
     /// Gather the positional things apart from the named ones, retaining
     /// every keyword until the call has checked for repeated names.
     pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        self.open_arguments_shown(values, "")
+    }
+
+    /// Open a call's arguments, keeping `shown` to name the callee in
+    /// the words of any complaint a spread raises. The words stand empty
+    /// where the callee is not known. A lone spread handed over in order
+    /// is the argument the reader wrote after the star; a spread among
+    /// others is worded as a later one.
+    pub(super) fn open_arguments_shown(&mut self, values: Vec<Value>, shown: &str) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let lone = values.iter().filter(|given| !matches!(given, Value::Couple(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
@@ -11193,49 +11211,139 @@ impl<'a> Machine<'a> {
             match &pair.0 {
                 Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
                 Value::Flag(true) => {
-                    let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
                     let spread = match pair.1.settled() {
                         Value::Dict(_) => pair.1.settled(),
                         _ => Self::underlying(&pair.1).map(|under| under.settled()).unwrap_or_else(|| pair.1.settled()),
                     };
-                    if let Value::Dict(entries) = spread {
-                        for (k, v) in entries.iter() {
-                            match k {
-                                Value::Text(text) => names.push((text.to_string(), v.clone())),
-                                _ => return Err(fault().into()),
+                    match spread {
+                        Value::Dict(entries) => {
+                            for (k, v) in entries.iter() {
+                                let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+                                let word = self.word_of_key(&k)?;
+                                names.push((word, v.clone()));
                             }
                         }
-                    } else { return Err(fault().into()); }
+                        _ => {
+                            let kind = spread.kind_word().to_string();
+                            for key in self.mapping_keys(&spread, shown, &kind)? {
+                                let word = self.word_of_key(&key)?;
+                                let value = self.prim(Prim::At, "", &[spread.clone(), key])?;
+                                names.push((word, value));
+                            }
+                        }
+                    }
                 }
                 Value::Flag(false) => {
-                    match &pair.1.settled() {
-                        Value::Generator(_) | Value::Thing(_) if self.table.flag("ext.op.arithmetic.python_numbers") => {
-                            let sequence = self.object_members(&pair.1.settled());
-                            if let Some(escape) = self.got_away.take() { return Err(escape); }
-                            positions.extend(sequence?);
+                    let kind = pair.1.settled().kind_word().to_string();
+                    let plain = format!("TypeError: '{kind}' object is not iterable");
+                    match self.spread_members(&pair.1) {
+                        Ok(members) => positions.extend(members),
+                        Err(Escape::Error(words)) if words.trim_start_matches('\0') == plain => {
+                            return Err(self.spread_words(shown, &kind, lone).into());
                         }
-                        Value::Iterator(_) => positions.extend(self.core_collect(&pair.1)?),
-                        Value::Progression(walk) => {
-                            let mut place = BigInt::from(0);
-                            while place < walk.count() {
-                                if let Some(item) = walk.item(&place) { positions.push(item); }
-                                place += 1;
-                            }
-                        }
-                        Value::Vector(values) | Value::Tuple(values) => positions.extend(values.iter().cloned()),
-                        Value::Set(store) => positions.extend(store.borrow().values()),
-                        Value::Dict(entries) => positions.extend(entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() })),
-                        Value::Text(text) => {
-                            for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
-                        }
-                        Value::Thing(_) => positions.extend(self.object_members(&pair.1)?),
-                        _ => return Err(self.argument_fault("ext.syntax.call.spread.amiss", None).into()),
+                        Err(escaped) => return Err(escaped),
                     }
                 }
                 _ => return Err(self.argument_fault("ext.syntax.call.amiss", None).into()),
             }
         }
         Ok((positions, names))
+    }
+
+    /// The keys a spread of pairs lists: the pairs of a map are read
+    /// directly, any other thing gives what its `keys` member hands
+    /// over, and a thing with none is not a mapping.
+    fn mapping_keys(&mut self, source: &Value, shown: &str, kind: &str) -> Res<Vec<Value>> {
+        let listed = if matches!(source, Value::Thing(_)) {
+            match self.read_class_member(source.clone(), "keys", false) {
+                Ok(member) => Some(member),
+                Err(escaped) if self.missing_member_escape(&escaped) => { self.sought_in_vain = None; None }
+                Err(escaped) => return Err(self.suspension_fault(escaped).into()),
+            }
+        } else { self.attribute(source, "keys") };
+        let Some(member) = listed else { return Err(self.spread_pairs_words(shown, kind).into()); };
+        let offered = self.apply_within(member, Vec::new())?;
+        let walk = self.iterated_value(&offered)?;
+        let mut keys = Vec::new();
+        loop {
+            match self.next_value(&walk)? {
+                None => break,
+                Some(key) => keys.push(key),
+            }
+        }
+        Ok(keys)
+    }
+
+    /// The word a keyword is written under. Only text stands; anything
+    /// else is the reference's own complaint, with no naming over it.
+    fn word_of_key(&self, key: &Value) -> Res<String> {
+        let bare = match key.settled() {
+            Value::Text(_) => key.settled(),
+            _ => Self::underlying(key).unwrap_or_else(|| key.settled()),
+        };
+        match bare.settled() {
+            Value::Text(name) => Ok(name.to_string()),
+            _ => Err(self.table.strings("ext.syntax.call.spread.pairs.keys").first().cloned().unwrap_or_default().into()),
+        }
+    }
+
+    /// The words for a spread that would not open: a lone spread carries
+    /// the callee before them, a later one does not.
+    fn spread_words(&self, shown: &str, kind: &str, lone: bool) -> String {
+        if lone {
+            let words = self.table.strings("ext.syntax.call.spread.amiss");
+            format!("{}{}{}{}", words.first().map_or("", String::as_str), shown, words.get(1).map_or("", String::as_str), kind)
+        } else {
+            let words = self.table.strings("ext.syntax.call.spread.later");
+            format!("{}{}", words.first().map_or("", String::as_str), kind)
+        }
+    }
+
+    /// The words for a spread of pairs that is no mapping.
+    fn spread_pairs_words(&self, shown: &str, kind: &str) -> String {
+        let words = self.table.strings("ext.syntax.call.spread.pairs.amiss");
+        format!("{}{}{}{}", words.first().map_or("", String::as_str), shown, words.get(1).map_or("", String::as_str), kind)
+    }
+
+    /// Gather a spread's members, or the words a value that does not
+    /// walk would raise, which the caller replaces with its own.
+    fn spread_members(&mut self, source: &Value) -> Res<Vec<Value>> {
+        let kind = || source.settled().kind_word();
+        match &source.settled() {
+            Value::Generator(_) | Value::Thing(_) if self.table.flag("ext.op.arithmetic.python_numbers") => {
+                let sequence = self.object_members(&source.settled());
+                if let Some(escape) = self.got_away.take() { return Err(escape); }
+                match sequence {
+                    Ok(members) => Ok(members),
+                    Err(why) if why.trim_start_matches('\0') == self.bad_answer().trim_start_matches('\0') => Err(format!("TypeError: '{}' object is not iterable", kind()).into()),
+                    Err(why) => Err(why.into()),
+                }
+            }
+            Value::Iterator(_) => self.core_collect(source).map_err(Into::into),
+            Value::Progression(walk) => {
+                let mut members = Vec::new();
+                let mut place = BigInt::from(0);
+                while place < walk.count() {
+                    if let Some(item) = walk.item(&place) { members.push(item); }
+                    place += 1;
+                }
+                Ok(members)
+            }
+            Value::Vector(rows) | Value::Tuple(rows) => Ok(rows.iter().cloned().collect()),
+            Value::Set(store) => Ok(store.borrow().values()),
+            Value::Dict(entries) => Ok(entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect()),
+            Value::Text(text) => Ok(text.chars().map(|letter| Value::text(&letter.to_string())).collect()),
+            Value::Thing(_) => {
+                let sequence = self.object_members(&source.settled());
+                if let Some(escape) = self.got_away.take() { return Err(escape); }
+                match sequence {
+                    Ok(members) => Ok(members),
+                    Err(why) if why.trim_start_matches('\0') == self.bad_answer().trim_start_matches('\0') => Err(format!("TypeError: '{}' object is not iterable", kind()).into()),
+                    Err(why) => Err(why.into()),
+                }
+            }
+            _ => Err(format!("TypeError: '{}' object is not iterable", kind()).into()),
+        }
     }
 
     /// The name the outermost names go by, where the language gives
@@ -11258,12 +11366,13 @@ impl<'a> Machine<'a> {
     /// refused as the text is read. The reference names the routine by
     /// the namespace it belongs to and the name it goes by there, so
     /// the two are written together here.
-    fn keyword_twice(&self, program: &Routine, key: &str) -> String {
+    fn keyword_twice(&self, program: &Rc<Routine>, key: &str) -> String {
         let words = self.table.strings("ext.syntax.call.amiss.keyword");
         if words.len() < 3 { return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)); }
-        let called = match (self.namespace_named(), self.routine_called(program)) {
-            (Some(space), title) if !title.is_empty() => space + "." + &title,
-            (_, title) => title,
+        let title = self.routine_called(program);
+        let called = match self.routine_module(program).settled() {
+            Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
+            _ => title,
         };
         self.whole_complaint([words[0].as_str(), &called, &words[1], key, &words[2]].concat())
     }
@@ -11373,7 +11482,7 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
+    fn fit_arguments(&mut self, program: &Rc<Routine>, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
         // Where every place is an ordinary one, none of the worths given
         // carries a name or a scattering, and there are exactly as many
         // of them as there are places, the row given is already the row
@@ -11383,7 +11492,13 @@ impl<'a> Machine<'a> {
             && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset)) {
             return Ok(values);
         }
-        let (positional, named) = self.open_arguments(values)?;
+        let title = self.routine_called(program);
+        let called = match self.routine_module(program).settled() {
+            Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
+            _ => title,
+        };
+        let shown = format!("{called}() ");
+        let (positional, named) = self.open_arguments_shown(values, &shown)?;
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
             .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
@@ -27196,7 +27311,13 @@ impl Machine<'_> {
                 (Powered, _) if is("pow.base") => 0,
                 (Powered, _) if is("pow.exp") => 1,
                 (Powered, _) if is("pow.mod") => 2,
-                _ => return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label))),
+                _ => {
+                    let keeps = matches!(op, Ordered | Least | Greatest | Zipped | Mapped | Numbered | Rounded | Powered | Iterator | Dictionary);
+                    if keeps { return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label))); }
+                    let words = self.table.strings("ext.syntax.call.amiss.builtin");
+                    if words.len() >= 2 { return Err(format!("{}{}{}", words[0], name, words[1])); }
+                    return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label)));
+                }
             };
             if input.get(slot).map_or(false, |v| !matches!(v, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&label))); }
             if input.len() <= slot { input.resize(slot + 1, Value::Unset); }

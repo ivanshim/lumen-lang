@@ -25,6 +25,13 @@ _TPFLAGS_IMMUTABLETYPE = 256
 def _identity(function):
     return function
 
+def sortdict(dict):
+    "Like repr(dict), but in sorted order."
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    withcommas = ", ".join(reprpairs)
+    return "{%s}" % withcommas
+
 # A guard names the implementations a test is for, all together wanted
 # or all together unwanted; an implementation it does not name gets the
 # opposite answer. Naming none of them means the reference one.
