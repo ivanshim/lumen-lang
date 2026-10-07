@@ -7056,3 +7056,28 @@
 {"t":"2026-10-07T08:12:00Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-07T08:12:35Z","event":"exited","job":"dsflash-iterlen","code":0}
 {"t":"2026-10-07T08:13:15Z","event":"exited","job":"dsflash-shelve-dbm","code":0}
+{"t":"2026-10-07T08:13:54Z","event":"accepted","job":"dsflash-subclassinit","review":"review-auto-dsflash-subclassinit-0756","batch":"21e","commit":"5437f5e7c","branch":"fix/dsflash-subclassinit","note":"subclassinit 15->17/17 both kernels (real exception notes); tests/README provenance conflict vs 21d/21e cmd/codeop/nturl2path, kernel class files overlap - combine; follow-ups: repr/100-char names in note, non-list __notes__; re-certify coverage"}
+{"t":"2026-10-07T08:13:54Z","event":"returned","job":"dsflash-rlcompleter","review":"review-auto-dsflash-rlcompleter-0731","commit":"97a0f90ca","note":"(2nd; library names leak into __main__ completion, memoryview getset descriptors, class-bound callables get empty Signature in inspect; rlcompleter 9/11 both) -> DS Flash queue (or-resume)"}
+{"t":"2026-10-07T08:13:54Z","event":"handed-over","job":"stdlib-typing","review":"review-auto-stdlib-typing-0746","commit":"362ed2309","note":"(3rd; alias param substitution, union dedup/hash state, Protocol construction, annotations/NamedTuple/TypedDict; typing 636/714 types 89/128 both) -> fresh Sol session (brief-stdlib-typing-sol.md, queued sol-new stdlib-typing-sol)"}
+{"t":"2026-10-07T08:13:54Z","event":"queued","job":"stdlib-typing-sol","model":"gpt-6.1-sol","line":"sol-new stdlib-typing-sol"}
+{"t":"2026-10-07T08:13:54Z","event":"queued","job":"dsflash-rlcompleter","model":"deepseek-flash","line":"or-resume dsflash-rlcompleter deepseek-flash ses_eec4ee9c3ffeTuq0UHjmLHZQ69"}
+{"t":"2026-10-07T08:15:38Z","event":"resumed","job":"stdlib-codecs","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T08:16:00Z","event":"queued","job":"dsflash-flufl","model":"deepseek-flash","line":"ds-new dsflash-flufl deepseek-flash"}
+{"t":"2026-10-07T08:16:00Z","event":"queued","job":"dsflash-minicompat","model":"deepseek-flash","line":"ds-new dsflash-minicompat deepseek-flash"}
+{"t":"2026-10-07T08:16:00Z","event":"queued","job":"dsflash-tabnanny","model":"deepseek-flash","line":"ds-new dsflash-tabnanny deepseek-flash"}
+{"t":"2026-10-07T08:16:00Z","event":"queued","job":"dsflash-strftime","model":"deepseek-flash","line":"ds-new dsflash-strftime deepseek-flash"}
+{"t":"2026-10-07T08:16:22Z","event":"quota","codex_week_used":11,"codex_credits":0,"claude_week_used":27,"claude_5h_used":4,"kimi_5h_used":0,"kimi_month_used":0.9017,"kimi_code_used":0,"deepseek_usd":342.57}
+{"t":"2026-10-07T08:16:26Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":11,"expected":10.2,"gap":"+0.8","status":"ok"}
+{"t":"2026-10-07T08:16:34Z","event":"checkin","status":"done","actions":"accepted dsflash-subclassinit -> 21e (17/17 both); returned dsflash-rlcompleter (2nd) -> DS Flash or-resume; stdlib-typing 3rd return -> handed to fresh Sol session (brief-stdlib-typing-sol.md, sol-new queued); box disk 81% -> removed target/ of idle accepted subclassinit, kimi-filecmp (79%); queued 4 new DS Flash subjects: flufl, xml_dom_minicompat, tabnanny, strftime (worktrees at 589a950a9)","notes":"disk Mac 80%, box 79%; luna-meter gap +0.8 ok, no new luna alerts; no open PRs; Sol 10/11 feature + typing-sol queued"}
+{"t":"2026-10-07T08:17:04Z","event":"finished","job":"dsflash-iterlen","exit_time":"2026-10-07T08:12:35Z"}
+{"t":"2026-10-07T08:17:04Z","event":"review-queued","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-0817"}
+{"t":"2026-10-07T08:17:06Z","event":"finished","job":"dsflash-shelve-dbm","exit_time":"2026-10-07T08:13:15Z"}
+{"t":"2026-10-07T08:17:06Z","event":"review-queued","job":"dsflash-shelve-dbm","review":"review-auto-dsflash-shelve-dbm-0817"}
+{"t":"2026-10-07T08:17:09Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T08:20:39Z","event":"started","job":"dsflash-builtin","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T08:25:40Z","event":"resumed","job":"dspro-argparse","model":"deepseek-v4-pro","session":"ses_eed60bde5ffeLItMzxWY9YWZe3"}
+{"t":"2026-10-07T08:25:42Z","event":"exited","job":"dspro-argparse","code":1}
+{"t":"2026-10-07T08:27:17Z","event":"finished","job":"dspro-argparse","exit_time":"2026-10-07T08:25:42Z"}
+{"t":"2026-10-07T08:27:17Z","event":"review-queued","job":"dspro-argparse","review":"review-auto-dspro-argparse-0827"}
+{"t":"2026-10-07T08:27:19Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T08:30:41Z","event":"started","job":"dsflash-getpass","model":"deepseek-flash","via":"ds-run"}
