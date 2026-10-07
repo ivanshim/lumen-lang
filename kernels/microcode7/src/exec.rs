@@ -15202,6 +15202,15 @@ impl<'a> Machine<'a> {
             let joining_kinds = operation == Prim::BitsEither
                 && self.union_member(left) && self.union_member(right)
                 && (self.union_anchor(left) || self.union_anchor(right));
+            // An arithmetic working every side's own methods answered
+            // was not theirs to give, with no side standing on a native
+            // kind that could, has no working at all: the reference
+            // names the sign and both kinds rather than reading the
+            // worth beneath.
+            if forward >= 18 && !joining_kinds && declined && !native_side {
+                let sign = self.written_as(&operation);
+                return Err(self.operands_refused(&sign, left, right));
+            }
             if forward >= 18 && !joining_kinds && (bare(left) || bare(right)) {
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));

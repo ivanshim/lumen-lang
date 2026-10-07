@@ -8769,6 +8769,15 @@ impl<'a> Engine<'a> {
             let joining_kinds = matches!(op, Action::BitEither)
                 && self.union_member(a) && self.union_member(b)
                 && (self.union_anchor(a) || self.union_anchor(b));
+            // An arithmetic working every side's own methods answered
+            // was not theirs to give, with no side standing on a native
+            // kind that could, has no working at all: the reference
+            // names the sign and both kinds rather than reading the
+            // worth beneath.
+            if direct >= 18 && !joining_kinds && declined && !native_side {
+                let sign = self.sign_of(op);
+                return Err(self.operands_complaint(&sign, a, b));
+            }
             if direct >= 18 && !joining_kinds && (Self::plain_thing(a) || Self::plain_thing(b)) {
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
