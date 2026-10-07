@@ -230,10 +230,15 @@ def _apply_state(value, state):
         # A dict state is written straight into the instance's own
         # __dict__, the way CPython's load_build writes it, so a frozen
         # class's __setattr__ is never asked and a frozen dataclass
-        # reads back whole.
-        namespace = value.__dict__
-        for name, item in state.items():
-            namespace[name] = item
+        # reads back whole. A compact instance (a tuple subclass, say)
+        # keeps no __dict__, so its state is written back by setattr.
+        namespace = getattr(value, '__dict__', None)
+        if namespace is not None:
+            for name, item in state.items():
+                namespace[name] = item
+        else:
+            for name, item in state.items():
+                setattr(value, name, item)
     if slots is not None:
         for name, item in slots.items():
             setattr(value, name, item)
