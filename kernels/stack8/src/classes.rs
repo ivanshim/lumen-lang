@@ -2482,6 +2482,14 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        // Expand the call once: allocation and initialization share its arguments.
+        let args = if self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let title = c.python_title().unwrap_or_else(|| c.name.clone());
+            self.call_items_named(&title, args)?.into_iter().map(|(name, value)| match name {
+                Some(name) => Value::Tie(Rc::new((Value::text(&name), value))),
+                None => value,
+            }).collect()
+        } else { args };
         if self.traceback_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &c)) { return self.traceback_from_parts(args); }
         self.abstract_refusal(&c)?;
         let allocation = self.class_value(&c,self.class_word("allocate")).filter(|value| {

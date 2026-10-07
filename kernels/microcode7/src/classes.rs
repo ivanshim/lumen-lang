@@ -2614,6 +2614,12 @@ impl<'a> Machine<'a> {
     /// The making itself, as the kind primitive does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        // A one-shot spread is read before either construction hook is called.
+        let given = if self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let (mut positional, named) = self.open_arguments(given)?;
+            positional.extend(named.into_iter().map(|(key, item)| Value::Couple(Rc::new((Value::text(&key), item)))));
+            positional
+        } else { given };
         self.abstract_turned_away(&class)?;
         let native = match Self::native_beneath(&class) {
             Some(word) if word == "Generic" && !self.table.strings("ext.stmt.type_params.open").is_empty() => None,
