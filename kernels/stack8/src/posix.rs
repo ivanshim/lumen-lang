@@ -66,6 +66,12 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let number = |i: usize| integer(&a[i]);
     let pathname = |i: usize| CString::new(raw(&a[i])?).map_err(|_| "ValueError: embedded null byte".to_owned());
     let output: Result<Value, i32> = unsafe { match op.as_ref() {
+        "socket_hostname" => {
+            let mut buffer = vec![0u8; 256];
+            if libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) != 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else { let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len()); buffer.truncate(length); Ok(bytes(buffer)) }
+        },
+        "socket_hostbyaddr" => Ok(host_by_address(&a[0])?),
         "getpid" => Ok(Value::Small(libc::getpid() as i64)),
         "getuid" => Ok(Value::Small(libc::getuid() as i64)),
         "geteuid" => Ok(Value::Small(libc::geteuid() as i64)),
@@ -258,4 +264,69 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         _ => return Err("NotImplementedError: unknown POSIX operation".into()),
     }};
     Ok(match output { Ok(value) => Value::tuple(vec![Value::Small(0), value]), Err(e) => Value::tuple(vec![Value::Small(e as i64), Value::Null]) })
+}
+
+// Resolve network names using libc's reentrant host database APIs.
+unsafe extern "C" {
+    #[link_name = "gethostbyaddr_r"]
+    fn address_host(address: *const libc::c_void, length: libc::socklen_t, family: libc::c_int,
+        entry: *mut libc::hostent, buffer: *mut libc::c_char, size: usize,
+        result: *mut *mut libc::hostent, error: *mut libc::c_int) -> libc::c_int;
+    #[link_name = "hstrerror"]
+    fn host_error_words(code: libc::c_int) -> *const libc::c_char;
+}
+
+// Return real host entries, or a categorized resolver error for the Python adapter.
+fn host_by_address(input: &Value) -> Result<Value, String> {
+    let name = CString::new(raw(input)?).map_err(|_| "ValueError: embedded null byte")?;
+    let failure = |kind: i64, code: i32, message: *const libc::c_char| {
+        let words = unsafe { if message.is_null() { Vec::new() } else { CStr::from_ptr(message).to_bytes().to_vec() } };
+        Value::tuple(vec![Value::Small(kind), Value::Small(code as i64), bytes(words), Value::Null])
+    };
+    unsafe {
+        let mut hints: libc::addrinfo = std::mem::zeroed();
+        hints.ai_family = libc::AF_UNSPEC;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        let mut found = std::ptr::null_mut();
+        let code = libc::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut found);
+        if code != 0 { return Ok(failure(1, code, libc::gai_strerror(code))); }
+        if found.is_null() { return Ok(failure(1, libc::EAI_NONAME, libc::gai_strerror(libc::EAI_NONAME))); }
+        let family = (*found).ai_family;
+        let address = if family == libc::AF_INET {
+            let ip = &*((*found).ai_addr.cast::<libc::sockaddr_in>());
+            std::slice::from_raw_parts((&ip.sin_addr as *const libc::in_addr).cast::<u8>(), 4).to_vec()
+        } else if family == libc::AF_INET6 {
+            (*(*found).ai_addr.cast::<libc::sockaddr_in6>()).sin6_addr.s6_addr.to_vec()
+        } else { libc::freeaddrinfo(found); return Ok(failure(1, libc::EAI_FAMILY, libc::gai_strerror(libc::EAI_FAMILY))); };
+        libc::freeaddrinfo(found);
+        let mut storage = vec![0u8; 8192];
+        let mut entry: libc::hostent = std::mem::zeroed();
+        let mut answer = std::ptr::null_mut();
+        let mut host_error = 0;
+        loop {
+            let status = address_host(address.as_ptr().cast(), address.len() as libc::socklen_t, family,
+                &mut entry, storage.as_mut_ptr().cast(), storage.len(), &mut answer, &mut host_error);
+            if status == libc::ERANGE { storage.resize(storage.len().checked_mul(2).ok_or("MemoryError: resolver buffer is too large")?, 0); continue; }
+            if answer.is_null() { return Ok(failure(2, host_error, host_error_words(host_error))); }
+            break;
+        }
+        let canonical = bytes(CStr::from_ptr(entry.h_name).to_bytes().to_vec());
+        let mut aliases = Vec::new();
+        let mut cursor = entry.h_aliases;
+        while !cursor.is_null() && !(*cursor).is_null() {
+            aliases.push(bytes(CStr::from_ptr(*cursor).to_bytes().to_vec())); cursor = cursor.add(1);
+        }
+        let mut addresses = Vec::new();
+        let mut cursor = entry.h_addr_list;
+        while !cursor.is_null() && !(*cursor).is_null() {
+            let raw = std::slice::from_raw_parts((*cursor).cast::<u8>(), entry.h_length as usize);
+            let text = if entry.h_addrtype == libc::AF_INET && raw.len() == 4 {
+                std::net::Ipv4Addr::new(raw[0],raw[1],raw[2],raw[3]).to_string()
+            } else if entry.h_addrtype == libc::AF_INET6 && raw.len() == 16 {
+                std::net::Ipv6Addr::from(<[u8;16]>::try_from(raw).unwrap()).to_string()
+            } else { return Err("OSError: resolver returned an unsupported address family".into()); };
+            addresses.push(bytes(text.into_bytes())); cursor = cursor.add(1);
+        }
+        Ok(Value::tuple(vec![Value::Small(0),Value::Small(0),bytes(Vec::new()),Value::tuple(vec![canonical,Value::array(aliases),Value::array(addresses)])]))
+    }
 }
