@@ -584,6 +584,12 @@ fn compile_pass(
     wants_value: bool,
     interactive: bool,
 ) -> Res<Rc<Routine>> {
+    for pair in tokens.windows(2) {
+        if pair[0].shape == Shape::Instr && pair[1].lexeme == "="
+            && (Lang::spells(&lang.async_words, &pair[0].spelling()) || Lang::spells(&lang.await_words, &pair[0].spelling())) {
+            return Err("SyntaxError: invalid syntax".into());
+        }
+    }
     let spelled = tokens;
     let renamed = private_tokens(tokens, lang);
     let tokens = renamed.as_slice();
@@ -1737,7 +1743,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        let asynchronous = name == "<genexpr>" || (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
         self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
@@ -1802,6 +1808,11 @@ impl<'a> Compiler<'a> {
             self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
+        if name == "<comprehension>" && unit.asynchronous_walk {
+            if let Some(parent) = self.pieces.last_mut().filter(|parent| parent.comprehension_kind.is_some()) {
+                parent.asynchronous_walk = true;
+            }
+        }
         if unit.asynchronous && unit.instrs.iter().any(|word| matches!(word, Instr::Act(Action::Suspend, _))) {
             if let Some(at) = unit.return_value_at {
                 self.pos = at;
@@ -1841,7 +1852,8 @@ impl<'a> Compiler<'a> {
             if rules.contains(&3) { code_flags |= 4; }
             if rules.contains(&4) { code_flags |= 8; }
         }
-        code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
+        let native_async = if name == "<genexpr>" { unit.asynchronous_walk } else { unit.asynchronous };
+        code_flags |= if native_async { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
         Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
@@ -2174,6 +2186,36 @@ impl<'a> Compiler<'a> {
         Ok(true)
     }
 
+    // Comprehension bodies have their own scope. Let their parser decide
+    // whether an await belongs to that body or its enclosing declaration.
+    fn await_in_comprehension_body(&self, start: usize, awaited: usize) -> bool {
+        let mut openings = Vec::new();
+        for index in start..awaited {
+            match self.tokens[index].spelling() {
+                "(" | "[" | "{" => openings.push(index),
+                ")" | "]" | "}" => { openings.pop(); },
+                _ => {}
+            }
+        }
+        openings.into_iter().rev().any(|open| {
+            let mut level = 1usize;
+            let mut first_for = None;
+            let mut filter = None;
+            for index in open + 1..self.tokens.len() {
+                let word = self.tokens[index].spelling();
+                if level == 1 && word == "for" && first_for.is_none() { first_for = Some(index); }
+                if level == 1 && word == "if" && first_for.is_some() { filter = Some(index); }
+                match word {
+                    "(" | "[" | "{" => level += 1,
+                    ")" | "]" | "}" => { level -= 1; if level == 0 { break; } },
+                    _ => {}
+                }
+                if index == awaited && filter.is_some() { return true; }
+            }
+            first_for.is_some_and(|position| awaited < position)
+        })
+    }
+
     fn python_type_scope_problem(&self) -> Option<String> {
         if self.lang.syntax_members.is_empty() { return None; }
         let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
@@ -2224,7 +2266,7 @@ impl<'a> Compiler<'a> {
                         else if tuple_bound { "TypeVar constraint".to_string() }
                         else { "TypeVar bound".to_string() };
                     for item in begin..at {
-                        let kind = match spelling(item) { ":=" => "named", "yield" => "yield", "await" => "await", _ => continue };
+                        let kind = match spelling(item) { ":=" => "named", "yield" => "yield", "await" if !self.await_in_comprehension_body(begin, item) => "await", _ => continue };
                         return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}"));
                     }
                 }
@@ -2250,7 +2292,7 @@ impl<'a> Compiler<'a> {
             for item in at + 1..self.tokens.len() {
                 let token = &self.tokens[item];
                 if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let kind = match token.spelling() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                let kind = match token.spelling() { ":=" => "named", "yield" => "yield", "await" if !self.await_in_comprehension_body(at + 1, item) => "await", _ => "" };
                 if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
@@ -3137,6 +3179,7 @@ impl<'a> Compiler<'a> {
                     self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::AsyncContext(false), 1);
+                    self.act(Action::Awaited, 1);
                     leaving
                 } else {
                     self.read(&manager);
@@ -3144,7 +3187,7 @@ impl<'a> Compiler<'a> {
                     manager
                 };
                 let cell = self.cell_to_write(&watched);
-                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: false, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
+                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: asynchronous, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
                 watchers.push(mark);
             }
             if self.on_keyword(&lang.with_as_words) {
@@ -5181,7 +5224,7 @@ impl<'a> Compiler<'a> {
     fn return_stmt(&mut self) -> Res<()> {
         let return_at = self.pos;
         self.take();
-        let has_value = !(self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes));
+        let has_value = !(self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) || self.look().shape == Shape::Close);
         if has_value && !self.lang.syntax_members.is_empty() {
             self.piece().return_value_at.get_or_insert(return_at);
         }
@@ -5191,7 +5234,7 @@ impl<'a> Compiler<'a> {
         // names has no cell to share, the value itself is answered, as
         // such a language does rather than stopping.
         let by_cell = self.giving_cells.last().copied().unwrap_or(false);
-        if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) {
+        if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes) || self.look().shape == Shape::Close {
             self.constant(Value::Null);
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
@@ -8270,7 +8313,7 @@ impl<'a> Compiler<'a> {
     /// A colon in a header or within a value is no such mark.
     fn statement_annotation(&self) -> Option<usize> {
         let lang = self.lang;
-        if lang.annotation_marks.is_empty() { return None; }
+        if lang.annotation_marks.is_empty() || Lang::spells(&lang.lambda_words, self.look().spelling()) { return None; }
         let pairs: Vec<&Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets,
             &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
         let mut depth = 0usize;
@@ -9869,7 +9912,11 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.await_words) {
             let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1))
                 && (self.in_class_body() || self.piece().comprehension_kind.is_some());
-            if self.forbids_await || !self.piece().asynchronous || class_expression {
+            let generator_body = self.piece().comprehension_kind == Some("generator expression");
+            if !generator_body && (self.forbids_await || !self.piece().asynchronous || class_expression) {
+                if self.piece().comprehension_kind.is_some() {
+                    return Err("SyntaxError: asynchronous comprehension outside of an asynchronous function".into());
+                }
                 let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {phrase}"));
             }
@@ -9879,6 +9926,7 @@ impl<'a> Compiler<'a> {
                 self.pieces[0].generator = true;
             }
             self.take();
+            if self.on_keyword(&lang.await_words) { return Err("SyntaxError: invalid syntax".into()); }
             self.prefix()?;
             self.act(Action::Awaited, 1);
             return Ok(());
@@ -10425,7 +10473,7 @@ impl<'a> Compiler<'a> {
                 if let Some(group) = lang.grouping.clone() {
                     if tok.lexeme == group.open {
                         self.take();
-                        if self.yield_operand {
+                        if self.yield_operand && self.comprehension_ahead().is_none() {
                             let mut count = 0;
                             let mut tuple = self.at_symbol(&group.close);
                             while !self.at_symbol(&group.close) {
@@ -11691,6 +11739,7 @@ impl<'a> Compiler<'a> {
         let name = "<genexpr>".to_string();
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
+        let enclosing_await_rule = std::mem::replace(&mut self.forbids_await, false);
         let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
             r.pos = clause;
@@ -11704,6 +11753,7 @@ impl<'a> Compiler<'a> {
             r.piece().generator = true;
             Ok(())
         })?;
+        self.forbids_await = enclosing_await_rule;
         self.generator_source = prior;
         self.constant(Value::Routine(program));
         self.act(Action::Invoke(Rc::from(name)), 2);
