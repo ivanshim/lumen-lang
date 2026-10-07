@@ -234,6 +234,16 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 status(libc::fcntl(fd, libc::F_SETFD, next) as i64)
             }
         },
+        "get_blocking" | "set_blocking" => {
+            let fd = number(0)? as i32;
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else if op.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
+            else {
+                let next = if a[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
+                status(libc::fcntl(fd, libc::F_SETFL, next) as i64)
+            }
+        },
         "pipe" => {
             let mut descriptors = [-1; 2];
             status(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)

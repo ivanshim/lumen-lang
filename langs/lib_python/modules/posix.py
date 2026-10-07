@@ -555,5 +555,13 @@ def set_inheritable(fd, inheritable, /):
     _call('set_inheritable', _cint(fd), bool(_cint(inheritable)))
 
 
+def get_blocking(fd, /):
+    return _call('get_blocking', _cint(fd))
+
+
+def set_blocking(fd, blocking, /):
+    _call('set_blocking', _cint(fd), bool(_cint(blocking)))
+
+
 def pipe():
     return _call('pipe')
