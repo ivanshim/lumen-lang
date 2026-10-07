@@ -101,6 +101,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("gc", include_str!("gc.py"), "gc.py"),
     ("genericpath", include_str!("genericpath.py"), "genericpath.py"),
     ("getopt", include_str!("getopt.py"), "getopt.py"),
+    ("getpass", include_str!("getpass.py"), "getpass.py"),
     ("gettext", include_str!("gettext.py"), "gettext.py"),
     ("glob", include_str!("glob.py"), "glob.py"),
     ("graphlib", include_str!("graphlib.py"), "graphlib.py"),
