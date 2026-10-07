@@ -7779,6 +7779,7 @@ impl<'a> Builder<'a> {
         let mut inside = Vec::new();
         for index in span.clone() {
             let token = &self.tokens[index];
+            match token.shape { Shape::Sign => {}, _ => continue }
             if token.lexeme == "[" || token.lexeme == "(" {
                 let carries = inside.iter().any(|scope| *scope);
                 let indexing = index > span.start && self.tokens[index - 1].shape == Shape::Bare;
@@ -7788,12 +7789,15 @@ impl<'a> Builder<'a> {
                 let right = if token.lexeme == "[" { "]" } else { ")" };
                 let mut cursor = index + 1;
                 while cursor < span.end && depth > 0 {
-                    let mark = self.tokens[cursor].lexeme.as_str();
+                    let mark = if self.tokens[cursor].shape == Shape::Sign {
+                        self.tokens[cursor].lexeme.as_str()
+                    } else { "" };
                     if mark == token.lexeme { depth += 1; }
                     if mark == right { depth -= 1; }
                     cursor += 1;
                 }
                 let trailer = depth == 0 && cursor < span.end
+                    && self.tokens[cursor].shape == Shape::Sign
                     && [".", "(", "["].contains(&self.tokens[cursor].lexeme.as_str());
                 inside.push(carries || indexing || trailer);
             } else if token.lexeme == "]" || token.lexeme == ")" {

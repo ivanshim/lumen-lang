@@ -8031,6 +8031,7 @@ impl<'a> Compiler<'a> {
         let mut protected = Vec::new();
         for at in begin..end {
             let word = &self.tokens[at];
+            if word.shape != Shape::Sign { continue; }
             match word.lexeme.as_str() {
                 "[" | "(" => {
                     let nested = protected.last().copied().unwrap_or(false);
@@ -8041,11 +8042,12 @@ impl<'a> Compiler<'a> {
                     let mut level = 0;
                     let mut receiver = false;
                     for later in at..end {
+                        if self.tokens[later].shape != Shape::Sign { continue; }
                         if self.tokens[later].lexeme == word.lexeme { level += 1; }
                         if self.tokens[later].lexeme == closing { level -= 1; }
                         if level == 0 {
                             receiver = self.tokens.get(later + 1).filter(|_| later + 1 < end)
-                                .is_some_and(|next| matches!(next.lexeme.as_str(), "." | "[" | "("));
+                                .is_some_and(|next| next.shape == Shape::Sign && matches!(next.lexeme.as_str(), "." | "[" | "("));
                             break;
                         }
                     }
