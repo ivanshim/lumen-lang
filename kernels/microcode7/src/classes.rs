@@ -759,6 +759,43 @@ impl<'a> Machine<'a> {
     /// entries and the metaclass it is to remember. This is the building
     /// the kind primitive does, which a metaclass reaches through its
     /// forebears once it has made a namespace of its own.
+    /// The ancestry a class built by a metaclass keeps. Where the
+    /// metaclass spells an `mro` of its own, building asks it, as the
+    /// reference asks while readying the class: the answer, every entry
+    /// a class, is the line the new blueprint keeps (gh-127773).
+    fn asked_ancestry(&mut self,class:Rc<Blueprint>)->Result<Rc<Blueprint>,Escape> {
+        let word=self.detail("order");
+        if word.is_empty(){return Ok(class);}
+        let Some(builder)=Self::named_builder(&class) else{return Ok(class)};
+        if self.builds_classes(&builder){return Ok(class);}
+        let mut spelled=None;
+        for base in std::iter::once(&builder).chain(builder.ancestry.iter()){
+            if self.builds_classes(base){break;}
+            if let Some(entry)=Self::own_entry(base,word){spelled=Some((entry,base.clone()));break;}
+        }
+        let Some((entry,owner))=spelled else{return Ok(class)};
+        let bound=self.member_binding(entry,Some(Value::Blueprint(class.clone())),owner)?;
+        let answered=self.apply_class_member(bound,Vec::new())?.settled();
+        let items=match &answered{
+            Value::Tuple(row)|Value::Vector(row)=>row.as_ref().to_vec(),
+            other=>return Err(format!("TypeError: '{}' object is not iterable",other.kind_word()).into()),
+        };
+        if items.is_empty(){return Err(String::from("TypeError: type MRO must not be empty").into());}
+        let mut line:Vec<Rc<Blueprint>>=Vec::new();
+        for item in &items{
+            match item.settled(){
+                Value::Blueprint(base)=>line.push(base),
+                other=>return Err(format!("TypeError: mro() returned a non-class ('{}')",Self::type_argument_kind(&other)).into()),
+            }
+        }
+        let rest=if line.first().map_or(false,|head|Rc::ptr_eq(head,&class)){&line[1..]}else{&line[..]};
+        if rest.len()==class.ancestry.len()&&rest.iter().zip(class.ancestry.iter()).all(|(one,two)|Rc::ptr_eq(one,two)){return Ok(class);}
+        Ok(Rc::new(Blueprint{presentation:class.presentation.clone(),name:class.name.clone(),under:class.under.clone(),parents:class.parents.clone(),
+            ancestry:rest.to_vec(),answers:vec![],fields:vec![],reaches:vec![],methods:vec![],constants:class.constants.clone(),
+            shared:RefCell::new(class.shared.borrow().clone()),weak_slot:Cell::new(None),has_slot_storage:class.has_slot_storage,
+            sealed:Cell::new(class.sealed.get()),type_names:RefCell::new(class.type_names.borrow().as_ref().map(|names| crate::data::TypeNames { short: names.short.clone(), declared: names.declared.clone(), full: names.full.clone(), module_key: names.module_key.clone() }))}))
+    }
+
     pub(super) fn assemble_class(&mut self,title:String,parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>,
         builder:Option<Rc<Blueprint>>,handed:Vec<Value>,title_object:Value)->Res {
         let mut class_cell = None;
@@ -854,6 +891,7 @@ impl<'a> Machine<'a> {
             under:primary,parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:fixed,
             shared:RefCell::new(entries),weak_slot:Cell::new(None),has_slot_storage: storage, sealed:Cell::new(false), type_names: RefCell::new(type_names)});
+        let class = self.asked_ancestry(class)?;
         if let Some(cell) = class_cell { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(cell, &word, Some(Value::Blueprint(class.clone())), true)?; }
 
         if !self.rules.words_ext_builtin_weak_get.is_empty() { crate::ghost::note(crate::ghost::Ghost::Blueprint(Rc::downgrade(&class))); }
@@ -3228,6 +3266,9 @@ impl<'a> Machine<'a> {
                 let mut passed = false;
                 for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
                     if passed {
+                        if key == self.detail("prepare") && !self.detail("prepare").is_empty() && self.builds_classes(base) {
+                            return Ok(Self::wrap(72, Vec::new()));
+                        }
                         if key == self.detail("allocate") {
                             if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                                 return Ok(Self::wrap(14, vec![Value::text(&native)]));
@@ -3634,6 +3675,19 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Window(Rc::new(Value::Blueprint(b.clone())), 'm'));
             }
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
+            // A metaclass spelling `mro` of its own answers for the
+            // name itself: the reference's own lookup asks the metatype
+            // before the class's forebears.
+            if key==self.detail("order") && !key.is_empty() {
+                if let Some(builder)=Self::builder_over(b) {
+                    let mut declared=None;
+                    for base in std::iter::once(&builder).chain(builder.ancestry.iter()) {
+                        if self.builds_classes(base){break;}
+                        if let Some(entry)=Self::own_entry(base,key){declared=Some((entry,base.clone()));break;}
+                    }
+                    if let Some((entry,owner))=declared { return self.member_binding(entry,Some(value.clone()),owner); }
+                }
+            }
             if key==self.detail("mro")||key==self.detail("order"){
                 let mut all=Vec::new();all.push(self.visible_blueprint(b.clone()));all.extend(b.ancestry.iter().map(|p|self.visible_blueprint(p.clone())));
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
@@ -5448,6 +5502,10 @@ impl<'a> Machine<'a> {
             // class out and makes a thing of one, as the kind primitive
             // plainly does.
             if self.builds_classes(b) {
+                // The preparing the builder answers for on a plain
+                // read is reached up the line as well:
+                // super().__prepare__ is type.__prepare__ from below.
+                if key==self.detail("prepare") && !self.detail("prepare").is_empty() {return self.apply_class_member(Self::wrap(72,Vec::new()),args);}
                 // The kind primitive's own building: a name, the
                 // parents and a namespace become a class, remembering
                 // the metaclass handed to it as the one that built it.

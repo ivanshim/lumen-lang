@@ -24129,8 +24129,14 @@ impl Engine<'_> {
         let mut plain = Vec::new(); let mut keywords = Vec::new(); let mut asked = None;
         for (key, value) in self.call_items(arguments)? {
             match key {
-                Some(key) if Lang::spells(&self.lang.metaclass_word, &key) => asked = Some(value),
-                Some(key) => keywords.push(Value::Tie(Rc::new((Value::text(&key), value)))),
+                Some(key) if Lang::spells(&self.lang.metaclass_word, &key) => {
+                    if asked.is_some() { return Err(format!("TypeError: __build_class__() got multiple values for keyword argument '{key}'").into()); }
+                    asked = Some(value);
+                },
+                Some(key) => {
+                    if keywords.iter().any(|held| matches!(held, Value::Tie(pair) if pair.0.plain() == key)) { return Err(format!("TypeError: __build_class__() got multiple values for keyword argument '{key}'").into()); }
+                    keywords.push(Value::Tie(Rc::new((Value::text(&key), value))));
+                },
                 None => plain.push(value),
             }
         }

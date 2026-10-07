@@ -652,6 +652,44 @@ impl<'a> Engine<'a> {
         Ok(chosen)
     }
     /// The class itself, laid out from its name, its bases, its members
+    /// The line a class made by a metaclass keeps. Where the metaclass
+    /// declares an `mro` of its own, making the class asks it, as the
+    /// reference asks while readying the class: the answer, each entry
+    /// a class, is the line the new class keeps from then on (gh-127773).
+    fn mro_answered(&mut self, c: Rc<Class>) -> Flow<Rc<Class>> {
+        let word = self.class_word("order");
+        if word.is_empty() { return Ok(c); }
+        let Some(maker) = Self::own_maker(&c) else { return Ok(c) };
+        if self.is_metaclass_root(&maker) { return Ok(c) }
+        let mut declared = None;
+        for base in std::iter::once(&maker).chain(maker.lineage.iter()) {
+            if self.is_metaclass_root(base) { break; }
+            if let Some(held) = Self::own_class_value(base, word) { declared = Some((held, base.clone())); break; }
+        }
+        let Some((held, owner)) = declared else { return Ok(c) };
+        let bound = self.bind_class_value(held, Some(Value::Class(c.clone())), owner)?;
+        let answered = self.class_apply(bound, Vec::new())?.contents();
+        let items = match &answered {
+            Value::Tuple(row) => row.as_ref().to_vec(),
+            Value::Array(row) => row.as_ref().to_vec(),
+            other => return Err(format!("TypeError: '{}' object is not iterable", Self::shown_kind(other)).into()),
+        };
+        if items.is_empty() { return Err("TypeError: type MRO must not be empty".into()); }
+        let mut line: Vec<Rc<Class>> = Vec::new();
+        for item in &items {
+            match item.contents() {
+                Value::Class(base) => line.push(base),
+                other => return Err(format!("TypeError: mro() returned a non-class ('{}')", Self::shown_kind(&other)).into()),
+            }
+        }
+        let tail = if line.first().map_or(false, |head| Rc::ptr_eq(head, &c)) { &line[1..] } else { &line[..] };
+        if tail.len() == c.lineage.len() && tail.iter().zip(c.lineage.iter()).all(|(a, b)| Rc::ptr_eq(a, b)) { return Ok(c); }
+        Ok(Rc::new(Class { name: c.name.clone(), outline: c.outline.clone(), base: c.base.clone(), direct: c.direct.clone(), lineage: tail.to_vec(),
+            answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: c.constants.clone(),
+            shared: RefCell::new(c.shared.borrow().clone()), weak_storage: std::cell::Cell::new(None),
+            declares_slots: c.declares_slots, sealed: std::cell::Cell::new(c.sealed.get()), python_names: RefCell::new(c.python_names.borrow().clone()) }))
+    }
+
     /// and the metaclass it is to remember. This is the making the kind
     /// builtin does, and what a metaclass reaches for through its
     /// forebears when it has made a namespace of its own.
@@ -739,6 +777,7 @@ impl<'a> Engine<'a> {
             methods: vec![], constants,
             shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), declares_slots: owns_storage, sealed: std::cell::Cell::new(false), python_names: RefCell::new(python_names) });
         if !self.lang.weak_refused.is_empty() { crate::faint::remember(crate::faint::Hold::Class(Rc::downgrade(&c))); }
+        let c = self.mro_answered(c)?;
         if let Some(cell) = class_cell { let word = self.class_word("cell.contents").to_owned(); self.class_write(cell, &word, Some(Value::Class(c.clone())), true)?; }
 
         self.furnish_slots(&c)?;
@@ -2690,6 +2729,12 @@ impl<'a> Engine<'a> {
                 let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.iter().cloned()).collect();
                 if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
                     for class in &order[start + 1..] {
+                        // The root of every metaclass keeps a preparing
+                        // of its own, the one a plain read of it hands
+                        // out: a call up the line reaches it here too.
+                        if name == self.class_word("prepare") && !name.is_empty() && self.is_metaclass_root(class) {
+                            return Ok(Self::adapter(42, Vec::new()));
+                        }
                         if name == self.class_word("allocate") {
                             if let Some(word) = Self::own_kind(class) {
                                 if word != self.class_word("root") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
@@ -3119,6 +3164,20 @@ impl<'a> Engine<'a> {
                     // members of its own; what it names are the ones a
                     // value of the kind answers to.
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
+                }
+                // A metaclass that declares an `mro` of its own
+                // answers for the name itself: the reference's own
+                // attribute lookup asks the metatype before the class's
+                // forebears.
+                if name == self.class_word("order") && !name.is_empty() {
+                    if let Some(maker) = Self::maker_beneath(c) {
+                        let mut declared = None;
+                        for base in std::iter::once(&maker).chain(maker.lineage.iter()) {
+                            if self.is_metaclass_root(base) { break; }
+                            if let Some(held) = Self::own_class_value(base, name) { declared = Some((held, base.clone())); break; }
+                        }
+                        if let Some((held, owner)) = declared { return self.bind_class_value(held, Some(subject.clone()), owner); }
+                    }
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![self.public_class(c.clone())]; order.extend(c.lineage.iter().cloned().map(|base| self.public_class(base)));
@@ -5332,6 +5391,12 @@ impl<'a> Engine<'a> {
             // The class every metaclass stands on: it lays a class out
             // and makes a thing of one, as the kind builtin plainly does.
             if self.is_metaclass_root(c) {
+                // The preparing the root answers for on a plain read is
+                // reached through the line as well: super().__prepare__
+                // is type.__prepare__ asked from below.
+                if name == self.class_word("prepare") && !self.class_word("prepare").is_empty() {
+                    return self.class_apply(Self::adapter(42, Vec::new()), args);
+                }
                 // The kind builtin's own making: a name, the bases and
                 // a namespace become a class, remembering the metaclass
                 // it was handed as the one that made it.
