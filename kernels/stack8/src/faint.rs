@@ -220,7 +220,7 @@ fn note_death() {
 }
 
 /// The routine a class says its last words with, where it has one.
-pub fn last_word_of(class: &Class) -> Option<Value> {
+pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
         let name = name.as_deref()?;
@@ -228,7 +228,8 @@ pub fn last_word_of(class: &Class) -> Option<Value> {
             return Some(Value::Routine(program.clone()));
         }
         let holder = class.holder(name)?;
-        holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        let answer=holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        answer
     }).ok().flatten()
 }
 
@@ -492,8 +493,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.extend(shared.iter().map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
-            out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
-            out.extend(c.lineage.iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
+            out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
+            out.extend(c.lineage().iter().chain(&c.direct()).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {

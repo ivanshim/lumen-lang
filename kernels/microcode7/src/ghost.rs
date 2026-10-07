@@ -197,7 +197,7 @@ pub fn anything_departing() {
 
 /// The farewell method of a class, looked for among its programs first
 /// and then among the values it keeps for itself.
-pub fn farewell_of(class: &Blueprint) -> Option<Value> {
+pub fn farewell_of(class: &Rc<Blueprint>) -> Option<Value> {
     let name = FAREWELL_NAME.try_with(|n| n.borrow().clone()).ok().flatten()?;
     if let Some(program) = class.program(&name) {
         return Some(Value::Routine(program.clone()));
@@ -504,7 +504,7 @@ impl Knot {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
-                    for parent in b.under.iter().chain(&b.ancestry).chain(&b.parents).chain(&b.answers) {
+                    for parent in b.under().iter().chain(&b.ancestry()).chain(&b.parents()).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
                     }
                 }

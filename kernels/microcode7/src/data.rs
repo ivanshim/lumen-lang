@@ -1417,7 +1417,7 @@ impl Value {
         let value = self.settled();
         if let Value::Thing(thing) = &value {
             let class = thing.blueprint();
-            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
@@ -1694,13 +1694,16 @@ pub struct TypeNames {
 
 #[derive(Debug)]
 pub struct Blueprint {
+    pub mro_place: std::cell::RefCell<Vec<usize>>,
+    pub mro_ready: std::cell::Cell<bool>,
+    pub base_epoch: std::cell::Cell<u64>,
     /// The mutable names of a Python class, outside its dictionary.
     pub type_names: RefCell<Option<TypeNames>>,
-    pub ancestry: Vec<Rc<Blueprint>>,
-    pub parents: Vec<Rc<Blueprint>>,
+    pub ancestry: RefCell<Vec<Rc<Blueprint>>>,
+    pub parents: RefCell<Vec<Rc<Blueprint>>>,
     pub presentation: Option<String>,
     pub name: String,
-    pub under: Option<Rc<Blueprint>>,
+    pub under: RefCell<Option<Rc<Blueprint>>>,
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Blueprint>>,
     pub fields: Vec<(String, Value)>,
@@ -1721,6 +1724,21 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    pub fn resolution(self: &Rc<Self>) -> Vec<Rc<Blueprint>> {
+        let inherited=self.ancestry();
+        let positions=self.mro_place.borrow();
+        let mut ordered=Vec::with_capacity(inherited.len()+positions.len());
+        let count=inherited.len()+positions.len();
+        let mut cursor=inherited.into_iter();
+        for rank in 0..count {
+            ordered.push(if positions.contains(&rank) {self.clone()}else{cursor.next().unwrap()});
+        }
+        ordered
+    }
+    pub fn ancestry(&self) -> Vec<Rc<Blueprint>> {self.ancestry.borrow().clone()}
+    pub fn parents(&self) -> Vec<Rc<Blueprint>> {self.parents.borrow().clone()}
+    pub fn under(&self) -> Option<Rc<Blueprint>> {self.under.borrow().clone()}
+
     pub(super) fn python_title(&self) -> Option<String> {
         let kept = self.type_names.borrow();
         let names = kept.as_ref()?;
@@ -1737,26 +1755,26 @@ impl Blueprint {
         Some(match module { Some(word) if word != "builtins" => format!("{word}.{full}"), _ => full })
     }
 
-    pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
+    pub fn program(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
-            Some((_, p)) => Some(p),
-            None => self.under.as_ref().and_then(|u| u.program(name)),
+            Some((_, p)) => Some(p.clone()),
+            None => self.under().as_ref().and_then(|u| u.program(name)),
         }
     }
 
-    pub fn constant(&self, name: &str) -> Option<&Value> {
+    pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
-            Some((_, v)) => Some(v),
-            None => self.under.as_ref().and_then(|u| u.constant(name)),
+            Some((_, v)) => Some(v.clone()),
+            None => self.under().as_ref().and_then(|u| u.constant(name)),
         }
     }
 
     /// The class along the line that keeps a value of that name.
-    pub fn keeper(&self, name: &str) -> Option<&Blueprint> {
+    pub fn keeper(self: &Rc<Self>, name: &str) -> Option<Rc<Blueprint>> {
         if self.shared.borrow().iter().any(|(n, _)| n == name) {
-            return Some(self);
+            return Some(self.clone());
         }
-        self.under.as_ref().and_then(|u| u.keeper(name))
+        self.under().as_ref().and_then(|u| u.keeper(name))
     }
 
     pub fn built_on(&self, name: &str) -> bool {
@@ -1771,16 +1789,16 @@ impl Blueprint {
             false => self.name == name,
         };
         it
-            || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
+            || self.under().as_ref().map_or(false, |u| u.goes_by(name, either_way))
             || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
     /// How far a member of that name is reached from, and the class
     /// saying so: the nearest one declaring it, this class first.
-    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
-            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Everywhere), self.name.as_str())),
-            None => self.under.as_ref().and_then(|u| u.reach_of(name)),
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Everywhere), self.name.clone())),
+            None => self.under().as_ref().and_then(|u| u.reach_of(name)),
         }
     }
 
@@ -1792,17 +1810,12 @@ impl Blueprint {
     /// Ask whether an inherited public field exists without constructing
     /// the complete instance layout or cloning its names and values.
     pub fn has_public_field(&self, name: &str) -> bool {
-        let mut current = Some(self);
-        while let Some(class) = current {
-            if class.fields.iter().enumerate().any(|(at, (key, _))|
-                key == name && class.reaches.get(at) != Some(&Reach::Alone)) { return true; }
-            current = class.under.as_deref();
-        }
-        false
+        self.fields.iter().enumerate().any(|(at,(key,_))|key==name && self.reaches.get(at)!=Some(&Reach::Alone))
+            || self.under().is_some_and(|parent|parent.has_public_field(name))
     }
 
     pub fn every_field(&self) -> Vec<(String, Value)> {
-        let mut all = self.under.as_ref().map_or_else(Vec::new, |u| u.every_field());
+        let mut all = self.under().as_ref().map_or_else(Vec::new, |u| u.every_field());
         for (at, (name, value)) in self.fields.iter().enumerate() {
             let alone = self.reaches.get(at) == Some(&Reach::Alone);
             let filed = match alone {

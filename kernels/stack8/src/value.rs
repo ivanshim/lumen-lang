@@ -1564,7 +1564,7 @@ impl Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
             let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.lineage().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
@@ -1833,14 +1833,17 @@ pub const MAKER_MEMBER: &str = "\0metaclass";
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    pub mro_place: std::cell::RefCell<Vec<usize>>,
+    pub mro_ready: std::cell::Cell<bool>,
+    pub base_epoch: std::cell::Cell<u64>,
     /// Python heap-type names, the module label, and the original
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
-    pub lineage: Vec<Rc<Class>>,
-    pub direct: Vec<Rc<Class>>,
+    pub lineage: RefCell<Vec<Rc<Class>>>,
+    pub direct: RefCell<Vec<Rc<Class>>>,
     pub outline: Option<String>,
     pub name: String,
-    pub base: Option<Rc<Class>>,
+    pub base: RefCell<Option<Rc<Class>>>,
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Class>>,
     pub fields: Vec<(String, Value)>,
@@ -1862,6 +1865,15 @@ pub struct Class {
 }
 
 impl Class {
+    pub fn order(self: &Rc<Self>) -> Vec<Rc<Class>> {
+        let mut result=self.lineage();
+        for at in self.mro_place.borrow().iter() {result.insert((*at).min(result.len()),self.clone());}
+        result
+    }
+    pub fn lineage(&self) -> Vec<Rc<Class>> {self.lineage.borrow().clone()}
+    pub fn direct(&self) -> Vec<Rc<Class>> {self.direct.borrow().clone()}
+    pub fn base(&self) -> Option<Rc<Class>> {self.base.borrow().clone()}
+
     pub(super) fn python_title(&self) -> Option<String> {
         let names = self.python_names.borrow();
         let (short, qualified, module_key, _) = names.as_ref()?;
@@ -1880,27 +1892,27 @@ impl Class {
 
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
-    pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
+    pub fn method(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
-            Some((_, p)) => Some(p),
-            None => self.base.as_ref().and_then(|b| b.method(name)),
+            Some((_, p)) => Some(p.clone()),
+            None => self.base().as_ref().and_then(|b| b.method(name)),
         }
     }
 
     /// The constant of that name, looked for the same way.
-    pub fn constant(&self, name: &str) -> Option<&Value> {
+    pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
-            Some((_, v)) => Some(v),
-            None => self.base.as_ref().and_then(|b| b.constant(name)),
+            Some((_, v)) => Some(v.clone()),
+            None => self.base().as_ref().and_then(|b| b.constant(name)),
         }
     }
 
     /// The class holding a value of that name for itself.
-    pub fn holder(&self, name: &str) -> Option<&Class> {
+    pub fn holder(self: &Rc<Self>, name: &str) -> Option<Rc<Class>> {
         if self.shared.borrow().iter().any(|(n, _)| n == name) {
-            return Some(self);
+            return Some(self.clone());
         }
-        self.base.as_ref().and_then(|b| b.holder(name))
+        self.base().as_ref().and_then(|b| b.holder(name))
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
@@ -1911,7 +1923,7 @@ impl Class {
             false => self.name == name,
         };
         same
-            || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.base().as_ref().map_or(false, |b| b.named(name, loosely))
             || self.answers.iter().any(|a| a.named(name, loosely))
     }
 
@@ -1923,10 +1935,10 @@ impl Class {
 
     /// How far a member of that name may be reached from, and the class
     /// that says so: the nearest one declaring it, this class first.
-    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
-            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.as_str())),
-            None => self.base.as_ref().and_then(|b| b.reach_of(name)),
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.clone())),
+            None => self.base().as_ref().and_then(|b| b.reach_of(name)),
         }
     }
 
@@ -1938,17 +1950,12 @@ impl Class {
     /// Ask whether an inherited public field exists without constructing
     /// the complete instance layout or cloning its names and values.
     pub fn has_public_field(&self, name: &str) -> bool {
-        let mut current = Some(self);
-        while let Some(class) = current {
-            if class.fields.iter().enumerate().any(|(at, (key, _))|
-                key == name && class.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
-            current = class.base.as_deref();
-        }
-        false
+        self.fields.iter().enumerate().any(|(at,(key,_))|key==name && self.reaches.get(at)!=Some(&Reach::Hidden))
+            || self.base().is_some_and(|parent|parent.has_public_field(name))
     }
 
     pub fn all_fields(&self) -> Vec<(String, Value)> {
-        let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
+        let mut all = self.base().as_ref().map_or_else(Vec::new, |b| b.all_fields());
         for (at, (name, value)) in self.fields.iter().enumerate() {
             let alone = self.reaches.get(at) == Some(&Reach::Hidden);
             let filed = match alone {

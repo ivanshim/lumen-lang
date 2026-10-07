@@ -944,17 +944,17 @@ impl<'a> Machine<'a> {
             let (parents, ancestry) = match &under {
                 Some(forebear) => {
                     let mut line = vec![forebear.clone()];
-                    line.extend(forebear.ancestry.iter().cloned());
+                    line.extend(forebear.ancestry().iter().cloned());
                     if !line.iter().any(|b| Rc::ptr_eq(b, ancestor)) { line.push(ancestor.clone()); }
                     (vec![forebear.clone()], line)
                 }
                 None => (Vec::new(), Vec::new()),
             };
-            let kind = Blueprint { parents, ancestry, presentation: None,
-                name: word.clone(), under,
+            let kind = Blueprint { parents: std::cell::RefCell::new(parents), ancestry: std::cell::RefCell::new(ancestry), presentation: None,
+                name: word.clone(), under: std::cell::RefCell::new(under),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
                 shared: RefCell::new(shared), constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-            };
+             mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             chain[number] = Some(Rc::new(kind));
         }
         chain.into_iter().flatten().map(|b| (b.name.clone(), Value::Blueprint(b))).collect()
@@ -1272,8 +1272,8 @@ impl<'a> Machine<'a> {
         // A kind drawn with several parents stands under every one of
         // them, the whole of its gathered line holding each.
         second.map_or(false, |other| Self::fault_descends(other, ancestor))
-            || kind.ancestry.iter().any(|parent| Rc::ptr_eq(parent, ancestor))
-            || kind.under.as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
+            || kind.ancestry().iter().any(|parent| Rc::ptr_eq(parent, ancestor))
+            || kind.under().as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
     }
 
     /// A fault made by a call: what was given by position is its row,
@@ -1728,12 +1728,7 @@ impl<'a> Machine<'a> {
     }
 
     fn fault_methods(kind: &Blueprint) -> bool {
-        let mut current = Some(kind);
-        while let Some(class) = current {
-            if !class.methods.is_empty() { return true; }
-            current = class.under.as_deref();
-        }
-        false
+        !kind.methods.is_empty() || kind.under().is_some_and(|parent|Self::fault_methods(&parent))
     }
 
     fn raise_class(&mut self, value: Value, frame: &Rc<Env>) -> Res {
@@ -1751,7 +1746,7 @@ impl<'a> Machine<'a> {
                     let made = self.apply_class_member(new, vec![Value::Blueprint(kind.clone())])?;
                     if let Value::Thing(object) = made.settled() {
                         if self.is_fault_kind(&object.blueprint()) {
-                            let belongs = Rc::ptr_eq(&object.blueprint(), &kind) || object.blueprint().ancestry.iter().any(|base| Rc::ptr_eq(base, &kind));
+                            let belongs = Rc::ptr_eq(&object.blueprint(), &kind) || object.blueprint().ancestry().iter().any(|base| Rc::ptr_eq(base, &kind));
                             if belongs {
                                 if let Some(init) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|word| self.inherited_entry(&object.blueprint(), word)) {
                                     let owner = object.blueprint().clone();
@@ -1796,11 +1791,11 @@ impl<'a> Machine<'a> {
         crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
-                let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-                    name: idents[at].clone(), under: None, answers: Vec::new(),
+                let blueprint = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
+                    name: idents[at].clone(), under: std::cell::RefCell::new(None), answers: Vec::new(),
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-                };
+                 mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
                 outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
             }
         }
@@ -1808,8 +1803,8 @@ impl<'a> Machine<'a> {
         // out, so their lines can end on it.
         let root_title = table.single("ext.stmt.class.detail.root").unwrap_or_default().to_owned();
         let ancestor = Rc::new(Blueprint { presentation: Some(format!("<class '{root_title}'>")), name: root_title,
-            parents: Vec::new(), ancestry: Vec::new(), under: None, answers: Vec::new(), fields: Vec::new(),
-            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) });
+            parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), under: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
+            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let fault_kinds = Self::given_faults(table, &ancestor);
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = fault_kinds.get(word) { outermost.cells.borrow_mut()[i] = value.clone(); }
@@ -2413,7 +2408,7 @@ impl<'a> Machine<'a> {
     /// that keeps the name answers for it, and a line keeping none takes
     /// the name as the class's own.
     fn own_cell(&self, class: &Rc<Blueprint>, called: &str) -> Rc<RefCell<Value>> {
-        let keeper = class.keeper(called).unwrap_or(class);
+        let keeper = class.keeper(called).unwrap_or_else(||class.clone());
         let mut shared = keeper.shared.borrow_mut();
         let at = match shared.iter().position(|(k, _)| k.as_str() == called) {
             Some(at) => at,
@@ -2465,7 +2460,7 @@ impl<'a> Machine<'a> {
         if !thing.blueprint().goes_by(class, self.classes_either_way) {
             return Ok(None);
         }
-        let Some(program) = thing.blueprint().program(gives).cloned() else { return Ok(None) };
+        let Some(program) = thing.blueprint().program(gives) else { return Ok(None) };
         let handed = self.invoke(program, self.outermost.clone(), vec![x.clone()])?;
         let itself = matches!((&handed, x), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b));
         Ok(match itself {
@@ -2491,7 +2486,7 @@ impl<'a> Machine<'a> {
     /// through instead.
     fn walk_asked(&mut self, x: &Value, named: Option<String>) -> Result<Option<Value>, Escape> {
         let (Some(thing), Some(named)) = (self.walks_itself(x), named) else { return Ok(None) };
-        let Some(program) = thing.blueprint().program(&named).cloned() else { return Ok(None) };
+        let Some(program) = thing.blueprint().program(&named) else { return Ok(None) };
         Ok(Some(self.invoke(program, self.outermost.clone(), vec![x.clone()])?))
     }
 
@@ -2696,7 +2691,7 @@ impl<'a> Machine<'a> {
             while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
                 reached += 1;
                 let Some(thing) = loosely.upgrade() else { continue };
-                let Some(program) = thing.blueprint().program(named).cloned() else { continue };
+                let Some(program) = thing.blueprint().program(named) else { continue };
                 if !crate::ghost::first_farewell(&thing) { continue; }
                 let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
             }
@@ -3255,7 +3250,7 @@ impl<'a> Machine<'a> {
             if let Some(Value::Blueprint(kind)) = self.fault_kinds.get(self.rules.words_ext_stmt_class_special_stop.first().map(String::as_str)?).cloned() {
                 return Some(self.make_fault(kind, vec![], Value::Nil));
             }
-            let of = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.rules.words_ext_stmt_class_special_stop.first().map(String::as_str)?.to_owned(), under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) };
+            let of = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None, name: self.rules.words_ext_stmt_class_special_stop.first().map(String::as_str)?.to_owned(), under: std::cell::RefCell::new(None), fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             self.made += 1;
             return Some(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(of), holds: RefCell::new(vec![]), turn: self.made })));
         }
@@ -3493,7 +3488,7 @@ impl<'a> Machine<'a> {
         // from within it.
         let within = self.standing_in().map(str::to_string).map(|named| {
             let under = match self.class_bound(&named) {
-                Some(Value::Blueprint(c)) => c.under.as_ref().map(|b| b.name.clone()),
+                Some(Value::Blueprint(c)) => c.under().as_ref().map(|b| b.name.clone()),
                 _ => None,
             };
             (named, under)
@@ -4127,8 +4122,8 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = subject else { return None };
         let named = |key: &String| names.iter().any(|word| word == key);
         let actual=thing.blueprint();
-        if self.table.has_class_order&&!actual.ancestry.is_empty() {
-            for blueprint in std::iter::once(actual.as_ref()).chain(actual.ancestry.iter().map(Rc::as_ref)) {
+        if self.table.has_class_order&&!actual.ancestry().is_empty() {
+            for blueprint in actual.resolution().iter().map(Rc::as_ref) {
                 let entry=blueprint.shared.borrow().iter().find(|(key,_)|named(key)).map(|(_,v)|v.clone())
                     .or_else(||blueprint.methods.iter().find(|(key,_)|named(key)).map(|(_,body)|Value::Routine(body.clone())));
                 match entry {
@@ -4143,7 +4138,7 @@ impl<'a> Machine<'a> {
             }
             return None;
         }
-        let mut blueprint = &actual;
+        let mut blueprint = actual.clone();
         loop {
             let found = blueprint.shared.borrow().iter().find(|(key, _)| named(key)).map(|(_, value)| value.clone())
                 .or_else(|| blueprint.methods.iter().find(|(key, _)| named(key)).map(|(_, body)| Value::Routine(body.clone())));
@@ -4151,7 +4146,7 @@ impl<'a> Machine<'a> {
                 Some(Value::Bound(body, frame)) => return Some((body, frame)),
                 Some(Value::Routine(body)) => return Some((body, self.outermost.clone())),
                 Some(_) => return None,
-                None => blueprint = blueprint.under.as_ref()?,
+                None => blueprint = blueprint.under()?,
             }
         }
     }
@@ -5373,9 +5368,9 @@ impl<'a> Machine<'a> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
         if self.activation_kind.is_none() {
-            self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
-                parents: Vec::new(), ancestry: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) }));
+            self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: std::cell::RefCell::new(None), presentation: Some(format!("<class '{}'>", words[9])),
+                parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}));
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;
@@ -6360,11 +6355,11 @@ impl<'a> Machine<'a> {
                     _ => {
                         let held = if matches!(held, Value::Unset) { Value::text("") } else { held };
                         let kind = Blueprint {
-                            ancestry: vec![], parents: vec![], presentation: None,
+                            ancestry: std::cell::RefCell::new(vec![]), parents: std::cell::RefCell::new(vec![]), presentation: None,
                             name: self.table.strings("ext.stmt.assert.kind").first().map(String::as_str).unwrap_or_default().to_string(),
                             fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
-                            shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-                        };
+                            shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: std::cell::RefCell::new(None), answers: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
+                         mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
                         Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), turn: 0, holds: RefCell::new(vec![("message".to_string(), held)]) }))
                     }
                 };
@@ -6671,9 +6666,9 @@ impl<'a> Machine<'a> {
                     return self.build_class_value(plan.name.clone(),parents,entries);
                 }
                 Ok(Value::Blueprint(Rc::new(Blueprint {
-                    ancestry: vec![], parents: vec![], presentation: None,
+                    ancestry: std::cell::RefCell::new(vec![]), parents: std::cell::RefCell::new(vec![]), presentation: None,
                     name: plan.name.clone(),
-                    under,
+                    under: std::cell::RefCell::new(under),
                     answers,
                     fields,
                     reaches: plan.field_reach.clone(),
@@ -6681,7 +6676,7 @@ impl<'a> Machine<'a> {
                     constants,
                     shared: RefCell::new(shared),
                     weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-                })))
+                 mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)})))
             }
             Form::Cycle { test, body, step, after, otherwise } => {
                 let mut broken = false;
@@ -6959,7 +6954,7 @@ impl<'a> Machine<'a> {
                         || self.table.strings("ext.stmt.class.finaliser").first().map(String::as_str).is_some() {
                         self.things.borrow_mut().push(Rc::downgrade(&thing));
                     }
-                    let maker = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|m| class.program(m)).cloned();
+                    let maker = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|m| class.program(m));
                     match maker {
                         Some(maker) => {
                             let mut all = vec![Value::Thing(thing.clone())];
@@ -7030,7 +7025,7 @@ impl<'a> Machine<'a> {
                     let Value::Thing(thing) = subject else {
                         return Err(format!("Cannot call '{}' on something that is not an object", called).into());
                     };
-                    let program = thing.blueprint().program(&called).cloned();
+                    let program = thing.blueprint().program(&called);
                     // A class may answer for a call it does not have:
                     // where the language names such a method and the
                     // class is written with it, it stands in, given the
@@ -7062,7 +7057,7 @@ impl<'a> Machine<'a> {
                         let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
                         return Err(said.into());
                     };
-                    let program = class.program(&called).cloned();
+                    let program = class.program(&called);
                     let program = program.ok_or_else(|| format!("Call to undefined method {}::{}()", class.name, called))?;
                     let mut all = vec![subject];
                     all.extend(values);
@@ -7682,7 +7677,7 @@ impl<'a> Machine<'a> {
         if held || (self.rules.has_any_ext_stmt_class_special && self.attribute(&values[0], &called).is_some()) {
             return Ok(None);
         }
-        let Some(program) = thing.blueprint().program(&named).cloned() else {
+        let Some(program) = thing.blueprint().program(&named) else {
             return Ok(None);
         };
         let mut all = vec![values[0].clone(), Value::text(&called)];
@@ -7859,7 +7854,7 @@ impl<'a> Machine<'a> {
     /// the language names one and the class is written with it.
     fn stands_for_calls(&self, class: &Rc<Blueprint>) -> Option<Rc<Routine>> {
         let named = self.table.strings("ext.stmt.class.caller").first().map(String::as_str)?;
-        class.program(named).cloned()
+        class.program(named)
     }
 
     /// What a value of a native kind answers to by name, gathered for
@@ -8886,7 +8881,7 @@ impl<'a> Machine<'a> {
         self.made += 1;
         let fields = class.every_field();
         let object = Rc::new(Thing {reclassified: RefCell::new(None),  of: class.clone(), holds: RefCell::new(fields), turn: self.made });
-        if let Some(body) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|word| class.program(word)).cloned() {
+        if let Some(body) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|word| class.program(word)) {
             let mut given = Vec::with_capacity(args.len() + 1);
             given.push(Value::Thing(object.clone()));
             given.extend(args);
@@ -8995,7 +8990,7 @@ impl<'a> Machine<'a> {
             Value::Blueprint(class) => (class, Value::Nil),
             _ => return Some(Err(format!("Cannot call '{}' on something that holds no method", called).into())),
         };
-        let Some(program) = class.program(&called).cloned() else {
+        let Some(program) = class.program(&called) else {
             // A class may answer for a call it does not have, given the
             // name asked for and the arguments as an array.
             let stands = self.stands_for_calls(&class);
@@ -9243,7 +9238,7 @@ impl<'a> Machine<'a> {
         // keep their module ancestor. Ordinary instances cannot own the
         // loader's hidden marker, so avoid scanning their attributes.
         let class = thing.blueprint();
-        if !class.parents.is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
+        if !class.parents().is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
         let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
         if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
         for (path, held) in &self.imported {
@@ -9251,7 +9246,7 @@ impl<'a> Machine<'a> {
         }
         let names = self.rules.words_ext_system_module_name;
         let blueprint = thing.blueprint();
-        if blueprint.parents.is_empty() && blueprint.under.is_none() && blueprint.type_names.borrow().is_none() {
+        if blueprint.parents().is_empty() && blueprint.under().is_none() && blueprint.type_names.borrow().is_none() {
             let declared = thing.holds.borrow().iter().find(|entry| names.contains(&entry.0)).map(|entry| entry.1.settled());
             if let Some(Value::Text(label)) = declared { return Some(label.to_string()); }
         }
@@ -13706,7 +13701,7 @@ impl<'a> Machine<'a> {
     /// copied before the class method fills it.
     fn frozen_beneath(value: &Value) -> bool {
         let Value::Thing(t) = value else { return false };
-        t.blueprint().name == "frozendict" || t.blueprint().ancestry.iter().any(|base| base.name == "frozendict")
+        t.blueprint().name == "frozendict" || t.blueprint().ancestry().iter().any(|base| base.name == "frozendict")
     }
 
     /// A frozendict's rows as a fresh map that may be written.
@@ -13740,10 +13735,10 @@ impl<'a> Machine<'a> {
         }
         let Value::Thing(thing) = subject else { return None };
         let actual=thing.blueprint();
-        if self.table.has_class_order&&!actual.ancestry.is_empty() {
-            for blueprint in std::iter::once(actual.as_ref()).chain(actual.ancestry.iter().map(Rc::as_ref)) {
+        if self.table.has_class_order&&!actual.ancestry().is_empty() {
+            for blueprint in actual.resolution().iter().map(Rc::as_ref) {
                 if let Some(entry)=blueprint.shared.borrow().iter().find(|(key,_)|key==word).map(|(_,v)|v.clone()) {
-                    if Self::native_word(blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
+                    if Self::native_word(&blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
                     return Some(entry);
                 }
                 if let Some((_,body))=blueprint.methods.iter().find(|(key,_)|key==word){return Some(Value::Routine(body.clone()));}
@@ -13760,20 +13755,20 @@ impl<'a> Machine<'a> {
             }
             return None;
         }
-        let mut blueprint = &actual;
+        let mut blueprint = actual.clone();
         loop {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
             if let Some(entry) = own {
                 // A builtin slot is dispatched through the underlying native value.
                 // Keeping its descriptor in the type dictionary does not appoint an override.
-                if Self::native_word(blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
+                if Self::native_word(&blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
                 return Some(entry);
             }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
-            blueprint = blueprint.under.as_ref()?;
+            blueprint = blueprint.under()?;
         }
     }
 
@@ -13781,7 +13776,7 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = subject else { return false };
         let owner = thing.blueprint();
         let Some(selected) = self.appointed(subject, index) else { return false };
-        for blueprint in std::iter::once(&owner).chain(owner.ancestry.iter()) {
+        for blueprint in std::iter::once(&owner).chain(owner.ancestry().iter()) {
             if blueprint.constants.iter().all(|(label, _)| label != "\0native-name") { continue; }
             let flags = self.inherited_entry(blueprint, "__abc_tpflags__").map(|held| held.settled());
             if !matches!(flags, Some(Value::Small(bits)) if bits & 32 != 0) { continue; }
@@ -14139,7 +14134,7 @@ impl<'a> Machine<'a> {
                             }
                         }
                         let module = self.rules.detail_main;
-                        Ok(if t.blueprint().under.is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_owned() }
+                        Ok(if t.blueprint().under().is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_owned() }
                             else if let Some(title) = t.blueprint().python_title() { format!("<{title} object at 0x1>") }
                             else if module.is_empty() { format!("<{} object>", t.blueprint().name) }
                             else { format!("<{module}.{} object at 0x1>", t.blueprint().name) })
@@ -15984,7 +15979,7 @@ impl<'a> Machine<'a> {
             },
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
-                let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry.iter().any(|parent| parent.name == class.name));
+                let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry().iter().any(|parent| parent.name == class.name));
                 // The run's own module objects answer to the native module kind.
                 let module = Self::native_beneath(class).as_deref() == Some("module") && self.namespace_holding(one).is_some();
                 Value::Flag(named || module)
@@ -18030,7 +18025,7 @@ impl<'a> Machine<'a> {
                             // business and no other's.
                             (_, Some(owner)) => here.as_deref() == Some(owner),
                             (called, None) => match thing.blueprint().reach_of(called) {
-                                Some((Reach::Within, holder)) => self.along_with(holder, here.as_deref()),
+                                Some((Reach::Within, holder)) => self.along_with(&holder, here.as_deref()),
                                 _ => true,
                             },
                         };
@@ -18228,10 +18223,10 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if self.has_class_order() { return self.build_class_value(title, vec![ancestor], holdings).map_err(|e| self.carried_native_fault(e)); }
-                let heir = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-                    under: Some(ancestor), name: title, shared: RefCell::new(holdings),
+                let heir = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
+                    under: std::cell::RefCell::new(Some(ancestor)), name: title, shared: RefCell::new(holdings),
                     methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-                };
+                 mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
                 Value::Blueprint(Rc::new(heir))
             }
             Prim::Regex => return crate::sre::invoke(v),
@@ -18627,7 +18622,7 @@ impl<'a> Machine<'a> {
                 let stands = self.class_it_spells(v[0].clone());
                 match &stands {
                     Value::Blueprint(class) => {
-                        let keeper = class.keeper(&called).unwrap_or(class);
+                        let keeper = class.keeper(&called).unwrap_or_else(||class.clone());
                         let mut shared = keeper.shared.borrow_mut();
                         match shared.iter_mut().find(|(k, _)| *k == called) {
                             Some(place) => place.1 = v[2].clone(),
@@ -19703,15 +19698,15 @@ impl<'a> Machine<'a> {
                 };
                 let mut gathered: Vec<String> = Vec::new();
                 let mut ordered = match of {
-                    Some(class) if !class.ancestry.is_empty() => {
-                        std::iter::once(class.clone()).chain(class.ancestry.iter().cloned()).collect::<Vec<_>>()
+                    Some(class) if !class.ancestry().is_empty() => {
+                        std::iter::once(class.clone()).chain(class.ancestry().iter().cloned()).collect::<Vec<_>>()
                     }
                     root => {
                         let mut chain = Vec::new();
                         let mut cursor = root;
                         loop {
                             let Some(entry) = cursor else { break; };
-                            cursor = entry.under.clone();
+                            cursor = entry.under().clone();
                             chain.push(entry);
                         }
                         chain
@@ -19740,7 +19735,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(class) => Some(class),
                     _ => None,
                 };
-                match of.and_then(|c| c.under.clone()) {
+                match of.and_then(|c| c.under().clone()) {
                     Some(under) => Value::text(&under.name),
                     None => Value::Nil,
                 }
@@ -21343,8 +21338,8 @@ impl<'a> Machine<'a> {
                 if !matches!(source, Value::Vector(_) | Value::Arguments(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_)) {
                     return Err(self.argument_fault("ext.builtin.exceptions.unready", None));
                 }
-                let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: name.into(), under: None, answers: vec![], reaches: vec![],
-                    fields: vec![], shared: RefCell::new(vec![]), constants: vec![], methods: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) };
+                let kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None, name: name.into(), under: std::cell::RefCell::new(None), answers: vec![], reaches: vec![],
+                    fields: vec![], shared: RefCell::new(vec![]), constants: vec![], methods: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
                 self.made += 1;
                 Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), turn: self.made,
                     holds: RefCell::new(vec![("\0walked".into(), source), ("\0walk-step".into(), Value::Small(0))]) }))
@@ -24057,10 +24052,10 @@ impl Machine<'_> {
             (Value::text(name), self.outermost.cells.borrow()[beginning + position].clone())).collect::<Vec<_>>();
         members.push(("\0bindings".to_owned(), Value::Dict(Rc::new(slot_links.into()))));
         members.push(("\0loaded-module".to_owned(), Value::text(path)));
-        let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-            name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
+        let kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
+            name: path.into(), under: std::cell::RefCell::new(None), methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-        };
+         mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
         self.namespace_books.retain(|(name, _)| name != path);
@@ -24117,9 +24112,9 @@ impl Machine<'_> {
             let main_name = self.detail("main").to_owned();
             if main_name.len() > 0 && self.imported.get(&main_name).is_none() {
                 let dictionary = Value::Mutable(self.world_kept(), true);
-                let blueprint = Blueprint { name: main_name.clone(), presentation: Some(format!("<module '{main_name}'>")), under: None,
-                    parents: Vec::new(), ancestry: Vec::new(), answers: Vec::new(), reaches: Vec::new(), fields: Vec::new(),
-                    type_names: RefCell::new(None), shared: RefCell::new(Vec::new()), constants: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false) };
+                let blueprint = Blueprint { name: main_name.clone(), presentation: Some(format!("<module '{main_name}'>")), under: std::cell::RefCell::new(None),
+                    parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), answers: Vec::new(), reaches: Vec::new(), fields: Vec::new(),
+                    type_names: RefCell::new(None), shared: RefCell::new(Vec::new()), constants: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
                 self.made += 1;
                 let instance = Thing { of: Rc::new(blueprint), reclassified: RefCell::new(None), turn: self.made,
                     holds: RefCell::new(vec![(String::from("\0dictionary"), dictionary)]) };
@@ -24719,7 +24714,7 @@ impl<'a> Machine<'a> {
         let requested = asked.as_ref().map(Value::settled).or(implicit);
         let custom = requested.as_ref().is_some_and(|value| match value {
             Value::Intrinsic(Prim::SortOf, _) => false,
-            Value::Blueprint(class) => !self.builds_classes(class) && !class.ancestry.iter().any(|base| self.builds_classes(base)),
+            Value::Blueprint(class) => !self.builds_classes(class) && !class.ancestry().iter().any(|base| self.builds_classes(base)),
             _ => true,
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|value| self.parent_from_type(value)).collect::<Result<Vec<_>, _>>()? };
@@ -24823,19 +24818,19 @@ impl<'a> Machine<'a> {
         // file, as CPython's SourceFileLoader does for __main__.
         if self.rules.has_any_ext_builtin_loader_source {
             let get_source = ("get_source".to_owned(), Value::Intrinsic(Prim::LoaderSource, Rc::from("__loader_source")));
-            let loader_kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-                name: "SourceFileLoader".to_owned(), under: None, methods: Vec::new(), constants: Vec::new(),
+            let loader_kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
+                name: "SourceFileLoader".to_owned(), under: std::cell::RefCell::new(None), methods: Vec::new(), constants: Vec::new(),
                 shared: RefCell::new(vec![get_source]), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
-                has_slot_storage: false, weak_slot: Cell::new(None), type_names: RefCell::new(None), sealed: Cell::new(false) };
+                has_slot_storage: false, weak_slot: Cell::new(None), type_names: RefCell::new(None), sealed: Cell::new(false) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             self.made += 1;
             let loader = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),
                 of: Rc::new(loader_kind), holds: RefCell::new(Vec::new()), turn: self.made }));
             let _ = self.booked_put(&book, "__loader__", Some(loader));
         }
-        let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-            name: main.clone(), under: None, methods: Vec::new(), constants: Vec::new(),
+        let kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
+            name: main.clone(), under: std::cell::RefCell::new(None), methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), has_slot_storage: false, weak_slot: std::cell::Cell::new(None), type_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false),
-        };
+         mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: Rc::new(kind), holds: RefCell::new(vec![("\0dictionary".to_string(), Value::Shared(book))]), turn: self.made }));
         self.imported.insert(main.clone(), value); self.namespace_places.borrow_mut().take();
@@ -25233,7 +25228,7 @@ impl<'a> Machine<'a> {
     fn escape_names(&self, escape: &Escape, kind: &str) -> bool {
         match escape {
             Escape::Error(words) => words.split(':').next() == Some(kind),
-            Escape::Thrown(Value::Thing(t)) => t.blueprint().name == kind || t.blueprint().ancestry.iter().any(|b| b.name == kind),
+            Escape::Thrown(Value::Thing(t)) => t.blueprint().name == kind || t.blueprint().ancestry().iter().any(|b| b.name == kind),
             _ => false,
         }
     }
@@ -26053,7 +26048,7 @@ impl<'a> Machine<'a> {
         // of reading already is.
         let within = self.standing_in().map(str::to_string).map(|named| {
             let under = match self.class_bound(&named) {
-                Some(Value::Blueprint(c)) => c.under.as_ref().map(|b| b.name.clone()),
+                Some(Value::Blueprint(c)) => c.under().as_ref().map(|b| b.name.clone()),
                 _ => None,
             };
             (named, under)
@@ -26214,7 +26209,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
             let mut current = object.blueprint().clone();
             loop {
                 if Rc::ptr_eq(&current, class) { return true; }
-                match current.under.clone() { Some(parent) => current = parent, None => return false }
+                match current.under().clone() { Some(parent) => current = parent, None => return false }
             }
         },
         Value::KindOf(tag) => worth.kind() == Some(*tag),
@@ -27077,7 +27072,7 @@ impl Machine<'_> {
                         // The run’s own module objects answer to the native module kind.
                         if word == "module" && Self::native_word(class).as_deref() == Some("module") && self.namespace_holding(item).is_some() { return Ok(true); }
                         if let Value::Thing(thing) = item {
-                            return Ok(std::iter::once(&thing.blueprint()).chain(thing.blueprint().ancestry.iter()).any(|parent| Rc::ptr_eq(parent, class)));
+                            return Ok(std::iter::once(&thing.blueprint()).chain(thing.blueprint().ancestry().iter()).any(|parent| Rc::ptr_eq(parent, class)));
                         }
                         return Ok(Self::native_word(class).is_some() && item.kind_word() == word);
                     }
@@ -27089,7 +27084,7 @@ impl Machine<'_> {
                 // language files under `answers`.
                 Ok(matches!(item, Value::Thing(t) if {
                     let held = &t.blueprint();
-                    held.goes_by(&class.name, false) || held.ancestry.iter().any(|p| p.goes_by(&class.name, false))
+                    held.goes_by(&class.name, false) || held.ancestry().iter().any(|p| p.goes_by(&class.name, false))
                 }))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
