@@ -233,6 +233,124 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
     Ok(Value::Dict(Rc::new(entries.into())))
 }
 
+/// A text that keeps a lone surrogate is searched and cut through the
+/// code units themselves, so a stunted half is matched and handed back
+/// as the half it is, never as the noncharacter a stand-in would show.
+fn unpaired_work(numbers: &[u32], work: Work, given: &[Value], table: &Table) -> Option<Result<Value, String>> {
+    use Work::*;
+    let codes = |v: &Value| v.character_numbers();
+    match work {
+        FIND | RFIND | INDEX | RINDEX | COUNT => Some((|| -> Result<Value, String> {
+            if given.is_empty() || given.len() > 3 { return Err(complaint(table, "arguments")); }
+            let size = numbers.len();
+            let floor = if given.len() < 2 || matches!(given[1], Value::Nil) { 0 } else { count(&given[1], table)? };
+            let ceil = if given.len() < 3 || matches!(given[2], Value::Nil) { size as i64 } else { count(&given[2], table)? };
+            let clip = |n: i64| if n < 0 { (size as i64 + n).max(0) as usize } else { (n as usize).min(size) };
+            let (lo, hi) = (clip(floor), clip(ceil));
+            let usable = floor <= size as i64 && lo <= hi;
+            let window = if usable { &numbers[lo..hi] } else { &numbers[0..0] };
+            let needle = codes(&given[0]).ok_or_else(|| complaint(table, "arguments"))?;
+            if work == COUNT {
+                if !usable { return Ok(Value::Small(0)); }
+                if needle.is_empty() { return Ok(Value::Small(window.len() as i64 + 1)); }
+                let mut tally = 0i64;
+                let mut at = 0;
+                while at + needle.len() <= window.len() {
+                    if window[at..at + needle.len()] == needle[..] { tally += 1; at += needle.len(); } else { at += 1; }
+                }
+                return Ok(Value::Small(tally));
+            }
+            let mut hit = None;
+            if needle.is_empty() { hit = Some(if matches!(work, RFIND | RINDEX) { window.len() } else { 0 }); }
+            else {
+                let mut at = 0;
+                while at + needle.len() <= window.len() {
+                    if window[at..at + needle.len()] == needle[..] {
+                        hit = Some(at);
+                        if !matches!(work, RFIND | RINDEX) { break; }
+                    }
+                    at += 1;
+                }
+            }
+            match hit {
+                Some(at) => Ok(Value::Small((lo + at) as i64)),
+                None if matches!(work, INDEX | RINDEX) => Err(complaint(table, "missing")),
+                None => Ok(Value::Small(-1)),
+            }
+        })()),
+        SPLIT | RSPLIT => Some((|| -> Result<Value, String> {
+            if given.len() > 2 { return Err(complaint(table, "arguments")); }
+            let needle = given.first().filter(|v| !matches!(v, Value::Nil)).and_then(codes).ok_or_else(|| complaint(table, "separator"))?;
+            if needle.is_empty() { return Err(complaint(table, "separator")); }
+            let limit = if given.len() < 2 || matches!(given[1], Value::Nil) { -1 } else { count(&given[1], table)? };
+            let room = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut marks = Vec::new();
+            let mut at = 0;
+            while at + needle.len() <= numbers.len() {
+                if numbers[at..at + needle.len()] == needle[..] { marks.push(at); at += needle.len(); } else { at += 1; }
+            }
+            let chosen: Vec<usize> = if work == SPLIT { marks.into_iter().take(room).collect() }
+                else { let skipped = marks.len().saturating_sub(room); marks.into_iter().skip(skipped).collect() };
+            let mut pieces = Vec::new();
+            let mut edge = 0;
+            for mark in chosen { pieces.push(Value::characters(numbers[edge..mark].to_vec())); edge = mark + needle.len(); }
+            pieces.push(Value::characters(numbers[edge..].to_vec()));
+            Ok(Value::Vector(crate::tuples::Sequence::plain(pieces)).keep(true))
+        })()),
+        PARTITION | RPARTITION => Some((|| -> Result<Value, String> {
+            if given.len() != 1 { return Err(complaint(table, "arguments")); }
+            let needle = codes(&given[0]).ok_or_else(|| complaint(table, "separator"))?;
+            if needle.is_empty() { return Err(complaint(table, "separator")); }
+            let backwards = work == RPARTITION;
+            let mut at = None;
+            let mut i = 0;
+            while i + needle.len() <= numbers.len() {
+                if numbers[i..i + needle.len()] == needle[..] {
+                    at = Some(i);
+                    if !backwards { break; }
+                }
+                i += 1;
+            }
+            let (front, middle, back) = match at {
+                Some(i) => (numbers[..i].to_vec(), needle.clone(), numbers[i + needle.len()..].to_vec()),
+                None if backwards => (Vec::new(), Vec::new(), numbers.to_vec()),
+                None => (numbers.to_vec(), Vec::new(), Vec::new()),
+            };
+            Ok(Value::tuple(vec![Value::characters(front), Value::characters(middle), Value::characters(back)]))
+        })()),
+        REPLACE => Some((|| -> Result<Value, String> {
+            if given.len() < 2 || given.len() > 3 { return Err(complaint(table, "arguments")); }
+            let old = codes(&given[0]).ok_or_else(|| complaint(table, "arguments"))?;
+            let fresh = codes(&given[1]).ok_or_else(|| complaint(table, "arguments"))?;
+            let limit = if given.len() < 3 || matches!(given[2], Value::Nil) { -1 } else { count(&given[2], table)? };
+            let room = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut out: Vec<u32> = Vec::new();
+            let mut done = 0usize;
+            if old.is_empty() {
+                for &unit in numbers {
+                    if done < room { out.extend_from_slice(&fresh); done += 1; }
+                    out.push(unit);
+                }
+                if done < room { out.extend_from_slice(&fresh); }
+                return Ok(Value::characters(out));
+            }
+            let mut at = 0usize;
+            while at < numbers.len() {
+                if done < room && at + old.len() <= numbers.len() && numbers[at..at + old.len()] == old[..] {
+                    out.extend_from_slice(&fresh);
+                    at += old.len();
+                    done += 1;
+                } else {
+                    out.push(numbers[at]);
+                    at += 1;
+                }
+            }
+            Ok(Value::characters(out))
+        })()),
+        _ => None,
+    }
+}
+
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
     let settled: Vec<Value> = input.iter().map(Value::settled).collect();
     let input = settled.as_slice();
@@ -255,6 +373,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let answer = apply(table, work, _name, &operands, names)?;
             return Ok(if work == ISASCII { Value::Flag(false) } else { answer });
         }
+            if let Some(answer) = unpaired_work(numbers, work, &input[1..], table) { return answer; }
     }
     let Some(Value::Text(subject))=input.first() else {return Err(complaint(table,"receiver"));};
     let g=Given{tail:&input[1..],table};

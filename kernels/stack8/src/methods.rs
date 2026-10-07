@@ -89,6 +89,129 @@ fn bound(n: i64, length: usize) -> usize {
     if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length) }
 }
 
+/// A text that keeps a lone surrogate answers the searching and the
+/// cutting questions by walking the code units it keeps, so a half of a
+/// surrogate pair is compared, found and handed back as the very unit it
+/// is, rather than as the noncharacter a stand-in text would carry.
+fn codepoint_text_work(row: &[u32], op: &str, a: &[Value], fault: &dyn Fn(&str) -> String) -> Answer {
+    let piece = |span: &[u32]| Value::from_codes(span.to_vec());
+    match op {
+        "find" | "rfind" | "index" | "rindex" | "count" => {
+            if a.is_empty() || a.len() > 3 { return Err(fault("arguments")); }
+            let floor = match a.get(1) { None | Some(Value::Null) => 0, Some(v) => integer(v, fault)? };
+            let ceil = match a.get(2) { None | Some(Value::Null) => row.len() as i64, Some(v) => integer(v, fault)? };
+            let begin = bound(floor, row.len());
+            let end = bound(ceil, row.len());
+            let needle = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if floor > row.len() as i64 || begin > end {
+                if matches!(op, "index" | "rindex") { return Err(fault("substring")); }
+                return Ok(if op == "count" { Value::Small(0) } else { Value::Small(-1) });
+            }
+            let span = &row[begin..end];
+            if op == "count" {
+                if needle.is_empty() { return Ok(Value::Small(span.len() as i64 + 1)); }
+                let mut seen = 0i64;
+                let mut at = 0usize;
+                while at + needle.len() <= span.len() {
+                    if span[at..at + needle.len()] == needle[..] { seen += 1; at += needle.len(); } else { at += 1; }
+                }
+                return Ok(Value::Small(seen));
+            }
+            let mut hit = None;
+            if needle.is_empty() {
+                hit = Some(if matches!(op, "rfind" | "rindex") { span.len() } else { 0 });
+            } else {
+                let backwards = matches!(op, "rfind" | "rindex");
+                let mut at = 0usize;
+                while at + needle.len() <= span.len() {
+                    if span[at..at + needle.len()] == needle[..] {
+                        hit = Some(at);
+                        if !backwards { break; }
+                    }
+                    at += 1;
+                }
+            }
+            match hit {
+                Some(at) => Ok(Value::Small((begin + at) as i64)),
+                None if matches!(op, "index" | "rindex") => Err(fault("substring")),
+                None => Ok(Value::Small(-1)),
+            }
+        }
+        "split" | "rsplit" => {
+            if a.len() > 2 { return Err(fault("arguments")); }
+            let separator = a.first().filter(|v| !matches!(v.contents(), Value::Null))
+                .map(|v| v.contents().text_codes().ok_or_else(|| fault("arguments"))).transpose()?;
+            let Some(separator) = separator else { return Err(fault("separator")); };
+            if separator.is_empty() { return Err(fault("separator")); }
+            let limit = match a.get(1) { None | Some(Value::Null) => -1, Some(v) => integer(v, fault)? };
+            let room = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut breaks = Vec::new();
+            let mut at = 0usize;
+            while at + separator.len() <= row.len() {
+                if row[at..at + separator.len()] == separator[..] { breaks.push(at); at += separator.len(); } else { at += 1; }
+            }
+            let kept: Vec<usize> = if op == "split" { breaks.into_iter().take(room).collect() }
+                else { let spent = breaks.len().saturating_sub(room); breaks.split_off(spent) };
+            let mut spans = Vec::new();
+            let mut edge = 0usize;
+            for stop in kept { spans.push(piece(&row[edge..stop])); edge = stop + separator.len(); }
+            spans.push(piece(&row[edge..]));
+            Ok(Value::array(spans).held(true))
+        }
+        "partition" | "rpartition" => {
+            if a.len() != 1 { return Err(fault("arguments")); }
+            let separator = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if separator.is_empty() { return Err(fault("separator")); }
+            let from_end = op == "rpartition";
+            let mut at = None;
+            let mut i = 0usize;
+            while i + separator.len() <= row.len() {
+                if row[i..i + separator.len()] == separator[..] {
+                    at = Some(i);
+                    if !from_end { break; }
+                }
+                i += 1;
+            }
+            let (head, middle, tail) = match at {
+                Some(i) => (row[..i].to_vec(), separator.clone(), row[i + separator.len()..].to_vec()),
+                None if from_end => (Vec::new(), Vec::new(), row.to_vec()),
+                None => (row.to_vec(), Vec::new(), Vec::new()),
+            };
+            Ok(Value::tuple(vec![piece(&head), piece(&middle), piece(&tail)]))
+        }
+        "replace" => {
+            if a.len() < 2 || a.len() > 3 { return Err(fault("arguments")); }
+            let old = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let new = a[1].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let limit = match a.get(2) { None | Some(Value::Null) => -1, Some(v) => integer(v, fault)? };
+            let room = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut out: Vec<u32> = Vec::new();
+            let mut done = 0usize;
+            if old.is_empty() {
+                for &unit in row.iter() {
+                    if done < room { out.extend_from_slice(&new); done += 1; }
+                    out.push(unit);
+                }
+                if done < room { out.extend_from_slice(&new); }
+                return Ok(piece(&out));
+            }
+            let mut at = 0usize;
+            while at < row.len() {
+                if done < room && at + old.len() <= row.len() && row[at..at + old.len()] == old[..] {
+                    out.extend_from_slice(&new);
+                    at += old.len();
+                    done += 1;
+                } else {
+                    out.push(row[at]);
+                    at += 1;
+                }
+            }
+            Ok(piece(&out))
+        }
+        _ => Err(fault("arguments")),
+    }
+}
+
 /// The names a value of a builtin kind answers to, by the working
 /// each stands for. A kind answers its own alone: a list appends, a
 /// tuple does not.
@@ -196,6 +319,9 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
             };
             return Ok(Value::Flag(valid));
+        }
+        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex" | "count" | "split" | "rsplit" | "replace" | "partition" | "rpartition") => {
+            return codepoint_text_work(row, op, a, fault);
         }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;
