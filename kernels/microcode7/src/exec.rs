@@ -18310,6 +18310,10 @@ impl<'a> Machine<'a> {
                         };
                         match answerer {
                             Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.carried_native_fault(fault))?,
+                            Some(held) if self.table.has_any("ext.builtin.core.uncallable") && !self.work_on_class(2, vec![held.clone()]).map_err(|fault| self.carried_native_fault(fault))?.is_true() => {
+                                return Err(self.core_complaint("core.uncallable", &held.kind_word()).into());
+                            }
+                            Some(callable) => self.apply_class_member(callable, vec![Value::text(&word)]).map_err(|fault| self.carried_native_fault(fault))?,
                             _ => {
                                 let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
                                 return Err(format!("{opening}{word}{ending}"));
@@ -18460,11 +18464,15 @@ impl<'a> Machine<'a> {
                             }
                             // A namespace may answer for a name it has not,
                             // through the routine the table names for it.
-                            None if self.table.strings("ext.system.module.getattr").first().map(String::as_str).map_or(false, |word| thing.holds.borrow().iter().any(|(n, _)| n == word)) => {
+                            None if self.table.strings("ext.system.module.getattr").first().map(String::as_str).map_or(false, |word| thing.holds.borrow().iter().any(|(n, held)| n == word && !matches!(held.settled(), Value::Unset))) => {
                                 let word = self.table.strings("ext.system.module.getattr").first().map(String::as_str).unwrap_or_default();
-                                let answerer = thing.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
+                                let answerer = thing.holds.borrow().iter().find(|(n, held)| n == word && !matches!(held.settled(), Value::Unset)).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
                                 match answerer {
                                     Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.carried_native_fault(fault))?,
+                                    Some(held) if self.table.has_any("ext.builtin.core.uncallable") && !self.work_on_class(2, vec![held.clone()]).map_err(|fault| self.carried_native_fault(fault))?.is_true() => {
+                                        return Err(self.core_complaint("core.uncallable", &held.kind_word()).into());
+                                    }
+                                    Some(callable) => self.apply_class_member(callable, vec![Value::text(&called)]).map_err(|fault| self.carried_native_fault(fault))?,
                                     _ => return Err(format!("Undefined property: {}::${}", thing.blueprint().name, called)),
                                 }
                             }
@@ -24013,12 +24021,13 @@ impl Machine<'_> {
             (Value::text(name), self.outermost.cells.borrow()[beginning + position].clone())).collect::<Vec<_>>();
         members.push(("\0bindings".to_owned(), Value::Dict(Rc::new(slot_links.into()))));
         members.push(("\0loaded-module".to_owned(), Value::text(path)));
-        let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+        let kind = Rc::new(Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
-        };
+        });
+        if !self.rules.words_ext_builtin_weak_get.is_empty() { kind.weak_slot.set(Some(true)); }
         self.made += 1;
-        let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
+        let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(members), turn: self.made }));
         self.namespace_books.retain(|(name, _)| name != path);
         // The namespace the module's routines were built beside is the
         // very holdings of the module itself, so an attribute written,
@@ -24073,11 +24082,12 @@ impl Machine<'_> {
             let main_name = self.detail("main").to_owned();
             if main_name.len() > 0 && self.imported.get(&main_name).is_none() {
                 let dictionary = Value::Mutable(self.world_kept(), true);
-                let blueprint = Blueprint { name: main_name.clone(), presentation: Some(format!("<module '{main_name}'>")), under: None,
+                let blueprint = Rc::new(Blueprint { name: main_name.clone(), presentation: Some(format!("<module '{main_name}'>")), under: None,
                     parents: Vec::new(), ancestry: Vec::new(), answers: Vec::new(), reaches: Vec::new(), fields: Vec::new(),
-                    type_names: RefCell::new(None), shared: RefCell::new(Vec::new()), constants: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false) };
+                    type_names: RefCell::new(None), shared: RefCell::new(Vec::new()), constants: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false) });
+                if !self.rules.words_ext_builtin_weak_get.is_empty() { blueprint.weak_slot.set(Some(true)); }
                 self.made += 1;
-                let instance = Thing { of: Rc::new(blueprint), reclassified: RefCell::new(None), turn: self.made,
+                let instance = Thing { of: blueprint, reclassified: RefCell::new(None), turn: self.made,
                     holds: RefCell::new(vec![(String::from("\0dictionary"), dictionary)]) };
                 self.imported.insert(main_name, Value::Thing(Rc::new(instance)));
             }

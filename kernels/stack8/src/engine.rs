@@ -2765,11 +2765,27 @@ impl<'a> Engine<'a> {
 
     /// The routine a module holds under the definition's word for
     /// answering a name it has not, where the module holds one.
-    fn module_reader(&self, o: &Instance) -> Option<Rc<Routine>> {
+    /// A module's own answer for a name it has not, whatever that
+    /// answer holds: kept for the calling, which names a holder that is
+    /// no callable at all the way every call names one.
+    fn module_getattr_held(&self, o: &Instance) -> Option<Value> {
         let named = self.lang.module_getattr.as_deref()?;
-        let fields = o.fields.borrow();
-        let (_, held) = fields.iter().find(|(n, _)| n == named)?;
-        match held.contents() { Value::Routine(routine) => Some(routine), _ => None }
+        o.fields.borrow().iter().find(|(key, _)| key == named)
+            .map(|(_, held)| held.contents()).filter(|held| !matches!(held, Value::Blank))
+    }
+
+    /// A module's own answer for a name it has not, called with the
+    /// name: a routine runs, anything callable is applied, and anything
+    /// else is named not callable.
+    fn module_hook_call(&mut self, hook: Value, name: &str) -> Flow<Value> {
+        if let Value::Routine(routine) = hook {
+            self.invoke(&routine, vec![Value::text(name)])?;
+            return self.drop_top().map_err(Fault::Note);
+        }
+        if self.lang.core_words.contains_key("core.uncallable") && !self.class_work(2, vec![hook.clone()])?.is_true() {
+            return Err(self.core_fault("core.uncallable", &hook.core_kind()).into());
+        }
+        self.class_apply(hook, vec![Value::text(name)])
     }
 
     fn writes_for(&self, o: &Instance) -> Option<Rc<Routine>> {
@@ -11646,9 +11662,14 @@ impl<'a> Engine<'a> {
                         }
                         // A module may answer for a name it does not
                         // hold, through a routine of its own so named.
-                        None if self.module_reader(&o).is_some() => {
-                            let routine = self.module_reader(&o).expect("the routine");
-                            return self.invoke(&routine, vec![Value::text(name)]);
+                        None if self.module_getattr_held(&o).is_some() => {
+                            let hook = self.module_getattr_held(&o).expect("the hook");
+                            if let Value::Routine(routine) = hook {
+                                return self.invoke(&routine, vec![Value::text(name)]);
+                            }
+                            let answered = self.module_hook_call(hook, name)?;
+                            self.data.push(answered);
+                            return Ok(());
                         }
                         // A language with a word for a warning says a
                         // property is not there and reads nothing.
@@ -23506,8 +23527,10 @@ impl Engine<'_> {
         // attribute of the module and a key written through those
         // globals all meet in one place.
         self.made += 1;
+        let module_class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
+        if !self.lang.weak_refused.is_empty() { module_class.weak_storage.set(Some(true)); }
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
+            class: module_class,
             fields: RefCell::new(Vec::new()), mark: self.made,
         });
         local.globe = Some(Value::Fields(object.clone()));
@@ -23630,6 +23653,7 @@ impl Engine<'_> {
                 let class = Rc::new(Class { name: name.clone(), base: None, direct: vec![], lineage: vec![], outline: Some(format!("<module '{name}'>")),
                     answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![],
                     python_names: RefCell::new(None), shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots:false, sealed: std::cell::Cell::new(false) });
+                if !self.lang.weak_refused.is_empty() { class.weak_storage.set(Some(true)); }
                 let main = Value::Object(Rc::new(Instance { class, replacement_class: RefCell::new(None),
                     fields: RefCell::new(vec![("\0namespace".into(), Value::Bond(book))]), mark: self.made }));
                 self.modules.insert(name, main);
