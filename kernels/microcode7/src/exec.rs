@@ -4103,12 +4103,7 @@ impl<'a> Machine<'a> {
             };
         }
 
-        if let Value::Generator(inner) = walk {
-            // A walk already over still keeps what it gave back for this
-            // delegation, so it is not stepped a second time.
-            if inner.try_borrow().is_ok_and(|state| state.ended) { return Ok(None); }
-            return self.resume(inner, sent);
-        }
+        if let Value::Generator(inner) = walk { return self.resume(inner, sent); }
         // Only a suspended body and the wrapper above know a word for
         // being sent into; every other walk refuses the send here, where
         // the reference would look one up and not find it.
@@ -4606,7 +4601,15 @@ impl<'a> Machine<'a> {
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
                         Ok(None) if closing => { state.inner = None; }
-                        Ok(None) => { hurled = None; }
+                        Ok(None) => {
+                            // The body's own walk ended under the throw, so
+                            // what it gave back is what the delegation comes
+                            // to; it is kept in a wrapper, since stepping the
+                            // closed body again would clear it.
+                            let returned = inner.try_borrow().map(|held| held.result.clone()).unwrap_or(Value::Nil);
+                            state.inner = Some(Value::Wrapped(63, Rc::new(vec![Value::Generator(inner.clone()), Value::Shared(Rc::new(RefCell::new(returned))), Value::Shared(Rc::new(RefCell::new(Value::Flag(true))))]).into()));
+                            hurled = None;
+                        }
                         Err(Escape::Thrown(raised)) => { state.inner = None; hurled = Some(raised); }
                         Err(other) => { state.inner = None; return Err(other); }
                     }
