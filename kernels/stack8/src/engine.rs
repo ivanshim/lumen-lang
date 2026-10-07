@@ -94,6 +94,19 @@ fn watch_host_signals() {
     unsafe { signal(2, signal_arrived) };
 }
 
+/// Cancel and join a timer before its interpreter thread can disappear.
+struct HostAlarm {
+    deadline: std::time::Instant,
+    cancel: std::sync::mpsc::Sender<()>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for HostAlarm {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+    }
+}
+
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
@@ -304,6 +317,7 @@ pub struct Engine<'a> {
     /// one keeps its own way. Only a language taking signals up between
     /// statements ever writes here.
     signal_handlers: HashMap<i64, Value>,
+    alarm: Option<HostAlarm>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -1580,7 +1594,7 @@ impl<'a> Engine<'a> {
             class_children: RefCell::new(HashMap::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
-            signal_handlers: HashMap::new(),
+            signal_handlers: HashMap::new(), alarm: None,
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -15782,6 +15796,15 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// Preserve a handler's raised Python value across a native builtin boundary.
+    fn signal_checkpoint(&mut self) -> Res<()> {
+        match self.deliver_signals() {
+            Ok(()) => Ok(()),
+            Err(Fault::Note(words)) => Err(words),
+            Err(raised) => { self.carried = Some(raised); Err(self.special_fault()) }
+        }
+    }
+
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
@@ -18931,6 +18954,15 @@ impl<'a> Engine<'a> {
                         let Some((_, Value::Tuple(extra))) = fields.iter().find(|(name, _)| name == "\0structseq") else { return Err("TypeError: a struct sequence is required".into()); };
                         extra.get(as_index(&args[2])?).cloned().ok_or_else(|| "IndexError: tuple index out of range".to_string())?
                     }
+                    Some(Value::Text(op)) if matches!(op.as_ref(), "read" | "write") => {
+                        loop {
+                            self.signal_checkpoint()?;
+                            let answer = crate::posix::call(args)?;
+                            self.signal_checkpoint()?;
+                            let interrupted = matches!(&answer, Value::Tuple(row) if matches!(row.get(0), Some(Value::Small(code)) if *code == i64::from(libc::EINTR)));
+                            if !interrupted { break answer; }
+                        }
+                    }
                     _ => crate::posix::call(args)?,
                 }
             },
@@ -18985,7 +19017,17 @@ impl<'a> Engine<'a> {
             Builtin::Waited => {
                 arity(1)?;
                 let millionths = as_index(&args[0])?;
-                std::thread::sleep(std::time::Duration::from_micros(millionths as u64));
+                let mut requested = libc::timespec { tv_sec: (millionths / 1_000_000) as libc::time_t, tv_nsec: ((millionths % 1_000_000) * 1000) as libc::c_long };
+                self.signal_checkpoint()?;
+                loop {
+                    let mut rest = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+                    let code = unsafe { libc::nanosleep(&requested, &mut rest) };
+                    let error = std::io::Error::last_os_error();
+                    self.signal_checkpoint()?;
+                    if code == 0 { break; }
+                    if error.raw_os_error() != Some(libc::EINTR) { return Err(format!("OSError: {error}")); }
+                    requested = rest;
+                }
                 Value::Null
             }
             Builtin::NetAsk => {
@@ -19082,6 +19124,16 @@ impl<'a> Engine<'a> {
                     0 => {
                         arity(3)?;
                         let which = as_index(&args[1])? as i64;
+                        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+                        action.sa_sigaction = match args[2].contents() {
+                            Value::Small(0) => libc::SIG_DFL,
+                            Value::Small(1) => libc::SIG_IGN,
+                            _ => signal_arrived as *const () as usize,
+                        };
+                        unsafe { libc::sigemptyset(&mut action.sa_mask); }
+                        if unsafe { libc::sigaction(which as i32, &action, std::ptr::null_mut()) } != 0 {
+                            return Err(format!("OSError: {}", std::io::Error::last_os_error()));
+                        }
                         self.signal_handlers.insert(which, args[2].clone()).unwrap_or(Value::Null)
                     }
                     1 => {
@@ -19095,6 +19147,42 @@ impl<'a> Engine<'a> {
                         if (1..=64).contains(&which) {
                             SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
                         }
+                        Value::Null
+                    }
+                    3 => {
+                        arity(2)?;
+                        let seconds = args[1].as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")? as u32;
+                        let previous = self.alarm.take();
+                        let remaining = previous.as_ref().map_or(0, |timer| {
+                            let duration = timer.deadline.saturating_duration_since(std::time::Instant::now());
+                            duration.as_secs() + u64::from(duration.subsec_nanos() != 0)
+                        });
+                        drop(previous);
+                        if seconds != 0 {
+                            let delay = std::time::Duration::from_secs(u64::from(seconds));
+                            let deadline = std::time::Instant::now() + delay;
+                            let target = unsafe { libc::pthread_self() };
+                            let (cancel, wait) = std::sync::mpsc::channel();
+                            let worker = std::thread::Builder::new().stack_size(131072).spawn(move || {
+                                if matches!(wait.recv_timeout(delay), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+                                    unsafe { libc::pthread_kill(target, libc::SIGALRM); }
+                                }
+                            }).map_err(|error| format!("OSError: {error}"))?;
+                            self.alarm = Some(HostAlarm { deadline, cancel, worker: Some(worker) });
+                        }
+                        Value::Small(remaining as i64)
+                    }
+                    4 => {
+                        arity(1)?;
+                        unsafe {
+                            let mut blocked: libc::sigset_t = std::mem::zeroed();
+                            let mut before: libc::sigset_t = std::mem::zeroed();
+                            libc::sigfillset(&mut blocked);
+                            libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut before);
+                            if SIGNALS_PENDING.load(std::sync::atomic::Ordering::Relaxed) == 0 { libc::sigsuspend(&before); }
+                            libc::pthread_sigmask(libc::SIG_SETMASK, &before, std::ptr::null_mut());
+                        }
+                        self.signal_checkpoint()?;
                         Value::Null
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),
