@@ -167,7 +167,11 @@ def _state(value):
                     slots[name] = getattr(value, name)
     if slots:
         return (namespace, slots)
-    return namespace
+    # An instance that carries no attributes at all has no state to
+    # restore, and the reference writes none: a class that defines
+    # __setstate__ is still called for a class that has one, and only
+    # for a state that is there.
+    return namespace if namespace else None
 
 
 def _reduce(value, protocol):
