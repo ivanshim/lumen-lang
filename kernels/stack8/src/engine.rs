@@ -4144,10 +4144,13 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        let mut namespace = self.constructor_book(program).or_else(|| match program.globe.as_ref() {
-            Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) => Some(cell.clone()),
-            Some(value @ Value::Map(_)) => Some(Rc::new(RefCell::new(value.clone()))),
-            _ => None,
+        let mut namespace = self.constructor_book(program).or_else(|| {
+            self.armed_names.as_ref()?;
+            match program.globe.as_ref() {
+                Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) => Some(cell.clone()),
+                Some(value @ Value::Map(_)) => Some(Rc::new(RefCell::new(value.clone()))),
+                _ => None,
+            }
         });
         // A helper called by an isolated annotator keeps its original globals.
         if program.globe.is_none() && self.armed_names.is_none() {

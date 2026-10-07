@@ -11865,11 +11865,12 @@ impl<'a> Machine<'a> {
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
         let mut handed = match self.constructor_world(&program) {
             Some(namespace) => Some(namespace),
-            None => match &program.globe {
+            None if self.armed_names.is_some() => match &program.globe {
                 Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
                 Some(dictionary @ Value::Dict(_)) => Some(Rc::new(RefCell::new(dictionary.clone()))),
                 _ => None,
             },
+            None => None,
         };
         let caller_scope = self.annotation_scopes.last().filter(|(_, _, _, pointer)| {
             self.frames_named.last().is_some_and(|caller| Rc::as_ptr(caller) as usize == *pointer)
