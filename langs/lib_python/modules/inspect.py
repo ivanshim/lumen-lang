@@ -401,6 +401,8 @@ class Parameter:
         return text
 
     def __eq__(self, other):
+        if self is other:
+            return True
         if not isinstance(other, Parameter):
             return NotImplemented
         return (self._name == other._name and self._kind is other._kind
@@ -408,20 +410,52 @@ class Parameter:
                 and self._annotation == other._annotation)
 
     def __hash__(self):
-        return hash((self._name, id(self._kind), id(self._annotation)))
+        # The same fields equality reads: two parameters that compare
+        # alike go into the same bucket, and a default or annotation
+        # that cannot be an element of a set or a key of a map lets that
+        # show through, as it does in the reference.
+        return hash((self._name, self._kind, self._annotation, self._default))
 
 
 class Signature:
     _parameter_cls = Parameter
     empty = _empty
 
-    def __init__(self, parameters=None, *, return_annotation=_empty):
-        ordered = {}
-        if parameters is not None:
-            entries = parameters.items() if hasattr(parameters, 'items') else parameters
-            for name, param in entries:
-                if not isinstance(param, Parameter):
-                    raise TypeError('unexpected object in Signature.parameters')
+    def __init__(self, parameters=None, *, return_annotation=_empty,
+                 __validate_parameters__=True):
+        if parameters is None:
+            ordered = {}
+        elif not __validate_parameters__:
+            ordered = {param.name: param for param in parameters}
+        else:
+            # A row of parameters is checked as it is read: kinds only
+            # move forward, a variadic kind stands at most once, a
+            # default does not precede one that has none, and no name is
+            # taken twice.
+            ordered = {}
+            top_kind = _POSITIONAL_ONLY
+            seen_default = False
+            seen_variadic = set()
+            for param in parameters:
+                kind = param.kind
+                name = param.name
+                if kind in (_VAR_POSITIONAL, _VAR_KEYWORD):
+                    if kind in seen_variadic:
+                        raise ValueError('more than one ' + kind.description + ' parameter')
+                    seen_variadic.add(kind)
+                if kind.value < top_kind.value:
+                    raise ValueError('wrong parameter order: ' + top_kind.description
+                                     + ' parameter before ' + kind.description + ' parameter')
+                elif kind.value > top_kind.value:
+                    top_kind = kind
+                if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
+                    if param.default is _empty:
+                        if seen_default:
+                            raise ValueError('non-default argument follows default argument')
+                    else:
+                        seen_default = True
+                if name in ordered:
+                    raise ValueError('duplicate parameter name: ' + repr(name))
                 ordered[name] = param
         self._parameters = ordered
         self._return_annotation = return_annotation
@@ -436,7 +470,7 @@ class Signature:
 
     def replace(self, *, parameters=_empty, return_annotation=_empty):
         if parameters is _empty:
-            parameters = self._parameters
+            parameters = self._parameters.values()
         if return_annotation is _empty:
             return_annotation = self._return_annotation
         return type(self)(parameters, return_annotation=return_annotation)
@@ -471,25 +505,44 @@ class Signature:
         # in this runtime reads the one-line form back.
         return str(self)
 
+    def _hash_basis(self):
+        # The positional and positional-or-keyword parameters keep their
+        # order; keyword-only ones are read as a bag, since their order
+        # is not part of a call's shape; the return annotation is read
+        # as it stands.
+        ordered = tuple(param for param in self._parameters.values()
+                        if param.kind is not _KEYWORD_ONLY)
+        kw_only = {param.name: param for param in self._parameters.values()
+                   if param.kind is _KEYWORD_ONLY}
+        return ordered, kw_only, self._return_annotation
+
     def __eq__(self, other):
+        if self is other:
+            return True
         if not isinstance(other, Signature):
             return NotImplemented
-        return (list(self._parameters.values()) == list(other._parameters.values())
-                and self._return_annotation == other._return_annotation)
+        return self._hash_basis() == other._hash_basis()
 
     def __hash__(self):
-        return hash(tuple(self._parameters.values()))
+        ordered, kw_only, return_annotation = self._hash_basis()
+        return hash((ordered, frozenset(kw_only.values()), return_annotation))
 
     @staticmethod
     def _metaclass_call(obj):
         # The __call__ a class's own kind wrote before the common kind,
         # which decides whether the class is called as a plain type or
-        # through a hand-written metaclass.
+        # through a hand-written metaclass. The method is handed over
+        # bound to the kind that wrote it, so the class it is passed on
+        # a call is not read as one of the caller's arguments.
         for entry in type(obj).__mro__:
             if entry is type:
                 return None
             if '__call__' in entry.__dict__:
-                return entry.__dict__['__call__']
+                method = entry.__dict__['__call__']
+                bind = getattr(method, '__get__', None)
+                if bind is None:
+                    return method
+                return bind(entry, type(entry))
         return None
 
     @classmethod
