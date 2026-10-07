@@ -321,6 +321,7 @@ pub struct Builder<'a> {
     /// The future flags in force so far: those the caller handed over
     /// ahead of the reading, and any the text itself has imported.
     future_bits: i64,
+    flufl: bool,
     annotation_sites: Vec<(String, usize)>,
     module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
@@ -665,7 +666,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { optimize: settle, indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { flufl: future_bits & 0x400000 != 0, optimize: settle, indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -3558,6 +3559,7 @@ impl<'a> Builder<'a> {
                     self.future_bits |= match original.as_str() { "nested_scopes" => 0x10, "generators" => 0, "division" => 0x20000, "absolute_import" => 0x40000, "with_statement" => 0x80000, "print_function" => 0x100000, "unicode_literals" => 0x200000, "barry_as_FLUFL" => 0x400000, "generator_stop" => 0x800000, _ => 0x1000000 };
                     if original == "annotations" { self.annotations_as_strings = true; }
                 }
+                if future && original == "barry_as_FLUFL" { self.flufl = true; }
                 gathered.push((original, local, alias));
                 if !self.on_any("syntax.call.separator") {
                     break;
@@ -9414,6 +9416,14 @@ impl<'a> Builder<'a> {
                     let keyword = if text == "|" { "or" } else { "and" };
                     return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
                 }
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && text == "<>" && !self.flufl {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && text == "!=" && self.flufl {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
             }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {

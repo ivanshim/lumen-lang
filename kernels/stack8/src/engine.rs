@@ -27136,6 +27136,7 @@ impl Engine<'_> {
         trial.allow_top_level_await = allow_top_await;
         trial.future_bits = future_bits;
         trial.optimize = optimization;
+        trial.allow_flufl = flags & 0x400000 != 0;
         let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => {
