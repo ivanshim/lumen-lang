@@ -6208,11 +6208,10 @@ impl<'a> Engine<'a> {
             if Self::map_cell(receiver).is_some_and(|cell| Self::map_size(&cell).1 != store.revision) { continue; }
             break (store, found, keyed);
         };
-        let pairs = store.to_vec();
         if let Some(index) = found {
-            let value = pairs[index].1.clone();
+            let value = store[index].1.clone();
             if operation == "pop" {
-                let mut remaining = pairs;
+                let mut remaining = store.to_vec();
                 remaining.remove(index);
                 self.replace_map(receiver, remaining)?;
             }
@@ -6223,7 +6222,18 @@ impl<'a> Engine<'a> {
         }
         let value = args.get(1).cloned().unwrap_or(Value::Null);
         if operation == "setdefault" {
-            let mut grown = pairs;
+            // The new row goes into the map where it stands, so that the
+            // rows already there are not copied to make room for it.
+            if let Some(cell) = Self::map_cell(receiver) {
+                if crate::methods::reaches(&value, &cell, 0) || crate::methods::reaches(&keyed, &cell, 0) { return Err(self.lang.method_errors["unready"].clone()); }
+                drop(store);
+                let taken = std::mem::replace(&mut *cell.borrow_mut(), Value::Null);
+                let Value::Map(mut rows) = taken else { *cell.borrow_mut() = taken; return Err(self.lang.method_errors["unready"].clone()); };
+                store_insert_new(&mut rows, keyed, value.clone());
+                *cell.borrow_mut() = Value::Map(rows);
+                return Ok(value);
+            }
+            let mut grown = store.to_vec();
             grown.push((keyed, value.clone()));
             self.replace_map(receiver, grown)?;
         }
@@ -16468,6 +16478,10 @@ impl<'a> Engine<'a> {
                 };
             }
         }
+        // What was read of the receiver above is let go before a map is
+        // written into, so that the map is held by its place alone and is
+        // written where it stands rather than copied.
+        drop(contents);
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None }
                 .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()))

@@ -9909,6 +9909,10 @@ impl<'a> Machine<'a> {
                 };
             }
         }
+        // What was read of the receiver above is let go before a dictionary
+        // is written into, so that it is held by its place alone and is
+        // written where it stands rather than copied.
+        drop(actual);
         if matches!(receiver.settled(), Value::Set(_)) {
             let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None }
                 .filter(|code| !(Self::set_alters(*code) && receiver.set_sealed()));
@@ -13554,17 +13558,17 @@ impl<'a> Machine<'a> {
         if let Some(words) = self.cannot_key(&arguments[0]) { return Err(words); }
         let hashed = self.hash_key(&arguments[0])?;
         let mut current = receiver.settled();
-        let (pairs, found, keyed) = loop {
+        let (store, found, keyed) = loop {
             let Value::Dict(store) = current else { return Err(self.method_fault("unready")); };
             let located = self.map_locate(&store, Some(&store), &hashed)?;
             current = receiver.settled();
             if matches!(&current, Value::Dict(now) if now.serial != store.serial) { continue; }
-            break (store.to_vec(), located.0, located.1);
+            break (store, located.0, located.1);
         };
         if let Some(index) = found {
-            let answer = pairs[index].1.clone();
+            let answer = store[index].1.clone();
             if name == "pop" {
-                let mut remaining = pairs;
+                let mut remaining = store.to_vec();
                 remaining.remove(index);
                 self.replace_dict(receiver, remaining)?;
             }
@@ -13575,7 +13579,19 @@ impl<'a> Machine<'a> {
         }
         let answer = arguments.get(1).cloned().unwrap_or(Value::Nil);
         if name == "setdefault" {
-            let mut grown = pairs;
+            // The new entry goes into the dictionary where it stands, so
+            // that the entries already there are not copied to make room.
+            if let Value::Mutable(cell, _) | Value::Shared(cell) = receiver {
+                if crate::members::circular(&answer, cell, 0) || crate::members::circular(&keyed, cell, 0) { return Err(self.method_fault("unready")); }
+                drop(store);
+                drop(current);
+                let taken = cell.replace(Value::Nil);
+                let Value::Dict(mut entries) = taken else { cell.replace(taken); return Err(self.method_fault("unready")); };
+                store_insert_new(&mut entries, keyed, answer.clone());
+                cell.replace(Value::Dict(entries));
+                return Ok(answer);
+            }
+            let mut grown = store.to_vec();
             grown.push((keyed, answer.clone()));
             self.replace_dict(receiver, grown)?;
         }
