@@ -100,6 +100,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Adapter(w) if w.0 == 143 => "function",
+            // A slot a class names is carried by a member descriptor:
+            // the accessor __slots__ lays down, named the way type() names it.
+            Value::Adapter(w) if w.0 == 16 && matches!(w.1.as_slice(), [Value::Text(word), _] if word.as_ref() != "__weakref__") => "member_descriptor",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => {
                 let class = o.class_now();

@@ -162,6 +162,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("re._constants", include_str!("re/_constants.py"), "re/_constants.py"),
     ("re._parser", include_str!("re/_parser.py"), "re/_parser.py"),
     ("reprlib", include_str!("reprlib.py"), "reprlib.py"),
+    ("rlcompleter", include_str!("rlcompleter.py"), "rlcompleter.py"),
     ("runtime_adapters.copyreg", include_str!("runtime_adapters/copyreg.py"), "runtime_adapters/copyreg.py"),
     ("sched", include_str!("sched.py"), "sched.py"),
     ("secrets", include_str!("secrets.py"), "secrets.py"),

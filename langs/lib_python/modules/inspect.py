@@ -291,8 +291,53 @@ def __getattr__(name):
 
 
 # A signature reconstructed from the code fields the runtime exposes.
-# Frame walking and builtin text signatures remain unavailable.
+# Frame walking and builtin text signatures remain unavailable, so a
+# callable whose body the runtime cannot hand out has no signature and
+# says so, exactly where the reference says the same of a builtin it
+# has no text signature for.
+_empty = _void()
+
+
+class Parameter:
+    POSITIONAL_ONLY = 0
+    POSITIONAL_OR_KEYWORD = 1
+    VAR_POSITIONAL = 2
+    KEYWORD_ONLY = 3
+    VAR_KEYWORD = 4
+    empty = _empty
+
+    def __init__(self, name, kind, *, default=_empty, annotation=_empty):
+        self.name = name
+        self.kind = kind
+        self.default = default
+        self.annotation = annotation
+
+    def __str__(self):
+        lead = {Parameter.VAR_POSITIONAL: '*', Parameter.VAR_KEYWORD: '**'}.get(self.kind, '')
+        text = lead + self.name
+        if self.default is not _empty:
+            text += '=' + repr(self.default)
+        return text
+
+    def __repr__(self):
+        return '<Parameter "%s">' % (self.name,)
+
+
 class Signature:
+    def __init__(self, parameters=None):
+        self._parameters = {}
+        parts = []
+        if parameters is None:
+            parameters = ()
+        for parameter in parameters:
+            self._parameters[parameter.name] = parameter
+            parts.append(str(parameter))
+        self._text = '(' + ', '.join(parts) + ')'
+
+    @property
+    def parameters(self):
+        return self._parameters
+
     @classmethod
     def from_callable(cls, obj, *, follow_wrapped=True, globals=None, locals=None,
                       eval_str=False, annotation_format=1):
@@ -312,12 +357,20 @@ class Signature:
         if hasattr(obj, '__func__'):
             obj = obj.__func__
         if isinstance(obj, type):
-            obj = obj.__init__
+            original = obj
+            obj = getattr(obj, '__init__', None)
+            if obj is None or not hasattr(obj, '__code__'):
+                raise ValueError('no signature found for builtin type ' + repr(original))
             bound = True
         elif not hasattr(obj, '__code__'):
             if not callable(obj):
                 raise TypeError(repr(obj) + ' is not a callable object')
-            obj = obj.__call__
+            # A builtin without a body the runtime keeps has no signature,
+            # the same verdict the reference reaches for one it cannot read.
+            call = getattr(obj, '__call__', None)
+            if call is None or not hasattr(call, '__code__'):
+                raise ValueError('no signature found for builtin ' + repr(obj))
+            obj = call
             bound = True
         code = getattr(obj, '__code__', None)
         if code is None:
@@ -329,28 +382,39 @@ class Signature:
         defaults = getattr(obj, '__defaults__', None) or ()
         kwdefaults = getattr(obj, '__kwdefaults__', None) or {}
         parts = []
+        parameters = []
         for i in range(1 if bound else 0, count):
             part = names[i]
+            default = _empty
             if i >= count - len(defaults):
-                part += '=' + repr(defaults[i - count + len(defaults)])
+                default = defaults[i - count + len(defaults)]
+                part += '=' + repr(default)
             parts.append(part)
+            kind = Parameter.POSITIONAL_ONLY if i + 1 <= posonly else Parameter.POSITIONAL_OR_KEYWORD
+            parameters.append(Parameter(names[i], kind, default=default))
             if i + 1 == posonly:
                 parts.append('/')
         cursor = count + kwonly
         if code.co_flags & CO_VARARGS:
             parts.append('*' + names[cursor])
+            parameters.append(Parameter(names[cursor], Parameter.VAR_POSITIONAL))
             cursor += 1
         elif kwonly:
             parts.append('*')
         for i in range(count, count + kwonly):
             part = names[i]
+            default = _empty
             if part in kwdefaults:
-                part += '=' + repr(kwdefaults[part])
+                default = kwdefaults[part]
+                part += '=' + repr(default)
             parts.append(part)
+            parameters.append(Parameter(names[i], Parameter.KEYWORD_ONLY, default=default))
         if code.co_flags & CO_VARKEYWORDS:
             parts.append('**' + names[cursor])
+            parameters.append(Parameter(names[cursor], Parameter.VAR_KEYWORD))
         result = cls()
         result._text = '(' + ', '.join(parts) + ')'
+        result._parameters = {parameter.name: parameter for parameter in parameters}
         return result
 
     def __str__(self):
