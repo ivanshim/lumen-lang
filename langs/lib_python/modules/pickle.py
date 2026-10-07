@@ -1,6 +1,5 @@
-# The standard pickle stream, protocols 0 through 5, exactly as
-# CPython's Lib/pickle.py writes it; the reduction of each value
-# comes from the runtime through _reduce.
+# Write standard pickle opcodes for protocols 0 through 5;
+# the reduction of each value comes from the runtime through _reduce.
 import codecs
 import copyreg
 import marshal
@@ -191,6 +190,8 @@ def _state(value):
     if method is not None:
         return method()
     namespace = __reduce_native__(value, True)
+    if isinstance(namespace, dict) and not namespace:
+        namespace = None
     slots = {}
     for cls in type(value).__mro__:
         names = getattr(cls, '__slots__', ())
@@ -205,6 +206,32 @@ def _state(value):
     if slots:
         return (namespace, slots)
     return namespace
+
+
+# Validate reconstruction hooks without replacing their results or errors.
+def _newargs(value):
+    method_ex = getattr(value, '__getnewargs_ex__', None)
+    if method_ex is not None:
+        result = method_ex()
+        if not isinstance(result, tuple):
+            raise TypeError("__getnewargs_ex__ should return a tuple, not '" + type(result).__name__ + "'")
+        size = tuple.__len__(result)
+        if size != 2:
+            raise ValueError('__getnewargs_ex__ should return a tuple of length 2, not ' + str(size))
+        args = tuple.__getitem__(result, 0)
+        keywords = tuple.__getitem__(result, 1)
+        if not isinstance(args, tuple):
+            raise TypeError("first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '" + type(args).__name__ + "'")
+        if not isinstance(keywords, dict):
+            raise TypeError("second item of the tuple returned by __getnewargs_ex__ must be a dict, not '" + type(keywords).__name__ + "'")
+        return args, keywords, True
+    method = getattr(value, '__getnewargs__', None)
+    if method is None:
+        return (), None, False
+    args = method()
+    if not isinstance(args, tuple):
+        raise TypeError("__getnewargs__ should return a tuple, not '" + type(args).__name__ + "'")
+    return args, None, True
 
 
 def _reduce(value, protocol):
@@ -232,8 +259,6 @@ def _reduce(value, protocol):
     for base in (list, dict, set, frozenset, tuple, int, float, str, bytes, bytearray, complex):
         if isinstance(value, base) and cls is not base:
             state = _state(value)
-            if state == {}:
-                state = None
             if base is set or base is frozenset:
                 return (cls, (list(value),), state)
             if base is bytearray:
@@ -242,20 +267,7 @@ def _reduce(value, protocol):
                 return (cls, (bytes(value),), state)
             if base is complex:
                 return (copyreg.__newobj__, (cls, value.real, value.imag), state)
-            method_ex = getattr(value, '__getnewargs_ex__', None)
-            keywords = None
-            if callable(method_ex):
-                try:
-                    args, keywords = method_ex()
-                    args = tuple(args)
-                except Exception:
-                    args, keywords = (), None
-            else:
-                method = getattr(value, '__getnewargs__', None)
-                try:
-                    args = tuple(method()) if method is not None else ()
-                except Exception:
-                    args = ()
+            args, keywords, supplied = _newargs(value)
             if keywords:
                 if base is list:
                     return (copyreg.__newobj_ex__, (cls, args, keywords), state, iter(value))
@@ -266,31 +278,16 @@ def _reduce(value, protocol):
                 return (copyreg.__newobj__, (cls,) + args, state, iter(value))
             if base is dict:
                 return (copyreg.__newobj__, (cls,) + args, state, None, iter(value.items()))
-            if args:
+            if args or supplied:
                 return (copyreg.__newobj__, (cls,) + args, state)
             return (copyreg.__newobj__, (cls, base(value)), state)
     slots = getattr(cls, '__slots__', ())
     if protocol < 2 and slots and _reduction_hook(value, '__getstate__') is None:
         raise TypeError('a class that defines __slots__ without defining __getstate__ cannot be pickled')
     state = _state(value)
-    if state == {}:
-        state = None
     if protocol < 2:
         return (copyreg._reconstructor, (cls, object, None), state)
-    method_ex = getattr(value, '__getnewargs_ex__', None)
-    keywords = None
-    if callable(method_ex):
-        try:
-            args, keywords = method_ex()
-            args = tuple(args)
-        except Exception:
-            args, keywords = (), None
-    else:
-        method = getattr(value, '__getnewargs__', None)
-        try:
-            args = tuple(method()) if method is not None else ()
-        except Exception:
-            args = ()
+    args, keywords, _supplied = _newargs(value)
     if keywords:
         return (copyreg.__newobj_ex__, (cls, args, keywords), state)
     return (copyreg.__newobj__, (cls,) + args, state)
