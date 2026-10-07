@@ -291,11 +291,6 @@ class MultibyteStreamReader:
     def __init__(self, stream, errors='strict'):
         codecs.StreamReader.__init__(self, stream, errors)
         self._decoder = MultibyteIncrementalDecoder(errors, self.codec)
-        self.decode = self._decode
-
-    def _decode(self, data, errors='strict'):
-        self._decoder.errors = errors
-        return self._decoder.decode(data, False), len(data)
 
     # Read byte units, retaining incomplete input only across bounded reads.
     def _read(self, method, size):
