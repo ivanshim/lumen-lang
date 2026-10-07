@@ -5284,7 +5284,7 @@ impl<'a> Machine<'a> {
     /// already bound, which is called as it stands.
     fn ask_leaving(&mut self, watched: &Value, arguments: &[Value]) -> Result<Option<Value>, String> {
         match watched {
-            Value::Bound(..) | Value::Method(..) | Value::Routine(_) => match self.apply_class_member(watched.clone(), arguments.to_vec()).and_then(|value| self.await_completion(value)) {
+            Value::Bound(..) | Value::Method(..) | Value::Routine(_) | Value::Wrapped(3 | 7, _) => match self.apply_class_member(watched.clone(), arguments.to_vec()).and_then(|value| self.await_completion(value)) {
                 Ok(value) => Ok(Some(value)),
                 Err(Escape::Error(message)) => Err(message),
                 Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
@@ -5306,7 +5306,7 @@ impl<'a> Machine<'a> {
 
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
-        if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
+        if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_) | Value::Wrapped(3 | 7, _)) { return Ok(false); }
         let unready = self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned();
         let arguments = match raised {
             None => vec![Value::Nil; 3],
@@ -6520,7 +6520,7 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
-                    if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
+                    if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_) | Value::Wrapped(3 | 7, _)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned().into());
                     }
