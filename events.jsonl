@@ -6703,3 +6703,13 @@
 {"t":"2026-10-07T00:25:40Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-07T00:26:41Z","event":"exited","job":"review-auto-dsflash-builtin-0010","code":0}
 {"t":"2026-10-07T00:28:56Z","event":"review-started","job":"dsflash-json-speed","review":"review-auto-dsflash-json-speed-0015"}
+{"t":"2026-10-07T00:31:17Z","event":"exited","job":"review-auto-dsflash-json-speed-0015","code":0}
+{"t":"2026-10-07T00:33:08Z","event":"returned","job":"dsflash-builtin","review":"review-auto-dsflash-builtin-0010","commit":"22c71cdf2","note":"(1st; mc7 compile uses __bytes__ not buffer protocol -> kernel disagreement; test_compile optimize/AST path unfinished; builtin 113->114 both) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T00:33:08Z","event":"returned","job":"dsflash-datetime-speed","review":"review-auto-dsflash-datetime-speed-0005","commit":"de6d2f41a","note":"(1st; mc7 ghost.rs stirred() stale snapshot delays weakref callbacks; datetime 686->655s / 811->653s) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T00:33:08Z","event":"returned","job":"dsflash-json-speed","review":"review-auto-dsflash-json-speed-0015","commit":"5e760acbc","note":"(1st; test_json still TIMEOUT 870s on both kernels on Lambda, no reference gain) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T00:33:57Z","event":"started","job":"dsflash-iterlen","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T00:34:24Z","event":"quota","codex_week_used":82,"codex_credits":0,"claude_week_used":25,"claude_5h_used":23,"kimi_5h_used":0,"kimi_month_used":0.8962,"kimi_code_used":0,"deepseek_usd":354.64}
+{"t":"2026-10-07T00:34:29Z","event":"luna-meter","reset":"2026-10-02T21:19:41Z","metered":82,"expected":84.6,"gap":-2.6,"status":"ok"}
+{"t":"2026-10-07T00:34:39Z","event":"checkin","status":"done","actions":"returned dsflash-builtin (1st; mc7 buffer-protocol disagreement + compile optimize/AST unfinished); returned dsflash-datetime-speed (1st; mc7 weakref stirred() regression); returned dsflash-json-speed (1st; test_json still TIMEOUT both kernels); 3 or-resume lines queued (DS Flash); pruned target of idle accepted dspro-context, stdlib-cmd, dsflash-netrc (5.8 GB)","notes":"box load 6.5, 11.4 GB available, disk 82%->78%; Sol 7/8 running + review dataclasses queued; DS Flash 4 running + 5 queued (iterlen, nturl2path, 3 resumes); no open PRs; luna gap -2.6 ok, no new alerts; Codex week 82%"}
+{"t":"2026-10-07T00:38:59Z","event":"review-started","job":"dsflash-dataclasses","review":"review-auto-dsflash-dataclasses-0025"}
+{"t":"2026-10-07T00:41:59Z","event":"exited","job":"review-auto-dsflash-dataclasses-0025","code":0}
