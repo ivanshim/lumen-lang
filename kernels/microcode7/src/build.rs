@@ -12374,6 +12374,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
 
 fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
     fn literal(value: &Value, constants: &mut Vec<Value>) {
+        if matches!(value, Value::Unset) { return; }
         if let Value::Routine(p) = value {
             if p.frameless { return; }
             if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants); }

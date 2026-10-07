@@ -4134,7 +4134,7 @@ impl<'a> Machine<'a> {
                     if let Some(index) = fields.iter().position(|word| word == key) {
                         let result = match index {
                             0 => Value::text(if p.ident == "<generator>" { "<genexpr>" } else if p.ident == "<program>" { self.rules.trace_words.get(10).map_or("<module>", String::as_str) } else { &p.ident }),
-                            1 => Value::text(&p.qualification),
+                            1 => Value::text(if p.qualification.len() > 0 { &p.qualification } else { match p.ident.as_str() { "<program>" => self.rules.trace_words.get(10).map(String::as_str).unwrap_or("<module>"), name => name } }),
                             2 | 3 => Value::Small(p.taking.as_ref().map_or(0, |rules| rules.iter().filter(|r| **r == if index == 2 { 'p' } else { 'n' }).count()) as i64),
                             4 => Value::Small(p.locals.len() as i64),
                             5 => Value::tuple(p.referenced.iter().map(|n| Value::text(n)).collect()),

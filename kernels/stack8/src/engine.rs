@@ -4248,9 +4248,10 @@ impl<'a> Engine<'a> {
         });
         let caller_frame = self.trace_frame.take();
         self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
+        let surrounding_comp = self.inline_comp.clone();
         let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
             caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
-        } else { None });
+        } else { surrounding_comp });
         let caller_line = self.line;
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
@@ -5375,6 +5376,7 @@ impl<'a> Engine<'a> {
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
             ("\0mapping-locals".into(), Value::Flag(local_book.is_some())),
+            ("\0mapping-source".into(), local_book.unwrap_or(Value::Null)),
         ]) }))
     }
 
@@ -5405,7 +5407,41 @@ impl<'a> Engine<'a> {
 
     fn refresh_frame(&mut self, object: &Rc<Instance>) {
         let fields = object.fields.borrow();
-        if fields.iter().any(|(key, value)| key == "\0mapping-locals" && matches!(value, Value::Flag(true))) { return; }
+        if fields.iter().any(|(key, value)| key == "\0mapping-locals" && matches!(value, Value::Flag(true))) {
+            let Some(Value::Bond(source)) = fields.iter().find(|(key, _)| key == "\0mapping-source").map(|(_, value)| value.clone()) else { return };
+            let current = fields[3].1.clone();
+            let previous = fields.iter().find(|(key, _)| key == "\0mapping-shadow").map(|(_, value)| value.clone());
+            drop(fields);
+            if let (Value::Bond(view), Some(Value::Tuple(names))) = (&current, previous) {
+                if !Rc::ptr_eq(view, &source) {
+                    for name in names.iter() { if let Value::Text(name) = name { book_write(view, name, None); } }
+                }
+            }
+            let mut names_seen = Vec::new();
+            let mut locals = Value::Bond(source.clone());
+            if let Some((owner, names, values)) = self.inline_comp.clone() {
+                if owner == Rc::as_ptr(object) as usize {
+                    let copied = match self.builtin_call(Builtin::Dict, "dict", vec![(None, Value::Bond(source.clone()))]) {
+                        Ok(value) => value.contents(), Err(message) => { self.carried = Some(Fault::Note(message)); return; }
+                    };
+                    let view = match current { Value::Bond(view) if !Rc::ptr_eq(&view, &source) => view, _ => Rc::new(RefCell::new(Value::Null)) };
+                    *view.borrow_mut() = copied;
+                    for (name, value) in names.iter().zip(values) {
+                        let held = value.contents();
+                        if Self::public_name(name) && !matches!(held, Value::Blank | Value::Gap) {
+                            book_write(&view, name, Some(held));
+                            names_seen.push(Value::text(name));
+                        }
+                    }
+                    locals = Value::Bond(view);
+                }
+            }
+            let mut fields = object.fields.borrow_mut();
+            fields[3].1 = locals;
+            if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "\0mapping-shadow") { *value = Value::tuple(names_seen); }
+            else { fields.push(("\0mapping-shadow".into(), Value::tuple(names_seen))); }
+            return;
+        }
         let Value::Routine(program) = &fields[6].1 else { return };
         let Value::Tuple(slots) = &fields[5].1 else { return };
         let mut pairs: Vec<(Value, Value)> = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
@@ -25911,7 +25947,8 @@ impl Engine<'_> {
         let constants = Value::tuple(checked.code_constants.iter().map(|v| match v {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
-        let fields = vec![("co_consts".to_string(), constants)];
+        let module_name = self.lang.trace_fields.get(10).map_or("<module>", String::as_str);
+        let fields = vec![("co_consts".to_string(), constants), ("co_name".to_string(), Value::text(module_name)), ("co_qualname".to_string(), Value::text(module_name))];
         let mut fields = fields;
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1))];
         fields.splice(0..0, source_fields);

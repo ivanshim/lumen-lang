@@ -3515,7 +3515,7 @@ impl<'a> Engine<'a> {
                         let words = |v: &[String]| Value::tuple(v.iter().map(|s| Value::text(s)).collect());
                         let value = match field {
                             0 => Value::text(if f.ident.starts_with("#generator") { "<genexpr>" } else if f.ident == "<program>" { self.lang.trace_fields.get(10).map_or("<module>", String::as_str) } else { &f.ident }),
-                            1 => Value::text(&f.qualified),
+                            1 => Value::text(if !f.qualified.is_empty() { &f.qualified } else if f.ident == "<program>" { self.lang.trace_fields.get(10).map_or("<module>", String::as_str) } else { &f.ident }),
                             2 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 1).count())),
                             3 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 2).count())),
                             4 => number(f.local_names.len()),

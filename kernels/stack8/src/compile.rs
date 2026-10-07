@@ -13136,6 +13136,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
     for (at, word) in words.iter().enumerate() {
         if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
         match word {
+            Instr::Const(Value::Blank | Value::Gap) => {},
             Instr::Const(value) => {
                 if let Value::Routine(r) = value {
                     if let Some(a) = &r.annotation { constants.push(Value::Routine(a.clone())); }

@@ -606,13 +606,13 @@ fn run_all() {
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();
     let command_source = (inv.language.name() == "python" && inv.file == "<string>" && inv.module_source.is_some()).then(|| source.clone());
-    let source = with_library(&inv.kernel, inv.language.name(), source);
-    // Command strings have no filesystem source. Register their actual code
-    // recursively in the same cache used by interactive Python code.
+    // Initialize the language library before registering a command's code.
+    // Command strings have no filesystem source and share the interactive cache.
     let source = if let Some(text) = command_source {
         let literal = serde_json::to_string(&text).expect("a source string can be quoted");
-        format!("__import__('linecache')._register_code(__import__('sys')._getframe().f_code, {literal}, '<string>')\n{source}")
-    } else { source };
+        let registered = format!("__import__('linecache')._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\n{source}");
+        with_library(&inv.kernel, inv.language.name(), registered)
+    } else { with_library(&inv.kernel, inv.language.name(), source) };
     // How many lines the library put before the program's own text, so
     // that a kernel can name the line a program was written on rather
     // than the line of the two run together.

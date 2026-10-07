@@ -763,3 +763,32 @@ class _Parser(_ClassStatementParser):
                                (last.end_lineno, last.end_col_offset),
                                name=name.text, bases=bases, keywords=options,
                                body=body, decorator_list=[], type_params=[])
+
+class Delete(stmt):
+    _fields = ('targets',)
+
+_DeleteStatementParser = _Parser
+class _Parser(_DeleteStatementParser):
+    def deleted_target(self, node):
+        if isinstance(node, (Name, Attribute, Subscript)):
+            node.ctx = Del()
+        elif isinstance(node, (Tuple, List)):
+            node.ctx = Del()
+            for item in node.elts:
+                self.deleted_target(item)
+        else:
+            _syntax('cannot delete expression')
+
+    def parse_stmt(self):
+        if not self.at_name('del'):
+            return _DeleteStatementParser.parse_stmt(self)
+        first = self.pop()
+        targets = []
+        while True:
+            value, start, end = self.parse_expr(False)
+            self.deleted_target(value)
+            targets.append(value)
+            if not self.at_op(','):
+                break
+            self.pop()
+        return self.positioned(Delete, (first.srow, first.scol), end, targets=targets)

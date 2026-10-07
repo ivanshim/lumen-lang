@@ -5451,6 +5451,7 @@ impl<'a> Machine<'a> {
         entries.push((String::from("\0observed"), Value::Nil));
         entries.push((String::from("\0instruction"), Value::Small(-1)));
         entries.push((String::from("\0supplied-locals"), Value::Flag(locals.is_some())));
+        entries.push((String::from("\0locals-origin"), locals.unwrap_or(Value::Nil)));
         self.made += 1;
         Some(Rc::new(Thing { reclassified: RefCell::new(None), of: self.activation_kind.as_ref().unwrap().clone(), turn: self.made, holds: RefCell::new(entries) }))
     }
@@ -5505,9 +5506,51 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn update_activation_locals(&self, item: &Rc<Thing>) {
+    fn update_activation_locals(&mut self, item: &Rc<Thing>) {
         let kept = item.holds.borrow();
-        if kept.iter().any(|entry| entry.0 == "\0supplied-locals" && matches!(entry.1, Value::Flag(true))) { return; }
+        if kept.iter().any(|entry| entry.0 == "\0supplied-locals" && matches!(entry.1, Value::Flag(true))) {
+            let origin = kept.iter().find(|entry| entry.0 == "\0locals-origin").map(|entry| entry.1.clone());
+            let Some(Value::Shared(origin)) = origin else { return };
+            let cache = kept[3].1.clone();
+            let old_names = kept.iter().find(|entry| entry.0 == "\0gathered-shadows").map(|entry| entry.1.clone());
+            drop(kept);
+            if let (Value::Shared(cache), Some(Value::Tuple(words))) = (&cache, old_names) {
+                if !Rc::ptr_eq(cache, &origin) {
+                    for word in words.iter() {
+                        if let Value::Text(word) = word { set_down(cache, word, None); }
+                    }
+                }
+            }
+            let mut temporary_names = Vec::new();
+            let mut exposed = Value::Shared(origin.clone());
+            if let Some((owner, names, environment)) = self.gathering_locals.clone() {
+                if owner == Rc::as_ptr(item) as usize {
+                    let original = origin.borrow().settled();
+                    let copied = match original {
+                        Value::Dict(pairs) => Value::Dict(Rc::new(pairs.to_vec().into())),
+                        other => match self.dictionary(&[other], Vec::new()) {
+                            Ok(copied) => copied, Err(message) => { self.got_away = Some(Escape::Error(message)); return; }
+                        },
+                    };
+                    let cache = match cache { Value::Shared(cache) if !Rc::ptr_eq(&cache, &origin) => cache, _ => Rc::new(RefCell::new(Value::Nil)) };
+                    cache.replace(copied);
+                    for (word, value) in names.iter().zip(environment.cells.borrow().iter()) {
+                        let value = value.settled();
+                        if !Self::visible_name(word) || matches!(value, Value::Unset) { continue; }
+                        set_down(&cache, word, Some(value));
+                        temporary_names.push(Value::text(word));
+                    }
+                    exposed = Value::Shared(cache);
+                }
+            }
+            let mut kept = item.holds.borrow_mut();
+            kept[3].1 = exposed;
+            match kept.iter_mut().find(|entry| entry.0 == "\0gathered-shadows") {
+                Some(entry) => entry.1 = Value::tuple(temporary_names),
+                None => kept.push((String::from("\0gathered-shadows"), Value::tuple(temporary_names))),
+            }
+            return;
+        }
         let Value::Bound(body, environment) = &kept[5].1 else { return };
         let mut entries = Vec::new();
         for (word, value) in body.idents.iter().zip(environment.cells.borrow().iter()) {
@@ -5536,10 +5579,10 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn update_watched_locals(&self) {
-        if let Some(item) = &self.active_trace {
+    fn update_watched_locals(&mut self) {
+        if let Some(item) = self.active_trace.clone() {
             let observed = matches!(item.holds.borrow().get(3).map(|pair| &pair.1), Some(Value::Shared(_)));
-            if observed { self.update_activation_locals(item); }
+            if observed { self.update_activation_locals(&item); }
         }
     }
 
@@ -12079,9 +12122,10 @@ impl<'a> Machine<'a> {
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
         if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        let outer_gathering = self.gathering_locals.clone();
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
-        } else { None });
+        } else { outer_gathering });
         let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -26292,6 +26336,8 @@ impl<'a> Machine<'a> {
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
+        let title = self.rules.trace_words.get(10).map(String::as_str).unwrap_or("<module>");
+        holds.extend([("co_name".to_owned(), Value::text(title)), ("co_qualname".to_owned(), Value::text(title))]);
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
