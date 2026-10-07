@@ -65,7 +65,22 @@ def filterwarnings(action, message='', category=Warning, module='', lineno=0, ap
 
 
 def simplefilter(action, category=Warning, lineno=0, append=False):
-    filterwarnings(action, '', category, '', lineno, append)
+    # Unlike filterwarnings, CPython's simplefilter also accepts tuples
+    # for the exception matcher used by assertWarns.
+    global filters
+    if action not in ['error', 'ignore', 'always', 'default', 'once', 'module']:
+        raise ValueError('invalid action: ' + repr(action))
+    if not isinstance(lineno, int):
+        raise TypeError('lineno must be an int')
+    if lineno < 0:
+        raise ValueError('lineno must be an int >= 0')
+    rule = [action, '', category, '', lineno]
+    if append:
+        if rule not in filters:
+            filters = [*filters, rule]
+    else:
+        filters = [rule, *[old for old in filters if old != rule]]
+    _state.seen = []
 
 
 def resetwarnings():

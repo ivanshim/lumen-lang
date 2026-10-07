@@ -1844,7 +1844,7 @@ def write_mirror(lang, d, files, reasons):
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
             relative = source.relative_to(modules).as_posix()
-            if relative in adapters.values():
+            if relative in adapters.values() or relative in layout.get("exclude", []):
                 continue
             name = relative[:-(len(ext) + 1)].replace("/", ".")
             if name.endswith(".__init__"):

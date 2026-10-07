@@ -20,5 +20,8 @@
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
     "test": "runtime_adapters/test.py"
-  }
+  },
+  "exclude": [
+    "unittest.py"
+  ]
 }
