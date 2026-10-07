@@ -7481,3 +7481,28 @@
 {"t":"2026-10-07T14:56:09Z","event":"quota","codex_week_used":28,"codex_credits":0,"claude_week_used":31,"claude_5h_used":14,"kimi_5h_used":0,"kimi_month_used":0.9204,"kimi_code_used":0,"deepseek_usd":334.91}
 {"t":"2026-10-07T14:56:13Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":28,"expected":27.3,"gap":"+0.7","status":"ok"}
 {"t":"2026-10-07T14:56:20Z","event":"checkin","status":"done","actions":"accepted dsflash-exceptstar (64a90ca7d, 21e; except_star absent->60/60 both); accepted dsflash-hash (b35bdf56a, 21e; test_hash 11->30/30 both); removed target/ of idle accepted dsflash-exceptstar + dsflash-hash (4G); prune-merged freed 0; queued dsflash-colorize (test__colorize, library) for the free DS Flash slot","notes":"box disk 91%->89% (alert flag cleared); Mac disk 81%; box load 8.3, 11.6 GB available; codex week 28%, claude week 31%; no open PRs; Sol 11 + review slot, DS Flash 11 + 1 queued, DS Pro 1, Kimi 1, Sonnet 1; luna: no new alerts, meter gap +0.7 ok; json-speed still held for userstring-sol"}
+{"t":"2026-10-07T14:59:52Z","event":"exited","job":"dsflash-getpass","code":0}
+{"t":"2026-10-07T15:00:49Z","event":"exited","job":"dsflash-iterlen","code":0}
+{"t":"2026-10-07T15:02:47Z","event":"exited","job":"dsflash-minicompat","code":0}
+{"t":"2026-10-07T15:04:21Z","event":"finished","job":"dsflash-getpass","exit_time":"2026-10-07T14:59:52Z"}
+{"t":"2026-10-07T15:04:21Z","event":"review-queued","job":"dsflash-getpass","review":"review-auto-dsflash-getpass-1504"}
+{"t":"2026-10-07T15:04:24Z","event":"finished","job":"dsflash-iterlen","exit_time":"2026-10-07T15:00:49Z"}
+{"t":"2026-10-07T15:04:24Z","event":"review-queued","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-1504"}
+{"t":"2026-10-07T15:04:26Z","event":"finished","job":"dsflash-minicompat","exit_time":"2026-10-07T15:02:46Z"}
+{"t":"2026-10-07T15:04:26Z","event":"review-queued","job":"dsflash-minicompat","review":"review-auto-dsflash-minicompat-1504"}
+{"t":"2026-10-07T15:04:30Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T15:04:58Z","event":"review-started","job":"dsflash-getpass","review":"review-auto-dsflash-getpass-1504"}
+{"t":"2026-10-07T15:08:43Z","event":"exited","job":"review-auto-dsflash-getpass-1504","code":0}
+{"t":"2026-10-07T15:09:59Z","event":"review-started","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-1504"}
+{"t":"2026-10-07T15:10:10Z","event":"exited","job":"integrate-21d","code":0}
+{"t":"2026-10-07T15:13:13Z","event":"exited","job":"review-auto-dsflash-iterlen-1504","code":0}
+{"t":"2026-10-07T15:13:29Z","event":"accepted","job":"dsflash-getpass","review":"review-auto-dsflash-getpass-1504","batch":"21e","commit":"6cb83adf4","branch":"fix/dsflash-getpass","note":"test_getpass absent->16/24 both kernels (8 upstream termios skips); byte-exact getpass.py/test_getpass.py; mock.py flat name-list specs + class patch decoration; overlaps mock.py in 21d dspro-uuid + 21e dsflash-mimetypes/claude-functools-sol - combine adapters, do not take whole file; follow-ups: patch.TEST_PREFIX, autospec, termios; coverage re-certify (calendar/io timeouts)"}
+{"t":"2026-10-07T15:13:29Z","event":"returned","job":"integrate-21d","batch":"21d","commit":"ea23db970","note":"(2nd; str regression fixed; blocked by perf vs count-batch21c: urlparse ~2x both kernels (paths-merge Unicode scan), enumerate/iter +40%, mc7 dict/csv/bisect (pickle-merge hot-path cost); mc7 calendar/io timeouts + mc7 pickle coverage to re-check) -> returns/integrate-21d.md + sol-resume queued","counts":"stack8 10994/12200, mc7 10917/12110"}
+{"t":"2026-10-07T15:13:29Z","event":"queued","job":"integrate-21d","model":"gpt-6.1-sol","line":"sol-resume integrate-21d"}
+{"t":"2026-10-07T15:15:00Z","event":"started","job":"stdlib-codecs-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T15:15:29Z","event":"queued","job":"dsflash-stat","model":"deepseek-flash","line":"ds-new dsflash-stat deepseek-flash","note":"test_stat below 18/22 (library, small), worktree at 589a950a9"}
+{"t":"2026-10-07T15:15:29Z","event":"queued","job":"dsflash-ucn","model":"deepseek-flash","line":"ds-new dsflash-ucn deepseek-flash","note":"new subject test_ucn (language, not-yet), worktree at 589a950a9"}
+{"t":"2026-10-07T15:15:29Z","event":"queued","job":"dsflash-type-aliases","model":"deepseek-flash","line":"ds-new dsflash-type-aliases deepseek-flash","note":"new subject test_type_aliases (language, not-yet), worktree at 589a950a9"}
+{"t":"2026-10-07T15:15:48Z","event":"quota","codex_week_used":29,"codex_credits":0,"claude_week_used":31,"claude_5h_used":15,"kimi_5h_used":0,"kimi_month_used":0.9211,"kimi_code_used":0,"deepseek_usd":334.64}
+{"t":"2026-10-07T15:15:52Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":29,"expected":28.1,"gap":"+0.9","status":"ok"}
+{"t":"2026-10-07T15:16:08Z","event":"checkin","status":"done","actions":"accepted dsflash-getpass (6cb83adf4, 21e; getpass absent->16/24 both); returned integrate-21d (2nd: str fixed; perf vs 21c urlparse ~2x, enumerate/iter +40%, mc7 dict/csv/bisect; mc7 calendar/io/pickle coverage) -> returns/integrate-21d.md + sol-resume queued; removed target/ of idle accepted dsflash-getpass (1.6G); prune-merged freed 0; DS Flash 3 free slots filled: dsflash-stat (test_stat 18/22), dsflash-ucn (test_ucn), dsflash-type-aliases (test_type_aliases) briefs + worktrees at 589a950a9, queued","notes":"box disk 90%->89%, load 5.5, 11.9 GB available; Mac disk 80%; luna: 1 more turn in known OpenClaw relay session (expected), meter gap +0.9 ok; no open PRs; integrate-21d Telegram summary already sent by the worker"}
