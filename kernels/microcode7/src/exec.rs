@@ -20765,9 +20765,14 @@ impl<'a> Machine<'a> {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
                 // Resolve inherited user hooks before the native fallback.
                 if let Some(entry) = self.inherited_entry(class, self.rules.detail_getitem) {
-                    if matches!(entry.settled(), Value::Nil) && self.is_fault_kind(class) {
-                        let name = &class.name;
-                        return Err(format!("TypeError: type '{name}' is not subscriptable").into());
+                    // A class-getitem left as nothing leaves the class
+                    // unsubscriptable, whether it is a fault kind or not;
+                    // a text standing in that place is no callable at
+                    // all. Each is refused by the kind the value has.
+                    match entry.settled() {
+                        Value::Nil => return Err(format!("TypeError: type '{}' is not subscriptable", class.name).into()),
+                        Value::Text(_) => return Err(String::from("TypeError: 'str' object is not callable").into()),
+                        _ => {}
                     }
                     let asked = match entry {
                         method @ Value::Wrapped(5, _) => {
