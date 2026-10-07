@@ -6956,3 +6956,19 @@
 {"t":"2026-10-07T06:30:15Z","event":"review-queued","job":"stdlib-codecs","review":"review-auto-stdlib-codecs-0630"}
 {"t":"2026-10-07T06:30:17Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-07T06:31:26Z","event":"started","job":"dsflash-structseq","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T06:34:25Z","event":"queued","job":"dsflash-exceptstar","model":"deepseek-flash","line":"ds-new dsflash-exceptstar deepseek-flash"}
+{"t":"2026-10-07T06:34:49Z","event":"quota","codex_week_used":7,"codex_credits":0,"claude_week_used":27,"claude_5h_used":9,"kimi_5h_used":0,"kimi_month_used":0.9001,"kimi_code_used":0,"deepseek_usd":344.44}
+{"t":"2026-10-07T06:34:52Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":7,"expected":6.7,"gap":"+0.3","status":"ok"}
+{"t":"2026-10-07T06:35:14Z","event":"checkin","status":"done","actions":"no verdicts pending; prune-merged freed 0MB (box disk 80%); DS Flash slot 12 filled: dsflash-exceptstar (test_except_star) brief + worktree at 589a950a9, queued","notes":"box load 9.95, 7.0 GB available: 4 DS Flash + 1 Sol resume + 3 reviews queued; Mac disk 89% (just under the 90% line); integrate-21d opt-level-1 build running 91 min (worker watching it, not a runaway); luna-meter gap +0.3 ok, no new alerts; no open PRs"}
+{"t":"2026-10-07T06:36:27Z","event":"exited","job":"review-auto-dsflash-tomllib-0625","code":127}
+{"t":"2026-10-07T06:36:27Z","event":"review-started","job":"dsflash-tomllib","review":"review-auto-dsflash-tomllib-0625"}
+{"t":"2026-10-07T06:40:19Z","event":"note","text":"Traceback (most recent call last):"}
+{"t":"2026-10-07T06:40:19Z","event":"note","text":"  File \"<stdin>\", line 18, in <module>"}
+{"t":"2026-10-07T06:40:19Z","event":"note","text":"  File \"<frozen genericpath>\", line 67, in getmtime"}
+{"t":"2026-10-07T06:40:19Z","event":"note","text":"FileNotFoundError: [Errno 2] No such file or directory: '/home/rocky/coord-archive/lumen-coord/brief-review-wave10.md'"}
+{"t":"2026-10-07T06:40:23Z","event":"note","text":"archive-sync: archived to lumenlang2:coord-archive; pruned 6 old local items (active kept: claude-io dsflash-genericclass dsflash-hash dsflash-iterlen dsflash-json-speed dsflash-rlcompleter dsflash-shelve-dbm dsflash-structseq dsflash-subclassinit dsflash-userstring-sol dspro-argparse integrate-21d kimi-filecmp stdlib-descr stdlib-email stdlib-pathlib stdlib-traceback stdlib-typing stdlib-unittest stdlib-warnings stdlib-zipfile )"}
+{"t":"2026-10-07T06:41:29Z","event":"review-started","job":"dsflash-mimetypes","review":"review-auto-dsflash-mimetypes-0630"}
+{"t":"2026-10-07T06:43:44Z","event":"exited","job":"review-auto-dsflash-mimetypes-0630","code":0}
+{"t":"2026-10-07T06:46:30Z","event":"review-started","job":"stdlib-codecs","review":"review-auto-stdlib-codecs-0630"}
+{"t":"2026-10-07T06:51:31Z","event":"started","job":"dsflash-yieldfrom","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-07T06:52:23Z","event":"exited","job":"review-auto-stdlib-codecs-0630","code":0}
