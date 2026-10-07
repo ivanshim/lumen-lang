@@ -144,6 +144,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("logging", include_str!("logging.py"), "logging.py"),
     ("marshal", include_str!("marshal.py"), "marshal.py"),
     ("math", include_str!("math.py"), "math.py"),
+    ("mimetypes", include_str!("mimetypes.py"), "mimetypes.py"),
     ("ntpath", include_str!("ntpath.py"), "ntpath.py"),
     ("numbers", include_str!("numbers.py"), "numbers.py"),
     ("operator", concat!(include_str!("operator.py"), "\n", include_str!("runtime_adapters/operator.py")), "operator.py"),
