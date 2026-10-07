@@ -4625,7 +4625,7 @@ impl<'a> Engine<'a> {
     /// map of its own; a parent's annotations are never handed down.
     pub(super) fn class_annotations(&mut self,c:&Rc<Class>) -> Flow<Value> {
         let word=self.lang.class_annotations[0].clone();
-        if let Some((_,held))=c.shared.borrow().iter().find(|(n,_)|*n==word) { return Ok(held.clone()); }
+        if let Some((_,held))=c.shared.borrow().iter().find(|(n,_)|*n==word || n == "__annotations_cache__") { return Ok(held.clone()); }
         let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
         let overwritten = { let members = c.shared.borrow(); members.iter().find(|(key, _)| key == &annotate).or_else(|| members.iter().find(|(key, _)| key == "__annotate_func__")).map(|(_, value)| value.contents()) };
         let made = match overwritten {
@@ -4633,7 +4633,7 @@ impl<'a> Engine<'a> {
             Some(callable) => self.class_apply(callable, vec![Value::Small(1)])?,
             None => self.evaluate_class_annotations(c)?,
         };
-        c.shared.borrow_mut().push((word,made.clone()));
+        c.shared.borrow_mut().push(("__annotations_cache__".into(),made.clone()));
         Ok(made)
     }
     fn evaluate_class_annotations(&mut self, c: &Rc<Class>) -> Flow<Value> {
@@ -5027,7 +5027,7 @@ impl<'a> Engine<'a> {
                     let Some(incoming) = value.as_ref() else { return Err("TypeError: cannot delete __annotate__ attribute".into()); };
                     if !matches!(incoming.contents(), Value::Null) {
                         if !self.class_work(2, vec![incoming.clone()])?.is_true() { return Err("TypeError: __annotate__ must be callable or None".into()); }
-                        if let Some(annotation) = self.lang.class_annotations.first() { c.shared.borrow_mut().retain(|(key, _)| key != annotation); }
+                        if let Some(annotation) = self.lang.class_annotations.first() { c.shared.borrow_mut().retain(|(key, _)| key != annotation && key != "__annotations_cache__"); }
                     }
                 }
                 if name == self.class_word("type_params") && value.is_none() {
@@ -5040,6 +5040,10 @@ impl<'a> Engine<'a> {
                     c.shared.borrow_mut().retain(|(key, _)| key != "__annotate_func__");
                     let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
                     Self::write_members(&mut c.shared.borrow_mut(), &annotate, Some(Value::Null), false).map_err(|_| self.class_refusal())?;
+                    if !c.shared.borrow().iter().any(|(key, _)| key == name) {
+                        Self::write_members(&mut c.shared.borrow_mut(), "__annotations_cache__", value, false).map_err(|_| absent)?;
+                        return Ok(Value::Null);
+                    }
                 }
                 Self::write_members(&mut c.shared.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }

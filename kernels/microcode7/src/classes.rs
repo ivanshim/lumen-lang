@@ -3520,14 +3520,14 @@ impl<'a> Machine<'a> {
     /// own, and a parent's annotations never come down.
     pub(super) fn blueprint_annotations(&mut self,b:&Rc<Blueprint>)->Res {
         let word=self.rules.words_ext_stmt_class_annotations.first().map(String::as_str).unwrap_or_default().to_owned();
-        if let Some(own)=Self::own_entry(b,&word){return Ok(own);}
+        if let Some(own)=Self::own_entry(b,&word).or_else(|| Self::own_entry(b, "__annotations_cache__")){return Ok(own);}
         let title = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
         let made = match Self::own_entry(b, &title).or_else(|| Self::own_entry(b, "__annotate_func__")).map(|entry| entry.settled()) {
             Some(Value::Nil) => self.collection_cell(Value::Dict(Rc::new(Vec::new().into()))),
             Some(evaluator) => self.apply_class_member(evaluator, vec![Value::Small(1)])?,
             None => self.resolve_blueprint_annotations(b)?,
         };
-        b.shared.borrow_mut().push((word, made.clone()));
+        b.shared.borrow_mut().push((String::from("__annotations_cache__"), made.clone()));
         Ok(made)
     }
     fn resolve_blueprint_annotations(&mut self, b: &Rc<Blueprint>) -> Res {
@@ -5427,7 +5427,7 @@ impl<'a> Machine<'a> {
                         None => return Err(String::from("TypeError: cannot delete __annotate__ attribute").into()),
                         Some(value) if !matches!(value.settled(), Value::Nil) => {
                             if !self.work_on_class(2, vec![value.clone()])?.is_true() { return Err(String::from("TypeError: __annotate__ must be callable or None").into()); }
-                            if let Some(annotation) = self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) { b.shared.borrow_mut().retain(|entry| entry.0 != annotation); }
+                            if let Some(annotation) = self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) { b.shared.borrow_mut().retain(|entry| entry.0 != annotation && entry.0 != "__annotations_cache__"); }
                         }
                         _ => {},
                     }
@@ -5442,6 +5442,11 @@ impl<'a> Machine<'a> {
                     b.shared.borrow_mut().retain(|entry| entry.0 != "__annotate_func__");
                     let evaluator = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
                     Self::change_entry(&mut b.shared.borrow_mut(), &evaluator, Some(Value::Nil));
+                    if Self::own_entry(b, key).is_none() {
+                        let changed = Self::change_entry(&mut b.shared.borrow_mut(), "__annotations_cache__", replacement);
+                        if !changed { return Err(self.absent_attribute(&subject, key)); }
+                        return Ok(Value::Nil);
+                    }
                 }
                 Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
             },
