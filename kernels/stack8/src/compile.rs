@@ -3119,6 +3119,10 @@ impl<'a> Compiler<'a> {
                     self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::AsyncContext(false), 1);
+                    if lang.bind_names {
+                        let old_manager = self.cell_to_write(&manager);
+                        self.put(Instr::Forget(old_manager));
+                    }
                     leaving
                 } else {
                     self.read(&manager);
@@ -3150,6 +3154,10 @@ impl<'a> Compiler<'a> {
                     return Err("SyntaxError: cannot assign to expression".into());
                 }
                 self.give_places(begin, end, &held).map_err(|e| self.loop_target_error(begin, end, e))?;
+                if lang.bind_names {
+                    let scratch = self.cell_to_write(&held);
+                    self.put(Instr::Forget(scratch));
+                }
                 self.pos = end;
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
@@ -9883,7 +9891,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }

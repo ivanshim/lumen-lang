@@ -79,6 +79,9 @@ impl Value {
             },
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(slot)) if slot.0 == 29
                 && matches!(slot.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            Value::Adapter(w) if w.0 == 182 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 183 => if matches!(w.1.last(), Some(Value::Object(_))) { "method-wrapper" } else { "wrapper_descriptor" },
+            Value::Adapter(w) if w.0 == 184 => "method-wrapper",
             Value::Adapter(w) if w.0 == 129 => "function",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
@@ -157,6 +160,18 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
+            Value::Adapter(slot) if slot.0 == 183 => {
+                let hashed = match (slot.1.first(), slot.1.last()) {
+                    (Some(Value::Class(owner)), Some(Value::Object(receiver))) => {
+                        let mut descriptor = std::rc::Rc::as_ptr(owner) as usize >> 4;
+                        let word = match slot.1.get(1) { Some(Value::Text(word)) => word.as_ref(), _ => "__init__" };
+                        for byte in word.bytes() { descriptor = descriptor.rotate_left(5) ^ usize::from(byte); }
+                        descriptor ^ (std::rc::Rc::as_ptr(receiver) as usize >> 4)
+                    }
+                    _ => std::rc::Rc::as_ptr(slot) as usize >> 4,
+                };
+                Some(finish(hashed as i64))
+            }
             Value::Complex(z) => {
                 if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
                 let a = crate::complex::real(z.real).core_hash()?;
