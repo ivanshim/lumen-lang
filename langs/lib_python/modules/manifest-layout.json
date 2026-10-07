@@ -21,6 +21,7 @@
     "importlib": "runtime_adapters/importlib.py",
     "ast": "runtime_adapters/ast.py",
     "sys": "runtime_adapters/sys.py",
-    "unicodedata": "runtime_adapters/unicodedata.py"
+    "unicodedata": "runtime_adapters/unicodedata.py",
+    "codecs": "runtime_adapters/codecs.py"
   }
 }

@@ -135,7 +135,11 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
         format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys", library)
     } else { library };
     let lead = source.len() - source.trim_start().len();
-    if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
+    let standalone = language != "python" || source.get(lead + prologue.len()..).is_some_and(|tail| {
+        let tail = tail.trim_start_matches([' ', '\t']);
+        tail.is_empty() || tail.starts_with(['\n', '\r', '#'])
+    });
+    if !prologue.is_empty() && standalone && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
         let cut = lead + prologue.len();
         return format!("{}\n{}\n{}", &source[..cut], library, &source[cut..]);
     }
@@ -413,6 +417,33 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
     process::exit(1);
 }
 
+/// Decode source with the same CPython-derived legacy mapping data as codecs.
+fn legacy_source(bytes: &[u8], encoding: &str, given: &str) -> String {
+    static TABLES: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    let tables = TABLES.get_or_init(|| serde_json::from_str(include_str!("../langs/lib_python/modules/_legacy_charmaps.json")).expect("valid codec mapping data"));
+    let rows = tables[encoding].as_array().expect("a registered mapping family");
+    let first = if encoding == "gbk" { 0x81 } else { 0xa1 };
+    let mut text = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let lead = bytes[at];
+        if lead < 128 { text.push(char::from(lead)); at += 1; continue; }
+        let mapped = if lead >= first && lead <= 0xfe && at + 1 < bytes.len() {
+            let trail = bytes[at + 1];
+            let column = if encoding == "gbk" && (0x40..=0xfe).contains(&trail) && trail != 0x7f {
+                Some(usize::from(trail - 0x40 - u8::from(trail > 0x7f)))
+            } else if encoding == "gb2312" && (0xa1..=0xfe).contains(&trail) { Some(usize::from(trail - 0xa1)) } else { None };
+            column.and_then(|column| rows[usize::from(lead - first)].as_str()?.chars().nth(column)).filter(|character| *character != '\0')
+        } else { None };
+        if let Some(character) = mapped { text.push(character); at += 2; }
+        else {
+            eprintln!("SyntaxError: encoding problem: {encoding} ({given})");
+            process::exit(1);
+        }
+    }
+    text
+}
+
 /// Read a Python file according to PEP 263: a UTF-8 signature is
 /// discarded before it reaches the lexer, and a coding word in a
 /// comment among the first two lines names how the rest decodes. The
@@ -451,6 +482,8 @@ fn python_file_source(written: Vec<u8>, given: &str) -> String {
             bytes.iter().copied().map(char::from).collect()
         }
         "latin1" | "latin" | "iso88591" | "isolatin1" => bytes.iter().copied().map(char::from).collect(),
+        "gbk" | "cp936" | "ms936" | "936" => legacy_source(bytes, "gbk", given),
+        "gb2312" | "gb231280" | "euccn" | "chinese" | "csiso58gb231280" => legacy_source(bytes, "gb2312", given),
         "cp437" | "437" | "ibm437" => decode_with_upper(bytes, CP437_UPPER),
         "cp1251" => decode_with_upper(bytes, CP1251_UPPER),
         "iso88597" => decode_with_upper(bytes, ISO88597_UPPER),
@@ -572,7 +605,14 @@ fn run_all() {
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();
+    let command_source = (inv.language.name() == "python" && inv.file == "<string>" && inv.module_source.is_some()).then(|| source.clone());
     let source = with_library(&inv.kernel, inv.language.name(), source);
+    // Command strings have no filesystem source. Register their actual code
+    // recursively in the same cache used by interactive Python code.
+    let source = if let Some(text) = command_source {
+        let literal = serde_json::to_string(&text).expect("a source string can be quoted");
+        format!("__import__('linecache')._register_code(__import__('sys')._getframe().f_code, {literal}, '<string>')\n{source}")
+    } else { source };
     // How many lines the library put before the program's own text, so
     // that a kernel can name the line a program was written on rather
     // than the line of the two run together.
@@ -971,6 +1011,31 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[used..];
                 break;
+            }
+            // Python command strings retain their conventional virtual filename.
+            Some("-c") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                if rest.len() < 2 { usage(program); }
+                module_source = Some(said(&rest[1]));
+                file = Some("<string>".to_owned());
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[2..];
+                break;
+            }
+            // Apply Python's debug-range switch before compiling any code.
+            Some(flag) if file.is_none() && (flag == "-X" || flag.starts_with("-X"))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                let (option, used) = if flag == "-X" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let (key, value) = option.split_once('=').unwrap_or((&option, "True"));
+                let mut options: std::collections::BTreeMap<String, String> = env::var("LUMEN_PYTHON_XOPTIONS").ok()
+                    .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                options.insert(key.to_owned(), value.to_owned());
+                env::set_var("LUMEN_PYTHON_XOPTIONS", serde_json::to_string(&options).unwrap());
+                if key == "no_debug_ranges" { env::set_var("PYTHONNODEBUGRANGES", "1"); }
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[used..];
             }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
