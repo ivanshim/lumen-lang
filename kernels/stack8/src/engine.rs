@@ -5319,7 +5319,13 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            return Some(Value::Bond(self.book_here(true)));
+            // Resolve globals from the inspected frame's routine, even when
+            // the inspector is running in a different imported module.
+            let routine = match &object.fields.borrow()[6].1 {
+                Value::Routine(body) => body.clone(),
+                _ => return None,
+            };
+            return Some(Value::Bond(self.routine_outer(&routine)));
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);
@@ -23492,7 +23498,10 @@ impl Engine<'_> {
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
-        let filename = own_file.as_deref().unwrap_or(path);
+        let namespace_roots = own_file.as_deref().filter(|file| file.starts_with('\0'))
+            .map(|file| file[1..].split('\0').collect::<Vec<_>>());
+        let namespace_origin = format!("<namespace {path}>");
+        let filename = if namespace_roots.is_some() { namespace_origin.as_str() } else { own_file.as_deref().unwrap_or(path) };
         let tokens = match self.text_tokens(&source, 0) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => {
@@ -23528,9 +23537,10 @@ impl Engine<'_> {
         let file_word = self.lang.source_bindings.iter().find(|(part, _)| part == "file").map(|(_, w)| w.clone());
         let package_dir = own_file.as_deref().filter(|file| file.ends_with("/__init__.py"))
             .and_then(|file| std::path::Path::new(file).parent()).map(|dir| dir.to_string_lossy().into_owned());
-        let package_owner = if package_dir.is_some() { path } else { path.rsplit_once('.').map_or("", |(owner, _)| owner) };
-        let package_path = package_dir.as_deref().map(|dir| Value::array(vec![Value::text(dir)]).held(false));
-        let package_name = if package_dir.is_some() { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
+        let package_owner = if package_dir.is_some() || namespace_roots.is_some() { path } else { path.rsplit_once('.').map_or("", |(owner, _)| owner) };
+        let package_path = namespace_roots.as_ref().map(|roots| Value::array(roots.iter().map(|dir| Value::text(dir)).collect()).held(false))
+            .or_else(|| package_dir.as_deref().map(|dir| Value::array(vec![Value::text(dir)]).held(false)));
+        let package_name = package_owner;
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
             let initial = if self.lang.module_path.as_ref() == Some(name) && package_path.is_some() { package_path.clone().unwrap() }
@@ -23559,7 +23569,7 @@ impl Engine<'_> {
         // the same unconditional way, whether or not the module's own
         // text ever names it: a module that never spells `__file__`
         // still answers one to a caller that asks by attribute.
-        if let Some(word) = &file_word {
+        if let Some(word) = file_word.as_ref().filter(|_| namespace_roots.is_none()) {
             if !fields.iter().any(|(key, _)| key == word) {
                 fields.push((word.clone(), own_file.as_deref().map_or(Value::Null, Value::text)));
             }
@@ -23695,6 +23705,7 @@ impl Engine<'_> {
                 }
             }
         }
+        let mut namespace_roots = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.lang.module_path.is_none() { continue; }
@@ -23717,8 +23728,17 @@ impl Engine<'_> {
                     return Some((made_absolute(&file), source));
                 }
             }
+            if self.lang.module_path.is_some() {
+                let folder = std::path::Path::new(directory).join(leaf);
+                if folder.is_dir() || directories.contains(&folder) {
+                    namespace_roots.push(made_absolute(&folder.to_string_lossy()));
+                }
+            }
         }
-        None
+        // Namespace portions only win after all regular packages and modules
+        // have been considered. Keep every contributing search directory.
+        if namespace_roots.is_empty() { None }
+        else { Some((format!("\0{}", namespace_roots.join("\0")), Vec::new())) }
     }
 
     /// An embedded source has a manifest location even without a disk file.
@@ -24468,7 +24488,7 @@ impl Engine<'_> {
             };
             return cell;
         }
-        self.module_book_of(program).unwrap_or_else(|| self.book_here(true))
+        self.module_book_of(program).unwrap_or_else(|| self.outer_book_made())
     }
 
     /// The same, asked from wherever a run now stands: the routine

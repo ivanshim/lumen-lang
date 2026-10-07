@@ -5430,7 +5430,20 @@ impl<'a> Machine<'a> {
                     }
                     return Some(current);
                 }
-                if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 13 {
+                    // A caller's global dictionary belongs to its saved
+                    // program; the current inspector need not share it.
+                    let body = match item.holds.borrow()[5].1.clone() {
+                        Value::Bound(body, _) => body,
+                        _ => return None,
+                    };
+                    let dictionary = match body.globe.clone() {
+                        Some(Value::Shared(link)) | Some(Value::Mutable(link, _)) => link,
+                        Some(Value::Dict(entries)) => Rc::new(RefCell::new(Value::Dict(entries))),
+                        _ => self.space_book_for(&body).unwrap_or_else(|| self.world_kept()),
+                    };
+                    return Some(Value::Shared(dictionary));
+                }
                 if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
                     return Some(Value::Nil);
                 }
@@ -23921,7 +23934,10 @@ impl Machine<'_> {
         }
         let beginning = self.idents.len();
         let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
-        let filename = own_file.as_deref().unwrap_or(path);
+        let namespace_portions = own_file.as_deref().filter(|location| location.starts_with('\0'))
+            .map(|location| location[1..].split('\0').collect::<Vec<_>>());
+        let empty_origin = format!("<namespace {path}>");
+        let filename = if namespace_portions.is_some() { empty_origin.as_str() } else { own_file.as_deref().unwrap_or(path) };
         let ready = match self.text_tokens(&text, 0) {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
@@ -23950,11 +23966,14 @@ impl Machine<'_> {
         // to, carried here for a module read in besides it.
         let file_word = self.table.strings("ext.system.source.file").first().map(String::as_str);
         let path_word = self.table.strings("ext.system.module.path").first().map(String::as_str);
-        let search = own_file.as_deref().and_then(|file| {
+        let search = namespace_portions.as_ref().map(|locations| {
+            let entries = locations.iter().map(|location| Value::text(location)).collect();
+            Value::Mutable(Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(entries)))), false)
+        }).or_else(|| own_file.as_deref().and_then(|file| {
             let location = std::path::Path::new(file);
             if location.file_name()?.to_str()? != "__init__.py" { return None; }
             Some(Value::Mutable(Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(&location.parent()?.to_string_lossy())])))), false))
-        });
+        }));
         let package_word = self.table.strings("ext.system.module.package").first().map(String::as_str);
         let package_name = if search.is_some() { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
         let mut members = Vec::with_capacity(exported.len());
@@ -23984,7 +24003,7 @@ impl Machine<'_> {
         // the same unconditional way, whether or not the module's own
         // text ever names it: a module that never spells `__file__`
         // still answers one to a caller that asks by attribute.
-        if let Some(word) = file_word {
+        if let Some(word) = file_word.filter(|_| namespace_portions.is_none()) {
             if !members.iter().any(|(name, _)| name == word) {
                 members.push((word.to_string(), own_file.as_deref().map_or(Value::Nil, Value::text)));
             }
@@ -24148,6 +24167,7 @@ impl Machine<'_> {
                 }
             }
         }
+        let mut portions: Vec<String> = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() { continue; }
@@ -24167,8 +24187,15 @@ impl Machine<'_> {
                     return Some((made_absolute(&location.to_string_lossy()), text));
                 }
             }
+            let portion = folder.join(filename);
+            if self.table.strings("ext.system.module.path").first().is_some()
+                && (portion.is_dir() || virtual_dirs.contains(&portion)) {
+                portions.push(made_absolute(&portion.to_string_lossy()));
+            }
         }
-        None
+        // Defer namespace creation until no concrete module has matched.
+        // The private location marker carries all namespace search portions.
+        (!portions.is_empty()).then(|| (String::from("\0") + &portions.join("\0"), Vec::new()))
     }
 
     /// Manifest locations describe the embedded library even when its files
@@ -24839,7 +24866,12 @@ impl<'a> Machine<'a> {
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
     fn space_book_of(&mut self) -> Option<Rc<RefCell<Value>>> {
-        let program = self.frames_named.last()?;
+        let body = self.frames_named.last()?.clone();
+        self.space_book_for(&body)
+    }
+
+    // Return the live module dictionary of a particular saved program.
+    fn space_book_for(&mut self, program: &Routine) -> Option<Rc<RefCell<Value>>> {
         let path = program.written_in.as_ref().and_then(|file| self.loaded_spaces.get(file.as_ref()))?.to_owned();
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return None };
         if let Some(book) = self.space_books.get(&path).cloned() {
