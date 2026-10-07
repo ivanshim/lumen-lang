@@ -9734,11 +9734,14 @@ impl<'a> Builder<'a> {
             }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
-        if t.shape != Shape::Quote && table.spells("ext.stmt.class.special.declined", &t.spelling()) {
+        if t.shape != Shape::Quote && table.spells("ext.stmt.class.special.declined", &t.spelling())
+            && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.stmt.class.special.stop", &t.spelling()) && !table.spells("ext.builtin.exceptions", &t.spelling()) {
+        if table.spells("ext.stmt.class.special.stop", &t.spelling())
+            && !table.spells("ext.builtin.exceptions", &t.spelling())
+            && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
             self.advance();
             let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
@@ -9746,12 +9749,17 @@ impl<'a> Builder<'a> {
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
-        if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.spelling()) {
+        // The words for the lone value and the one a method declines with
+        // stand for those values only while this scope keeps no name of
+        // its own spelling them; a parameter or local reads as a name.
+        if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.spelling())
+            && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
         }
         // The value with which a method declines an operation, by name.
-        if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.spelling()) {
+        if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.spelling())
+            && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }

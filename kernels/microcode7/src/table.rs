@@ -390,7 +390,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 326] = [
             ("ext.builtin.text.repr", Prim::Textual(crate::text::Work::REPR)),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
      ("ext.builtin.namespace_type", Prim::ClassWork(21)),
-     ("ext.builtin.type_descriptors.clear", Prim::ClassWork(22)),
+     ("ext.builtin.type_descriptors.clear", Prim::ClassWork(26)),
      ("ext.builtin.build_class", Prim::ClassWork(13)), ("ext.builtin.inline_values", Prim::ClassWork(12)), ("ext.builtin.issubclass", Prim::ClassWork(1)),       ("ext.builtin.dir", Prim::ClassWork(8)), ("ext.builtin.staticmethod", Prim::ClassWork(9)), ("ext.builtin.classmethod", Prim::ClassWork(10)), ("ext.builtin.property", Prim::ClassWork(11)),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
