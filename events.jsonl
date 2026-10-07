@@ -7289,3 +7289,26 @@
 {"t":"2026-10-07T11:55:35Z","event":"review-queued","job":"dsflash-getpass","review":"review-auto-dsflash-getpass-1155"}
 {"t":"2026-10-07T11:55:36Z","event":"note","job":"integrate-21d","text":"Coordinator stopped integrate-21d: stack8 debug build with an uncommitted Cargo.toml opt-level=z profile compiled 3 h+ (pipeline blocked ~13 h). Resume queued first with: revert profile change, solve stack depth in kernels, continue the 3 open items."}
 {"t":"2026-10-07T11:55:39Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T11:55:50Z","event":"review-started","job":"dsflash-rlcompleter","review":"review-auto-dsflash-rlcompleter-1150"}
+{"t":"2026-10-07T11:58:31Z","event":"exited","job":"dsflash-yieldfrom","code":0}
+{"t":"2026-10-07T12:00:43Z","event":"finished","job":"dsflash-yieldfrom","exit_time":"2026-10-07T11:58:31Z"}
+{"t":"2026-10-07T12:00:43Z","event":"review-queued","job":"dsflash-yieldfrom","review":"review-auto-dsflash-yieldfrom-1200"}
+{"t":"2026-10-07T12:00:47Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T12:00:52Z","event":"review-started","job":"dsflash-getpass","review":"review-auto-dsflash-getpass-1155"}
+{"t":"2026-10-07T12:00:53Z","event":"exited","job":"review-auto-dsflash-rlcompleter-1150","code":0}
+{"t":"2026-10-07T12:04:38Z","event":"exited","job":"review-auto-dsflash-getpass-1155","code":0}
+{"t":"2026-10-07T12:05:53Z","event":"resumed","job":"integrate-21d","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T12:07:55Z","event":"note","text":"stdlib-email return: genuine builtins int-doc case inventory is in /home/rocky/wt/stdlib-email/probe/return/reference-count-proof.md. Both original 133 progress characters are unchanged; exactly one passing doctest is appended (113->114 passes). BASE_COUNT=count-batch21c is read-only and count.py reports every length delta unconditionally. Please apply the coordinator reference-count acceptance procedure for this new real case; no doctest assertion, saved baseline, or checker has been suppressed or edited. Codec dependency reused signed owner ecee70ec399ce9338ba6267d06aab481206c43f5; 310 released source/data bodies verified against v3.14.8 with zero mismatches."}
+{"t":"2026-10-07T12:09:53Z","event":"exited","job":"stdlib-pathlib","code":0}
+{"t":"2026-10-07T12:10:54Z","event":"resumed","job":"dsflash-iterlen","model":"deepseek-flash","session":"ses_eec37f502ffeCJoS0MGKiJJnUm"}
+{"t":"2026-10-07T12:10:56Z","event":"finished","job":"stdlib-pathlib","exit_time":"2026-10-07T12:09:53Z"}
+{"t":"2026-10-07T12:10:56Z","event":"review-queued","job":"stdlib-pathlib","review":"review-auto-stdlib-pathlib-1210"}
+{"t":"2026-10-07T12:10:58Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T12:12:34Z","event":"exited","job":"dsflash-json-speed","code":0}
+{"t":"2026-10-07T12:14:04Z","event":"accepted","job":"dsflash-builtin","review":"review-auto-dsflash-builtin-1150","batch":"21e","commit":"6cdaaa242","branch":"fix/dsflash-builtin","note":"(after 2 returns) builtin 113->115/133 both kernels (test_compile, test_compile_ast: inline suites/semicolons, optimize level 2 docstrings, optimization plumbing); overlaps 21e kimi-codeop (all 4 kernel files, ast.py, file-builtin/28 - keep 115/133 expectation) and dsflash-syntax (mc7 Builder init) - reconcile; follow-ups source-backed AST ignores node edits, optimized AST keeps Assert/docstrings, inline compound/bare return at EOF messages; coordinator to re-certify bytes/decimal/calendar/tokenize/io coverage"}
+{"t":"2026-10-07T12:14:04Z","event":"returned","job":"dsflash-getpass","review":"review-auto-dsflash-getpass-1155","commit":"dd3fc7497","note":"(1st; Mock spec name lists treated as list objects, plain spec made recursive and evaluates descriptors; getpass 0->16/24 both kept, 8 upstream skips; mock.py overlaps 21d uuid, 21e mimetypes/claude-functools) -> DS Flash queue (or-resume)"}
+{"t":"2026-10-07T12:14:04Z","event":"queued","job":"dsflash-getpass","model":"deepseek-flash","line":"or-resume dsflash-getpass deepseek-flash ses_eea83813fffe5qC8X3bWE46h68"}
+{"t":"2026-10-07T12:14:04Z","event":"handed-over","job":"dsflash-rlcompleter","review":"review-auto-dsflash-rlcompleter-1150","commit":"d40726e11","round":3,"note":"(3rd; namespace isolation for __main__ completion, memoryview getset descriptors, __text_signature__ lookup not behind Python label; rlcompleter 9/11, dataclasses 239/280 both) -> GPT-6.1 Sol (brief-dsflash-rlcompleter-sol.md, queued sol-new dsflash-rlcompleter-sol)"}
+{"t":"2026-10-07T12:14:05Z","event":"queued","job":"dsflash-rlcompleter-sol","model":"gpt-6.1-sol","line":"sol-new dsflash-rlcompleter-sol"}
+{"t":"2026-10-07T12:15:38Z","event":"queued","job":"dsflash-copyreg","model":"deepseek-flash","line":"ds-new dsflash-copyreg deepseek-flash","note":"new subject test_copyreg (library, not-yet), worktree at 589a950a9"}
+{"t":"2026-10-07T12:15:55Z","event":"resumed","job":"stdlib-zipfile","model":"gpt-6.1-sol"}
