@@ -387,10 +387,12 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if table.single("ext.system.args.list").is_some() || table.single("ext.system.args.count").is_some() {
-        // sys.argv[0] holds the path the run was started with, not the
-        // canonical whole path, so a directory or a relative name is
-        // named the way the reference names it.
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "given")
+        // sys.argv[0] is the path the run was started with: the given
+        // path for a script or a directory, but the resolved module file
+        // for -m, which is the path the module's __spec__.origin names.
+        let as_module = std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name != "__main__");
+        let wanted = if as_module { "file" } else { "given" };
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
             .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
             .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
