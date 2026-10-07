@@ -860,6 +860,20 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
+/// The module name a test package's own `__main__.py` runs under, named
+/// inside the library's `test` namespace, or nothing when the file is not
+/// the entry of a package beside the given suite directory.
+fn suite_package_main(file: &str, tests: &str) -> Option<String> {
+    if !file.contains(&format!("{tests}/")) || !file.ends_with("/__main__.py") {
+        return None;
+    }
+    let dir = Path::new(file).parent()?;
+    if !dir.join("__init__.py").is_file() {
+        return None;
+    }
+    Some(format!("test.{}.__main__", dir.file_name()?.to_string_lossy()))
+}
+
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -1060,6 +1074,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
+    // A test package's entry file runs inside its package, named in the
+    // library's test namespace so the relative imports its reference text
+    // spells resolve the way running the package as a module makes them.
+    if module_name.is_none() {
+        if let Some(version) = &python {
+            if let Some(name) = suite_package_main(&file, version.tests_dir()) {
+                module_name = Some(name);
+            }
+        }
+    }
     Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
 }
 

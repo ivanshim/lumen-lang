@@ -52,6 +52,9 @@ pub fn select(flag: Option<&str>, file: &str) -> Result<&'static PythonVersion, 
 }
 
 impl PythonVersion {
+    /// The reference suite directory this pin runs against.
+    pub fn tests_dir(&self) -> &'static str { self.tests }
+
     pub fn definition(&self, base: &str) -> Result<String, String> {
         let mut data: Value = serde_json::from_str(base).map_err(|e| e.to_string())?;
         let labels: Value = serde_json::from_str(self.labels).map_err(|e| e.to_string())?;

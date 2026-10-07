@@ -23401,8 +23401,12 @@ impl Engine<'_> {
 
     fn import_path(&self, written: &str) -> Res<String> {
         if !written.starts_with('.') { return Ok(written.to_string()); }
-        let Some((_, owner)) = self.module_slots.get(&self.source) else {
-            return Err(self.lang.import_relative_unready.clone());
+        // An entry file the run was started with need not stand in the
+        // module table; the name the host gave the run answers for it.
+        let owner = match self.module_slots.get(&self.source) {
+            Some((_, owner)) => owner.clone(),
+            None => std::env::var("LUMEN_RUN_MODULE").ok().filter(|name| !name.is_empty())
+                .ok_or_else(|| self.lang.import_relative_unready.clone())?,
         };
         let is_package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
         let mut components: Vec<&str> = owner.split('.').collect();

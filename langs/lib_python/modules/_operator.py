@@ -2,7 +2,7 @@
 # Lib/operator.py stays unchanged; native index conversion ignores int subclass overrides.
 
 __doc__ = 'Operator accelerator supplied by the Python runtime.'
-__all__ = ['index']
+__all__ = ['add', 'index']
 
 def index(a):
     if isinstance(a, int):
@@ -21,6 +21,18 @@ def index(a):
         raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
     raise 'TypeError: value cannot be interpreted as an integer'
 
+
+
+class _AddBridge:
+    """Callable bridge with the non-binding behavior of a C builtin."""
+    __module__ = '_operator'
+    __name__ = 'add'
+
+    def __call__(self, a, b, /):
+        return a + b
+
+
+add = _AddBridge()
 
 
 _native_compare = __crypto
