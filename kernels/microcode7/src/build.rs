@@ -555,6 +555,9 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
 }
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, aliasing: &[(String, String)]) -> Res<Built> {
+    let reserved_assignment = tokens.windows(2).any(|adjacent| adjacent[0].shape == Shape::Bare
+        && adjacent[1].lexeme == "=" && ["ext.stmt.async", "ext.op.await"].iter().any(|label| table.spells(label, adjacent[0].spelling())));
+    if reserved_assignment { return Err(String::from("SyntaxError: invalid syntax")); }
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
@@ -1833,7 +1836,7 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>" | "<genexpr>"))
+        let permits_async = name == "<genexpr>" || (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>"))
             && self.layers.last().map_or(false, |scope| scope.permits_async);
         self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>" || name == "<genexpr>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
@@ -1877,6 +1880,9 @@ impl<'a> Builder<'a> {
             self.generator_seen = enclosing_yield;
         }
         let scope = self.layers.pop().unwrap();
+        if scope.async_walk_seen && name == "<gathering>" && self.layers.last().is_some_and(|outer| outer.gathering_kind.is_some()) {
+            self.layers.last_mut().unwrap().async_walk_seen = true;
+        }
         if self.survey && holds == Holds::Every {
             let bound = scope.idents.iter().filter(|word| !scope.borrowed.contains(word) && !scope.aliases.iter().any(|pair| pair.0 == **word)).cloned().collect();
             self.surveyed.insert(began, ScopeWords { bound, outermost: scope.aliases.clone(), borrowed: scope.borrowed.clone(), class_borrowed: scope.class_borrowed.clone() });
@@ -1901,13 +1907,14 @@ impl<'a> Builder<'a> {
         for (kind, bit) in [('v', 4), ('k', 8)] {
             if taking.as_ref().map_or(false, |rules| rules.contains(&kind)) { flags |= bit; }
         }
-        if scope.permits_async { flags |= 128; } else if generator { flags |= 32; }
+        let asynchronous_body = if name == "<genexpr>" { scope.async_walk_seen } else { scope.permits_async };
+        if asynchronous_body { flags |= 128; } else if generator { flags |= 32; }
         let mut literals = vec![doc.as_ref().map_or(Value::Nil, |s| Value::text(s))];
         let mut referenced = Vec::new();
         let mut suspension = false;
         if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
-        if scope.permits_async && suspension {
+        if asynchronous_body && suspension {
             if let Some(at) = scope.return_value_at {
                 self.pos = at;
                 return Err("SyntaxError: 'return' with value in async generator".to_owned());
@@ -2195,6 +2202,32 @@ impl<'a> Builder<'a> {
         self.limb(catches, |r| r.body())
     }
 
+    fn comprehension_owns_await(&self, begin: usize, place: usize) -> bool {
+        let mut nesting = Vec::new();
+        for (index, token) in self.tokens.iter().enumerate().take(place).skip(begin) {
+            let text = token.spelling();
+            if ["(", "[", "{"].contains(&text) { nesting.push(index); }
+            else if [")", "]", "}"].contains(&text) { nesting.pop(); }
+        }
+        for opening in nesting {
+            let mut depth = 0;
+            let mut loop_at = usize::MAX;
+            let mut in_filter = false;
+            for (index, token) in self.tokens.iter().enumerate().skip(opening) {
+                match token.spelling() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => { depth -= 1; if depth == 0 { break; } },
+                    "for" if depth == 1 => { loop_at = loop_at.min(index); },
+                    "if" if depth == 1 && loop_at != usize::MAX => in_filter = true,
+                    _ => {}
+                }
+                if index == place && in_filter { return true; }
+            }
+            if loop_at != usize::MAX && place < loop_at { return true; }
+        }
+        false
+    }
+
     fn type_scope_fault(&self) -> Option<String> {
         if !self.table.has_any("ext.builtin.exceptions.syntax") { return None; }
         let word = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
@@ -2249,7 +2282,7 @@ impl<'a> Builder<'a> {
                         else if constrained { String::from("TypeVar constraint") }
                         else { String::from("TypeVar bound") };
                     if let Some(invalid) = (begin..cursor).find_map(|index| match word(index) {
-                        ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None,
+                        ":=" => Some("named"), "yield" => Some("yield"), "await" if !self.comprehension_owns_await(begin, index) => Some("await"), _ => None,
                     }) { return Some(format!("SyntaxError: {invalid} expression cannot be used within a {place}")); }
                 }
                 match word(cursor) {
@@ -2275,9 +2308,9 @@ impl<'a> Builder<'a> {
         }
         if head == "type" && word(cursor) == "=" {
             let mut inside = 0usize;
-            for token in self.tokens.iter().skip(cursor + 1) {
+            for (index, token) in self.tokens.iter().enumerate().skip(cursor + 1) {
                 if inside == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let bad = match token.spelling() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                let bad = match token.spelling() { ":=" => "named", "yield" => "yield", "await" if !self.comprehension_owns_await(cursor + 1, index) => "await", _ => "" };
                 if !bad.is_empty() { return Some(format!("SyntaxError: {bad} expression cannot be used within a type alias")); }
                 if ["(", "[", "{"].contains(&token.lexeme.as_str()) { inside += 1; }
                 else if [")", "]", "}"].contains(&token.lexeme.as_str()) { inside = inside.saturating_sub(1); }
@@ -3090,7 +3123,7 @@ impl<'a> Builder<'a> {
                 // has no cell, the value itself is the answer, as such a
                 // language does rather than stopping.
                 let by_cell = self.giving_cells.last().copied().unwrap_or(false);
-                let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") {
+                let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") || self.look().shape == Shape::Close {
                     Vec::new()
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
@@ -3553,7 +3586,7 @@ impl<'a> Builder<'a> {
                     // place and is called with the outcome at the end.
                     let leaving = self.gensym("leaving");
                     steps.push(Form::Write(leaving.clone(), Box::new(self.located(bounds, prim_call(Prim::AsyncContext(true), vec![manager_read.clone()])))));
-                    value = prim_call(Prim::AsyncContext(false), vec![manager_read]);
+                    value = prim_call(Prim::AwaitResult, vec![prim_call(Prim::AsyncContext(false), vec![manager_read])]);
                     leaving
                 } else {
                     value = prim_call(Prim::StartContext, vec![manager_read]);
@@ -8069,7 +8102,7 @@ impl<'a> Builder<'a> {
     /// Seek the kind's sign before reading a statement's place. Marks
     /// sheltered by brackets are part of the place, not its declaration.
     fn declaration_mark(&self) -> Option<usize> {
-        if !self.table.has_any("ext.stmt.annotation") { return None; }
+        if !self.table.has_any("ext.stmt.annotation") || self.table.spells("ext.op.lambda", self.look().spelling()) { return None; }
         let mut closings = Vec::new();
         let mut at = self.pos;
         while let Some(token) = self.tokens.get(at) {
@@ -9356,7 +9389,11 @@ impl<'a> Builder<'a> {
         if self.key("ext.op.await") {
             let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1))
                 && (self.in_class_body() || self.layers.last().is_some_and(|scope| scope.gathering_kind.is_some()));
-            if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
+            let in_generator = self.layers.last().unwrap().gathering_kind == Some("generator expression");
+            if !in_generator && (self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression) {
+                if self.layers.last().unwrap().gathering_kind.is_some() {
+                    return Err(String::from("SyntaxError: asynchronous comprehension outside of an asynchronous function"));
+                }
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));
             }
@@ -9364,6 +9401,7 @@ impl<'a> Builder<'a> {
             let scope = self.layers.last_mut().unwrap();
             if scope.gathering_kind.is_some() { scope.async_walk_seen = true; }
             self.advance();
+            if self.key("ext.op.await") { return Err(String::from("SyntaxError: invalid syntax")); }
             let pending = self.monadic_expr()?;
             return Ok(prim_call(Prim::AwaitResult, vec![pending]));
         }
@@ -9820,7 +9858,7 @@ impl<'a> Builder<'a> {
             Shape::Sign => {
                 if table.single("syntax.group.open") == Some(t.lexeme.as_str()) {
                     self.advance();
-                    let inner = if self.reading_yield {
+                    let inner = if self.reading_yield && self.ahead_in_item("ext.op.comprehension.for").is_none() {
                         let mut values = Vec::new();
                         let mut tuple = self.on_any("syntax.group.close");
                         while !self.on_any("syntax.group.close") {
@@ -10882,6 +10920,8 @@ impl<'a> Builder<'a> {
         let parameter = String::from(".0");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
         let mut async_result = false;
+        let surrounding_rule = self.forbids_await;
+        self.forbids_await = false;
         let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter.clone()], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
@@ -10897,6 +10937,7 @@ impl<'a> Builder<'a> {
             r.generator_seen = true;
             Ok(body)
         })?;
+        self.forbids_await = surrounding_rule;
         self.source_before = previous;
         let walk = if self.table.spells("ext.op.comprehension.async", &self.tokens[clause].spelling()) { Prim::AsyncWalked } else { Prim::Walked };
         let value = Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(walk, vec![source])]);
