@@ -892,7 +892,7 @@ impl<'a> Machine<'a> {
         let names = table.strings("ext.builtin.exceptions");
         let mut chain: Vec<Option<Rc<Blueprint>>> = vec![None; names.len()];
         let parent_of = |number| match number {
-                0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
+                0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2), 66 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 | 58 | 59 | 63..=65 => Some(20), 42 => Some(19),
                 57 | 60..=62 => Some(59), 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
@@ -24719,7 +24719,12 @@ impl<'a> Machine<'a> {
         let mut words: Vec<&String> = self.table.prims.keys().chain(self.rules.words_ext_builtin_exceptions).collect();
         words.sort();
         words.dedup();
-        let entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        let mut entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        if self.has_class_order() && !self.rules.detail_root.is_empty() {
+            let root = self.common_ancestor();
+            entries.retain(|(word, _)| !spells_key(word, self.rules.detail_root));
+            entries.push((Value::text(self.rules.detail_root), Value::Blueprint(root)));
+        }
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.natives_book = Some(book.clone());
         book
@@ -25971,6 +25976,22 @@ impl<'a> Machine<'a> {
                 Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals),
                 None => self.perform_booked(source, file, mode, near, None, top_await, literals),
             };
+        }
+        // Text run at the reading's own top level, handed no dictionaries,
+        // reads the names of the module it stands in, as the reference
+        // reads the caller's globals: the module's own namespace stands in
+        // front of everything further out.
+        let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| self.imported.get(module)).cloned();
+        if let Some(Value::Thing(namespace)) = owner {
+            let book = Rc::new(RefCell::new(Value::Attributes(namespace)));
+            if let Some(key) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
+                let present = self.builtin_entry(&book, &key).map_err(|escape| self.carried_native_fault(escape))?;
+                if present.is_none() {
+                    let defaults = Value::Shared(self.natives_kept());
+                    self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
+                }
+            }
+            return self.perform_booked(source, file, mode, book, None, top_await, literals);
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {

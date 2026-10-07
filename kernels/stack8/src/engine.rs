@@ -557,7 +557,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String], root: &Rc<Class>) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(59), Some(20), Some(20), Some(59), Some(59), Some(59), Some(20), Some(20), Some(20)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(59), Some(20), Some(20), Some(59), Some(59), Some(59), Some(20), Some(20), Some(20), Some(2)];
         let mut classes: Vec<Option<Rc<Class>>> = vec![None; names.len()];
         let mut pending: Vec<usize> = (0..names.len()).collect();
         while !pending.is_empty() {
@@ -24218,6 +24218,13 @@ impl Engine<'_> {
         if let Some(book) = &self.natives { return book.clone(); }
         let mut names: Vec<String> = self.lang.builtins.keys().cloned().collect();
         names.extend(self.lang.exceptions.iter().cloned());
+        // The class every other class stands under answers for a name of
+        // its own too, so text reading it through a dictionary of its own
+        // finds it as the reference does.
+        if self.fuller_classes() && !self.class_word("root").is_empty() {
+            self.root_class();
+            names.push(self.class_word("root").to_owned());
+        }
         names.sort();
         names.dedup();
         let mut pairs = Vec::with_capacity(names.len());
@@ -25593,6 +25600,20 @@ impl Engine<'_> {
                 Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await, replacements),
                 None => self.run_text_booked(source, file, mode, near, None, top_await, replacements),
             };
+        }
+        // Text run at the reading's own top level, handed no dictionaries,
+        // reads the names of the module it stands in, as the reference
+        // reads the caller's globals: the module's own dictionary stands
+        // in front of everything further out.
+        if let Some(Value::Object(module)) = self.module_slots.get(&self.source).and_then(|(_, name)| self.modules.get(name)).cloned() {
+            let globals = Rc::new(RefCell::new(Value::Fields(module)));
+            if let Some(word) = self.lang.module_builtins.first().cloned() {
+                if self.book_builtins(&globals, &word).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_none() {
+                    let builtins = self.native_dict();
+                    self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                }
+            }
+            return self.run_text_booked(source, file, mode, globals, None, top_await, replacements);
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
