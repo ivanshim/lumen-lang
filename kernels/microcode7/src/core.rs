@@ -71,6 +71,9 @@ impl Value {
             // method of a thing the program laid out is not.
             Self::Member(_, operation) if matches!(operation.as_str(), "__next__" | "__buffer__" | "__release_buffer__") => "method-wrapper",
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Wrapped(184, _) => "builtin_function_or_method",
+            Self::Wrapped(185, parts) => if matches!(parts.last(), Some(Self::Thing(_))) { "method-wrapper" } else { "wrapper_descriptor" },
+            Self::Wrapped(186, _) => "method-wrapper",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
             Self::Wrapped(130, _) => "function",
@@ -183,6 +186,17 @@ impl Value {
 
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
+            Self::Wrapped(185, contents) => {
+                match (contents.first(), contents.last()) {
+                    (Some(Self::Blueprint(class)), Some(Self::Thing(instance))) => {
+                        let initial = std::rc::Rc::as_ptr(class) as usize / 16;
+                        let called = match contents.get(1) { Some(Self::Text(word)) => word.as_ref(), _ => "__init__" };
+                        let signature = called.bytes().fold(initial, |part, byte| part.rotate_left(5) ^ usize::from(byte));
+                        (signature ^ (std::rc::Rc::as_ptr(instance) as usize / 16)) as i64
+                    }
+                    _ => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
+                }
+            }
             Self::Complex(pair) => {
                 if pair.0.is_nan() || pair.1.is_nan() { return Some((std::rc::Rc::as_ptr(pair) as usize / 16) as i64); }
                 let real = crate::complex::decimal_value(pair.0).hash_number()?;

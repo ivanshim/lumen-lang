@@ -21,15 +21,17 @@ pub struct Env {
     /// Slots used by closures after this call returns.
 
     pub weak_callback_frame: Cell<bool>,
+    /// A callback-bearing weak closure observes this frame's lifetime.
+    pub weakly_observed: Cell<bool>,
 }
 
 impl Drop for Env {
-    fn drop(&mut self) { crate::ghost::anything_departing(); }
+    fn drop(&mut self) { if self.weakly_observed.get() { crate::ghost::anything_departing(); } }
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false), weakly_observed: Cell::new(false) })
     }
 }
 
@@ -218,9 +220,9 @@ pub struct TraceLink {
 }
 
 #[derive(Debug)]
-pub struct MethodMark;
+pub struct MethodMark { pub watched: Cell<bool> }
 impl Drop for MethodMark {
-    fn drop(&mut self) { crate::ghost::anything_departing(); }
+    fn drop(&mut self) { if self.watched.get() { crate::ghost::anything_departing(); } }
 }
 
 #[derive(Clone)]
@@ -571,7 +573,7 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
 }
 
 impl Value {
-    pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
+    pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark { watched: Cell::new(false) })) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
 
@@ -1185,6 +1187,17 @@ impl Value {
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
             (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
+            (Value::Wrapped(185, one), Value::Wrapped(185, two)) => {
+                let same_call = match (one.get(1), two.get(1)) {
+                    (Some(Value::Text(a)), Some(Value::Text(b))) => a == b,
+                    (Some(Value::Thing(_)), Some(Value::Thing(_))) => true,
+                    _ => false,
+                };
+                match (one.first(), two.first(), one.last(), two.last()) {
+                    (Some(Value::Blueprint(a)), Some(Value::Blueprint(b)), Some(Value::Thing(x)), Some(Value::Thing(y))) => same_call && Rc::ptr_eq(a, b) && Rc::ptr_eq(x, y),
+                    _ => Rc::ptr_eq(one, two),
+                }
+            },
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,
@@ -1686,6 +1699,62 @@ pub struct TypeNames {
     pub declared: Value,
 }
 
+thread_local! { static NAMESPACE_CHANGE: Cell<u64> = const { Cell::new(1) }; }
+
+/// Namespace slots stay ordered; Python lookup may index their spellings.
+/// Mutation invalidates all slot positions before the caller can edit rows.
+#[derive(Debug)]
+pub struct BlueprintEntries {
+    values: RefCell<Vec<(String, Value)>>,
+    missing: RefCell<std::collections::HashMap<String, u64, crate::table::FxBuildHasher>>,
+    positions: RefCell<Option<std::collections::HashMap<String, usize, crate::table::FxBuildHasher>>>,
+}
+
+impl BlueprintEntries {
+    pub fn new(entries: Vec<(String, Value)>) -> Self {
+        Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())) }
+    }
+    pub fn borrow(&self) -> std::cell::Ref<'_, Vec<(String, Value)>> { self.values.borrow() }
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<(String, Value)>> {
+        NAMESPACE_CHANGE.with(|stamp| stamp.set(stamp.get().wrapping_add(1)));
+        *self.positions.borrow_mut() = None;
+        self.values.borrow_mut()
+    }
+    pub fn try_borrow(&self) -> Result<std::cell::Ref<'_, Vec<(String, Value)>>, std::cell::BorrowError> { self.values.try_borrow() }
+    pub fn try_borrow_mut(&self) -> Result<std::cell::RefMut<'_, Vec<(String, Value)>>, std::cell::BorrowMutError> {
+        let entries = self.values.try_borrow_mut()?;
+        NAMESPACE_CHANGE.with(|stamp| stamp.set(stamp.get().wrapping_add(1)));
+        self.positions.borrow_mut().take();
+        Ok(entries)
+    }
+    pub(super) fn absent_in_lineage(&self, word: &str) -> bool {
+        let current = NAMESPACE_CHANGE.with(|stamp| stamp.get());
+        self.missing.borrow().get(word).is_some_and(|stamp| *stamp == current)
+    }
+    pub(super) fn note_absence(&self, word: &str) {
+        let now = NAMESPACE_CHANGE.with(|stamp| stamp.get());
+        let mut table = self.missing.borrow_mut();
+        if table.len() >= 128 { table.retain(|_, stamp| *stamp == now); }
+        if table.len() >= 128 { table.clear(); }
+        table.insert(word.to_string(), now);
+    }
+    pub(super) fn named(&self, word: &str, python: bool) -> Option<Value> {
+        let entries = self.values.borrow();
+        if python && entries.len() >= 12 {
+            let mut saved = self.positions.borrow_mut();
+            if saved.is_none() {
+                let mut slots = std::collections::HashMap::with_capacity_and_hasher(entries.len(), crate::table::FxBuildHasher::default());
+                for (at, entry) in entries.iter().enumerate() {
+                    slots.entry(entry.0.clone()).or_insert(at);
+                }
+                *saved = Some(slots);
+            }
+            return saved.as_ref()?.get(word).map(|at| entries[*at].1.clone());
+        }
+        entries.iter().find_map(|entry| (entry.0 == word).then(|| entry.1.clone()))
+    }
+}
+
 #[derive(Debug)]
 pub struct Blueprint {
     /// The mutable names of a Python class, outside its dictionary.
@@ -1702,7 +1771,7 @@ pub struct Blueprint {
     pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
-    pub shared: RefCell<Vec<(String, Value)>>,
+    pub shared: BlueprintEntries,
     /// Set from the declared layout before class-creation hooks run;
     /// subsequent edits to members do not add or remove weak storage.
     pub weak_slot: Cell<Option<bool>>,
@@ -1747,7 +1816,7 @@ impl Blueprint {
 
     /// The class along the line that keeps a value of that name.
     pub fn keeper(&self, name: &str) -> Option<&Blueprint> {
-        if self.shared.borrow().iter().any(|(n, _)| n == name) {
+        if self.shared.named(name, self.type_names.borrow().is_some()).is_some() {
             return Some(self);
         }
         self.under.as_ref().and_then(|u| u.keeper(name))
