@@ -1,7 +1,8 @@
-# Pickle reductions use the Python reconstruction protocol. The byte
-# envelope remains the runtime's private marshal-based representation,
-# except for boolean roots using standard pickle encodings for protocols 0--5.
+# The standard pickle stream, protocols 0 through 5, exactly as
+# CPython's Lib/pickle.py writes it; the reduction of each value
+# comes from the runtime through _reduce.
 import codecs
+import copyreg
 import marshal
 import sys
 from struct import pack as _pack
@@ -139,6 +140,40 @@ def _global_name(value):
     return None
 
 
+def _whichmodule(obj, name):
+    parts = name.split('.')
+    module = getattr(obj, '__module__', None)
+    candidates = []
+    if module is not None:
+        candidates.append(module)
+    candidates.append('__main__')
+    for key in list(sys.modules):
+        if key not in candidates:
+            candidates.append(key)
+    for module_name in candidates:
+        if module_name == '__main__':
+            try:
+                candidate = _global('__main__', name)
+            except (ImportError, AttributeError, KeyError):
+                continue
+        else:
+            owner = sys.modules.get(module_name)
+            if owner is None:
+                continue
+            candidate = owner
+            found = True
+            for part in parts:
+                candidate = getattr(candidate, part, None)
+                if candidate is None:
+                    found = False
+                    break
+            if not found:
+                continue
+        if candidate is obj:
+            return module_name
+    return None
+
+
 def _reduction_hook(value, name):
     # The final MRO entry is the root object, whose native hooks have a
     # separate fallback. Keep hooks declared by every more specific class.
@@ -194,17 +229,71 @@ def _reduce(value, protocol):
     cls = type(value)
     if isinstance(value, BaseException):
         return value.__reduce__()
-    for base in (list, dict, set, frozenset, tuple, int, float, str):
+    for base in (list, dict, set, frozenset, tuple, int, float, str, bytes, bytearray, complex):
         if isinstance(value, base) and cls is not base:
-            return (_new_builtin, (cls, __reduce_native__(value, False)), _state(value))
+            state = _state(value)
+            if state == {}:
+                state = None
+            if base is set or base is frozenset:
+                return (cls, (list(value),), state)
+            if base is bytearray:
+                if protocol < 3:
+                    return (cls, (str(bytes(value), 'latin-1'), 'latin-1'), state)
+                return (cls, (bytes(value),), state)
+            if base is complex:
+                return (copyreg.__newobj__, (cls, value.real, value.imag), state)
+            method_ex = getattr(value, '__getnewargs_ex__', None)
+            keywords = None
+            if callable(method_ex):
+                try:
+                    args, keywords = method_ex()
+                    args = tuple(args)
+                except Exception:
+                    args, keywords = (), None
+            else:
+                method = getattr(value, '__getnewargs__', None)
+                try:
+                    args = tuple(method()) if method is not None else ()
+                except Exception:
+                    args = ()
+            if keywords:
+                if base is list:
+                    return (copyreg.__newobj_ex__, (cls, args, keywords), state, iter(value))
+                if base is dict:
+                    return (copyreg.__newobj_ex__, (cls, args, keywords), state, None, iter(value.items()))
+                return (copyreg.__newobj_ex__, (cls, args, keywords), state)
+            if base is list:
+                return (copyreg.__newobj__, (cls,) + args, state, iter(value))
+            if base is dict:
+                return (copyreg.__newobj__, (cls,) + args, state, None, iter(value.items()))
+            if args:
+                return (copyreg.__newobj__, (cls,) + args, state)
+            return (copyreg.__newobj__, (cls, base(value)), state)
     slots = getattr(cls, '__slots__', ())
     if protocol < 2 and slots and _reduction_hook(value, '__getstate__') is None:
         raise TypeError('a class that defines __slots__ without defining __getstate__ cannot be pickled')
-    args = ()
-    method = getattr(value, '__getnewargs__', None)
-    if protocol >= 2 and method is not None:
-        args = method()
-    return (_new_object, (cls, args), _state(value))
+    state = _state(value)
+    if state == {}:
+        state = None
+    if protocol < 2:
+        return (copyreg._reconstructor, (cls, object, None), state)
+    method_ex = getattr(value, '__getnewargs_ex__', None)
+    keywords = None
+    if callable(method_ex):
+        try:
+            args, keywords = method_ex()
+            args = tuple(args)
+        except Exception:
+            args, keywords = (), None
+    else:
+        method = getattr(value, '__getnewargs__', None)
+        try:
+            args = tuple(method()) if method is not None else ()
+        except Exception:
+            args = ()
+    if keywords:
+        return (copyreg.__newobj_ex__, (cls, args, keywords), state)
+    return (copyreg.__newobj__, (cls,) + args, state)
 
 
 def _apply_state(value, state):
@@ -408,9 +497,8 @@ class _Pickler:
         elif isinstance(obj, type):
             self.save_type(obj)
         else:
-            name = _global_name(obj)
-            if name is not None:
-                self.save_global(obj, name)
+            if _global_name(obj) is not None:
+                self.save_global(obj)
                 return
             reduction = _reduce(obj, self.proto)
             if isinstance(reduction, str):
@@ -619,10 +707,15 @@ class _Pickler:
         return self.save_global(obj)
 
     def save_global(self, obj, name=None):
-        resolved = _global_name(obj)
-        if resolved is None:
-            raise PicklingError('cannot pickle ' + repr(obj))
-        module_name, name = resolved
+        if name is None:
+            resolved = _global_name(obj)
+            if resolved is None:
+                raise PicklingError('cannot pickle ' + repr(obj))
+            module_name, name = resolved
+        else:
+            module_name = _whichmodule(obj, name)
+            if module_name is None:
+                raise PicklingError('global name does not refer to the object being pickled')
         if self.proto >= 4:
             self.save(module_name)
             self.save(name)
@@ -656,12 +749,27 @@ class _Pickler:
         func_name = getattr(func, '__name__', '')
         if self.proto >= 2 and func_name == '__newobj_ex__':
             cls, positional, keywords = args
-            self.save(cls)
-            self.save(positional)
-            self.save(keywords)
-            self.write(NEWOBJ_EX)
+            if not hasattr(cls, '__new__'):
+                raise PicklingError('first argument to __newobj_ex__() has no __new__')
+            if obj is not None and cls is not obj.__class__:
+                raise PicklingError('first argument to __newobj_ex__() must be ' + repr(obj.__class__))
+            if self.proto >= 4:
+                self.save(cls)
+                self.save(positional)
+                self.save(keywords)
+                self.write(NEWOBJ_EX)
+            else:
+                from functools import partial
+                func = partial(cls.__new__, cls, *positional, **keywords)
+                self.save(func)
+                self.save(())
+                self.write(REDUCE)
         elif self.proto >= 2 and func_name == '__newobj__':
             cls = args[0]
+            if not hasattr(cls, '__new__'):
+                raise PicklingError('first argument to __newobj__() has no __new__')
+            if obj is not None and cls is not obj.__class__:
+                raise PicklingError('first argument to __newobj__() must be ' + repr(obj.__class__))
             args = args[1:]
             self.save(cls)
             self.save(args)
