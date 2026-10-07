@@ -7202,3 +7202,30 @@
 {"t":"2026-10-07T10:32:52Z","event":"returned","job":"stdlib-warnings","review":"review-auto-stdlib-warnings-1003","commit":"f597854c9","note":"(1st; test_warnings cannot collect on both kernels: _warnings backend removed, _set_module on None; 0->0 ran; copies faithful; overlaps 21e kimi-codeop warnings.py) -> Sol queue (resume)"}
 {"t":"2026-10-07T10:34:34Z","event":"quota","codex_week_used":16,"codex_credits":0,"claude_week_used":29,"claude_5h_used":11,"kimi_5h_used":0,"kimi_month_used":0.9103,"kimi_code_used":0,"deepseek_usd":340.18}
 {"t":"2026-10-07T10:34:38Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":16,"expected":15.0,"gap":"+1.0","status":"ok"}
+{"t":"2026-10-07T10:34:54Z","event":"checkin","status":"done","actions":"returned stdlib-warnings (1st: test_warnings cannot collect, _warnings backend missing) -> returns/stdlib-warnings.md + sol-resume queued; prune-merged freed 0MB; box disk >90% recommendation sent to Ivan","notes":"box disk 91% (15G free), load 8.2, 8.9 GB available; Mac disk 80%; Sol 9 running + 4 queued (codecs, typing-sol, email review, warnings); DS Flash 13 running + hash queued; DS Pro, Sonnet, Kimi 1 each running; integrate-21d still running; no open PRs; luna-meter gap +1.0 ok, no new alerts; Codex week 16%, Claude week 29%"}
+{"t":"2026-10-07T10:37:30Z","event":"review-started","job":"stdlib-email","review":"review-auto-stdlib-email-1029"}
+{"t":"2026-10-07T10:37:37Z","event":"exited","job":"review-auto-stdlib-traceback-1018","code":0}
+{"t":"2026-10-07T10:42:04Z","event":"note","text":"Traceback (most recent call last):"}
+{"t":"2026-10-07T10:42:04Z","event":"note","text":"  File \"<stdin>\", line 18, in <module>"}
+{"t":"2026-10-07T10:42:04Z","event":"note","text":"  File \"<frozen genericpath>\", line 67, in getmtime"}
+{"t":"2026-10-07T10:42:04Z","event":"note","text":"FileNotFoundError: [Errno 2] No such file or directory: '/home/rocky/coord-archive/lumen-coord/brief-review-wave10.md'"}
+{"t":"2026-10-07T10:42:09Z","event":"note","text":"archive-sync: archived to lumenlang2:coord-archive; pruned 2 old local items (active kept: claude-functools-sol claude-strptime dsflash-builtin dsflash-dynamic dsflash-exceptstar dsflash-flufl dsflash-getpass dsflash-json-speed dsflash-minicompat dsflash-rlcompleter dsflash-shelve-dbm dsflash-strftime dsflash-tabnanny dsflash-tomllib dsflash-userstring-sol dsflash-yieldfrom dspro-argparse integrate-21d kimi-metaclass review-auto-stdlib-email-1029 stdlib-coroutines stdlib-descr stdlib-pathlib stdlib-unittest stdlib-zipfile )"}
+{"t":"2026-10-07T10:42:31Z","event":"resumed","job":"stdlib-codecs","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T10:42:34Z","event":"exited","job":"claude-functools-sol","code":0}
+{"t":"2026-10-07T10:42:43Z","event":"exited","job":"review-auto-stdlib-email-1029","code":0}
+{"t":"2026-10-07T10:44:17Z","event":"finished","job":"claude-functools-sol","exit_time":"2026-10-07T10:42:34Z"}
+{"t":"2026-10-07T10:44:17Z","event":"review-queued","job":"claude-functools-sol","review":"review-auto-claude-functools-sol-1044"}
+{"t":"2026-10-07T10:44:21Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T10:46:44Z","event":"exited","job":"stdlib-unittest","code":1}
+{"t":"2026-10-07T10:47:32Z","event":"resumed","job":"stdlib-typing-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-07T10:49:26Z","event":"finished","job":"stdlib-unittest","exit_time":"2026-10-07T10:46:44Z"}
+{"t":"2026-10-07T10:49:27Z","event":"review-queued","job":"stdlib-unittest","review":"review-auto-stdlib-unittest-1049"}
+{"t":"2026-10-07T10:49:28Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T10:52:34Z","event":"resumed","job":"dsflash-hash","model":"deepseek-flash","session":"ses_eeaff6867ffe8AzKle3nXoRGzT"}
+{"t":"2026-10-07T10:53:17Z","event":"returned","job":"stdlib-email","review":"review-auto-stdlib-email-1029","commit":"713669dd8","note":"(Sol 1st; ISO-2022-JP/EUC-JP + GB2312 codecs, test_long_lines OOM, socket gethostname/gethostbyaddr undefined (make_msgid), one-item str join identity, test_builtin length change 133->134 both kernels; email 0->1786/1804 both kept) -> Sol queue (resume)"}
+{"t":"2026-10-07T10:53:17Z","event":"queued","job":"stdlib-email","model":"gpt-6.1-sol","line":"sol-resume stdlib-email"}
+{"t":"2026-10-07T10:53:17Z","event":"returned","job":"stdlib-traceback","review":"review-auto-stdlib-traceback-1018","commit":"3686c38ea","note":"(Sol 1st; kernel disagreement in name suggestions; positions/no_debug_ranges/CLI filename, AST adapter, suggestions, temp .pyc path; traceback 0->138/370 both kept) -> Sol queue (resume)"}
+{"t":"2026-10-07T10:53:17Z","event":"queued","job":"stdlib-traceback","model":"gpt-6.1-sol","line":"sol-resume stdlib-traceback"}
+{"t":"2026-10-07T10:54:18Z","event":"quota","codex_week_used":17,"codex_credits":0,"claude_week_used":29,"claude_5h_used":12,"kimi_5h_used":0,"kimi_month_used":0.911,"kimi_code_used":0,"deepseek_usd":339.7}
+{"t":"2026-10-07T10:54:22Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":17,"expected":15.8,"gap":"+1.2","status":"ok"}
+{"t":"2026-10-07T10:54:32Z","event":"checkin","status":"done","actions":"returned stdlib-email (1st: ISO-2022-JP/EUC-JP + GB2312, test_long_lines OOM, socket gethostname undefined, str join identity, test_builtin length change) -> returns/stdlib-email.md + sol-resume queued; returned stdlib-traceback (1st: kernel disagreement in name suggestions + 17 ref failures) -> returns/stdlib-traceback.md + sol-resume queued; prune-merged freed 0MB; no idle accepted target/ to remove; slots full or queued","notes":"box disk 91% (14G free; alert already sent today): biggest ~/wt 95G (target/ ~2-5G each; _int21d 4.9G), ~/.debug 9.2G perf cache safe to delete; box load 8.3, 7.9 GB available; Mac disk 80%; Sol 8 running + 3 resumes + 2 reviews queued (load gate); DS Flash 14 running; DS Pro argparse, Kimi metaclass, Sonnet claude-strptime running; no open PRs; luna: no new alerts, meter gap +1.2 ok (Codex week 17%); Claude week 29%"}
