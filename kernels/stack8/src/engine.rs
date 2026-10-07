@@ -4125,7 +4125,7 @@ impl<'a> Engine<'a> {
         // counted.
         if !program.body_of_all {
             if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() >= limit { return Err(format!("\0{}", words).into()); }
+                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
             }
         }
         let n = if let Some(rules) = &program.parameter_rules {
@@ -20558,6 +20558,9 @@ impl<'a> Engine<'a> {
             }
             Builtin::ProductStep => self.iterator_operation(args)?,
             Builtin::ProgramNamespace => {
+                if matches!(args.as_slice(), [Value::Text(key)] if key.as_ref() == "recursion_depth") {
+                    return Ok(Value::Small((self.calls.len() + self.reaching) as i64));
+                }
 
                 if let [value] = args.as_slice() {
                     if let Value::Object(module) = value.contents() {

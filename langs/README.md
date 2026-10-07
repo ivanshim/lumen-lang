@@ -6109,3 +6109,5 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 without invoking attribute hooks, metaclass properties, or other descriptors.
 
 `ext.stmt.annotation.adapter` names a runtime attribute exposing retained native class annotation expressions to the symbolic namespace adapter. Python uses it to produce genuine forward references without changing direct annotator format errors.
+
+The Python program-namespace primitive accepts `recursion_depth` to expose the active kernel recursion counter. The sys adapter validates a new limit against that counter, including native dispatch entries, so an accepted low limit retains room to restore the limit after unwinding.

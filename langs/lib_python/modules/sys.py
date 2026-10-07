@@ -100,11 +100,7 @@ def setrecursionlimit(limit):
         raise TypeError("'" + type(limit).__name__ + "' object cannot be interpreted as an integer")
     if limit < 1:
         raise ValueError('recursion limit must be greater or equal than 1')
-    frame = _getframe()
-    depth = 0
-    while frame is not None:
-        depth += 1
-        frame = frame.f_back
+    depth = __program_namespace('recursion_depth')
     if limit <= depth:
         raise RecursionError('cannot set the recursion limit to ' + str(limit) +
                              ' at the recursion depth ' + str(depth) + ': the limit is too low')
