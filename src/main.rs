@@ -860,57 +860,13 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
-/// The module name a package's own entry file runs under: the dotted
-/// name the library holds the file's package directory under, with
-/// `.__main__` after it, or nothing where the library holds no such
-/// package. The package is recognised by the directory it stands in and
-/// the text of the `__init__.py` it carries, which a copy of a package
-/// carries the same as the package itself, so a package the library
-/// holds -- a directory of its own, or a directory linked to one, or a
-/// copy of one -- answers the same, and no particular directory is named.
-fn package_entry_module(file: &str) -> Option<String> {
-    if Path::new(file).file_name() != Some(OsStr::new("__main__.py")) {
-        return None;
+/// Where this build keeps the Python library, which is the first
+/// directory a name is looked for in.
+fn python_library_root() -> String {
+    match env::var_os("LUMEN_ROOT") {
+        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
     }
-    let entry = fs::canonicalize(file).ok()?;
-    let home = entry.parent()?;
-    let opening = fs::read(home.join("__init__.py")).ok()?;
-    let root = match env::var_os("LUMEN_ROOT") {
-        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules"),
-        None => std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules")),
-    };
-    named_package(&root, "", home, &opening, &mut HashSet::new()).map(|package| format!("{package}.__main__"))
-}
-
-/// The dotted name of the package under `at` that is the one standing in
-/// `home`, found with `prefix` before what is found. The two are the same
-/// package when the directories are named alike and their `__init__.py`
-/// read alike. A directory already looked into is not looked into again,
-/// so a link that closes a circle stops.
-fn named_package(at: &Path, prefix: &str, home: &Path, opening: &[u8], seen: &mut HashSet<std::path::PathBuf>) -> Option<String> {
-    if !seen.insert(fs::canonicalize(at).ok()?) {
-        return None;
-    }
-    let mut children: Vec<_> = fs::read_dir(at).ok()?.flatten().collect();
-    children.sort_by_key(|child| child.file_name());
-    for child in children {
-        let path = child.path();
-        if !path.join("__init__.py").is_file() {
-            continue;
-        }
-        let name = child.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let dotted = if prefix.is_empty() { name } else { format!("{prefix}.{name}") };
-        if path.file_name() == home.file_name() && fs::read(path.join("__init__.py")).ok().as_deref() == Some(opening) {
-            return Some(dotted);
-        }
-        if let Some(found) = named_package(&path, &dotted, home, opening, seen) {
-            return Some(found);
-        }
-    }
-    None
 }
 
 fn parse_args(args: &[OsString]) -> Invocation {
@@ -1006,6 +962,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 let mut found = None;
                 for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
                     if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                }
+                if found.is_none() {
+                    // A name the library keeps is found where the library
+                    // keeps it, as the reference finds one walking sys.path.
+                    let root = python_library_root();
+                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
+                        if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                    }
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
@@ -1113,12 +1077,6 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    // A file that is a package's own entry runs inside that package, as
-    // running the package by name does, so the relative imports its text
-    // spells resolve against the package the library holds it under.
-    if module_name.is_none() && language.name() == "python" {
-        module_name = package_entry_module(&file);
-    }
     Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
 }
 
