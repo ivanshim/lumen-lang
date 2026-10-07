@@ -247,11 +247,13 @@ fn unpaired_work(numbers: &[u32], work: Work, given: &[Value], table: &Table) ->
             let ceil = if given.len() < 3 || matches!(given[2], Value::Nil) { size as i64 } else { count(&given[2], table)? };
             let clip = |n: i64| if n < 0 { (size as i64 + n).max(0) as usize } else { (n as usize).min(size) };
             let (lo, hi) = (clip(floor), clip(ceil));
-            let usable = floor <= size as i64 && lo <= hi;
-            let window = if usable { &numbers[lo..hi] } else { &numbers[0..0] };
+            if floor > size as i64 || lo > hi {
+                if matches!(work, INDEX | RINDEX) { return Err(complaint(table, "missing")); }
+                return Ok(if work == COUNT { Value::Small(0) } else { Value::Small(-1) });
+            }
+            let window = &numbers[lo..hi];
             let needle = codes(&given[0]).ok_or_else(|| complaint(table, "arguments"))?;
             if work == COUNT {
-                if !usable { return Ok(Value::Small(0)); }
                 if needle.is_empty() { return Ok(Value::Small(window.len() as i64 + 1)); }
                 let mut tally = 0i64;
                 let mut at = 0;
