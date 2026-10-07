@@ -222,6 +222,41 @@ class CodecInfo(tuple):
 
 _built_in_codecs = {}
 
+def _stream_classes(name):
+    # The stream reader and writer of a built-in codec, as the reference's
+    # per-encoding modules make them: the base classes with this codec's
+    # decode and encode. The byte order and the byte order mark that the
+    # first chunk settles are carried from one call to the next.
+    base_reader = globals()['StreamReader']
+    base_writer = globals()['StreamWriter']
+    class StreamReader(base_reader):
+        _order = None
+        def decode(self, input, errors='strict'):
+            decoder = _IncrementalDecoder(name, errors)
+            if self._order is not None:
+                decoder.order = self._order
+            text = decoder.decode(input, False)
+            self._order = decoder.order
+            return text, len(input) - len(decoder.buffer)
+        def reset(self):
+            base_reader.reset(self)
+            self._order = None
+    class StreamWriter(base_writer):
+        _later = False
+        def encode(self, input, errors='strict'):
+            at = name
+            if self._later:
+                if at in ('utf_16', 'utf_32'):
+                    at += '_le' if sys.byteorder == 'little' else '_be'
+                elif at == 'utf_8_sig':
+                    at = 'utf_8'
+            self._later = True
+            return _encode(input, at, errors), len(input)
+        def reset(self):
+            base_writer.reset(self)
+            self._later = False
+    return StreamReader, StreamWriter
+
 def lookup(encoding):
     if isinstance(encoding, str):
         encoding.encode('utf-8')
@@ -236,8 +271,9 @@ def lookup(encoding):
     if built is not None:
         return built
     if name in _charmaps or name in ('ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'unicode_escape', 'raw_unicode_escape', 'idna'):
+        reader, writer = _stream_classes(name)
         built = CodecInfo(lambda obj, errors='strict': (_encode(obj, name, errors), len(obj)),
-                          lambda obj, errors='strict': (_decode(obj, name, errors), len(obj)), name={'latin_1': 'iso8859-1', 'utf_8_sig': 'utf-8-sig'}.get(name, name.replace('_', '-')))
+                          lambda obj, errors='strict': (_decode(obj, name, errors), len(obj)), reader, writer, name={'latin_1': 'iso8859-1', 'utf_8_sig': 'utf-8-sig'}.get(name, name.replace('_', '-')))
         _built_in_codecs[spelling] = built
         return built
     for search in _searches:

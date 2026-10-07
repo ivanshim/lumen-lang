@@ -253,12 +253,6 @@ class _HostFile:
             brought = _host_file_read_bytes(name) if self._binary else _host_file_read(name)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
-            # A file opened for reading as text, with no newline argument,
-            # reads every line end as a newline; one opened to be written
-            # back as well is left as it stands, since the whole of it is
-            # written out again.
-            if not self._binary and '+' not in mode:
-                brought = brought.replace('\r\n', '\n').replace('\r', '\n')
             self._buffer = brought
 
     def _open(self):

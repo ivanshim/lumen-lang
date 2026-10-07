@@ -1211,7 +1211,7 @@ def _buffered_impl(kind):
     if impl is None:
         import _pyio
         base = getattr(_pyio, kind)
-        class Impl(base):
+        class _Impl(base):
             raw = None
             def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
                 base.__init__(self, raw, buffer_size)
@@ -1223,8 +1223,7 @@ def _buffered_impl(kind):
                 result = base.detach(self)
                 self.raw = None
                 return result
-        Impl.__name__ = Impl.__qualname__ = kind
-        impl = _IMPLS[kind] = Impl
+        impl = _IMPLS[kind] = _Impl
     return impl
 
 class BufferedReader(_BufferedIOBase):
@@ -1405,7 +1404,7 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
-        if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode:
+        if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode or 'r' in mode:
             if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
                 import os
                 file = os.fspath(file)
