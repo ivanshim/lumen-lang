@@ -626,7 +626,7 @@ def _encode(obj, encoding='utf-8', errors='strict'):
             raise UnicodeError("unsupported error handling " + errors)
         return _idna_encode(obj)
     info = lookup(encoding)
-    if not info._is_text_encoding:
+    if not getattr(info, '_is_text_encoding', True):
         raise LookupError("%r is not a text encoding; use codecs.encode() to handle arbitrary codecs" % encoding)
     value = info[0](obj, errors)[0]
     if not isinstance(value, bytes):
@@ -659,7 +659,7 @@ def _decode(obj, encoding='utf-8', errors='strict'):
         import _codec_idna
         return '.'.join(_codec_idna.to_unicode(label) for label in text.split('.'))
     info = lookup(encoding)
-    if not info._is_text_encoding:
+    if not getattr(info, '_is_text_encoding', True):
         raise LookupError("%r is not a text encoding; use codecs.decode() to handle arbitrary codecs" % encoding)
     value = info[1](obj, errors)[0]
     if not isinstance(value, str):
