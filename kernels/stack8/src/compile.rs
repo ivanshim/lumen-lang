@@ -9756,7 +9756,7 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             if lang.chained_comparisons {
-                if let Some((op, tier, width)) = self.comparison() {
+                if let Some((op, tier, width)) = self.comparison()? {
                     if tier < floor { break; }
                     self.comparisons(op, tier, width)?;
                     continue;
@@ -9809,7 +9809,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Kindred(Rc::from(named.as_str())), 1);
                 continue;
             }
-            let comparison = self.comparison();
+            let comparison = self.comparison()?;
             let Some(mut infix) = lang.dyadic.get(&text).cloned().or_else(|| {
                 comparison.as_ref().map(|(op, level, _)| crate::lang::Operator { action: op.clone(), level: *level, right_assoc: false })
             }) else {
@@ -9890,23 +9890,45 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn comparison(&self) -> Option<(Action, u32, usize)> {
-        let word = self.look().spelling();
-        if Lang::spells(&self.lang.membership_not, word) {
+    fn comparison(&mut self) -> Res<Option<(Action, u32, usize)>> {
+        let word = self.look().spelling().to_string();
+        // `<>` is not a word of Python's definition: it is the old
+        // diamond, two signs written with nothing between them. The
+        // future import barry_as_FLUFL brings it back to mean
+        // not-equal. Without that import the reference aims the
+        // complaint at the pair and names the operator meant instead.
+        if !self.lang.syntax_members.is_empty() && word == "<" && self.look_ahead(1).spelling() == ">"
+            && self.look_ahead(1).row == self.look().row
+            && self.look_ahead(1).column == self.look().end_column {
+            if !self.flufl {
+                let far = self.look_ahead(1).clone();
+                self.registry.stopped_end = if far.end_column != 0 { far.end_column } else { far.column + far.lexeme.chars().count() };
+                self.registry.stopped_end_row = far.end_row.max(far.row);
+                return Err("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?".into());
+            }
+            let level = self.lang.dyadic.get("!=").map_or(3, |op| op.level);
+            return Ok(Some((Action::Ne, level, 2)));
+        }
+        if Lang::spells(&self.lang.membership_not, &word) {
             let next = self.look_ahead(1).spelling();
             if Lang::spells(&self.lang.membership_words, next) {
-                return self.lang.dyadic.get(next).map(|op| (Action::Lacks, op.level, 2));
+                return Ok(self.lang.dyadic.get(next).map(|op| (Action::Lacks, op.level, 2)));
             }
         }
-        let op = self.lang.dyadic.get(word)?;
+        let Some(op) = self.lang.dyadic.get(&word) else { return Ok(None); };
         let mut action = op.action.clone();
         let mut width = 1;
         if matches!(action, Action::Same) && Lang::spells(&self.lang.identity_not, &self.look_ahead(1).spelling()) {
             action = Action::Unsame;
             width = 2;
         }
-        matches!(action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Same | Action::Unsame | Action::Contains | Action::Lacks)
-            .then_some((action, op.level, width))
+        // Where Barry is at the helm the two-character spelling is the
+        // one that is wrong, and the old diamond is the one to write.
+        if self.flufl && matches!(action, Action::Ne) {
+            return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
+        }
+        Ok(matches!(action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Same | Action::Unsame | Action::Contains | Action::Lacks)
+            .then_some((action, op.level, width)))
     }
 
     /// Each link keeps its far side for the link after it. A false link
@@ -9929,7 +9951,7 @@ impl<'a> Compiler<'a> {
             self.read(&far);
             self.act(op, 2);
             self.write(&answer);
-            let Some((next, level, words)) = self.comparison().filter(|(_, level, _)| *level == tier) else { break; };
+            let Some((next, level, words)) = self.comparison()?.filter(|(_, level, _)| *level == tier) else { break; };
             let _ = level;
             self.read(&answer);
             exits.push(self.skip());

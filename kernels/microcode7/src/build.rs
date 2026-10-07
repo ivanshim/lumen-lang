@@ -9444,7 +9444,7 @@ impl<'a> Builder<'a> {
                 continue;
             }
             if table.flag("ext.op.compare.chained") {
-                if let Some((operation, level, words)) = self.comparison_head() {
+                if let Some((operation, level, words)) = self.comparison_head()? {
                     if floor > level { break; }
                     let saved = self.gensym("middle");
                     let keep = Form::Write(saved.clone(), Box::new(left));
@@ -9525,7 +9525,7 @@ impl<'a> Builder<'a> {
                 left = prim_call(Prim::Akin, vec![left, against]);
                 continue;
             }
-            let head = self.comparison_head();
+            let head = self.comparison_head()?;
             let Some(mut op) = table.dyadic.get(&text).copied().or_else(|| {
                 head.map(|(prim, level, _)| crate::table::Infix { prim, level, right_assoc: false })
             }) else {
@@ -9586,19 +9586,45 @@ impl<'a> Builder<'a> {
         Ok(left)
     }
 
-    fn comparison_head(&self) -> Option<(Prim, u32, usize)> {
+    /// The comparison link standing at the reading's place, and how
+    /// many signs spell it. The old diamond `<>` is not a word of the
+    /// definition: with Barry's future import it is the not-equal
+    /// operator, two signs wide, and in a chain it is read link by
+    /// link like any other; without that import the pair is the
+    /// mistake the reference reports, wherever in the chain it stands.
+    fn comparison_head(&mut self) -> Res<Option<(Prim, u32, usize)>> {
         let t = self.table;
-        let first = self.look().spelling();
-        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", self.glance(1).spelling()) {
-            let membership = t.dyadic.get(self.glance(1).spelling())?;
-            return Some((Prim::Absent, membership.level, 2));
+        let first = self.look().spelling().to_string();
+        if t.has_any("ext.builtin.exceptions.syntax") && first == "<" && {
+            let next = self.glance(1);
+            let here = self.look();
+            next.lexeme == ">" && next.row == here.row && next.column == here.column + 1
+        } {
+            if !self.flufl {
+                let here = self.look().clone();
+                self.range_end = Some((here.column + 2, here.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            let not_equal = t.dyadic.get("!=").ok_or("Python's not-equal operator is missing")?;
+            return Ok(Some((Prim::Ne, not_equal.level, 2)));
         }
-        let binary = t.dyadic.get(first)?;
-        match binary.prim {
+        if t.spells("ext.op.in.negated", &first) && t.spells("ext.op.in", self.glance(1).spelling()) {
+            let Some(membership) = t.dyadic.get(self.glance(1).spelling()) else { return Ok(None); };
+            return Ok(Some((Prim::Absent, membership.level, 2)));
+        }
+        let Some(binary) = t.dyadic.get(&first) else { return Ok(None); };
+        // Barry turns the two-character spelling into the mistake and
+        // keeps the old diamond for the operator.
+        if self.flufl && matches!(binary.prim, Prim::Ne) {
+            let here = self.look().clone();
+            self.range_end = Some((here.column + here.lexeme.chars().count(), here.row));
+            return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
+        }
+        Ok(match binary.prim {
             Prim::Selfsame if t.spells("ext.op.identical.negated", self.glance(1).spelling()) => Some((Prim::Unlike, binary.level, 2)),
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Selfsame | Prim::Unlike | Prim::Contains | Prim::Absent => Some((binary.prim, binary.level, 1)),
             _ => None,
-        }
+        })
     }
 
     /// The next link runs beneath the true arm of this one. Its near
@@ -9609,7 +9635,7 @@ impl<'a> Builder<'a> {
         let far = self.gensym("next");
         let put = Form::Write(far.clone(), Box::new(side));
         let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
-        let answer = match self.comparison_head() {
+        let answer = match self.comparison_head()? {
             Some((following, tier, width)) if tier == level => {
                 let rest = self.comparison_tail(far.clone(), following, tier, width)?;
                 self.choose(test, rest, constant(Value::Flag(false)))
