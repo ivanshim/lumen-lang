@@ -228,6 +228,13 @@ class MultibyteIncrementalDecoder(_State):
                         self._state[4] &= ~1
                     pos += 1
                     continue
+                elif byte < 32:
+                    # Pass C0 controls through; a newline ends a Korean shift.
+                    if byte == 10:
+                        self._state[4] &= ~1
+                    result += chr(byte)
+                    pos += 1
+                    continue
                 if not prefix:
                     prefix = self._designation()
                     group = 1 if name == 'iso2022_kr' and self._state[4] & 1 else 0
@@ -290,6 +297,37 @@ class MultibyteStreamReader:
         self._decoder.errors = errors
         return self._decoder.decode(data, False), len(data)
 
+    # Read byte units, retaining incomplete input only across bounded reads.
+    def _read(self, method, size):
+        if size is None:
+            size = -1
+        elif not isinstance(size, int):
+            raise TypeError('arg 1 must be an integer')
+        if size == 0:
+            return ''
+        self._decoder.errors = self.errors
+        while True:
+            data = method() if size < 0 else method(size)
+            if not isinstance(data, bytes):
+                raise TypeError('stream function returned a non-bytes object (' + type(data).__name__ + ')')
+            result = self._decoder.decode(data, not data or size < 0)
+            if result or not data or size < 0:
+                return result
+            size = 1
+
+    # Decode a byte-limited read, finalizing at EOF or an unlimited read.
+    def read(self, size=None, /):
+        return self._read(self.stream.read, size)
+
+    # Decode one byte-stream line with the same pending-input policy as read.
+    def readline(self, size=None, /):
+        return self._read(self.stream.readline, size)
+
+    # Split decoded text from the requested byte extent into complete lines.
+    def readlines(self, sizehint=None, /):
+        return self._read(self.stream.read, sizehint).splitlines(True)
+
+    # Clear all stream buffers and restore the initial codec state.
     def reset(self):
         codecs.StreamReader.reset(self)
         self._decoder.reset()
