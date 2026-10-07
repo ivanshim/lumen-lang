@@ -84,15 +84,58 @@ def getdoc(object):
     return cleandoc(doc)
 
 
-# The five fields CPython gives a frame's place, and the record that
-# adds the frame itself and its position.
-Traceback = namedtuple('Traceback', ['filename', 'lineno', 'function', 'code_context', 'index'])
-FrameInfo = namedtuple('FrameInfo', ['frame', 'filename', 'lineno', 'function', 'code_context', 'index', 'positions'])
+# The five fields CPython gives a frame's place. The position of the
+# code that raised it is a separate attribute, not a sixth field, so a
+# record still unpacks into five values as CPython's does.
+_Traceback = namedtuple('_Traceback', ['filename', 'lineno', 'function', 'code_context', 'index'])
+
+
+class Traceback(_Traceback):
+    def __new__(cls, filename, lineno, function, code_context, index, *, positions=None):
+        instance = super().__new__(cls, filename, lineno, function, code_context, index)
+        instance.positions = positions
+        return instance
+
+    def __len__(self):
+        # A record is a tuple of its fields. The runtime does not reach
+        # a builtin kind's own length through a subclass that holds a
+        # frame, so the field count is named here.
+        return len(_Traceback._fields)
+
+    def __repr__(self):
+        return ('Traceback(filename={!r}, lineno={!r}, function={!r}, '
+                'code_context={!r}, index={!r}, positions={!r})'.format(
+                self.filename, self.lineno, self.function, self.code_context,
+                self.index, self.positions))
+
+
+# The record of one call: the frame itself and the five fields of its
+# place. The frame's position is the same separate attribute.
+_FrameInfo = namedtuple('_FrameInfo', ['frame'] + list(Traceback._fields))
+
+
+class FrameInfo(_FrameInfo):
+    def __new__(cls, frame, filename, lineno, function, code_context, index, *, positions=None):
+        instance = super().__new__(cls, frame, filename, lineno, function, code_context, index)
+        instance.positions = positions
+        return instance
+
+    def __len__(self):
+        # A record is a tuple of its fields. The runtime does not reach
+        # a builtin kind's own length through a subclass that holds a
+        # frame, so the field count is named here.
+        return len(_FrameInfo._fields)
+
+    def __repr__(self):
+        return ('FrameInfo(frame={!r}, filename={!r}, lineno={!r}, function={!r}, '
+                'code_context={!r}, index={!r}, positions={!r})'.format(
+                self.frame, self.filename, self.lineno, self.function,
+                self.code_context, self.index, self.positions))
 
 
 def isframe(object):
-    # A frame is the kind of thing sys._getframe hands back.
-    return type(object).__name__ == 'frame'
+    # A frame is the interpreter's own frame kind.
+    return isinstance(object, types.FrameType)
 
 
 def getframeinfo(frame, context=1):
@@ -110,7 +153,7 @@ def getouterframes(frame, context=1):
     frames = []
     while frame is not None:
         info = getframeinfo(frame, context)
-        frames.append(FrameInfo(frame, info.filename, info.lineno, info.function, info.code_context, info.index, None))
+        frames.append(FrameInfo(frame, info.filename, info.lineno, info.function, info.code_context, info.index, positions=info.positions))
         frame = frame.f_back
     return frames
 
