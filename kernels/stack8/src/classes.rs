@@ -1471,6 +1471,9 @@ impl<'a> Engine<'a> {
             Value::Bond(cell) => { let held = cell.borrow().clone(); self.class_apply(held, args) },
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             Value::Native(operation, name) => {
+                if operation == Builtin::UnicodeDecomposition && args.iter().all(|arg| !matches!(arg, Value::Tie(_))) {
+                    return Ok(crate::sre::decompose(&args)?);
+                }
                 let items = self.call_items_named(&name, args)?;
                 let answer = self.builtin_call(operation, &name, items);
                 if let Some(raised) = self.carried.take() { return Err(raised); }
@@ -4064,7 +4067,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("globals") {
                     if let Some(globe)=&f.globe { return Ok(globe.clone()); }
                 }
-                if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.constructor_book(f).unwrap_or_else(|| self.outer_book_made()))); }
+                if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.outer_book_made())); }
                 // The builtins a routine reads its unbound names from.
                 if self.lang.module_builtins.iter().any(|word| word == name) {
                     return self.routine_builtins(f);
@@ -4523,10 +4526,6 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
-        // Only this function can turn a cached absence into a metadata slot.
-        if let Value::Routine(body) | Value::Method(_, body, _) = function {
-            self.constructor_indices.borrow_mut().remove(&(Rc::as_ptr(body) as usize));
-        }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });

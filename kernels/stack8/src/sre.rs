@@ -365,7 +365,9 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     }
     if op == 11 {
         let supplied = args.get(1).ok_or_else(|| "TypeError: normalize() argument 2 must be str".to_string())?;
-        let codes = supplied.type_text().text_codes().ok_or_else(|| {
+        let plain = supplied.type_text();
+        if matches!(&plain, Value::Text(text) if text.is_ascii()) { return Ok(plain); }
+        let codes = plain.text_codes().ok_or_else(|| {
             let kind = match supplied.contents() { Value::Null => "None".to_string(), other => other.core_kind() };
             format!("TypeError: normalize() argument 2 must be str, not {kind}")
         })?;
