@@ -1,12 +1,15 @@
 # What a program can find out about the things it is made of.
 #
 # Functions expose code objects and generators expose their suspended
-# frames and running state. The interpreter does not keep a Python-level
-# list of all active calls, so stack() and currentframe() remain unavailable.
-# The helpers below use the available code and frame details.
+# frames and running state. The interpreter keeps the calls in progress
+# as frame objects that sys._getframe hands back, so stack() and
+# currentframe() walk that chain here. The helpers below use the
+# available code and frame details.
 
 import functools
+import sys
 import types
+from collections import namedtuple
 
 # The flags CPython sets on a compiled body. Code objects expose co_flags
 # so a program can compare these values with a function's compiled flags.
@@ -81,17 +84,45 @@ def getdoc(object):
     return cleandoc(doc)
 
 
+# The five fields CPython gives a frame's place, and the record that
+# adds the frame itself and its position.
+Traceback = namedtuple('Traceback', ['filename', 'lineno', 'function', 'code_context', 'index'])
+FrameInfo = namedtuple('FrameInfo', ['frame', 'filename', 'lineno', 'function', 'code_context', 'index', 'positions'])
+
+
+def isframe(object):
+    # A frame is the kind of thing sys._getframe hands back.
+    return type(object).__name__ == 'frame'
+
+
+def getframeinfo(frame, context=1):
+    # The file, line and function name a frame stands at. The runtime
+    # keeps no source text, so there are no lines of context to stand
+    # beside them, as CPython has none when it cannot read the source.
+    if not isframe(frame):
+        raise TypeError('{!r} is not a frame or traceback object'.format(frame))
+    code = frame.f_code
+    return Traceback(code.co_filename, frame.f_lineno, code.co_name, None, None)
+
+
+def getouterframes(frame, context=1):
+    # A frame and every frame it was called from, innermost first.
+    frames = []
+    while frame is not None:
+        info = getframeinfo(frame, context)
+        frames.append(FrameInfo(frame, info.filename, info.lineno, info.function, info.code_context, info.index, None))
+        frame = frame.f_back
+    return frames
+
+
 def stack(context=1):
-    # CPython walks the calls in progress and hands back a record for
-    # each, with the frame, the file and the line. No kernel here keeps
-    # the calls in progress as anything a program can reach, so an empty
-    # list would read as a program called from nowhere, which is never
-    # true. It refuses instead.
-    raise 'NotImplementedError: inspect.stack needs the calls in progress as objects, which this runtime does not keep'
+    # The frames of the calls in progress, the caller of stack first.
+    return getouterframes(sys._getframe(1), context)
 
 
 def currentframe():
-    raise 'NotImplementedError: inspect.currentframe needs a frame object, which this runtime does not keep'
+    # The frame of the caller of currentframe.
+    return sys._getframe(1)
 
 
 def getgeneratorstate(generator):
