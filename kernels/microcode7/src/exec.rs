@@ -27312,8 +27312,12 @@ impl Machine<'_> {
                 (Powered, _) if is("pow.exp") => 1,
                 (Powered, _) if is("pow.mod") => 2,
                 _ => {
-                    let keeps = matches!(op, Ordered | Least | Greatest | Zipped | Mapped | Numbered | Rounded | Powered | Iterator | Dictionary);
-                    if keeps { return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label))); }
+                    let keeps = matches!(op, Ordered | Least | Greatest | Zipped | Mapped | Numbered | Rounded | Powered | Dictionary);
+                    if keeps {
+                        let words = self.table.strings("ext.syntax.call.amiss.unexpected");
+                        if words.len() >= 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], label, words[2])); }
+                        return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label)));
+                    }
                     let words = self.table.strings("ext.syntax.call.amiss.builtin");
                     if words.len() >= 2 { return Err(format!("{}{}{}", words[0], name, words[1])); }
                     return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&label)));
