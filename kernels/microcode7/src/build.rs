@@ -3548,18 +3548,11 @@ impl<'a> Builder<'a> {
                 let manager = self.gensym("manager");
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
-                let watched = if asynchronous {
-                    // An asynchronous manager is entered by its own word;
-                    // its leaving method, bound now, stands in the watched
-                    // place and is called with the outcome at the end.
-                    let leaving = self.gensym("leaving");
-                    steps.push(Form::Write(leaving.clone(), Box::new(self.located(bounds, prim_call(Prim::AsyncContext(true), vec![manager_read.clone()])))));
-                    value = prim_call(Prim::AsyncContext(false), vec![manager_read]);
-                    leaving
-                } else {
-                    value = prim_call(Prim::StartContext, vec![manager_read]);
-                    manager
-                };
+                let watched = self.gensym("leaving");
+                let capture = if asynchronous { Prim::AsyncContext(true) } else { Prim::BindLeaving };
+                let entering = if asynchronous { Prim::AsyncContext(false) } else { Prim::StartContext };
+                steps.push(Form::Write(watched.clone(), Box::new(self.located(bounds, prim_call(capture, vec![manager_read.clone()])))));
+                value = prim_call(entering, vec![manager_read]);
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));

@@ -5229,18 +5229,11 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// The watched place holds the manager, whose leaving word is asked,
-    /// or -- for an asynchronous block -- the leaving method itself,
-    /// already bound, which is called as it stands.
+    /// Both forms of a watched block retain the callback bound at entry.
+    /// Awaiting is controlled by the block, after the callback returns.
     fn ask_leaving(&mut self, watched: &Value, arguments: &[Value]) -> Result<Option<Value>, String> {
-        match watched {
-            Value::Bound(..) | Value::Method(..) | Value::Routine(_) => match self.apply_class_member(watched.clone(), arguments.to_vec()).and_then(|value| self.await_completion(value)) {
-                Ok(value) => Ok(Some(value)),
-                Err(Escape::Error(message)) => Err(message),
-                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-            },
-            _ => self.ask_special(watched, 34, arguments),
-        }
+        self.apply_class_member(watched.clone(),arguments.to_vec()).map(Some)
+            .map_err(|escape|self.carried_native_fault(escape))
     }
 
     /// The manager of a watched body is told the body is done with. It
@@ -5256,7 +5249,6 @@ impl<'a> Machine<'a> {
 
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
-        if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned();
         let arguments = match raised {
             None => vec![Value::Nil; 3],
@@ -6404,7 +6396,6 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
-                    if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned().into());
                     }
@@ -14854,24 +14845,59 @@ impl<'a> Machine<'a> {
     }
 
     fn reserve_hint(&mut self, subject:&Value)->Result<(),String> {
-        let length=self.ask_special(subject,10,&[]);
-        let candidate=match length {
-            Ok(Some(value))=>Some(value),
-            Ok(None)=>None,
-            Err(message) if message.starts_with("TypeError:")=>None,
-            Err(message)=>return Err(message),
-        };
-        let value=if let Some(value)=candidate {value} else {
-            match self.ask_special(subject,78,&[]) {
-                Ok(Some(Value::Refusal(_)))|Ok(None)=>return Ok(()),
+        for operation in [10,78] {
+            let asked=if operation==78 {
+                let Some(entry)=self.appointment(subject,operation) else{continue};
+                let declaring=match subject {
+                    Value::Thing(instance)=>instance.blueprint(),
+                    Value::Blueprint(class)=>Self::builder_over(class).ok_or_else(||self.bad_answer())?,
+                    _=>return Err(self.bad_answer()),
+                };
+                let callback=self.member_binding(entry,Some(subject.clone()),declaring).map_err(|away|self.carried_native_fault(away))?;
+                self.apply_class_member(callback,Vec::new()).map(Some).map_err(|escape|self.carried_native_fault(escape))
+            } else {self.ask_special(subject,operation,&[])};
+            let answer=match asked {
+                Ok(None)=>continue,
+                Ok(Some(Value::Refusal(_))) if operation==78=>return Ok(()),
                 Ok(Some(value))=>value,
-                Err(message) if message.starts_with("TypeError:")=>return Ok(()),
-                Err(message)=>return Err(message),
+                Err(words)=>{
+                    let wanted=self.rules.words_ext_builtin_exceptions.get(8).map(String::as_str);
+                    let suppressed=match self.got_away.as_ref() {
+                        Some(Escape::Thrown(Value::Thing(raised)))=>{
+                            let origin=raised.blueprint();
+                            wanted.is_some_and(|name|origin.name==name || origin.ancestry().iter().any(|parent|parent.name==name))
+                        },
+                        Some(Escape::Error(note))=>wanted==note.split(':').next(),
+                        None=>wanted==words.split(':').next(),
+                        _=>false,
+                    };
+                    if suppressed {self.got_away.take();continue;}
+                    return Err(words);
+                },
+            };
+            let plain=Self::underlying(&answer).unwrap_or(answer).settled();
+            let mut number=if let Value::Flag(bit)=plain {Value::Small(bit as i64)}else{plain};
+            if operation==10 && !matches!(number,Value::Small(_)|Value::Huge(_)) {
+                match self.stood_for_whole(&number) {
+                    Ok(Some(index))=>number=index,
+                    Ok(None)=>continue,
+                    Err(words)=>{
+                        let kind=self.rules.words_ext_builtin_exceptions.get(8);
+                        let ignored=match self.got_away.as_ref() {
+                            Some(Escape::Thrown(Value::Thing(error)))=>kind.is_some_and(|name|error.blueprint().name==*name || error.blueprint().ancestry().iter().any(|ancestor|ancestor.name==*name)),
+                            _=>kind.map(String::as_str)==words.split(':').next(),
+                        };
+                        if ignored {self.got_away=None;continue;}
+                        return Err(words);
+                    },
+                }
             }
-        }.settled();
-        let value=if let Value::Flag(bit)=value {Value::Small(i64::from(bit))}else{value};
-        if !matches!(value,Value::Small(_)|Value::Huge(_)){return Err("TypeError: length hint must be an integer".to_owned());}
-        if value.as_big()? < 0.into(){return Err("ValueError: length hint must be non-negative".to_owned());}
+            if !matches!(number,Value::Small(_)|Value::Huge(_)){return Err(format!("TypeError: __length_hint__ must be an integer, not {}",number.kind_word()));}
+            let size=number.as_big()?;
+            if size<BigInt::from(0){return Err(if operation==78 {"ValueError: __length_hint__() should return >= 0"}else{"ValueError: __len__() should return >= 0"}.to_string());}
+            if size>BigInt::from(i64::MAX){return Err(if operation==78 {"OverflowError: Python int too large to convert to C ssize_t"}else{"OverflowError: cannot fit 'int' into an index-sized integer"}.to_owned());}
+            return Ok(());
+        }
         Ok(())
     }
     fn object_members(&mut self, subject:&Value)->Result<Vec<Value>,String> {self.list_members(subject,false)}
@@ -15659,6 +15685,13 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            (Prim::BindLeaving, [manager]) => {
+                let target=manager.settled();
+                let Value::Thing(instance)=&target else{return Err(self.no_manager(&target.kind_word()))};
+                let alternative=self.appointment(&target,85).is_some() && self.appointment(&target,86).is_some();
+                let callback=self.appointment(&target,34).ok_or_else(||self.manager_declined(&instance.blueprint().name,false,"__exit__",alternative))?;
+                self.member_binding(callback,Some(target.clone()),instance.blueprint()).map_err(|escape|self.carried_native_fault(escape))?
+            },
             (Prim::StartContext, [manager]) => {
                 let plain = manager.settled();
                 if let Value::Thing(thing) = &plain {
@@ -17713,7 +17746,7 @@ impl<'a> Machine<'a> {
             }
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
-            Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
+            Prim::StartContext | Prim::BindLeaving | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {

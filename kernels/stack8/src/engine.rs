@@ -9963,19 +9963,63 @@ impl<'a> Engine<'a> {
         if !extra.is_empty() { fields.push(("\0keys".to_string(), Value::Map(Rc::new(extra.into())))); }
     }
 
+    fn hint_type_error(&self, message:&str)->bool {
+        let Some(kind)=self.lang.exceptions.get(8) else{return false};
+        match self.carried.as_ref() {
+            Some(Fault::Thrown(Value::Object(instance)))=>{
+                let class=instance.class_now();
+                class.name==*kind || class.lineage().iter().any(|base|base.name==*kind)
+            },
+            Some(Fault::Note(note))=>note.split(':').next()==Some(kind.as_str()),
+            None=>message.split(':').next()==Some(kind.as_str()),
+            _=>false,
+        }
+    }
+    fn hint_callable(&mut self, value:&Value)->Res<Option<Value>> {
+        let Some(member)=self.special_value(value,78) else{return Ok(None)};
+        let owner=match value {
+            Value::Object(instance)=>instance.class_now(),
+            Value::Class(class)=>Self::maker_beneath(class).ok_or_else(||self.special_fault())?,
+            _=>return Err(self.special_fault()),
+        };
+        match self.bind_class_value(member,Some(value.clone()),owner) {
+            Ok(callable)=>Ok(Some(callable)),
+            Err(Fault::Note(words))=>Err(words),
+            Err(fault)=>{self.carried=Some(fault);Err(self.special_fault())},
+        }
+    }
     fn list_hint(&mut self, value:&Value)->Res<()> {
         for slot in [10,78] {
-            let outcome=self.special_call(value,slot,Vec::new());
+            let outcome=if slot==78 {
+                // Failure while binding the descriptor is not a failed call.
+                let Some(callable)=self.hint_callable(value)? else{continue};
+                match self.class_apply(callable,Vec::new()) {
+                    Ok(number)=>Ok(Some(number)),
+                    Err(Fault::Note(words))=>Err(words),
+                    Err(fault)=>{self.carried=Some(fault);Err(self.special_fault())},
+                }
+            } else {self.special_call(value,slot,Vec::new())};
             let hint=match outcome {
                 Ok(None)=>continue,
                 Ok(Some(Value::Declined(_))) if slot==78=>return Ok(()),
                 Ok(Some(number))=>number.contents(),
-                Err(error) if error.starts_with("TypeError:")=>continue,
+                Err(error) if self.hint_type_error(&error)=>{self.carried=None;continue;},
                 Err(error)=>return Err(error),
             };
-            let whole=match hint {Value::Flag(bit)=>Value::Small(i64::from(bit)),other=>other};
-            if !matches!(whole,Value::Small(_)|Value::Huge(_)){return Err("TypeError: length hint must be an integer".into());}
-            if whole.as_big()? < 0.into(){return Err("ValueError: length hint must be non-negative".into());}
+            let native=Self::worth_of(&hint).unwrap_or(hint).contents();
+            let whole=match native {Value::Flag(bit)=>Value::Small(i64::from(bit)),other=>other};
+            let whole=if slot==10 && !matches!(whole,Value::Small(_)|Value::Huge(_)) {
+                match self.special_index(&whole) {
+                    Ok(Some(number))=>number,
+                    Ok(None)=>continue,
+                    Err(note) if self.hint_type_error(&note)=>{self.carried=None;continue;},
+                    Err(note)=>return Err(note),
+                }
+            } else {whole};
+            if !matches!(whole,Value::Small(_)|Value::Huge(_)){return Err(format!("TypeError: __length_hint__ must be an integer, not {}",whole.core_kind()));}
+            let size=whole.as_big()?;
+            if size < 0.into(){return Err(if slot==10 {"ValueError: __len__() should return >= 0"}else{"ValueError: __length_hint__() should return >= 0"}.into());}
+            if size > i64::MAX.into(){return Err(if slot==10 {"OverflowError: cannot fit 'int' into an index-sized integer"}else{"OverflowError: Python int too large to convert to C ssize_t"}.into());}
             return Ok(());
         }
         Ok(())
@@ -12287,7 +12331,8 @@ impl<'a> Engine<'a> {
             Action::ContextExit => {
                 let manager=self.drop_top()?.contents();
                 let Value::Object(instance)=&manager else{return Err(self.unmanaged(&manager.core_kind()).into())};
-                let slot=self.special_value(&manager,34).ok_or_else(||self.unmanaged(&instance.class_now().name))?;
+                let asynchronous=self.special_value(&manager,85).is_some() && self.special_value(&manager,86).is_some();
+                let slot=self.special_value(&manager,34).ok_or_else(||self.manager_refused(&instance.class_now().name,false,"__exit__",asynchronous))?;
                 self.bind_class_value(slot,Some(manager.clone()),instance.class_now())?
             }
             Action::ContextEnter => {

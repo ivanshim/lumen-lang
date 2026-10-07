@@ -4425,9 +4425,11 @@ impl<'a> Machine<'a> {
                     return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
                 }
                 // A blueprint naming its slots without the namespace among them has things without one.
-                if !self.allowed_slot(&t.blueprint(),key){return Err(self.absent_attribute(&value,key));}
-                if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary") { return Ok(self.what_it_spells(mapping.clone())); }
-                return Ok(Value::Attributes(t.clone()));
+                if t.blueprint().type_names.borrow().is_none() {
+                    if !self.allowed_slot(&t.blueprint(),key){return Err(self.absent_attribute(&value,key));}
+                    if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary") { return Ok(self.what_it_spells(mapping.clone())); }
+                    return Ok(Value::Attributes(t.clone()));
+                }
             }
             let from_class=self.inherited_entry(&t.blueprint(),key);
             // Reading a data descriptor requires a read slot as well as a
@@ -5056,10 +5058,10 @@ impl<'a> Machine<'a> {
                 }
                 // The thing's own namespace handed back to it, an entry
                 // having been put in through it, is already in place.
-                if key==self.detail("namespace") {
+                if key==self.detail("namespace") && t.blueprint().type_names.borrow().is_none() {
                     if let Some(Value::Attributes(view))=&replacement {if Rc::ptr_eq(view,t){return Ok(Value::Nil);}}
+                    return self.replace_instance_book(t,replacement);
                 }
-                if key==self.detail("namespace"){return self.replace_instance_book(t,replacement);}
                 if key == self.detail("kind") {
                     match replacement {
                         Some(Value::Blueprint(next)) => {
@@ -5909,8 +5911,6 @@ impl<'a> Machine<'a> {
             if let Some(answer)=self.builtin_names(Prim::ClassWork(op),&spelling,&mut arguments,names)? {return Ok(answer);}
             values=arguments;
         }
-        if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
-
         if op == 13 { return self.class_from_function(values); }
         if op == 14 { return self.check_class_builtin(); }
         if op == 15 { return self.prepared_class_book(values.remove(0)); }

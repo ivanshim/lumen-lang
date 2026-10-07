@@ -56,6 +56,8 @@ pub enum Prim {
     Pointed,
     Adorn(char),
     StartContext,
+    /// Capture the synchronous leaving callback before entering the body.
+    BindLeaving,
     /// An asynchronous manager's leaving method, bound (true), or what
     /// its entering method answers (false).
     AsyncContext(bool),

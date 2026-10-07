@@ -3863,10 +3863,13 @@ impl<'a> Engine<'a> {
                         }
                         return self.bind_class_value(descriptor,Some(subject.clone()),o.class_now().clone());
                     }
-                    // A class that names its slots and leaves the namespace out of them has things without one.
-                    if !self.slots_allow(&o.class_now(),name) {return Err(self.missing_member(&subject,name));}
-                    if let Some((_, dictionary)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace") { return Ok(self.what_it_spells(dictionary.clone())); }
-                    return Ok(Value::Fields(o.clone()));
+                    // Heap classes expose storage through their namespace descriptor;
+                    // removing that descriptor leaves ordinary attribute lookup.
+                    if o.class_now().python_names.borrow().is_none() {
+                        if !self.slots_allow(&o.class_now(),name) {return Err(self.missing_member(&subject,name));}
+                        if let Some((_, dictionary)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace") { return Ok(self.what_it_spells(dictionary.clone())); }
+                        return Ok(Value::Fields(o.clone()));
+                    }
                 }
                 let member=self.class_value(&o.class_now(),name);
                 if member.is_none() && self.exception_class(&o.class_now()) && self.exception_method_named(name) {
@@ -4752,10 +4755,10 @@ impl<'a> Engine<'a> {
                 }
                 // A thing's own namespace, written back to it after an
                 // entry was put in, is where it was: nothing to do.
-                if name==self.class_word("namespace") {
+                if name==self.class_word("namespace") && o.class_now().python_names.borrow().is_none() {
                     if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
+                    return self.namespace_write(o,value);
                 }
-                if name==self.class_word("namespace") {return self.namespace_write(o,value);}
                 if name == self.class_word("kind") {
                     let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
                     let old = o.class_now();
@@ -5631,8 +5634,6 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
-        if which == 22 && args.len() == 1 { return Ok(args.remove(0)); }
-
         if (3..=6).contains(&which) && args.len() >= 2 {
             if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
         }
