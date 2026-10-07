@@ -214,6 +214,10 @@ pub struct Builder<'a> {
     read_in: bool,
     /// Show expression statements in text compiled in interactive mode.
     interactive: bool,
+    /// The optimization level the reading runs under: below one keeps
+    /// docstrings, assertions and `__debug__` as written; one drops
+    /// assertions and settles `__debug__` false; two drops docstrings.
+    optimize: i64,
     /// How many layers stood open before a word of this text was read.
     /// A statement is at the top of what was handed over when no more
     /// than these are open, whatever stands around them elsewhere.
@@ -364,7 +368,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, None, None, false, false, &[], 0)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, None, None, false, false, 0, &[], 0)
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -373,7 +377,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, false, false, &[], 0)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, false, false, 0, &[], 0)
         .map_err(|said| (said, at.get(), hard.get(), column.get()))
 }
 
@@ -382,7 +386,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
 /// statement that means one thing in a program of its own and another
 /// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, None, None, true, false, &[], 0)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, None, None, true, false, 0, &[], 0)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -400,7 +404,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, None, None, Some((inside, knows)), within, true, false, &[], 0)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, None, None, Some((inside, knows)), within, true, false, 0, &[], 0)
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -416,33 +420,34 @@ pub fn build_within_at(
     within: Option<(String, Option<String>)>,
     value_only: bool,
     origin: Option<Rc<str>>,
+    settle: i64,
     aliasing: &[(String, String)],
     future_bits: i64,
 ) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, None, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only, aliasing, future_bits).map_err(|said| (said, at.get(), column.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, None, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only, settle, aliasing, future_bits).map_err(|said| (said, at.get(), column.get()))
 }
 
 pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String], origin: Rc<str>, beside: Option<Value>, named: Option<Rc<str>>) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, &[], 0)
+    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, 0, &[], 0)
         .map_err(|message| (message, line.get(), span.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, true, false, &[], 0).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, true, false, 0, &[], 0).map_err(|said| (said, at.get()))
 }
 
 /// Text handed over to be read while the run goes: as one expression
 /// and nothing after it where it is to be weighed, else as statements;
 /// said besides which file it came out of, and which builtin words are
 /// to be read as names the program bound, in front of the builtins.
-pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, value_only: bool, shadowed: &[String], allow_top_await: bool, interactive: bool, future_bits: i64) -> Result<Built, (String, u32, (usize, usize, u32))> {
+pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, value_only: bool, shadowed: &[String], allow_top_await: bool, interactive: bool, settle: i64, future_bits: i64) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     let mark = Some((&at, &hard, &column));
@@ -450,25 +455,25 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let mut bound = shadowed.to_vec();
     let mut exports = HashSet::new();
     if table.flag("ext.stmt.function.closes_over") {
-        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive, &[], future_bits).map_err(|said| (said, at.get(), column.get()))?;
+        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive, settle, &[], future_bits).map_err(|said| (said, at.get(), column.get()))?;
         exports = discovery.native_exports;
         for name in discovery.bound_globally {
             if !bound.contains(&name) { bound.push(name); }
         }
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, framed_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive, &[], future_bits).map_err(|said| (said, at.get(), column.get()))
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, framed_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive, settle, &[], future_bits).map_err(|said| (said, at.get(), column.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
-        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false, aliasing, future_bits)?;
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false, settle, aliasing, future_bits)?;
         (pass.bound_globally, pass.native_exports)
     } else { (Vec::new(), HashSet::new()) };
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, beside, None, named, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false, aliasing, future_bits)
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, beside, None, named, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false, settle, aliasing, future_bits)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -619,7 +624,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     output
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
@@ -657,7 +662,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -763,20 +768,24 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // Text standing alone as the first statement of a program
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
+            let mut opening_text = false;
             if opening && own_line && within.is_none() {
                 let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
-                    for name in table.strings("ext.system.module.doc") {
-                        let slot = r.global_address(name);
-                        if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
-                        stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                    opening_text = true;
+                    if r.optimize < 2 {
+                        for name in table.strings("ext.system.module.doc") {
+                            let slot = r.global_address(name);
+                            if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
+                            stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                        }
                     }
                 }
             }
             if own_line { opening = false; }
             if defines {
                 ahead.push(stmt);
-            } else {
+            } else if !opening_text || r.optimize < 2 {
                 stmts.push(stmt);
             }
             r.skip_line_ends();
@@ -1954,7 +1963,7 @@ impl<'a> Builder<'a> {
             doc.get_or_insert_with(String::new).push_str(&token.lexeme);
             finish += 1;
         }
-        if expression_body || self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
+        if self.optimize >= 2 || expression_body || self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
@@ -3348,6 +3357,7 @@ impl<'a> Builder<'a> {
                     self.expr(0)?
                 // No message given is told apart from empty text.
                 } else { constant(Value::Unset) };
+                if self.optimize >= 1 { return Ok(constant(Value::Nil)); }
                 return Ok(Form::Assert { condition, message: Box::new(message) });
             }
             if self.key("stmt.foreach") {
@@ -5264,10 +5274,13 @@ impl<'a> Builder<'a> {
             self.parts().attributes.push("__type_params__".into());
             self.parts().held.push(prim_call(Prim::MakeTuple, values));
         }
-        // Seed documentation only when the body starts with a docstring.
-        if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
-            if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
+        // Seed documentation only when the body starts with a docstring
+        // and the second level of optimisation has not dropped it.
+        if self.optimize < 2 {
+            if let Some(word) = table.single("ext.stmt.class.detail.doc") {
+                let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+                if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
+            }
         }
         let book = self.parts().book.clone().expect("class namespace");
         let module_name = table.single("ext.system.module.name").unwrap_or_default();
@@ -5515,7 +5528,7 @@ impl<'a> Builder<'a> {
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            let said = if self.optimize < 2 { self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme)) } else { None };
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
@@ -10040,7 +10053,9 @@ impl<'a> Builder<'a> {
             }
             Shape::Bare => {
                 self.advance();
-                if table.spells("literal.true", &t.spelling()) {
+                if self.optimize >= 1 && t.spelling() == "__debug__" {
+                    constant(Value::Flag(false))
+                } else if table.spells("literal.true", &t.spelling()) {
                     constant(Value::Flag(true))
                 } else if table.spells("literal.false", &t.spelling()) {
                     constant(Value::Flag(false))
