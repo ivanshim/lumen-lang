@@ -189,6 +189,7 @@ impl Value {
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
+            Value::Adapter(parts) if parts.0 == 7 => Self::code_field_hash(self),
             Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
