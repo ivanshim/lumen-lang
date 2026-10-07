@@ -1,8 +1,6 @@
-# The formats an __annotate__ function is asked for, and the one reader of
-# annotations that works without one. This runtime records the names a class
-# or module annotates but does not evaluate the annotations themselves, so
-# VALUE and resolved FORWARDREF annotations can be served; formats requiring
-# the original annotation expression are refused.
+# Annotation formats and namespace evaluation for the runtime adapter.
+# Stored values and explicit annotation functions support string formatting;
+# symbolic evaluation and original expression strings need additional runtime support.
 
 class Format:
     VALUE = 1
@@ -15,7 +13,7 @@ _FORMAT_NAMES = {1: 'VALUE', 2: 'VALUE_WITH_FAKE_GLOBALS', 3: 'FORWARDREF', 4: '
 def _check_format(format):
     if format not in _FORMAT_NAMES:
         raise 'ValueError: ' + str(format) + ' is not a valid Format'
-    if format not in (Format.VALUE, Format.FORWARDREF):
+    if format not in (Format.VALUE, Format.FORWARDREF, Format.STRING):
         raise NotImplementedError("annotationlib cannot produce unevaluated annotation strings here")
 
 def get_annotate_from_class_namespace(obj):
@@ -29,6 +27,8 @@ def get_annotate_from_class_namespace(obj):
             return None
         def annotate(format):
             _check_format(format)
+            if format == Format.STRING:
+                raise NotImplementedError("annotation expressions are not retained as strings")
             result = {}
             for index in range(0, len(rows), 2):
                 result[rows[index]] = rows[index + 1]()
@@ -52,18 +52,61 @@ def call_evaluate_function(evaluate, format, owner=None):
 
 def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1):
     _check_format(format)
+    if eval_str and format != Format.VALUE:
+        raise ValueError("eval_str=True is only supported with format=Format.VALUE")
     annotate = getattr(obj, '__annotate__', None)
     if annotate is not None:
         result = call_annotate_function(annotate, format, owner=obj)
         if result is None:
             return {}
-        return dict(result)
-    stored = getattr(obj, '__annotations__', None)
+        if not isinstance(result, dict):
+            raise ValueError(str(obj) + '.__annotate__ returned a non-dict')
+        if format == Format.STRING:
+            return dict(result)
+        stored = result
+    else:
+        stored = getattr(obj, '__annotations__', None)
     if stored is None:
         return {}
-    if eval_str:
-        raise 'NotImplementedError: annotationlib cannot evaluate string annotations here'
-    return dict(stored)
+    if format == Format.STRING:
+        if eval_str:
+            raise ValueError("eval_str=True is only supported with format=Format.VALUE")
+        return annotations_to_string(stored)
+    if not eval_str:
+        return dict(stored)
+    if format != Format.VALUE:
+        raise ValueError("eval_str=True is only supported with format=Format.VALUE")
+    if globals is None:
+        globals = getattr(obj, '__globals__', None)
+        if globals is None:
+            if isinstance(obj, types.ModuleType):
+                globals = obj.__dict__
+            else:
+                module = sys.modules.get(getattr(obj, '__module__', None))
+                globals = {} if module is None else module.__dict__
+    if locals is None and isinstance(obj, type):
+        locals = dict(obj.__dict__)
+    if locals is None:
+        locals = globals
+    parameters = getattr(obj, '__type_params__', ())
+    if parameters:
+        locals = {parameter.__name__: parameter for parameter in parameters} | locals
+    return {key: eval(value, globals, locals) if isinstance(value, str) else value
+            for key, value in stored.items()}
+
+# Approximate strings from existing values using their actual public identities.
+def type_repr(value):
+    if isinstance(value, (type, types.FunctionType, types.BuiltinFunctionType)):
+        if value.__module__ == 'builtins':
+            return value.__qualname__
+        return value.__module__ + '.' + value.__qualname__
+    if value is Ellipsis:
+        return '...'
+    return repr(value)
+
+def annotations_to_string(annotations):
+    return {name: value if isinstance(value, str) else type_repr(value)
+            for name, value in annotations.items()}
 
 # Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/annotationlib.py; PSF License.
 # ForwardRef uses conditionals for formats; symbolic AST transformation is unavailable.
