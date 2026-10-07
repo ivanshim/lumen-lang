@@ -5289,6 +5289,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.rewind` | - | - | - | - | `rewind` | - | - | - | - | - |
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
 | `ext.stmt.annotation` | - | - | `:` | - | - | - | - | - | - | - |
+| `ext.stmt.annotation.adapter` | - | - | `__native_annotation_rows__` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.amiss` | - | - | `invalid syntax` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
@@ -6106,3 +6107,5 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
+
+`ext.stmt.annotation.adapter` names a runtime attribute exposing retained native class annotation expressions to the symbolic namespace adapter. Python uses it to produce genuine forward references without changing direct annotator format errors.

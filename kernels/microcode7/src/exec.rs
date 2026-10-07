@@ -6119,11 +6119,14 @@ impl<'a> Machine<'a> {
         let chosen = self.constructor_world(&p);
         let suspended_reading = self.reading_now;
         if p.globe.is_none() && chosen.is_none() { self.reading_now = None; }
+        let clear_handed = chosen.is_none() && self.world_book.as_ref().is_some_and(|cell| matches!(*cell.borrow(), Value::Thing(_)));
+        let caller_dictionary = if clear_handed { self.world_book.take() } else { None };
         let earlier = chosen.map(|book| self.world_book.replace(book));
         let outcome = if p.generator && self.rules.suspends {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
         if let Some(previous) = earlier { self.world_book = previous; }
+        if clear_handed { self.world_book = caller_dictionary; }
         self.reading_now = suspended_reading;
         outcome
     }
@@ -7595,7 +7598,7 @@ impl<'a> Machine<'a> {
                             self.attribute_restore(t, entries);
                             return Ok(Value::Nil);
                         }
-                        if let (Some(index), true) = (&key, self.appointed(&target, 12).is_some()) {
+                        if let (Some(index), true) = (&key, self.appointed(&target, 12).is_some() || self.rules.closes_over && self.appointment(&target, 12).is_some()) {
                             self.ask_special(&target, 12, &[index.clone(), value])?;
                             return Ok(Value::Nil);
                         }
@@ -9908,7 +9911,7 @@ impl<'a> Machine<'a> {
         }
         if self.directory_attribute(receiver, name).is_some() {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
-            return Ok(self.ordinary_directory(receiver));
+            return self.ordinary_directory(receiver);
         }
         if name == "code_replace" {
             if let Value::Thing(item) = receiver.settled() {
@@ -12262,6 +12265,7 @@ impl<'a> Machine<'a> {
     // Cache locations, including absent records, until metadata gains an entry.
     // The record itself stays live, so later writes to globals remain visible.
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        if let Some(value @ Value::Thing(_)) = body.globe.as_ref() { return Some(Rc::new(RefCell::new(value.clone()))); }
         let wanted = Rc::as_ptr(body);
         let cached = self.constructor_records.borrow().get(&(wanted as usize)).copied();
         let at = match cached {
@@ -12300,9 +12304,12 @@ impl<'a> Machine<'a> {
             (None, None) => self.reading_now.take(),
             _ => self.reading_now,
         };
+        let isolated = handed.is_none() && self.world_book.as_ref().is_some_and(|book| matches!(*book.borrow(), Value::Thing(_)));
+        let paused = if isolated { self.world_book.take() } else { None };
         let saved_world = handed.map(|book| self.world_book.replace(book));
         let result = self.invoke_body(program, env, args);
         if let Some(prior) = saved_world { self.world_book = prior; }
+        if isolated { self.world_book = paused; }
         self.reading_now = resumed_reading;
         result
     }
@@ -14302,6 +14309,14 @@ impl<'a> Machine<'a> {
         let incoming = match (expanded, item.settled()) {
             (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
             (true, Value::Dict(entries)) => entries.to_vec(),
+            (true, Value::Attributes(owner)) => self.attribute_entries(&owner),
+            (true, Value::Window(owner, 'm')) => match owner.proxy_pairs() { Value::Dict(pairs) => pairs.to_vec(), _ => unreachable!() },
+            (true, instance @ Value::Thing(_)) if self.rules.has_any_ext_builtin_bool_result => {
+                let Some(Value::Dict(pairs)) = Self::underlying(&instance).map(|value| value.settled()) else {
+                    return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().cloned().unwrap_or_default());
+                };
+                pairs.to_vec()
+            }
             _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
         };
         for (key, value) in incoming {
@@ -14756,6 +14771,7 @@ impl<'a> Machine<'a> {
         while let Some(value) = pending.pop() {
             match value {
                 Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => return true,
+                Value::Wrapped(3 | 132, parts) if matches!(parts.first(), Some(Value::Routine(_) | Value::Bound(..))) => return true,
                 Value::Blueprint(plan) if Self::builder_over(&plan).is_some() => return true,
                 Value::Shared(cell) | Value::Mutable(cell, _) => {
                     if passed.insert(Rc::as_ptr(&cell) as usize) {
@@ -15006,7 +15022,7 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            Value::Wrapped(3, parts) if !self.rules.detail_main.is_empty() => {
+            Value::Wrapped(3 | 132, parts) if !self.rules.detail_main.is_empty() => {
                 let named = match parts.first() {
                     Some(Value::Routine(code) | Value::Bound(code, _)) => if code.qualification.is_empty() { code.ident.clone() } else { code.qualification.clone() },
                     _ => String::new(),
@@ -16312,6 +16328,16 @@ impl<'a> Machine<'a> {
                 return Err(self.operands_refused(&sign, left, right));
             }
         }
+        if let ([plain, subclass @ Value::Thing(_)], Prim::Eq | Prim::Ne) = (operands, operation) {
+            let slot = usize::from(operation == Prim::Ne) + 2;
+            if self.rules.closes_over && self.appointment(subclass, slot).is_none() {
+                if let Some(storage) = Self::underlying(subclass) {
+                    let native = storage.settled();
+                    let family = matches!((plain, &native), (Value::Vector(_), Value::Vector(_)) | (Value::Tuple(_), Value::Tuple(_)));
+                    if family { return self.prim(operation, "", &[native, plain.clone()]).map(Some); }
+                }
+            }
+        }
         if matches!(operation, Prim::Eq | Prim::Ne) {
             if let Some(equal) = self.native_sequence_equal(operation, operands)? {
                 return Ok(Some(Value::Flag(equal != (operation == Prim::Ne))));
@@ -16360,7 +16386,7 @@ impl<'a> Machine<'a> {
         // asked for an address of its own kind and have none.
         if let (Prim::Contains | Prim::Absent, [needle @ (Value::Thing(_) | Value::Tuple(_) | Value::Keyed(..)), haystack]) = (operation, operands) {
             if let Value::Set(store) = haystack.settled() {
-                if !Self::needs_set_methods(needle) { return Ok(None); }
+                if !Self::needs_set_methods(needle) && !store.borrow().custom_keys { return Ok(None); }
                 if let Value::Set(candidate) = self.set_search_item(needle) {
                     let present = store.borrow().keys.contains(&candidate.borrow().whole_address());
                     return Ok(Some(Value::Flag(if operation == Prim::Absent { !present } else { present })));
@@ -16941,7 +16967,7 @@ impl<'a> Machine<'a> {
             },
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
-            (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
+            (Prim::Length, [one]) if self.appointed(one, 10).is_some() || (self.rules.has_any_ext_builtin_bool_result && self.appointment(one, 10).is_some()) => {
                 let reported = self.ask_special(one, 10, &[])?.unwrap();
                 // Strip Python integer wrappers before inspecting their value.
                 let length = if self.rules.has_any_ext_builtin_bool_result {
@@ -20906,7 +20932,30 @@ impl<'a> Machine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Prim::SinceEpoch => {
+                if name == "ctime" && self.rules.clock_parts {
+                    if v.len() > 1 { return Err(format!("TypeError: ctime() takes at most 1 argument ({} given)", v.len())); }
+                    let supplied = v.first().map(|item| Self::underlying(item).unwrap_or_else(|| item.settled())).unwrap_or(Value::Nil);
+                    let timestamp = match supplied {
+                        Value::Nil => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs() as i64),
+                        Value::Frac(fraction) => {
+                            let real = crate::data::nearest_binary(&fraction.above, &fraction.beneath);
+                            if real.is_nan() { return Err(String::from("ValueError: Invalid value NaN (not a number)")); }
+                            if !real.is_finite() || real < i64::MIN as f64 || real >= 9223372036854775808.0 { return Err(String::from("OverflowError: timestamp out of range for platform time_t")); }
+                            real.floor() as i64
+                        }
+                        integer => integer.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: timestamp out of range for platform time_t"))?,
+                    };
+                    extern "C" { fn ctime_r(input: *const i64, output: *mut std::ffi::c_char) -> *mut std::ffi::c_char; }
+                    let mut output = vec![0 as std::ffi::c_char; 128];
+                    let calendar = unsafe { ctime_r(&timestamp, output.as_mut_ptr()) };
+                    if calendar.is_null() { return Err(String::from("OverflowError: timestamp out of range for platform time_t")); }
+                    let calendar_text = unsafe { std::ffi::CStr::from_ptr(calendar) }.to_string_lossy();
+                    return Ok(Value::text(calendar_text.strip_suffix('\n').unwrap_or(&calendar_text)));
+                }
                 if self.rules.clock_parts {
+                    if matches!(v, [Value::Text(word)] if word.as_ref() == "ctime") {
+                        return Ok(Value::Intrinsic(Prim::SinceEpoch, Rc::from("ctime")));
+                    }
                     if let Some(Value::Text(operation))=v.first() {
                         if operation.as_ref()=="struct_time" && v.len()==1 { return Ok(Value::Blueprint(self.clock_record_type())); }
                         if matches!(operation.as_ref(),"localtime"|"gmtime") && v.len()==2 {
@@ -21900,7 +21949,7 @@ impl<'a> Machine<'a> {
                     (item, Value::Set(hay)) => {
                         let address = if let Value::Set(candidate) = self.set_search_item(item) {
                             candidate.borrow().whole_address()
-                        } else if Self::needs_set_methods(item) {
+                        } else if Self::needs_set_methods(item) || hay.borrow().custom_keys {
                             // Custom equality can reach this set again, so
                             // only that road needs an independent snapshot.
                             let entries = hay.borrow().entries.clone();
@@ -22044,6 +22093,9 @@ impl<'a> Machine<'a> {
             // lies past the point, text is read for the number it opens
             // with, and anything that is not an array becomes an array
             // holding only itself.
+            Prim::AsChars if self.rules.closes_over && matches!(v[0], Value::Wrapped(3 | 132, _) | Value::Method(..)) => {
+                Value::text(&self.object_words(&v[0], false)?)
+            }
             Prim::AsChars => Value::text(&v[0].render(w)),
             Prim::UnheldText => return Err(v[0].bare()),
             Prim::RenderField => {
@@ -22572,7 +22624,7 @@ impl<'a> Machine<'a> {
                 self.figures_allowed(&v[0])?;
                 // A bound method (or a method closure) is written by the
                 // thing it is bound to, which only the program can word.
-                if matches!(&v[0], Value::Wrapped(3, _) | Value::Method(..)) {
+                if matches!(&v[0], Value::Wrapped(3 | 132, _) | Value::Method(..)) {
                     return self.object_words(&v[0], false).map(|text| Value::text(&text));
                 }
                 Value::text(&self.told(&v[0], w))
@@ -23851,12 +23903,17 @@ impl<'a> Machine<'a> {
     }
 
     fn set_address(&mut self, entries: &[(String, Value)], item: &Value) -> Result<String, String> {
-        if !Self::needs_set_methods(item) { return self.hash_for_set(item); }
+        if !Self::needs_set_methods(item) {
+            for (address, entry) in entries {
+                if Self::needs_set_methods(entry) && self.keys_agree(entry, item)? { return Ok(address.clone()); }
+            }
+            return self.hash_for_set(item);
+        }
         let keyed = self.hash_key(item)?;
         let hash = match &keyed { Value::Keyed(_, hash) => hash.bare(), _ => String::new() };
         let opening = format!("instance:{hash}:");
         for (address, held) in entries {
-            if !address.starts_with(&opening) { continue; }
+            if !address.starts_with(&opening) && Self::needs_set_methods(held) { continue; }
             if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
         }
         let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, _ => 0 }, _ => 0 };
@@ -23872,7 +23929,8 @@ impl<'a> Machine<'a> {
         // for, is placed against the entries, so they are copied out
         // for that alone and a store is gathered in a single pass
         // rather than in one pass for every entry it gains.
-        if !Self::needs_set_methods(&item) {
+        let has_python_keys = store.borrow().custom_keys;
+        if !Self::needs_set_methods(&item) && !has_python_keys {
             let address = self.hash_for_set(&item)?;
             store.borrow_mut().put(address, item);
             return Ok(());
@@ -23913,7 +23971,8 @@ impl<'a> Machine<'a> {
     /// thing, so that two stores built apart still agree on what each
     /// other holds however their own entries came to be addressed.
     fn set_member_found(&mut self, item: &Value, other: &crate::data::SetStore) -> Result<bool, String> {
-        if Self::needs_set_methods(item) {
+        let inspect_entries = other.custom_keys;
+        if Self::needs_set_methods(item) || inspect_entries {
             let keyed = self.hash_key(item)?;
             for (_, held) in &other.entries {
                 if self.keys_agree(&held, &keyed)? { return Ok(true); }
@@ -25608,6 +25667,7 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
+        if self.frames_named.last().is_some_and(|code| matches!(code.globe, Some(Value::Thing(_)))) && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {
@@ -25669,7 +25729,12 @@ impl<'a> Machine<'a> {
             }
             Held::World => {
                 let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up(book, name) {
+                let owned = book.clone();
+                let found = match self.booked_get(&owned, name) {
+                    Ok(found) => found,
+                    Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                };
+                if let Some(worth) = found {
                     if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
                 }
@@ -28612,7 +28677,7 @@ impl Machine<'_> {
                 if matches!(input[0].settled(), Value::Huge(_)) { self.figures_allowed(&input[0])?; }
                 // Cells and bound methods need the runtime's access to their
                 // frame or receiver to produce their Python representation.
-                if portion.is_none() && matches!(input[0], Value::Wrapped(3 | 35, _) | Value::Method(..)) {
+                if portion.is_none() && matches!(input[0], Value::Wrapped(3 | 35 | 132, _) | Value::Method(..)) {
                     let rendered = self.object_words(&input[0], true)?;
                     return Ok(Value::text(&rendered));
                 }

@@ -82,7 +82,12 @@ def format_exception_only(exc, value=None):
                         padding += ch if ch.isspace() else ' '
                     result.append('    ' + padding + '^' * max(1, min(end - exc.offset, len(shown) - start)) + '\n')
         message = str(exc.msg or '<no detail available>') + suffix
-    result.append((prefix + message if message else kind) + '\n')
+    cls = type(exc)
+    module = cls.__module__
+    display = cls.__qualname__
+    if module not in ('builtins', '__main__'):
+        display = module + '.' + display
+    result.append((display + ': ' + message if message else display) + '\n')
     notes = getattr(exc, '__notes__', None)
     if isinstance(notes, (list, tuple)):
         for note in notes:

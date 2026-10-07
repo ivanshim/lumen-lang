@@ -3471,7 +3471,7 @@ impl<'a> Builder<'a> {
         }
         let mut writes = Vec::new();
         if taking_names && !enclosed && self.on_any("op.mul") {
-            if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(1).any(|scope| scope.holds == Holds::Every)) {
+            if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(self.outer_layers).any(|scope| scope.holds == Holds::Every)) {
                 return Err(String::from("SyntaxError: import * only allowed at module level"));
             }
             self.advance();

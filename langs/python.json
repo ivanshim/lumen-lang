@@ -47,7 +47,9 @@
   "ext.builtin.posix": [
     "__posix"
   ],
-  "ext.builtin.loader.source": ["__loader_source"],
+  "ext.builtin.loader.source": [
+    "__loader_source"
+  ],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -909,8 +911,12 @@
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
-  "ext.builtin.static_namespace": ["__static_namespace__"],
-  "ext.builtin.trace_native": ["__trace_native__"],
+  "ext.builtin.static_namespace": [
+    "__static_namespace__"
+  ],
+  "ext.builtin.trace_native": [
+    "__trace_native__"
+  ],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],
@@ -4118,13 +4124,13 @@
   "ext.builtin.bytes.escape_decode": [
     "__escape_decode_native__"
   ],
-  "ext.builtin.struct_native": [
-    "__struct_native"
-  ],
   "ext.builtin.pickle_buffer": [
     "__pickle_buffer_native__"
   ],
   "ext.builtin.text.intern": [
     "__intern_native__"
+  ],
+  "ext.stmt.annotation.adapter": [
+    "__native_annotation_rows__"
   ]
 }

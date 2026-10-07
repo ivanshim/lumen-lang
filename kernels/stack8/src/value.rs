@@ -426,6 +426,7 @@ pub type FxBuildHasher = std::hash::BuildHasherDefault<QuickHash>;
 /// The hash finds a member; the row remembers when it first came.
 #[derive(Debug, Clone)]
 pub struct Members {
+    pub protocol_keys: bool,
     pub row: Vec<String>,
     pub held: std::collections::HashMap<String, Value, FxBuildHasher>,
     pub word: String,
@@ -444,12 +445,13 @@ pub struct Members {
 
 impl Members {
     pub fn empty(word: String, fixed: bool) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None) }
+        Self { protocol_keys: false, row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None) }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
         self.folded.set(None);
         if !self.held.contains_key(&key) {
+            self.protocol_keys |= matches!(value, Value::Hashed(_) | Value::Object(_)) || matches!(value, Value::Tuple(_)) && value.member_key().is_err();
             self.row.push(key.clone());
             self.held.insert(key, value);
         }
@@ -1862,6 +1864,8 @@ impl Value {
         }
         match kind {
             "type" if matches!(name, "__dict__" | "__name__" | "__mro__") => Some(("attribute", "getset_descriptor")),
+            "code" if matches!(name, "co_varnames" | "co_freevars" | "co_cellvars" | "co_code" | "co_lnotab") => Some(("attribute", "getset_descriptor")),
+            "code" if name.starts_with("co_") => Some(("member", "member_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

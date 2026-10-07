@@ -304,6 +304,7 @@ pub struct Adornment {
 // standard scattering pays for on every insertion.
 #[derive(Clone, Debug)]
 pub struct SetStore {
+    pub custom_keys: bool,
     pub entries: Vec<(String, Value)>,
     pub keys: HashSet<String, crate::table::FxBuildHasher>,
     pub spelling: String,
@@ -320,7 +321,7 @@ pub struct SetStore {
 
 impl SetStore {
     pub fn new(spelling: &str, sealed: bool) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None) }
+        SetStore { custom_keys: false, entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None) }
     }
 
     /// The address the whole store takes where a set holds it: the
@@ -341,7 +342,11 @@ impl SetStore {
 
     pub fn put(&mut self, address: String, item: Value) {
         self.reckoned.set(None);
-        if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
+        if self.keys.insert(address.clone()) {
+            let own_hash = matches!(item, Value::Keyed(..) | Value::Thing(_));
+            self.custom_keys = self.custom_keys || own_hash || (matches!(item, Value::Tuple(_)) && item.hash_address().is_err());
+            self.entries.push((address, item));
+        }
     }
 
     pub fn take(&mut self, address: &str) -> Option<Value> {
@@ -1773,6 +1778,7 @@ impl Value {
         if native_slot { return Some(("slot wrapper", "wrapper_descriptor")); }
         match kind {
             "type" if matches!(name, "__dict__" | "__mro__" | "__name__") => Some(("attribute", "getset_descriptor")),
+            "code" if name.starts_with("co_") => Some(if ["co_varnames", "co_freevars", "co_cellvars", "co_code", "co_lnotab"].contains(&name) { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

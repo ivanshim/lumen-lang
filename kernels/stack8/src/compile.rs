@@ -3759,7 +3759,7 @@ impl<'a> Compiler<'a> {
         }
         let star = from && self.look().shape == Shape::Sign && lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
         if star && group.is_none() {
-            if !lang.syntax_members.is_empty() && (!self.piece().outermost || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
+            if !lang.syntax_members.is_empty() && (self.pieces.len() > 1 || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
             self.take();
             if lang.import_values {
                 self.act(Action::Import(module.clone(), ImportStyle::Star), 0);

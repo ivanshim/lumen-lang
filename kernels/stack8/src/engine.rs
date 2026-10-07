@@ -4100,12 +4100,15 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        let namespace = self.constructor_book(program);
+        let namespace = self.constructor_book(program).or_else(|| match program.globe.as_ref() { Some(value @ Value::Object(_)) => Some(Rc::new(RefCell::new(value.clone()))), _ => None });
         let reading = self.reading_in;
         if program.globe.is_none() && namespace.is_none() { self.reading_in = None; }
+        let separate = namespace.is_none() && self.outer_book.as_ref().is_some_and(|book| matches!(*book.borrow(), Value::Object(_)));
+        let suspended = if separate { self.outer_book.take() } else { None };
         let earlier = namespace.map(|book| self.outer_book.replace(book));
         let answer = self.invoke_top_body(program, n);
         if let Some(earlier) = earlier { self.outer_book = earlier; }
+        if separate { self.outer_book = suspended; }
         self.reading_in = reading;
         answer
     }
@@ -4499,13 +4502,7 @@ impl<'a> Engine<'a> {
                 Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class_now().clone()), value.clone(), self.trace_of(value)],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
-            let (method, receiver) = match &object {
-                Value::Method(o, p, _) => (p.clone(), Value::Object(o.clone())),
-                _ => (self.special_method(&object, 34).ok_or_else(|| self.special_fault())?, object.clone()),
-            };
             let kept = self.data.len();
-            let mut given = vec![receiver];
-            given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
             if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
@@ -4516,14 +4513,22 @@ impl<'a> Engine<'a> {
                 self.location = context_location;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
-            let left = self.invoke(&method, given).and_then(|()| {
-                if leaving_bound {
+            let left = if let Value::Method(receiver, code, _) = &object {
+                let mut given = vec![Value::Object(receiver.clone())];
+                given.extend(args);
+                self.invoke(code, given).and_then(|()| {
                     let value = self.drop_top()?;
-                    let answer = self.await_value(value)?;
-                    self.data.push(answer);
+                    let result = self.await_value(value)?;
+                    self.data.push(result);
+                    Ok(())
+                })
+            } else {
+                match self.special_call(&object, 34, args) {
+                    Ok(Some(answer)) => { self.data.push(answer); Ok(()) }
+                    Ok(None) => Err(self.special_fault().into()),
+                    Err(words) => Err(self.carried.take().unwrap_or(Fault::Note(words))),
                 }
-                Ok(())
-            });
+            };
             let left = self.raised_of_note(left);
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;
@@ -6790,6 +6795,7 @@ impl<'a> Engine<'a> {
     /// and that same module for the bytes table-maker, whose own home
     /// the reference gives back for it.
     fn callable_home(&self, op: &Builtin, word: &str) -> Value {
+        if *op == Builtin::Clock && word == "ctime" { return Value::text("time"); }
         if !word.contains('.') { return Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)); }
         match op { Builtin::Bytes(40) => Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)), _ => Value::Null }
     }
@@ -7900,6 +7906,7 @@ impl<'a> Engine<'a> {
         fn looked_into(value: &Value, seen: &mut Vec<*const RefCell<Value>>, into_sets: bool) -> bool {
             match value {
                 Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) | Value::Method(..) => true,
+                Value::Adapter(method) if method.0 == 131 => true,
                 Value::Class(class) => Engine::maker_beneath(class).is_some(),
                 Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => {
                     if seen.contains(&Rc::as_ptr(c)) { return false; }
@@ -8097,6 +8104,15 @@ impl<'a> Engine<'a> {
                         else { format!("<{module}.{} object at 0x1>", object.class_now().name) })
                 }
             };
+        }
+        if let Value::Adapter(method) = value {
+            if method.0 == 131 && !self.class_word("main").is_empty() {
+                if let Some(Value::Routine(routine)) = method.1.first() {
+                    let title = if routine.qualified.is_empty() { &routine.ident } else { &routine.qualified };
+                    let receiver = self.special_text(&method.1[1], true)?;
+                    return Ok(format!("<bound method {title} of {receiver}>"));
+                }
+            }
         }
         // A bound method is written by the routine's own full name and
         // the thing it is bound to, as CPython writes it; a language
@@ -9142,7 +9158,7 @@ impl<'a> Engine<'a> {
             // is: by its own hash and its own equality, the members
             // standing in the set as the gathering put them there.
             if let Value::Set(cell) = b {
-                if !Self::set_needs_protocol(a) { return self.dyadic(op, a, b); }
+                if !Self::set_needs_protocol(a) && !cell.borrow().protocol_keys { return self.dyadic(op, a, b); }
                 if let Value::Set(needle) = self.set_lookup_value(a) {
                     let found = cell.borrow().held.contains_key(&needle.borrow().address());
                     return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
@@ -9232,6 +9248,12 @@ impl<'a> Engine<'a> {
             }
         }
         let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
+        if self.lang.bind_names && matches!(op, Action::Eq | Action::Ne) && matches!(b, Value::Object(_)) {
+            let slot = if matches!(op, Action::Eq) { 2 } else { 3 };
+            if self.special_value(b, slot).is_none() && matches!((a, &right), (Value::Array(_), Some(Value::Array(_))) | (Value::Tuple(_), Some(Value::Tuple(_)))) {
+                return self.special_dyad(op, right.as_ref().unwrap(), a);
+            }
+        }
         if left.is_some() || right.is_some() {
             if let (Action::At | Action::Toward | Action::Apart, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
                 if let Some(method) = self.lang.missing_key.as_deref().and_then(|word| self.class_value(&o.class_now(), word)) {
@@ -9688,11 +9710,11 @@ impl<'a> Engine<'a> {
                 let Value::Fields(o) = &args[0] else { unreachable!() };
                 Value::Small(self.fields_entries(o).len() as i64)
             }
-            Builtin::Replace if args.len() == 3 && self.special_method(&args[2], 12).is_some() => {
+            Builtin::Replace if args.len() == 3 && (self.special_method(&args[2], 12).is_some() || self.lang.bind_names && self.special_value(&args[2], 12).is_some()) => {
                 self.special_call(&args[2], 12, vec![args[0].clone(), args[1].clone()])?;
                 args[2].clone()
             }
-            Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
+            Builtin::Length if args.len() == 1 && (self.special_method(&args[0], 10).is_some() || (self.lang.bool_result.is_some() && self.special_value(&args[0], 10).is_some())) => {
                 let mut answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
                 // Python reads an integer subclass's stored length directly.
                 if self.lang.bool_result.is_some() {
@@ -11490,6 +11512,12 @@ impl<'a> Engine<'a> {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p, _ => unreachable!() };
                     let new_pairs = match (spread, next.contents()) {
                         (true, Value::Map(p)) => p.to_vec(),
+                        (true, Value::Fields(owner)) => self.fields_entries(&owner),
+                        (true, Value::View(view)) if view.1 == "mapping" => match view.0.proxy_dictionary() { Value::Map(pairs) => pairs.to_vec(), _ => unreachable!() },
+                        (true, instance @ Value::Object(_)) if self.lang.bool_result.is_some() => {
+                            let Some(Value::Map(pairs)) = Self::worth_of(&instance).map(|value| value.contents()) else { return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_default().into()); };
+                            pairs.to_vec()
+                        }
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
@@ -15549,7 +15577,7 @@ impl<'a> Engine<'a> {
     }
 
     fn write_slice(&mut self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
-        if self.special_method(&target, 12).is_some() {
+        if self.special_method(&target, 12).is_some() || self.lang.bind_names && self.special_value(&target, 12).is_some() {
             let key = Value::Slice(Rc::new(parts.clone()));
             self.special_call(&target, 12, vec![key, given])?;
             return Ok(target);
@@ -15848,12 +15876,17 @@ impl<'a> Engine<'a> {
     }
 
     fn set_place(&mut self, members: &[(String, Value)], value: &Value) -> Res<String> {
-        if !Self::set_needs_protocol(value) { return self.set_key(value); }
+        if !Self::set_needs_protocol(value) {
+            for (key, held) in members.iter().filter(|(_, held)| Self::set_needs_protocol(held)) {
+                if self.special_keys_equal(held, value)? { return Ok(key.clone()); }
+            }
+            return self.set_key(value);
+        }
         let wanted = self.special_key(value)?;
         let hash = match &wanted { Value::Hashed(pair) => pair.1.plain(), _ => String::new() };
         let opening = format!("object:{hash}:");
         for (key, held) in members {
-            if !key.starts_with(&opening) { continue; }
+            if !key.starts_with(&opening) && Self::set_needs_protocol(held) { continue; }
             if self.special_keys_equal(held, &wanted)? { return Ok(key.clone()); }
         }
         let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Object(o) => Rc::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, _ => 0 }, _ => 0 };
@@ -15866,7 +15899,7 @@ impl<'a> Engine<'a> {
     /// thing, so that two sets built apart still agree on what each
     /// other holds however their own members came to be addressed.
     fn set_member_found(&mut self, value: &Value, other: &crate::value::Members) -> Res<bool> {
-        if Self::set_needs_protocol(value) {
+        if Self::set_needs_protocol(value) || other.protocol_keys {
             let wanted = self.special_key(value)?;
             for held in other.held.values() {
                 if self.special_keys_equal(held, &wanted)? { return Ok(true); }
@@ -15943,7 +15976,7 @@ impl<'a> Engine<'a> {
         // is placed against the members, so the members are taken out
         // for it alone and a set is gathered in one pass and not in as
         // many passes as it has members.
-        if !Self::set_needs_protocol(&value) {
+        if !Self::set_needs_protocol(&value) && !cell.borrow().protocol_keys {
             let key = self.set_key(&value)?;
             cell.borrow_mut().insert(key, value);
             return Ok(());
@@ -16794,7 +16827,11 @@ impl<'a> Engine<'a> {
         }
         if self.builtin_directory_method(receiver, operation).is_some() {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-            return Ok(self.default_directory(receiver));
+            return match self.default_directory(receiver) {
+                Ok(names) => Ok(names),
+                Err(Fault::Note(words)) => Err(words),
+                Err(raised) => { self.carried = Some(raised); Err(String::new()) },
+            };
         }
         if operation == "code_replace" {
             if let Value::Object(object) = receiver.contents() {
@@ -20690,7 +20727,30 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                if self.lang.clock_parts && name == "ctime" {
+                    if args.len() > 1 { return Err(format!("TypeError: ctime() takes at most 1 argument ({} given)", args.len())); }
+                    let value = args.first().map(|value| Self::worth_of(value).unwrap_or_else(|| value.contents())).unwrap_or(Value::Null);
+                    let seconds = match value {
+                        Value::Null => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |duration| duration.as_secs() as i64),
+                        Value::Real(ratio) => {
+                            let number = crate::value::as_binary(&ratio.p, &ratio.q);
+                            if number.is_nan() { return Err("ValueError: Invalid value NaN (not a number)".into()); }
+                            if !number.is_finite() || number < i64::MIN as f64 || number >= 9223372036854775808.0 { return Err("OverflowError: timestamp out of range for platform time_t".into()); }
+                            number.floor() as i64
+                        }
+                        other => other.as_big()?.to_i64().ok_or_else(|| "OverflowError: timestamp out of range for platform time_t".to_string())?,
+                    };
+                    extern "C" { fn ctime_r(time: *const i64, buffer: *mut std::ffi::c_char) -> *mut std::ffi::c_char; }
+                    let mut buffer = [0 as std::ffi::c_char; 128];
+                    let pointer = unsafe { ctime_r(&seconds, buffer.as_mut_ptr()) };
+                    if pointer.is_null() { return Err("OverflowError: timestamp out of range for platform time_t".into()); }
+                    let text = unsafe { std::ffi::CStr::from_ptr(pointer) }.to_string_lossy();
+                    return Ok(Value::text(text.trim_end_matches('\n')));
+                }
                 if self.lang.clock_parts {
+                    if args.len() == 1 && matches!(args.first(), Some(Value::Text(word)) if word.as_ref() == "ctime") {
+                        return Ok(Value::Native(Builtin::Clock, Rc::from("ctime")));
+                    }
                     if let Some(Value::Text(task))=args.first() {
                         if task.as_ref()=="struct_time" && args.len()==1 {return Ok(Value::Class(self.calendar_kind()))}
                         if matches!(task.as_ref(),"localtime"|"gmtime") && args.len()==2 {
@@ -25159,6 +25219,7 @@ impl Engine<'_> {
     /// in one: a slot text was given, or any the program may name once
     /// the outermost dictionary has been handed out.
     fn book_of(&self, far: usize) -> Option<Kept> {
+        if self.running_routine.as_ref().is_some_and(|body| matches!(body.globe, Some(Value::Object(_)))) && self.outer_book.is_some() { return Some(Kept::Outer); }
         let ident = self.registry.idents.get(far)?;
         if let Some(rest) = ident.strip_prefix("\0module:") {
             let path = rest.splitn(3, ':').nth(1)?;
@@ -25227,7 +25288,11 @@ impl Engine<'_> {
                         Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
                     });
                 }
-                if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
+                match self.book_get(&book, name) {
+                    Ok(Some(held)) => return Some(Ok(held)),
+                    Ok(None) => (),
+                    Err(fault) => { self.carried = Some(fault); return Some(Err(self.special_fault())); }
+                }
                 if self.left_out(name, &self.world[far]) { return None; }
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
                 Some(Err(format!("Undefined variable: {}", name)))

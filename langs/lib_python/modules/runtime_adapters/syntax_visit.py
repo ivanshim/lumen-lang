@@ -139,3 +139,8 @@ def unparse(ast_obj):
         from _ast_unparse import Unparser as _Unparser
         unparser = _Unparser()
     return unparser.visit(ast_obj)
+
+# Keyword syntax nodes carry the same field layout as the native syntax tree.
+class keyword(AST):
+    _fields = ('arg', 'value')
+    _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')

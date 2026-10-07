@@ -305,3 +305,6 @@ def strftime(format, fields=None):
         else:
             out += '%' + ch
     return out
+
+# The system clock exposes the native C calendar formatter.
+ctime = _host_clock("ctime")
