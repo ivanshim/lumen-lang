@@ -239,9 +239,8 @@ pub struct Suspension {
     inner: Option<Value>,
     members: Option<std::vec::IntoIter<Value>>,
     ready: Option<Value>,
-    /// The cell of the map the members were taken from, and how many
-    /// pairs it held then, so a step may notice the map has grown or
-    /// shrunk under the walk.
+    /// The live dictionary, its original entry count and forward offset.
+    /// members keeps the remaining allowance independently of entry holes.
     overseen: Option<(Rc<RefCell<Value>>, (usize, u64))>,
     /// A walk taken backwards over a map: the cell, how many pairs it
     /// held when the walk began, and the place the walk is now at, so a
@@ -4201,10 +4200,16 @@ impl<'a> Machine<'a> {
     /// words for one that changes size: a step after such a change
     /// stops with those words.
     fn walk_over(&self, source: &Value, members: Vec<Value>) -> Value {
-        let overseen = match Self::dict_cell(source) {
-            Some(cell) if self.rules.has_any_ext_syntax_map_resized => { let size = Self::dict_extent(&cell); Some((cell, size)) }
-            _ => None,
-        };
+        let overseen = Self::dict_cell(source).filter(|_| self.rules.has_any_ext_syntax_map_resized)
+            .map(|cell| { let used = Self::dict_extent(&cell).0; (cell, (used, 0)) });
+        let (members, walked) = if let Some((_, (used, _))) = &overseen {
+            let name = match source {
+                Value::Window(_, 'v') => "dict_valueiterator",
+                Value::Window(_, 'i') => "dict_itemiterator",
+                _ => "dict_keyiterator",
+            };
+            (vec![Value::Nil; *used], Some(name))
+        } else { (members, None) };
         Value::Generator(Rc::new(RefCell::new(Suspension {
             titles: [String::new(), String::new()],
             trace_state: None,
@@ -4212,7 +4217,7 @@ impl<'a> Machine<'a> {
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: Some(members.into_iter()), ready: None, overseen, reversed_walk: None, of: None,
-            walked: None,
+            walked,
             stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
             source_reading: None,
         })))
@@ -4758,15 +4763,22 @@ impl<'a> Machine<'a> {
             state.ended = true;
             return Ok(None);
         }
-        // A map that changed size under the walk stops the step.
-        if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
-            let current = Self::dict_extent(cell);
-            if current != *size {
-                let which = usize::from(current.0 == size.0);
-                let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
-                state.ended = true;
-                return Err(format!("\0{complaint}").into());
+        // Equal-sized replacements retain the iterator's entry offset;
+        // its outstanding count limits how many live rows it may return.
+        if let Some((owner, (original, offset))) = state.overseen.clone() {
+            if !matches!(sent, Value::Nil) { return Err(self.generator_words("unsupported").into()); }
+            let mut offset = offset as usize;
+            let mut balance = (original, state.members.as_ref().map_or(0, |m| m.len()) as u64);
+            let projection = match state.walked {
+                Some("dict_itemiterator") => 'i', Some("dict_valueiterator") => 'v', _ => 'k',
+            };
+            let result = self.advance_dictionary(&Value::Shared(owner), &mut offset, &mut balance, projection);
+            if let Some((_, saved)) = &mut state.overseen { *saved = (balance.0, offset as u64); }
+            if matches!(&result, Ok(Some(_))) {
+                if let Some(members) = &mut state.members { members.next(); }
             }
+            state.ended = matches!(&result, Ok(None)) || (result.is_err() && balance.0 != usize::MAX);
+            return result.map_err(Escape::from);
         }
         if let Some(members) = &mut state.members {
             if !matches!(sent, Value::Nil) { return Err(self.generator_words("unsupported").into()); }
@@ -26433,6 +26445,17 @@ impl Machine<'_> {
                     }
                     out
                 }
+            } else if frame.ended { Vec::new() } else if let Some((home, (used, offset))) = &frame.overseen {
+                let mut cursor = *offset as usize;
+                let mut allowance = (*used, frame.members.as_ref().map_or(0, |m| m.len()) as u64);
+                let projection = match frame.walked {
+                    Some("dict_valueiterator") => 'v', Some("dict_itemiterator") => 'i', _ => 'k',
+                };
+                let mut output = Vec::new();
+                while let Some(member) = self.advance_dictionary(&Value::Shared(home.clone()), &mut cursor, &mut allowance, projection)? {
+                    output.push(member);
+                }
+                output
             } else {
                 frame.members.as_ref().map(|items| items.as_slice().to_vec()).unwrap_or_default()
             };
@@ -26869,15 +26892,9 @@ impl Machine<'_> {
                     return Ok(item);
                 }
                 IteratorKind::Watching { window, at, size } => {
-                    let current = Self::window_extent(window);
-                    if current != *size {
-                        let index = if current.0 == size.0 { 1 } else { 0 };
-                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
-                    }
-                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
-                    if item.is_some() { *at += 1; }
-                    held.done = item.is_none();
-                    return Ok(item);
+                    let result = self.advance_window(window, at, size);
+                    held.done = matches!(&result, Ok(None)) || (result.is_err() && size.0 != usize::MAX);
+                    return result;
                 }
                 IteratorKind::Stepping(walk, at) => {
                     let item = walk.item(at);
@@ -26903,14 +26920,7 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Watching { window, at, size } => {
-                    let current = Self::window_extent(window);
-                    if current != *size {
-                        let index = if current.0 == size.0 { 1 } else { 0 };
-                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
-                    }
-                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
-                    if item.is_some() { *at += 1; }
-                    Ok(item)
+                    self.advance_window(window, at, size)
                 }
                 IteratorKind::Placed(thing, at) => {
                     let Some((reader, scope)) = self.appointed_within(thing, 11) else { return Ok(None) };
@@ -27035,9 +27045,51 @@ impl Machine<'_> {
         }
     }
 
-    /// How many entries the dictionary behind a window holds.
+    /// Initialise the fixed size and remaining yield allowance of a view.
     fn window_extent(window: &Value) -> (usize, u64) {
-        match window { Value::Window(owner, _) => match owner.proxy_pairs() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) }, _ => (0, 0) }
+        match window {
+            Value::Window(owner, _) => match owner.proxy_pairs() {
+                Value::Dict(entries) => (entries.len(), entries.len() as u64),
+                _ => (0, 0),
+            },
+            _ => (0, 0),
+        }
+    }
+
+    /// Scan current dictionary entries from an unchanged numerical offset.
+    fn advance_dictionary(&self, owner: &Value, offset: &mut usize, balance: &mut (usize, u64), projection: char) -> Result<Option<Value>, String> {
+        let entries = match owner.proxy_pairs() { Value::Dict(entries) => entries, _ => return Ok(None) };
+        if balance.0 != entries.len() {
+            balance.0 = usize::MAX;
+            let message = &self.table.strings("ext.builtin.core.dict.changed")[0];
+            return Err(format!("\0{message}"));
+        }
+        let positions = entries.slots_synced();
+        let candidate = positions.iter().enumerate().find(|(_, slot)| **slot >= *offset);
+        let Some((index, entry_position)) = candidate else { return Ok(None) };
+        if balance.1 == 0 {
+            *offset = usize::MAX;
+            let complaint = &self.table.strings("ext.builtin.core.dict.changed")[1];
+            return Err(format!("\0{complaint}"));
+        }
+        let (stored, value) = &entries[index];
+        let key = if let Value::Keyed(inner, _) = stored { inner.as_ref().clone() } else { stored.clone() };
+        let member = match projection {
+            'v' => value.clone(),
+            'i' => Value::tuple(vec![key, value.clone()]),
+            _ => key,
+        };
+        balance.1 -= 1;
+        *offset = *entry_position + 1;
+        Ok(Some(member))
+    }
+
+    /// Project the next live dictionary entry through a keys/values/items view.
+    fn advance_window(&self, view: &Value, offset: &mut usize, balance: &mut (usize, u64)) -> Result<Option<Value>, String> {
+        match view {
+            Value::Window(owner, projection) => self.advance_dictionary(owner, offset, balance, *projection),
+            _ => Ok(None),
+        }
     }
 
     /// The cell a list lives in, or a window upon a dictionary, taken as

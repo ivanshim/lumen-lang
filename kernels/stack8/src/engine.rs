@@ -5197,14 +5197,24 @@ impl<'a> Engine<'a> {
                 kept.closed = true;
                 return Ok(None);
             }
-            // A map that changed size under the walk stops the next step.
-            if let (Some((cell, size)), Some(said)) = (&kept.watched, &self.lang.map_resized) {
-                let now = Self::map_size(cell);
-                if now != *size {
-                    let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
-                    kept.closed = true;
-                    return Err(format!("\0{words}").into());
+            // Read forward from the saved entry position, allowing a
+            // replacement table of equal size to supply its current rows.
+            if let Some((cell, (used, position))) = kept.watched.clone() {
+                let mut position = position as usize;
+                let mut counts = (used, used.saturating_sub(kept.pc) as u64);
+                let shape = match kept.walked.as_deref() {
+                    Some("dict_valueiterator") => "values",
+                    Some("dict_itemiterator") => "items",
+                    _ => "keys",
+                };
+                let answer = self.map_next_entry(&Value::Bond(cell), &mut position, &mut counts, shape);
+                if let Some((_, saved)) = &mut kept.watched { *saved = (counts.0, position as u64); }
+                match &answer {
+                    Ok(Some(_)) => kept.pc += 1,
+                    Ok(None) => kept.closed = true,
+                    Err(_) => kept.closed = counts.0 != usize::MAX,
                 }
+                return answer.map_err(Into::into);
             }
             let item = kept.items.get(kept.pc).cloned();
             kept.pc += usize::from(item.is_some());
@@ -13120,7 +13130,17 @@ impl<'a> Engine<'a> {
     fn watched_walk(&self, source: &Value, items: Vec<Value>) -> Value {
         let mut walk = Generator::new(None, Vec::new(), items);
         if self.lang.map_resized.is_some() {
-            if let Some(cell) = Self::map_cell(source) { walk.watched = Some((cell.clone(), Self::map_size(&cell))); }
+            if let Some(cell) = Self::map_cell(source) {
+                let len = Self::map_size(&cell).0;
+                walk.watched = Some((cell, (len, 0)));
+                walk.items = vec![Value::Null; len];
+                let kind = match source {
+                    Value::View(view) if view.1 == "values" => "dict_valueiterator",
+                    Value::View(view) if view.1 == "items" => "dict_itemiterator",
+                    _ => "dict_keyiterator",
+                };
+                walk.walked = Some(Rc::from(kind));
+            }
         }
         Value::Generator(Rc::new(RefCell::new(walk)))
     }
@@ -21872,7 +21892,20 @@ impl Engine<'_> {
                     }
                     out
                 }
-            } else if held.closed { Vec::new() } else { held.items.get(held.pc..).unwrap_or_default().to_vec() };
+            } else if held.closed { Vec::new() } else if let Some((cell, (used, position))) = &held.watched {
+                let mut place = *position as usize;
+                let mut counts = (*used, used.saturating_sub(held.pc) as u64);
+                let shape = match held.walked.as_deref() {
+                    Some("dict_valueiterator") => "values",
+                    Some("dict_itemiterator") => "items",
+                    _ => "keys",
+                };
+                let mut remaining = Vec::new();
+                while let Some(item) = self.map_next_entry(&Value::Bond(cell.clone()), &mut place, &mut counts, shape)? {
+                    remaining.push(item);
+                }
+                remaining
+            } else { held.items.get(held.pc..).unwrap_or_default().to_vec() };
             return Ok(pack(vec![iter, pack(vec![Value::array(entries)])]));
         }
         let Value::Cursor(cell) = value else { return Err("TypeError: cannot pickle this iterator".into()) };
@@ -22129,9 +22162,9 @@ impl Engine<'_> {
             if let Some(worth) = self.worth_free_of(source, &[15]) { return self.core_iterator(&worth); }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
-        // A plain map is walked through a keys window, whose walk
-        // remembers the revision it began at: a change made while the
-        // walk runs is refused, as the reference refuses it.
+        // A plain map uses a keys window whose entry position survives
+        // equal-sized mutations; size and remaining yield count are
+        // checked against the current table at each step.
         if self.lang.core_words.contains_key("core.dict.changed") && matches!(source, Value::Map(_)) {
             let window = Value::View(Rc::new((source.clone(), "keys".to_string())));
             let size = Self::window_size(&window);
@@ -22242,11 +22275,10 @@ impl Engine<'_> {
                     return Ok(found);
                 }
                 CursorSource::Viewed(window, place, size) => {
-                    let now = Self::window_size(window);
-                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
-                    let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
-                    if found.is_some() { *place += 1; } else { state.finished = true; }
-                    return Ok(found);
+                    let answer = self.window_next(window, place, size);
+                    let ended = matches!(&answer, Ok(None)) || (answer.is_err() && size.0 != usize::MAX);
+                    state.finished = ended;
+                    return answer;
                 }
                 _ => {}
             }
@@ -22270,11 +22302,7 @@ impl Engine<'_> {
                 Ok(found)
             }
             CursorSource::Viewed(window, place, size) => {
-                let now = Self::window_size(window);
-                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
-                let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
-                if found.is_some() { *place += 1; }
-                Ok(found)
+                self.window_next(window, place, size)
             }
             // The summoned callable was answered above, with the cursor free.
             CursorSource::Called(..) => Ok(None),
@@ -22399,19 +22427,45 @@ impl Engine<'_> {
         }
     }
 
-    /// The size of the map a window looks upon.
+    /// Record the original size and the number of entries still owed.
     fn window_size(window: &Value) -> (usize, u64) {
-        match window { Value::View(view) => match view.0.proxy_dictionary() {
-            Value::Map(pairs) => {
-                if matches!(view.0.contents(), Value::Class(_)) {
-                    use std::hash::{Hash, Hasher};
-                    let mut keys = std::collections::hash_map::DefaultHasher::new();
-                    for (key, _) in pairs.iter() { key.plain().hash(&mut keys); }
-                    (pairs.len(), keys.finish())
-                } else { (pairs.len(), pairs.revision) }
-            },
-            _ => (0, 0)
-        }, _ => (0, 0) }
+        let len = match window {
+            Value::View(view) => match view.0.proxy_dictionary() { Value::Map(pairs) => pairs.len(), _ => 0 },
+            _ => 0,
+        };
+        (len, len as u64)
+    }
+
+    /// Advance through live entry slots without resetting the saved cursor.
+    fn map_next_entry(&self, source: &Value, place: &mut usize, counts: &mut (usize, u64), shape: &str) -> Res<Option<Value>> {
+        let Value::Map(pairs) = source.proxy_dictionary() else { return Ok(None) };
+        if pairs.len() != counts.0 {
+            counts.0 = usize::MAX;
+            return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][0]));
+        }
+        let slots = pairs.slots_synced();
+        let row = slots.partition_point(|slot| *slot < *place);
+        let Some(&key_slot) = slots.get(row) else { return Ok(None) };
+        if counts.1 == 0 {
+            *place = usize::MAX;
+            return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][1]));
+        }
+        let (key, value) = &pairs[row];
+        let key = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+        let item = match shape {
+            "values" => value.clone(),
+            "items" => Value::tuple(vec![key, value.clone()]),
+            _ => key,
+        };
+        *place = key_slot + 1;
+        counts.1 -= 1;
+        Ok(Some(item))
+    }
+
+    /// Read a view's projection using its owner's current entry table.
+    fn window_next(&self, window: &Value, place: &mut usize, counts: &mut (usize, u64)) -> Res<Option<Value>> {
+        let Value::View(view) = window else { return Ok(None) };
+        self.map_next_entry(&view.0, place, counts, &view.1)
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,

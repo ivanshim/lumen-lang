@@ -210,8 +210,8 @@ pub struct Generator {
     pub sent: Value,
     pub items: Vec<Value>,
     pub current: Option<Value>,
-    /// The cell of a map the walk hands the items of, with the size the
-    /// map had when the walk began, so a step may see it has changed.
+    /// The live map, its initial size and the next entry position;
+    /// pc counts yields independently of holes in the entry table.
     pub watched: Option<(Rc<RefCell<Value>>, (usize, u64))>,
     /// A walk taken backwards over a map: the cell, how many pairs it
     /// held when the walk began, and the place it is to read next, so a
@@ -272,8 +272,8 @@ pub enum CursorSource {
     /// A list walked through the cell it lives in, read as it stands at
     /// each step rather than as it stood at the first.
     Living(Rc<RefCell<Value>>, usize),
-    /// A window upon a map, with the size the map had when the walk
-    /// began; the walk stops should that size change.
+    /// A live map view, next entry slot, original size and remaining
+    /// yield count; size faults keep a sentinel original size.
     Viewed(Value, usize, (usize, u64)),
     /// A thing walked by reading its places from nought upward.
     Indexed(Value, BigInt),

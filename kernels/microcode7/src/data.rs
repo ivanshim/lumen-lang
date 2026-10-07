@@ -185,8 +185,8 @@ pub enum IteratorKind {
     /// A list read through its cell at every step, so that members put
     /// in before the end are walked as well.
     Living(Rc<RefCell<Value>>, usize),
-    /// A window upon a dictionary, and the size the dictionary had at
-    /// the start: a different size later stops the walk.
+    /// A dictionary view with its entry offset and (initial size,
+    /// outstanding members); a size mismatch remains sticky.
     Watching { window: Value, at: usize, size: (usize, u64) },
     /// A thing read place by place from nought, until the reading fails.
     Placed(Value, BigInt),
