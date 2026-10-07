@@ -6787,3 +6787,30 @@
 {"t":"2026-10-07T03:44:38Z","event":"review-started","job":"dsflash-mimetypes","review":"review-auto-dsflash-mimetypes-0337"}
 {"t":"2026-10-07T03:46:45Z","event":"exited","job":"review-auto-dsflash-mimetypes-0337","code":0}
 {"t":"2026-10-07T03:49:39Z","event":"review-started","job":"dsflash-rlcompleter","review":"review-auto-dsflash-rlcompleter-0337"}
+{"t":"2026-10-07T03:51:58Z","event":"exited","job":"review-auto-dsflash-rlcompleter-0337","code":0}
+{"t":"2026-10-07T03:53:24Z","event":"returned","job":"dsflash-mimetypes","review":"review-auto-dsflash-mimetypes-0337","commit":"a2101960d","note":"(1st; stack8 surrogate whitespace split keeps wrong half; as_index Flag outside Python; mimetypes 0->41/44 both) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T03:53:24Z","event":"returned","job":"dsflash-rlcompleter","review":"review-auto-dsflash-rlcompleter-0337","commit":"3b79be0d3","note":"(1st; 3 rlcompleter ref tests fail both kernels; Signature / and * formatting; rlcompleter 8/11) -> DS Flash queue (resume)"}
+{"t":"2026-10-07T03:53:24Z","event":"returned","job":"stdlib-typing","review":"review-auto-stdlib-typing-0327","commit":"0d6c3eaea","note":"(2nd; GenericAlias reduce override, nested TypeVarTuple subst, ParamSpec/Tuple pickle; typing 618/714 types 88/128 both) -> Sol queue (resume)"}
+{"t":"2026-10-07T03:54:02Z","event":"queued","job":"dsflash-mimetypes","model":"deepseek-flash","line":"or-resume dsflash-mimetypes deepseek-flash ses_eec53820dffeplRrMUvuLw1158"}
+{"t":"2026-10-07T03:54:41Z","event":"resumed","job":"dsflash-mimetypes","model":"deepseek-flash","session":"ses_eec53820dffeplRrMUvuLw1158"}
+{"t":"2026-10-07T03:54:47Z","event":"quota","codex_week_used":1,"codex_credits":0,"claude_week_used":26,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.898,"kimi_code_used":0,"deepseek_usd":348.73}
+{"t":"2026-10-07T03:54:50Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":0,"expected":0.6,"gap":-0.6,"status":"ok"}
+{"t":"2026-10-07T03:55:26Z","event":"checkin","status":"done","actions":"returned dsflash-mimetypes (1st; surrogate whitespace split, as_index Flag outside Python) -> DS Flash resume via queue-after; returned dsflash-rlcompleter (1st; 3 rlcompleter ref tests, Signature / * formatting) -> DS Flash resume via queue-after; returned stdlib-typing (2nd; alias reduce/TypeVarTuple subst/ParamSpec pickle; typing 618/714) -> sol-resume queued; prune: none (no idle accepted worktree with build output)","notes":"disk on lumenlang2 88% (19G free), nothing idle to prune — worktrees hold 98G; Sol 7/7 feature slots full, stdlib-typing waits; DS Flash 8/8, rlcompleter waits; box load 4.1, 10 GB available; no open PRs; Codex week 1%; luna gap -0.6 ok, no new alerts"}
+{"t":"2026-10-07T03:58:05Z","event":"exited","job":"claude-io","code":0}
+{"t":"2026-10-07T03:58:05Z","event":"exited","job":"dsflash-datetime-speed","code":0}
+{"t":"2026-10-07T03:59:41Z","event":"queued","job":"dsflash-rlcompleter","model":"deepseek-flash","line":"or-resume dsflash-rlcompleter deepseek-flash ses_eec4ee9c3ffeTuq0UHjmLHZQ69"}
+{"t":"2026-10-07T03:59:43Z","event":"resumed","job":"dsflash-rlcompleter","model":"deepseek-flash","session":"ses_eec4ee9c3ffeTuq0UHjmLHZQ69"}
+{"t":"2026-10-07T04:03:03Z","event":"finished","job":"claude-io","exit_time":"2026-10-07T03:58:05Z"}
+{"t":"2026-10-07T04:03:03Z","event":"review-queued","job":"claude-io","review":"review-auto-claude-io-0403"}
+{"t":"2026-10-07T04:03:05Z","event":"finished","job":"dsflash-datetime-speed","exit_time":"2026-10-07T03:58:05Z"}
+{"t":"2026-10-07T04:03:06Z","event":"review-queued","job":"dsflash-datetime-speed","review":"review-auto-dsflash-datetime-speed-0403"}
+{"t":"2026-10-07T04:03:08Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T04:04:37Z","event":"exited","job":"dsflash-iterlen","code":0}
+{"t":"2026-10-07T04:04:45Z","event":"review-started","job":"claude-io","review":"review-auto-claude-io-0403"}
+{"t":"2026-10-07T04:06:21Z","event":"note","text":"tmp-expire: no worker from before the move remains; removed /tmp/lumen-coord, /tmp/lumen-wk, /tmp/ds-home and the old var/ds-home link"}
+{"t":"2026-10-07T04:08:12Z","event":"finished","job":"dsflash-iterlen","exit_time":"2026-10-07T04:04:37Z"}
+{"t":"2026-10-07T04:08:12Z","event":"review-queued","job":"dsflash-iterlen","review":"review-auto-dsflash-iterlen-0408"}
+{"t":"2026-10-07T04:08:15Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-07T04:08:39Z","event":"exited","job":"kimi-codeop-sol","code":0}
+{"t":"2026-10-07T04:09:34Z","event":"exited","job":"review-auto-claude-io-0403","code":0}
+{"t":"2026-10-07T04:09:46Z","event":"resumed","job":"stdlib-typing","model":"gpt-6.1-sol"}
