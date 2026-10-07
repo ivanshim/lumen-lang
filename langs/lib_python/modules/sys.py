@@ -21,10 +21,13 @@ platform = 'linux'
 # of measuring this kernel against machinery it does not have.
 _Implementation = __namespace_type()
 implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
-                                 hexversion=0x000200f0, cache_tag=None)
+                                 hexversion=0x000200f0, cache_tag='lumen')
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
+# Compiled modules go beside their source in __pycache__; there is no
+# redirected bytecode root, as CPython starts with none.
+pycache_prefix = None
 _recursion_limit = 1000
 
 # Stub: startup flags describe the fixed library environment.

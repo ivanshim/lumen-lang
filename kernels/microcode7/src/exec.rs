@@ -23015,6 +23015,9 @@ fn as_index(v: &Value) -> Result<usize, String> {
     match v {
         Value::Small(i) => usize::try_from(*i).map_err(|_| "Array index out of bounds".to_string()),
         Value::Huge(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
+        // True and False are the two integers they spell, as the
+        // reference reads them wherever a place is asked for.
+        Value::Flag(b) => Ok(usize::from(*b)),
         _ => Err("Array index must be a number".to_string()),
     }
 }
@@ -26439,6 +26442,21 @@ impl Machine<'_> {
     }
 
     fn native_reduce(&self, value: &Value) -> Value {
+        // A code value reduces to its own parts -- the source it was
+        // read from, the name it was read under, and the mode and flags
+        // that ride with it -- so a compiled module written out is read
+        // back as the very code it was and run again.
+        if let Value::Thing(t) = value {
+            if t.blueprint().name == "code" {
+                let fields = t.holds.borrow();
+                let words = self.table.strings("ext.builtin.compile.parameters");
+                let held = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or(Value::Nil);
+                let source = words.get(0).map(|w| held(w.as_str())).unwrap_or(Value::Nil);
+                let filename = words.get(1).map(|w| held(w.as_str())).unwrap_or(Value::Nil);
+                let mode = words.get(2).map(|w| held(w.as_str())).unwrap_or(Value::Nil);
+                return Value::tuple(vec![Value::text("code"), source, filename, mode, held("co_flags"), held("co_firstlineno"), held("co_consts")]);
+            }
+        }
         if let Value::Blueprint(b) = value {
             return Value::tuple(vec![Value::text("class"), Value::text(&b.name)]);
         }
@@ -26515,6 +26533,22 @@ impl Machine<'_> {
                     }
                     _ => Ok(cursor),
                 }
+            }
+            "code" => {
+                let get = |i: usize| parts.get(i).cloned().unwrap_or(Value::Nil);
+                let words = self.table.strings("ext.builtin.compile.parameters");
+                let key = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
+                let kind = self.code_blueprint();
+                let holds = vec![
+                    (key(0).to_string(), get(1)),
+                    (key(1).to_string(), get(2)),
+                    (key(2).to_string(), get(3)),
+                    ("co_flags".to_string(), get(4)),
+                    ("co_firstlineno".to_string(), get(5)),
+                    ("co_consts".to_string(), get(6)),
+                ];
+                self.made += 1;
+                Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(holds), turn: self.made })))
             }
             _ => Err(malformed()),
         }

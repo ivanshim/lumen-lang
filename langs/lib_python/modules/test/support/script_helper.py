@@ -62,6 +62,25 @@ def make_script(script_dir, script_basename, source, omit_suffix=False):
     return script_name
 
 
+def make_zip_script(zip_dir, zip_basename, script_name, name_in_zip=None):
+    import zipfile
+    zip_filename = zip_basename + os.extsep + 'zip'
+    zip_name = os.path.join(zip_dir, zip_filename)
+    with zipfile.ZipFile(zip_name, 'w') as zip_file:
+        if name_in_zip is None:
+            parts = script_name.split(os.sep)
+            if len(parts) >= 2 and parts[-2] == '__pycache__':
+                from importlib.util import source_from_cache
+                from test.support.import_helper import make_legacy_pyc
+                legacy_pyc = make_legacy_pyc(source_from_cache(script_name))
+                name_in_zip = os.path.basename(legacy_pyc)
+                script_name = legacy_pyc
+            else:
+                name_in_zip = os.path.basename(script_name)
+        zip_file.write(script_name, name_in_zip)
+    return zip_name, os.path.join(zip_name, name_in_zip)
+
+
 class _PythonRunResult:
     """Helper for reporting Python subprocess run results."""
 

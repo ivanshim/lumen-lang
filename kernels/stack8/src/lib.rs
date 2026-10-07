@@ -346,7 +346,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         // path for a directory, but the resolved file for a script or
         // -m, whose co_filename and __spec__.origin already name it; the
         // two must agree or a module filter keyed on __main__ misses.
-        let as_directory = std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
+        // Only Python runs a directory as the __main__.py inside it, so
+        // only Python reads the given path back for argv[0]; every other
+        // language keeps the resolved file it has always kept.
+        let as_directory = lang.python_numbers
+            && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
         let wanted = if as_directory { "given" } else { "file" };
         let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
             .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
