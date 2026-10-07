@@ -235,6 +235,7 @@ pub enum Prim {
     /// Find and cut the rounds of things nothing reaches any more
     /// (ext.builtin.gc.collect).
     Collect,
+    HeapObjects,
     /// What a path names: a file, a directory, or neither.
     PathSort,
     // The text of the file the run began from.

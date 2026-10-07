@@ -627,6 +627,21 @@ fn external_places(value: Value, out: &mut Vec<Value>) {
 }
 
 impl Graph {
+    /// The actual owners in this collector snapshot, once per heap identity.
+    /// Returning clones retains their existing Python identities.
+    pub fn tracked_objects(&self) -> Vec<Value> {
+        self.order.iter().filter_map(|place|self.nodes.get(place)).filter_map(|node| {
+            match &node.held {
+                Value::Fields(object)=>Some(Value::Object(object.clone())),
+                Value::Tie(_) | Value::Hashed(_)=>None,
+                Value::Array(_) | Value::Map(_)=>None,
+                Value::Binding(cell)=>Some(Value::Adapter(Rc::new((31,vec![Value::Binding(cell.clone())])))),
+                Value::Bond(cell) if !matches!(&*cell.borrow(),Value::Array(_)|Value::Map(_)|Value::Set(_)|Value::Collection(..))=>None,
+                value=>Some(value.clone()),
+            }
+        }).collect()
+    }
+
     /// Everything reachable from the remembered candidates still alive.
     pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
         let mut bookkeeping = HashMap::new();

@@ -1003,7 +1003,12 @@
     "ConnectionResetError",
     "InterruptedError",
     "ProcessLookupError",
-    "TimeoutError"
+    "TimeoutError",
+    "FloatingPointError",
+    "EnvironmentError",
+    "IOError",
+    "PythonFinalizationError",
+    "_IncompleteInputError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -5527,5 +5532,17 @@
     "warn",
     "RuntimeWarning",
     "non-string key in the __dict__ of class "
+  ],
+  "ext.builtin.bytes.escape_decode": [
+    "__escape_decode_native__"
+  ],
+  "ext.builtin.pickle_buffer": [
+    "__pickle_buffer_native__"
+  ],
+  "ext.builtin.text.intern": [
+    "__intern_native__"
+  ],
+  "ext.builtin.gc.get_objects": [
+    "__gc_objects"
   ]
 }

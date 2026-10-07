@@ -561,6 +561,7 @@ class defaultdict(dict):
     # a member of its own.
     __slots__ = ('_defaultdict__factory',)
 
+    __module__ = 'collections'
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
 

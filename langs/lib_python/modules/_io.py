@@ -81,6 +81,7 @@ class _IOBase:
             raise UnsupportedOperation('File or stream is not seekable.')
     @property
     def closed(self):
+        """True if the file is closed"""
         return self._closed
     def flush(self):
         self._checkClosed()
