@@ -8259,10 +8259,14 @@ impl<'a> Engine<'a> {
     /// module, so a filter the program set is honoured; one turning
     /// the warning into an error raises it, as in the reference.
     fn deprecation_warning(&mut self, message: &str) -> Res<()> {
+        let Some(category) = self.lang.exceptions.get(26).cloned() else { return Ok(()) };
+        self.runtime_warning(message, &category)
+    }
+
+    fn runtime_warning(&mut self, message: &str, category_name: &str) -> Res<()> {
         let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
-        let Some(kind_name) = self.lang.exceptions.get(26).cloned() else { return Ok(()) };
-        let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
+        let Some(category) = self.native_exceptions.get(category_name).cloned() else { return Ok(()) };
         let module = match self.import_module(&module_name) {
             Ok(module) => module,
             Err(Fault::Note(told)) => return Err(told),
@@ -9272,6 +9276,10 @@ impl<'a> Engine<'a> {
                 if said.is_ascii() { result } else { Value::text(&crate::strings::ascii_escaped(&said)) }
             }
             Builtin::ToText if args.len() == 1 => {
+                if matches!(args[0], Value::Bytes(..)) && !self.lang.syntax_warning_words.is_empty()
+                    && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|text| text.parse::<usize>().ok()).unwrap_or(0) > 0 {
+                    self.runtime_warning(if matches!(args[0], Value::Bytes(_, true, _)) { "str() on a bytearray instance" } else { "str() on a bytes instance" }, "BytesWarning")?;
+                }
                 if matches!(args[0], Value::Text(_) | Value::Codepoints(_)) { args[0].clone() }
                 else { self.digits_shown(&args[0])?; self.string_conversion(&args[0], false)? }
             }
@@ -13415,6 +13423,20 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::Eq | Action::Ne) && !self.lang.syntax_warning_words.is_empty()
+            && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|text| text.parse::<usize>().ok()).unwrap_or(0) != 0 {
+            let counterpart = match (a, b) {
+                (Value::Bytes(_, mutable, _), other) | (other, Value::Bytes(_, mutable, _)) => Some((other, *mutable)),
+                _ => None,
+            };
+            let message = match counterpart {
+                Some((Value::Text(_) | Value::Codepoints(_), true)) => Some("Comparison between bytearray and string"),
+                Some((Value::Text(_) | Value::Codepoints(_), false)) => Some("Comparison between bytes and string"),
+                Some((Value::Small(_) | Value::Huge(_) | Value::Flag(_), false)) => Some("Comparison between bytes and int"),
+                _ => None,
+            };
+            if let Some(message) = message { self.runtime_warning(message, "BytesWarning")?; }
+        }
         if matches!(op, Action::Add) && !self.lang.byte_prefixes.is_empty() {
             if let (Value::Bytes(_, _, _), Value::Object(_)) = (a, b) {
                 let namespace = self.route_module("builtins")?;
@@ -20706,6 +20728,10 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
+                if matches!(args[0], Value::Bytes(..)) && !self.lang.syntax_warning_words.is_empty()
+                    && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|text| text.parse::<usize>().ok()).unwrap_or(0) > 0 {
+                    self.runtime_warning(if matches!(args[0], Value::Bytes(_, true, _)) { "str() on a bytearray instance" } else { "str() on a bytes instance" }, "BytesWarning")?;
+                }
                 if matches!(args[0], Value::Text(_) | Value::Codepoints(_)) { return Ok(args[0].clone()); }
                 self.digits_shown(&args[0])?;
                 Value::text(&self.told(&args[0], &sp))

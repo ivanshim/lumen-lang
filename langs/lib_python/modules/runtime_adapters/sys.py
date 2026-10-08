@@ -27,6 +27,10 @@ while _warning_cursor < len(_warning_text) and _warning_text[_warning_cursor] !=
     if _warning_text[_warning_cursor:_warning_cursor + 1] == ',':
         _warning_cursor += 1
 
+flags.bytes_warning = int(_options_environment.get(b'LUMEN_PYTHON_BYTES_WARNING', b'0'))
+if _options_environment.get(b'LUMEN_PYTHON_NO_SITE'):
+    flags.no_site = 1
+
 del _options_environment
 
 # Native standard text streams use the Rust host's UTF-8 byte representation.

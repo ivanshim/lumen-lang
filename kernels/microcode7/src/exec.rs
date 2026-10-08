@@ -15114,9 +15114,13 @@ impl<'a> Machine<'a> {
     /// module, so a filter the program set is honoured; one that turns
     /// the warning into an error raises it, as in the reference.
     fn deprecation_warning(&mut self, message: &str) -> Result<(), String> {
+        self.publish_warning("DeprecationWarning", message)
+    }
+
+    fn publish_warning(&mut self, category_name: &str, message: &str) -> Result<(), String> {
         let words = self.table.strings("ext.system.syntax_warnings").to_vec();
         if words.len() < 2 { return Ok(()); }
-        let Some(category) = self.fault_kinds.get("DeprecationWarning").cloned() else { return Ok(()); };
+        let Some(category) = self.fault_kinds.get(category_name).cloned() else { return Ok(()); };
         let namespace = self.load_namespace(&words[0])?;
         let teller = self.namespace_item(&namespace, &words[0], &words[1])?;
         let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
@@ -16009,9 +16013,15 @@ impl<'a> Machine<'a> {
                 let plain = Self::underlying(&rendered).unwrap_or_else(|| rendered.clone()).render(self.wording());
                 if plain.is_ascii() { rendered } else { Value::text(&crate::text::ascii_escaped(&plain)) }
             }
-            (Prim::AsText, [one]) => match one {
+            (Prim::AsText, [one]) => {
+                if matches!(one, Value::Octets { .. }) && self.table.strings("ext.system.syntax_warnings").len() == 2
+                    && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|value| value.parse::<u32>().ok()).is_some_and(|setting| setting > 0) {
+                    self.publish_warning("BytesWarning", if matches!(one, Value::Octets { changeable: true, .. }) { "str() on a bytearray instance" } else { "str() on a bytes instance" })?;
+                }
+                match one {
                 Value::Text(_) | Value::Unpaired(_) => one.clone(),
                 _ => { self.figures_allowed(one)?; self.converted_string(one, false)? }
+                }
             },
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
@@ -16871,6 +16881,22 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Eq | Prim::Ne) && self.table.strings("ext.system.syntax_warnings").len() == 2
+            && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|number| number.parse::<u32>().ok()).is_some_and(|level| level > 0) {
+            if let [one, two] = v {
+                let other = match (one, two) {
+                    (Value::Octets { changeable, .. }, value) | (value, Value::Octets { changeable, .. }) => Some((value, changeable)),
+                    _ => None,
+                };
+                let explanation = match other {
+                    Some((Value::Text(_) | Value::Unpaired(_), true)) => "Comparison between bytearray and string",
+                    Some((Value::Text(_) | Value::Unpaired(_), false)) => "Comparison between bytes and string",
+                    Some((Value::Small(_) | Value::Huge(_) | Value::Flag(_), false)) => "Comparison between bytes and int",
+                    _ => "",
+                };
+                if !explanation.is_empty() { self.publish_warning("BytesWarning", explanation)?; }
+            }
+        }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
@@ -21557,6 +21583,10 @@ impl<'a> Machine<'a> {
                 Value::text(&v[0].representation(self.wording()))
             }
             Prim::AsText => {
+                if matches!(v.first(), Some(Value::Octets { .. })) && self.table.strings("ext.system.syntax_warnings").len() == 2
+                    && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|number| number.parse::<u32>().ok()).is_some_and(|level| level != 0) {
+                    self.publish_warning("BytesWarning", if matches!(v.first(), Some(Value::Octets { changeable: true, .. })) { "str() on a bytearray instance" } else { "str() on a bytes instance" })?;
+                }
                 if let [value @ (Value::Text(_) | Value::Unpaired(_))] = v { return Ok(value.clone()); }
                 n(1)?;
                 self.figures_allowed(&v[0])?;

@@ -912,6 +912,13 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut python: Option<String> = None;
     let mut file: Option<String> = None;
     let mut module_source = None;
+    let mut python_bytes_warning = 0usize;
+    // Startup transfers belong to one invocation; child processes parse their
+    // own flags rather than inheriting these internal option records.
+    for option in ["LUMEN_PYTHON_BYTES_WARNING", "LUMEN_PYTHON_WARNOPTIONS", "LUMEN_PYTHON_XOPTIONS", "LUMEN_PYTHON_NO_SITE", "LUMEN_PYTHON_UNBUFFERED"] {
+        env::remove_var(option);
+    }
+
     let mut module_name = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
@@ -1021,6 +1028,21 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[2..];
                 break;
             }
+            // These Python startup switches describe services already isolated
+            // from site imports and configure byte diagnostics before execution.
+            Some(flag) if file.is_none() && (flag == "-S" || flag == "-u"
+                || flag.len() > 1 && flag.starts_with('-') && flag[1..].chars().all(|letter| letter == 'b'))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                if flag == "-S" { env::set_var("LUMEN_PYTHON_NO_SITE", "1"); }
+                else if flag == "-u" { env::set_var("LUMEN_PYTHON_UNBUFFERED", "1"); }
+                else {
+                    let previous = python_bytes_warning;
+                    python_bytes_warning = previous + flag.len() - 1;
+                    env::set_var("LUMEN_PYTHON_BYTES_WARNING", python_bytes_warning.to_string());
+                }
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
             // Preserve Python warning options in command-line order.
             Some(flag) if file.is_none() && (flag == "-W" || flag.starts_with("-W"))
                 && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
@@ -1087,6 +1109,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[1..];
             }
             _ => break,
+        }
+    }
+
+    if let Ok(setting) = env::var("LUMEN_PYTHON_BYTES_WARNING") {
+        let level = setting.parse::<usize>().unwrap_or(0);
+        if level != 0 {
+            let mut options: Vec<String> = env::var("LUMEN_PYTHON_WARNOPTIONS").ok()
+                .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+            options.push(format!("{}::BytesWarning", if level > 1 { "error" } else { "default" }));
+            env::set_var("LUMEN_PYTHON_WARNOPTIONS", serde_json::to_string(&options).unwrap());
         }
     }
 
