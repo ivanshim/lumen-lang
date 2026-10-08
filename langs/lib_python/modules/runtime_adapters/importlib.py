@@ -55,3 +55,21 @@ if not getattr(_machinery_sys, '_lumen_importers_ready', False):
         if _zip_path_hook not in _machinery_sys.path_hooks:
             _machinery_sys.path_hooks.insert(0, _zip_path_hook)
         _machinery_sys._lumen_importers_ready = True
+
+
+def _attach_native_spec(module):
+    # The reader binds a module's own file and package path, but not
+    # the spec the reference keeps beside them. This builds that spec
+    # from the bindings, so a caller asking after the module's loader
+    # is answered the way the reference answers.
+    import importlib._bootstrap as _bootstrap
+    import importlib._bootstrap_external as _bootstrap_external
+    name = module.__name__
+    origin = getattr(module, '__file__', None)
+    loader = _bootstrap_external.SourceFileLoader(name, origin) if origin is not None else None
+    spec = _bootstrap.ModuleSpec(name, loader, origin=origin)
+    search = getattr(module, '__path__', None)
+    if search is not None:
+        spec.submodule_search_locations = list(search)
+    module.__spec__ = spec
+    return module

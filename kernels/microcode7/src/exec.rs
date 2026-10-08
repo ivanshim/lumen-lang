@@ -25198,7 +25198,26 @@ impl Machine<'_> {
         }
         self.importing.remove(path);
         self.refresh_import_table(path);
-        Ok(value)
+        Ok(self.attire_module(path, value))
+    }
+
+    /// The reader's own modules keep their file and package directories
+    /// but lack the spec the reference sits beside them. Where the
+    /// importlib the library carries is already up, ask its helper for
+    /// one; a finder-supplied module, or the importlib being read, is
+    /// left untouched.
+    fn attire_module(&mut self, name: &str, namespace: Value) -> Value {
+        if name == "importlib" || !self.imported.contains_key("importlib") { return namespace; }
+        let Value::Thing(thing) = &namespace else { return namespace };
+        let supplied = thing.holds.borrow().iter().any(|entry| entry.0 == "__spec__" && !matches!(entry.1.settled(), Value::Nil));
+        if supplied { return namespace; }
+        let carrier = match self.imported.get("importlib") { Some(found) => found.clone(), None => return namespace };
+        let helper = match self.read_class_member(carrier, "_attach_native_spec", true) {
+            Ok(found) => found.settled(),
+            Err(_) => return namespace,
+        };
+        let _ = self.apply_class_member(helper, vec![namespace.clone()]);
+        namespace
     }
 
     /// A name the reader cannot answer itself is offered to the reference

@@ -24764,7 +24764,26 @@ impl Engine<'_> {
         }
         self.importing.remove(path);
         self.refresh_module_cache(path);
-        Ok(module)
+        Ok(self.dress_module(path, module))
+    }
+
+    /// A module the reader read itself carries the file and package path
+    /// it bound, but not the spec the reference sets beside them. Once
+    /// the importlib the library carries stands, its own helper builds
+    /// one from those bindings; before that, or where a finder already
+    /// supplied one, the module is left as it is.
+    fn dress_module(&mut self, path: &str, module: Value) -> Value {
+        if path == "importlib" || !self.modules.contains_key("importlib") { return module; }
+        let Value::Object(held) = &module else { return module };
+        let dressed = held.fields.borrow().iter().any(|(word, value)| word == "__spec__" && !matches!(value.contents(), Value::Null));
+        if dressed { return module; }
+        let carrier = match self.modules.get("importlib") { Some(found) => found.clone(), None => return module };
+        let helper = match self.import_member(&carrier, "importlib", "_attach_native_spec") {
+            Ok(found) => found,
+            Err(_) => return module,
+        };
+        let _ = self.class_apply(helper, vec![module.clone()]);
+        module
     }
 
     /// A name the reader cannot answer itself is offered to the
