@@ -8774,7 +8774,10 @@ impl<'a> Engine<'a> {
                 // the thing it was handed in the words a sequence keeps
                 // for a joining to what is none of it, rather than the
                 // sign and both kinds a plain working names.
-                if matches!(op, Action::Add) && matches!(a, Value::Text(_) | Value::Array(_) | Value::Tuple(_)) {
+                if matches!(op, Action::Add)
+                    && (matches!(a, Value::Text(_) | Value::Array(_) | Value::Tuple(_))
+                        || a.core_kind() == "string.templatelib.Template")
+                {
                     return Err(self.sequence_concat_fault(a, b));
                 }
                 let sign = self.sign_of(op);

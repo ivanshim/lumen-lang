@@ -78,9 +78,7 @@ class Template:
 
     def __add__(self, other):
         if not isinstance(other, Template):
-            raise TypeError(
-                'can only concatenate string.templatelib.Template '
-                f'(not "{type(other).__name__}") to string.templatelib.Template')
+            return NotImplemented
         return Template(*list(self), *list(other))
 
     def __repr__(self):
