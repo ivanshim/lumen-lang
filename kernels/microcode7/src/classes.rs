@@ -88,6 +88,7 @@ impl<'a> Machine<'a> {
                 (name.to_string(), Self::wrap(123, vec![Value::Small(operation as i64)]))));
             protocols.push(("__hash__".into(), Value::Nil));
         }
+        protocols.extend(Self::builtin_kind_doc(word).map(|text| (self.detail("doc").to_string(), Value::text(text))));
         let title = match word { "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => format!("typing.{word}"), "SimpleNamespace" | "GenericAlias" => format!("types.{word}"), "Union" => String::from("typing.Union"), _ => word.to_owned() };
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
@@ -3247,7 +3248,12 @@ impl<'a> Machine<'a> {
                     whole.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?
                 };
                 if which == Some(12) {
-                    if let Some(reduction) = self.ask_special(&first, 79, &[])? { return Ok(reduction); }
+                    // A custom type reduction uses ordinary attribute lookup on the receiver.
+                    if self.appointment(&first, 79).is_some() {
+                        let key = self.rules.specials[79].to_owned();
+                        let reduction = self.read_class_member(first.clone(), &key, false)?;
+                        return self.apply_class_member(reduction, vec![]);
+                    }
                     if let Value::Thing(owner) = &first {
                         if self.is_fault_kind(&owner.blueprint()) {
                             let method = self.table.single("ext.builtin.exceptions.reduce").unwrap_or_default().to_owned();
@@ -3465,6 +3471,18 @@ impl<'a> Machine<'a> {
     /// this runtime keeps one. Nothing for a word left undocumented,
     /// which reads as the kind having no attribute of that name.
     pub(super) fn builtin_kind_doc(word:&str)->Option<&'static str> {
+        if word == "frozenset" { return Some("Build an immutable unordered collection of unique elements."); }
+        if word == "set" { return Some("Build an unordered collection of unique elements."); }
+        if word == "tuple" { return Some("Built-in immutable sequence.\n\nIf no argument is given, the constructor returns an empty tuple.\nIf iterable is specified the tuple is initialized from iterable's items.\n\nIf the argument is a tuple, the return value is the same object."); }
+        if word == "dict" { return Some("dict() -> new empty dictionary\ndict(mapping) -> new dictionary initialized from a mapping object's\n    (key, value) pairs\ndict(iterable) -> new dictionary initialized as if via:\n    d = {}\n    for k, v in iterable:\n        d[k] = v\ndict(**kwargs) -> new dictionary initialized with the name=value pairs\n    in the keyword argument list.  For example:  dict(one=1, two=2)"); }
+        if word == "list" { return Some("Built-in mutable sequence.\n\nIf no argument is given, the constructor creates a new empty list.\nThe argument must be an iterable if specified."); }
+        if word == "complex" { return Some("Create a complex number from a string or numbers.\n\nIf a string is given, parse it as a complex number.\nIf a single number is given, convert it to a complex number.\nIf the 'real' or 'imag' arguments are given, create a complex number\nwith the specified real and imaginary components."); }
+        if word == "float" { return Some("Convert a string or number to a floating-point number, if possible."); }
+        if word == "int" { return Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"); }
+        if word == "bool" { return Some("Returns True when the argument is true, False otherwise.\nThe builtins True and False are the only two instances of the class bool.\nThe class bool is a subclass of the class int, and cannot be subclassed."); }
+        if word == "bytearray" { return Some("bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"); }
+        if word == "bytes" { return Some("bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"); }
+        if word == "str" { return Some("str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'."); }
         match word {
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
@@ -3751,6 +3769,14 @@ impl<'a> Machine<'a> {
                 "__reduce__" => { let get = Value::Intrinsic(Prim::GetMember, Rc::from("getattr")); return Ok(Self::wrap(135, vec![Value::tuple(vec![get, Value::tuple(vec![kind, Value::text("__new__")])])])); }
                 "__reduce_ex__" => return Ok(Value::Member(Rc::new(value), String::from("callable_reduce_ex"))),
                 _ => (),
+            }
+        }
+        // Read native-instance documentation through its type's existing record.
+        if key == self.detail("doc") {
+            let native = matches!(value.settled(), Value::Text(_) | Value::Unpaired(_) | Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Octets { .. } | Value::Set(_));
+            if native {
+                let kind = self.kind_named_after(&value.settled());
+                return self.read_class_member(kind, key, direct);
             }
         }
         if key == self.detail("allocate") && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Unpaired(_) | Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Octets { .. } | Value::Set(_)) {

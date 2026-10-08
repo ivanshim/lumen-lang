@@ -91,6 +91,9 @@ impl<'a> Engine<'a> {
         if word == "super" {
             hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(236, Vec::new())));
         }
+        if let Some(doc) = Self::builtin_kind_doc(word) {
+            hooks.push((self.class_word("doc").to_owned(), Value::text(doc)));
+        }
         let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: RefCell::new(ancestry), base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
@@ -222,6 +225,18 @@ impl<'a> Engine<'a> {
     /// which reads as the kind having no attribute of that name.
     pub(super) fn builtin_kind_doc(word: &str) -> Option<&'static str> {
         match word {
+            "str" => Some("str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'."),
+            "bytes" => Some("bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"),
+            "bytearray" => Some("bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"),
+            "bool" => Some("Returns True when the argument is true, False otherwise.\nThe builtins True and False are the only two instances of the class bool.\nThe class bool is a subclass of the class int, and cannot be subclassed."),
+            "int" => Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"),
+            "float" => Some("Convert a string or number to a floating-point number, if possible."),
+            "complex" => Some("Create a complex number from a string or numbers.\n\nIf a string is given, parse it as a complex number.\nIf a single number is given, convert it to a complex number.\nIf the 'real' or 'imag' arguments are given, create a complex number\nwith the specified real and imaginary components."),
+            "list" => Some("Built-in mutable sequence.\n\nIf no argument is given, the constructor creates a new empty list.\nThe argument must be an iterable if specified."),
+            "dict" => Some("dict() -> new empty dictionary\ndict(mapping) -> new dictionary initialized from a mapping object's\n    (key, value) pairs\ndict(iterable) -> new dictionary initialized as if via:\n    d = {}\n    for k, v in iterable:\n        d[k] = v\ndict(**kwargs) -> new dictionary initialized with the name=value pairs\n    in the keyword argument list.  For example:  dict(one=1, two=2)"),
+            "tuple" => Some("Built-in immutable sequence.\n\nIf no argument is given, the constructor returns an empty tuple.\nIf iterable is specified the tuple is initialized from iterable's items.\n\nIf the argument is a tuple, the return value is the same object."),
+            "set" => Some("Build an unordered collection of unique elements."),
+            "frozenset" => Some("Build an immutable unordered collection of unique elements."),
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
             _ => None,
@@ -2642,7 +2657,12 @@ impl<'a> Engine<'a> {
                     indexed.as_big().map_err(Fault::Note)?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?
                 };
                 if place == 12 {
-                    if let Some(answer) = self.special_call(&subject, 79, Vec::new()).map_err(Fault::Note)? { return Ok(answer); }
+                    // An overridden reduction is retrieved normally, including instance attributes.
+                    if self.special_value(&subject, 79).is_some() {
+                        let name = self.lang.class_special[79].clone();
+                        let method = self.class_get(subject.clone(), &name, false)?;
+                        return self.class_apply(method, Vec::new());
+                    }
                     if let Value::Object(instance) = &subject {
                         if self.exception_class(&instance.class_now()) {
                             let name = self.lang.reduce_method.clone().unwrap_or_default();
@@ -3182,6 +3202,11 @@ impl<'a> Engine<'a> {
                 return Ok(Self::adapter(132, vec![Value::tuple(vec![getter, Value::tuple(vec![owner, Value::text("__new__")])])]));
             }
             if name == "__reduce_ex__" { return Ok(Value::ValueMethod(Rc::new((subject, "callable_reduce_ex".into())))); }
+        }
+        // Built-in instances inherit the documentation of their actual type.
+        if name == self.class_word("doc") && matches!(subject.contents(), Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Codepoints(_) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Bytes(..) | Value::Set(_)) {
+            let owner = self.named_kind(&subject.contents());
+            return self.class_get(owner, name, plain);
         }
         if name == self.class_word("allocate") && matches!(subject.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Codepoints(_) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Bytes(..) | Value::Set(_)) {
             let owner = self.named_kind(&subject.contents());
