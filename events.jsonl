@@ -9333,3 +9333,27 @@
 {"t":"2026-10-08T23:14:21Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":96,"expected":97.9,"gap":-1.9,"status":"ok"}
 {"t":"2026-10-08T23:14:29Z","event":"checkin","status":"done","actions":"returned dsflash-frame (2nd; stack8 FrameLocalsProxy by class name, proxy __contains__ returns value both kernels, mc7 dict position check by printed key) -> returns + or-resume queued with dsh session (DS Flash 10 running + 2 queued = 12); prune-merged 0MB; luna FINDINGS appended","notes":"PR #541 (21f) CI still pending, pr-merge-watch running; box load 8.2, 10.7 GB avail, disk 71%; Mac disk 86%; Sol 9/12 running + 5 Sol lines queued; Codex week 96% (alert already sent); Claude 5h 0% week 15%; Kimi month 99.8%; luna 1 expected OpenClaw alert, gap -1.9 ok"}
 {"t":"2026-10-08T23:14:56Z","event":"exited","job":"dsflash-pkgutil","code":0}
+{"t":"2026-10-08T23:19:34Z","event":"finished","job":"dsflash-pkgutil","exit_time":"2026-10-08T23:14:56Z"}
+{"t":"2026-10-08T23:19:34Z","event":"review-queued","job":"dsflash-pkgutil","review":"review-auto-dsflash-pkgutil-2319"}
+{"t":"2026-10-08T23:19:40Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T23:21:03Z","event":"review-started","job":"dsflash-pkgutil","review":"review-auto-dsflash-pkgutil-2319"}
+{"t":"2026-10-08T23:24:03Z","event":"exited","job":"review-auto-dsflash-pkgutil-2319","code":0}
+{"t":"2026-10-08T23:26:05Z","event":"started","job":"stdlib-zipimport","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T23:29:32Z","event":"exited","job":"dsflash-unpack-baseexc","code":0}
+{"t":"2026-10-08T23:29:52Z","event":"finished","job":"dsflash-unpack-baseexc","exit_time":"2026-10-08T23:29:32Z"}
+{"t":"2026-10-08T23:29:52Z","event":"review-queued","job":"dsflash-unpack-baseexc","review":"review-auto-dsflash-unpack-baseexc-2329"}
+{"t":"2026-10-08T23:29:58Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T23:30:46Z","event":"exited","job":"kimi-type-comments","code":0}
+{"t":"2026-10-08T23:30:46Z","event":"started","job":"kimi-generator-stop","model":"kimi-k3","mode":"fresh"}
+{"t":"2026-10-08T23:31:06Z","event":"review-started","job":"dsflash-unpack-baseexc","review":"review-auto-dsflash-unpack-baseexc-2329"}
+{"t":"2026-10-08T23:33:48Z","event":"returned","job":"dsflash-pkgutil","review":"review-auto-dsflash-pkgutil-2319","commit":"029be19eb","round":2,"note":"(2nd; integrity ok; clean check 1195/0 gates ok; test_pkgutil 18->21/21 both kernels; blocking: fallback-loaded submodules not bound on parent package, finder exceptions discarded (both kernels); main 8de5f2825 not merged, warnings_helper reverted to simpler recorder) -> returns/dsflash-pkgutil.md + queue"}
+{"t":"2026-10-08T23:33:48Z","event":"queued","job":"dsflash-pkgutil","model":"deepseek-flash","line":"or-resume dsflash-pkgutil deepseek-flash session-c2a126e0-456c-447f-9e4e-3e2020df6392","note":"DS Flash 8 running + memoryview, frame, pkgutil queued = 11; dsh session"}
+{"t":"2026-10-08T23:34:15Z","event":"exited","job":"review-auto-dsflash-unpack-baseexc-2329","code":0}
+{"t":"2026-10-08T23:35:03Z","event":"queued","job":"dsflash-mathprop-bigaddr","model":"deepseek-flash","line":"ds-new dsflash-mathprop-bigaddr","note":"new subject (profile 1.0 not-yet: test_math_property + test_bigaddrspace), worktree at 8de5f2825; DS Flash 8 running + 4 queued = 12"}
+{"t":"2026-10-08T23:35:03Z","event":"finished","job":"kimi-type-comments","exit_time":"2026-10-08T23:30:46Z"}
+{"t":"2026-10-08T23:35:03Z","event":"review-queued","job":"kimi-type-comments","review":"review-auto-kimi-type-comments-2335"}
+{"t":"2026-10-08T23:35:08Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T23:36:04Z","event":"quota","codex_week_used":97,"codex_credits":0,"claude_week_used":15,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.9987,"kimi_code_used":0,"deepseek_usd":279.08}
+{"t":"2026-10-08T23:36:07Z","event":"review-started","job":"kimi-type-comments","review":"review-auto-kimi-type-comments-2335"}
+{"t":"2026-10-08T23:36:07Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":97,"expected":98.8,"gap":-1.8,"status":"ok"}
+{"t":"2026-10-08T23:36:17Z","event":"checkin","status":"done","actions":"returned dsflash-pkgutil (2nd; fallback-loaded submodules not bound on parent, finder exceptions discarded both kernels, main not merged/warnings_helper reverted) -> returns + or-resume queued with dsh session; new DS Flash subject dsflash-mathprop-bigaddr (test_math_property + test_bigaddrspace, worktree at 8de5f2825) queued (DS Flash 8 running + 4 queued = 12); prune-merged 0MB; luna FINDINGS appended","notes":"PR #541 (21f) CI still pending, pr-merge-watch running; kimi-type-comments finished, review-queue loop to queue its review; box load 9.2, 10.2 GB avail, disk 74%; Mac disk 86%; Sol 10 feature + 1 review running, 4 Sol lines queued behind load gate; Codex week 97% (alert already sent); Kimi month 99.8%; luna gap -1.8 ok"}
