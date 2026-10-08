@@ -9640,7 +9640,10 @@ impl<'a> Engine<'a> {
                 let mut entries = self.fields_entries(o);
                 let mut found = None;
                 for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
-                if let Some(at) = found { entries[at].1 = args[1].clone(); } else { entries.push((key, args[1].clone())); }
+                if let Some(at) = found { entries[at].1 = args[1].clone(); } else {
+                    let value = if self.module_holding(&Value::Object(o.clone())).is_some() { Value::Bond(Rc::new(RefCell::new(self.keep_collection(args[1].clone())))) } else { args[1].clone() };
+                    entries.push((key, value));
+                }
                 self.fields_restore(o, entries);
                 args[2].clone()
             }

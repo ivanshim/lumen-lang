@@ -5214,6 +5214,10 @@ impl<'a> Machine<'a> {
                         return Ok(Value::Nil);
                     }
                 }
+                let replacement = match (&replacement, self.namespace_holding(&subject).is_some() || Self::native_beneath(&t.blueprint()).as_deref() == Some("module")) {
+                    (Some(kept), true) => Some(Value::Shared(Rc::new(RefCell::new(self.collection_cell(kept.clone()))))),
+                    _ => replacement,
+                };
                 if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{

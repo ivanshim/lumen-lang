@@ -4899,6 +4899,10 @@ impl<'a> Engine<'a> {
                         return Ok(Value::Null);
                     }
                 }
+                let value = match (module, value) {
+                    (true, Some(held)) => Some(Value::Bond(Rc::new(RefCell::new(self.keep_collection(held))))),
+                    (_, other) => other,
+                };
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {

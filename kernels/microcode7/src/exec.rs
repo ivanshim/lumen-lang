@@ -7496,7 +7496,12 @@ impl<'a> Machine<'a> {
                                 // cells by way of the restoring below.
                                 if self.keys_agree(stored, &wanted)? { *held = value.clone(); found = true; break; }
                             }
-                            if !found { entries.push((wanted, value.clone())); }
+                            if !found {
+                                let kept = if self.namespace_holding(&Value::Thing(t.clone())).is_some() {
+                                    Value::Shared(Rc::new(RefCell::new(self.collection_cell(value.clone()))))
+                                } else { value.clone() };
+                                entries.push((wanted, kept));
+                            }
                             self.attribute_restore(t, entries);
                             return Ok(Value::Nil);
                         }
@@ -16741,15 +16746,18 @@ impl<'a> Machine<'a> {
                 // An additional non-string key can compare equal to a name,
                 // so that case retains the full mapping protocol below.
                 if let Value::Text(word) = key {
+                    let module = self.namespace_holding(&Value::Thing(t.clone())).is_some();
                     let members = t.holds.borrow();
                     if members.iter().all(|entry| entry.0 != "\0keys") {
                         let answer = members.iter().find(|(name, item)| name == word.as_ref()
                             && !name.starts_with('#') && !name.starts_with('\0') && !matches!(item.settled(), Value::Unset));
-                        // The entry stands in the very place reading the
-                        // attribute finds, as attribute_entries keeps it:
-                        // what the binding shares is shared with the
-                        // dictionary's reader.
-                        return answer.map(|entry| Some(entry.1.clone())).ok_or_else(|| self.bad_answer());
+                        // A namespace's cell binds the name; what the
+                        // binding keeps is the answer, the binding left
+                        // behind, as attribute_entries keeps it.
+                        return answer.map(|entry| Some(match &entry.1 {
+                            Value::Shared(binding) if module => binding.borrow().clone(),
+                            value => value.clone(),
+                        })).ok_or_else(|| self.bad_answer());
                     }
                 }
                 // The key may be a name of any kind the dictionary can
@@ -17219,7 +17227,7 @@ impl<'a> Machine<'a> {
         Ok(Value::Dict(Rc::new(result.into())))
     }
 
-    fn collection_cell(&self, value: Value) -> Value {
+    pub(super) fn collection_cell(&self, value: Value) -> Value {
         match value {
             Value::Vector(_) | Value::Dict(_) if self.names_in_calls =>
                 Value::Shared(Rc::new(RefCell::new(value))),
@@ -26393,7 +26401,12 @@ impl<'a> Machine<'a> {
             let found = contents.iter().position(|entry| spells_key(&entry.0, name));
             match (found, given) {
                 (Some(at), Some(value)) => contents[at].1 = value,
-                (None, Some(value)) => contents.push((Value::text(name), value)),
+                (None, Some(value)) => {
+                    let kept = if self.namespace_holding(&Value::Thing(space.clone())).is_some() {
+                        Value::Shared(Rc::new(RefCell::new(self.collection_cell(value))))
+                    } else { value };
+                    contents.push((Value::text(name), kept));
+                }
                 (Some(at), None) => { contents.remove(at); },
                 (None, None) => return Err(self.absent_key(&Value::text(name)).into()),
             }
