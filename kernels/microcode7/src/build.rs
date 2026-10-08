@@ -11333,7 +11333,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
-        let result = Form::Read(accumulator);
+        let result = Form::Release(accumulator);
         steps.push(if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { prim_call(Prim::DistinctObjects, vec![result]) } else { result });
         Ok(sequence(steps))
     }
