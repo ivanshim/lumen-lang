@@ -633,6 +633,12 @@ class TextIOWrapper(_TextIOBase):
     def _CHUNK_SIZE(self):
         raise AttributeError('cannot be deleted')
     def __init__(self, buffer, encoding=None, errors=None, newline=None, line_buffering=False, write_through=False):
+        # Queued bytes belong to the current backing stream. Drain them
+        # before initialization can replace that stream or its codec state.
+        if self._pending:
+            self.flush()
+        self._pending = []
+        self._pending_count = 0
         import _pyio
         if not _TEXT_HELPERS:
             _install_text_helpers()
