@@ -10386,7 +10386,10 @@ impl<'a> Machine<'a> {
                     match name {
                         "index" => return Ok(Value::Small(position as i64)),
                         "remove" => {
-                            if let Value::Mutable(storage, _) = receiver {
+                            // A row the search reached reaches its own
+                            // cell whether it arrives bare or wrapped, the
+                            // same way the member that grows one does.
+                            if let Some(storage) = Self::native_cell(receiver) {
                                 if let Value::Vector(values) = &mut *storage.borrow_mut() {
                                     if values.len() > position { Rc::make_mut(values).remove(position); }
                                 }
@@ -19402,7 +19405,14 @@ impl<'a> Machine<'a> {
                             for name in wanted {
                                 match names.iter().find(|(word, _)| word == name) {
                                     Some((word, entry)) => kept.push((word.clone(), entry.clone())),
-                                    None => { self.namespace_item(&v[0], "", name)?; }
+                                    // A name the wildcard asks for that the
+                                    // namespace never bound is a submodule
+                                    // the reference imports on demand.
+                                    None => {
+                                        let from = match &v[0] { Value::Thing(space) => space.of.name.clone(), _ => String::new() };
+                                        let child = self.namespace_item(&v[0], &from, name)?;
+                                        kept.push((name.clone(), child));
+                                    }
                                 }
                             }
                             kept
@@ -25423,6 +25433,12 @@ impl Machine<'_> {
         for word in self.rules.words_ext_system_module_name {
             if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::text(path))); }
         }
+        // A namespace the interpreter builds carries a documentation
+        // entry even when its text opens with none, so `dir` and a
+        // plain attribute read meet the same `None` CPython keeps.
+        for word in self.table.strings("ext.system.module.doc") {
+            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::Nil)); }
+        }
         // `__file__` is read from outside a module (`mod.__file__`) as
         // freely as `__name__` is, in CPython, so it is carried here
         // the same unconditional way, whether or not the module's own
@@ -26676,7 +26692,7 @@ impl<'a> Machine<'a> {
                 _ => Vec::new(),
             };
             words.sort();
-            return Ok(Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|word| Value::text(word)).collect::<Vec<_>>())));
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|word| Value::text(word)).collect::<Vec<_>>())).keep(true));
         }
         Ok(Value::Shared(book))
     }
