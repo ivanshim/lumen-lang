@@ -427,13 +427,15 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
             exc_traceback = raised.__traceback__
     if kind == 'deallocator':
         message = 'Exception ignored while calling deallocator ' + repr(about)
+    elif kind == 'file':
+        message = 'Exception ignored while finalizing file ' + repr(about)
     elif kind == 'coroutine':
         message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
     else:
         message = None
-    target = None if kind in ('generator', 'coroutine') else about
+    target = None if kind in ('generator', 'coroutine', 'file') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))
