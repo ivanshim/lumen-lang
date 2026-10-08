@@ -49,3 +49,9 @@ for _class in (partial, partialmethod, _PlaceholderType, singledispatchmethod,
 
 del _class
 
+# The reference's partial is a C object whose call contributes no frame
+# to the Python frame chain. Keep the same attribution for this Python
+# implementation by marking its call as frame-less, which the runtime
+# honours when a frame walks its links.
+partial.__call__ = __native_frame__(partial.__call__)
+

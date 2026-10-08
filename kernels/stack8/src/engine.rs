@@ -101,6 +101,9 @@ fn watch_host_signals() {
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
+    /// Routines whose frames a frame walk hides, as C routines are
+    /// absent from a Python frame chain in the reference.
+    native_frame_routines: std::collections::HashSet<usize>,
     trace_hook: Value,
     in_trace_hook: bool,
     trace_fault_outside: Option<(Weak<Instance>, Weak<Instance>)>,
@@ -139,6 +142,9 @@ pub struct Engine<'a> {
     /// to once the program has asked for it: what the program writes
     /// into the dictionary the names then show, and the other way about.
     outer_book: Option<Rc<RefCell<Value>>>,
+    /// The main program's own namespace, kept apart from the book a
+    /// call may swap in and out, so an outer-name answer is steady.
+    main_book: Option<Rc<RefCell<Value>>>,
     function_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Text read into dictionaries handed over: each keeps the slots it
     /// was given, the dictionary its names live in and, where two were
@@ -1570,6 +1576,7 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            native_frame_routines: std::collections::HashSet::new(),
             trace_hook: Value::Null,
             in_trace_hook: false,
             trace_fault_outside: None,
@@ -1617,6 +1624,7 @@ impl<'a> Engine<'a> {
             reaching: 0,
             reading_amiss: None,
             outer_book: None,
+            main_book: None,
             function_books: Vec::new(),
             text_books: Vec::new(),
             reading_in: None,
@@ -4090,7 +4098,7 @@ impl<'a> Engine<'a> {
         if program.globe.is_none() { self.reading_in = None; }
         let namespace = program.globe.as_ref().and_then(|globals| match globals {
             Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
-            Value::Map(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            Value::Map(_) | Value::Fields(_) => Some(Rc::new(RefCell::new(globals.clone()))),
             _ => None,
         });
         let supplied = namespace.is_some();
@@ -5052,13 +5060,13 @@ impl<'a> Engine<'a> {
     // Initial async throw/close lets a delegate handle GeneratorExit through
     // throw, so cleanup may await; synchronous close ends the delegate first.
     fn step_generator_mode(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Flow<Option<Value>> {
-        let book = held.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| match body.globe.as_ref() {
+        let program = held.try_borrow().ok().and_then(|state| state.program.clone());
+        let book = program.as_ref().and_then(|body| match body.globe.as_ref() {
             Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
-                    Some(globals @ Value::Map(_)) => Some(Rc::new(RefCell::new(globals.clone()))), _ => None,
-        }));
+                    Some(globals @ Value::Map(_)) | Some(globals @ Value::Fields(_)) => Some(Rc::new(RefCell::new(globals.clone()))), _ => None,
+        });
         let supplied = book.is_some();
-        let ordinary = !self.function_books.is_empty() && held.try_borrow().ok()
-            .is_some_and(|state| state.program.as_ref().is_some_and(|body| body.globe.is_none()));
+        let ordinary = !self.function_books.is_empty() && program.as_ref().is_some_and(|body| body.globe.is_none());
         if !supplied && !ordinary { return self.step_generator_body(held, sent, hurled, given, close_on_exit); }
         let namespace = book.or_else(|| self.function_books.first().cloned().flatten());
         let saved = std::mem::replace(&mut self.outer_book, namespace);
@@ -5454,6 +5462,16 @@ impl<'a> Engine<'a> {
         // Code metadata is materialized when the frame is inspected.
         let code = Value::Null;
         self.made += 1;
+        // A routine marked native has no frame of its own on the Python
+        // frame chain: its own link is the caller's frame, and a child
+        // reaches past it the same way, as a walk past a C routine does.
+        let hidden = self.native_frame_routines.contains(&(Rc::as_ptr(program) as usize));
+        let back = match back {
+            Some(parent) if parent.fields.borrow().iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Flag(true))) => {
+                match parent.fields.borrow()[2].1.clone() { Value::Object(grand) => Some(grand), _ => None }
+            }
+            other => other,
+        };
         let mut fields = vec![
             (keys[4].clone(), Value::Small(program.declared_on as i64)),
             (keys[5].clone(), code),
@@ -5463,6 +5481,7 @@ impl<'a> Engine<'a> {
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
+            ("\0native".into(), Value::Flag(hidden)),
         ];
         if !matches!(self.trace_hook, Value::Null) {
             fields.push(("f_trace".into(), Value::Null));
@@ -22079,7 +22098,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -22774,7 +22793,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -23852,6 +23871,17 @@ impl Engine<'_> {
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }
+            Builtin::NativeFrame => {
+                arity(1, 1)?;
+                // A routine whose frame the reference implementation keeps
+                // off the Python frame chain, as a C routine's is: the
+                // function itself comes back, marked for the frame maker.
+                let Value::Routine(program) = args[0].contents() else {
+                    return Err("TypeError: native_frame() argument must be a function".into());
+                };
+                self.native_frame_routines.insert(Rc::as_ptr(&program) as usize);
+                args[0].clone()
+            }
             Builtin::HeapNative => {
                 arity(2, 3)?;
                 if self.lang.heap_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
@@ -24282,7 +24312,7 @@ impl Engine<'_> {
                 // answers __round__ has a rounding; anything else is told
                 // it has no such method rather than that rounding as a
                 // whole is unsupported.
-                if !matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) {
+                if self.lang.python_numbers && !matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) {
                     return Err(format!("TypeError: type {} doesn't define __round__ method", Self::shown_kind(&args[0])));
                 }
                 let ndigits_big: Option<BigInt> = match args.get(1) { None | Some(Value::Null) => None, Some(n) => Some(integer(n)?) };
@@ -25507,7 +25537,7 @@ impl Engine<'_> {
     /// is asked for from what the world holds then, and read and
     /// written through from then on.
     fn outer_book_made(&mut self) -> Rc<RefCell<Value>> {
-        if let Some(book) = &self.outer_book { return book.clone(); }
+        if let Some(book) = &self.main_book { return book.clone(); }
         let mut pairs = Vec::new();
         for (at, name) in self.registry.idents.iter().enumerate() {
             if !Self::public_name(name) || self.text_books.iter().any(|book| at >= book.from && at < book.upto) { continue; }
@@ -25520,7 +25550,8 @@ impl Engine<'_> {
             if !pairs.iter().any(|(key, _)| key_spells(key, name)) { pairs.push((Value::text(name), Value::Bond(natives.clone()))); }
         }
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
-        self.outer_book = Some(book.clone());
+        self.main_book = Some(book.clone());
+        if self.outer_book.is_none() { self.outer_book = Some(book.clone()); }
         book
     }
 
