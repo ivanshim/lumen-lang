@@ -1326,7 +1326,7 @@ impl<'a> Cursor<'a> {
         // token keeps both when they differ.
         let mut raw = None;
         if lang.identifier_normalized {
-            let folded = crate::unicode::normalized(&s);
+            let folded = crate::unicode::normalized(&s, 2);
             if folded != s { raw = Some(std::mem::replace(&mut s, folded)); }
         }
         let lowered = s.to_lowercase();

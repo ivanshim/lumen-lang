@@ -1533,7 +1533,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             // so the token keeps both when they differ.
             let mut raw = None;
             if table.flag("ext.lexical.identifier.normalized") {
-                let folded = crate::unicode::collated(&s);
+                let folded = crate::unicode::collated(&s, 2);
                 if folded != s { raw = Some(std::mem::replace(&mut s, folded)); }
             }
             let low = s.to_lowercase();

@@ -6392,13 +6392,17 @@ pub fn named_text(name: &str) -> Option<String> {
     names.get(&name.to_ascii_uppercase()).cloned()
 }
 
-/// NFKC, the normalization Python gives every identifier: each point
-/// is broken into its decomposition (compatibility mappings included),
-/// the marks are put in canonical order, and the result is joined back
-/// by canonical composition. The tables are built once from the same
-/// Unicode Character Database file the names above read.
-pub fn normalized(text: &str) -> String {
+/// One of the four normalization forms, named by a code: 0 NFC,
+/// 1 NFD, 2 NFKC, 3 NFKD. Each point is broken into its decomposition
+/// (compatibility mappings included only for the K forms), the marks
+/// are put in canonical order, and the C forms join the pieces back
+/// by canonical composition. NFKC is the form Python gives every
+/// identifier. The tables are built once from the same Unicode
+/// Character Database file the names above read.
+pub fn normalized(text: &str, form: u8) -> String {
     if text.is_ascii() { return text.to_owned(); }
+    let wholesale = form >= 2;
+    let recompose = form % 2 == 0;
     use std::collections::HashMap;
     use std::sync::OnceLock;
     struct Norm {
@@ -6442,7 +6446,7 @@ pub fn normalized(text: &str) -> String {
     const S_COUNT: u32 = L_COUNT * V_COUNT * T_COUNT;
     // A Hangul syllable is an arithmetic bundle of jamo, not a listed
     // decomposition, so it comes apart and rejoins by the same rule.
-    fn unfold(point: u32, norm: &Norm, out: &mut Vec<u32>) {
+    fn unfold(point: u32, norm: &Norm, wholesale: bool, out: &mut Vec<u32>) {
         const S_BASE: u32 = 0xAC00;
         const L_BASE: u32 = 0x1100;
         const V_BASE: u32 = 0x1161;
@@ -6455,14 +6459,15 @@ pub fn normalized(text: &str) -> String {
             out.push(V_BASE + index % step / 28);
             let tail = T_BASE + index % 28;
             if tail != T_BASE { out.push(tail); }
-        } else if let Some((_, list)) = norm.parts.get(&point) {
-            for &piece in list { unfold(piece, norm, out); }
+        } else if let Some((compat, list)) = norm.parts.get(&point) {
+            if *compat && !wholesale { out.push(point); }
+            else { for &piece in list { unfold(piece, norm, wholesale, out); } }
         } else {
             out.push(point);
         }
     }
     let mut points: Vec<u32> = Vec::new();
-    for c in text.chars() { unfold(u32::from(c), norm, &mut points); }
+    for c in text.chars() { unfold(u32::from(c), norm, wholesale, &mut points); }
     for at in 1..points.len() {
         let class = norm.marks.get(&points[at]).copied().unwrap_or(0);
         let mut to = at;
@@ -6472,6 +6477,9 @@ pub fn normalized(text: &str) -> String {
             points.swap(to, to - 1);
             to -= 1;
         }
+    }
+    if !recompose {
+        return points.into_iter().map(|point| char::from_u32(point).unwrap_or('\u{FFFD}')).collect();
     }
     let mut out: Vec<u32> = Vec::with_capacity(points.len());
     let mut head: Option<usize> = None;
