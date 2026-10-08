@@ -8688,3 +8688,25 @@
 {"t":"2026-10-08T12:05:35Z","event":"review-started","job":"kimi-type-comments","review":"review-auto-kimi-type-comments-1154"}
 {"t":"2026-10-08T12:08:53Z","event":"exited","job":"review-auto-kimi-type-comments-1154","code":0}
 {"t":"2026-10-08T12:10:35Z","event":"review-started","job":"dsflash-genericalias","review":"review-auto-dsflash-genericalias-1205"}
+{"t":"2026-10-08T12:15:09Z","event":"handed-over","job":"dsflash-source-encoding","review":"review-auto-dsflash-source-encoding-1149","commit":"d245e09d5","round":3,"note":"(3rd return -> Sol hand-over; test_source_encoding 49->93/93 both kernels kept, clean check 1195/0; mc7 numeric-warning collector stops at exponent sign: 1e-0or 2 warns on stack8, silent on mc7 = introduced kernel disagreement; overlaps 21e codecs, 21f pathlib/typing/shelve/coroutines/warnings) -> brief-dsflash-source-encoding-sol.md, sol-new queued"}
+{"t":"2026-10-08T12:15:09Z","event":"queued","job":"dsflash-source-encoding-sol","model":"gpt-6.1-sol","line":"sol-new dsflash-source-encoding-sol"}
+{"t":"2026-10-08T12:15:09Z","event":"returned","job":"kimi-type-comments","review":"review-auto-kimi-type-comments-1154","commit":"be8a688dd","round":1,"note":"(1st; test_type_comments 1->17 pass + 1 skip both kernels kept, clean check 1195/0, integrity ok; introduced ast.py parser bugs: params accept missing comma/non-default after default, suites skip indentation check, await operand parsed at unary level; overlaps 21e/21f ast.py) -> returns/kimi-type-comments.md, Kimi queue (resume) behind kimi-module"}
+{"t":"2026-10-08T12:15:09Z","event":"queued","job":"kimi-type-comments","model":"kimi-k3","line":"kimi-type-comments resume","note":"behind kimi-module resume (running)"}
+{"t":"2026-10-08T12:15:09Z","event":"queued","job":"dsflash-frame","model":"deepseek-flash","line":"or-resume dsflash-frame deepseek-flash ses_ee5bc7e50ffePvLPq9C9Iro9ri","note":"released from held-resumes (DS Flash 11/12)"}
+{"t":"2026-10-08T12:15:36Z","event":"resumed","job":"dsflash-frame","model":"deepseek-flash","session":"ses_ee5bc7e50ffePvLPq9C9Iro9ri"}
+{"t":"2026-10-08T12:15:41Z","event":"quota","codex_week_used":73,"codex_credits":0,"claude_week_used":9,"claude_5h_used":10,"kimi_5h_used":0,"kimi_month_used":0.9733,"kimi_code_used":0,"deepseek_usd":298.67}
+{"t":"2026-10-08T12:15:44Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":73,"expected":74.9,"gap":-1.9,"status":"ok"}
+{"t":"2026-10-08T12:15:54Z","event":"checkin","status":"done","actions":"RETURN dsflash-source-encoding (3rd) -> Sol hand-over brief, sol-new queued; RETURN kimi-type-comments (1st) -> Kimi queue resume; released dsflash-frame to DS Flash slot 12/12; prune-merged 0MB","notes":"PR #540 still red, integrate-21e repair check running; Kimi month 97.3%; Codex week 73%; box disk 80%, Mac 87%; luna: 1 expected OpenClaw luna alert, meter gap -1.9 ok"}
+{"t":"2026-10-08T12:19:19Z","event":"exited","job":"dsflash-pyclbr","code":0}
+{"t":"2026-10-08T12:19:27Z","event":"exited","job":"review-auto-dsflash-genericalias-1205","code":0}
+{"t":"2026-10-08T12:20:33Z","event":"finished","job":"dsflash-pyclbr","exit_time":"2026-10-08T12:19:19Z"}
+{"t":"2026-10-08T12:20:33Z","event":"review-queued","job":"dsflash-pyclbr","review":"review-auto-dsflash-pyclbr-1220"}
+{"t":"2026-10-08T12:20:38Z","event":"review-started","job":"dsflash-pyclbr","review":"review-auto-dsflash-pyclbr-1220"}
+{"t":"2026-10-08T12:20:39Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T12:24:11Z","event":"exited","job":"dsflash-platform-sol","code":0}
+{"t":"2026-10-08T12:25:06Z","event":"exited","job":"review-auto-dsflash-pyclbr-1220","code":0}
+{"t":"2026-10-08T12:25:39Z","event":"started","job":"dsflash-source-encoding-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T12:25:45Z","event":"finished","job":"dsflash-platform-sol","exit_time":"2026-10-08T12:24:11Z"}
+{"t":"2026-10-08T12:25:45Z","event":"review-queued","job":"dsflash-platform-sol","review":"review-auto-dsflash-platform-sol-1225"}
+{"t":"2026-10-08T12:25:51Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T12:30:40Z","event":"review-started","job":"dsflash-platform-sol","review":"review-auto-dsflash-platform-sol-1225"}
