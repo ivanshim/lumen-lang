@@ -6507,6 +6507,8 @@ pub fn normalized(text: &str) -> String {
 /// Hangul syllable has no mapping here; its algorithmic decomposition
 /// belongs to normalization. Unlisted characters return an empty mapping.
 pub fn decomposition(point: u32) -> String {
+    // ASCII has no Unicode decomposition; do not initialize the database.
+    if point < 128 { return String::new(); }
     use std::collections::HashMap;
     use std::sync::OnceLock;
     static MAPPINGS: OnceLock<HashMap<u32, String>> = OnceLock::new();

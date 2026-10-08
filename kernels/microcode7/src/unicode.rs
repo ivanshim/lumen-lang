@@ -3724,6 +3724,8 @@ pub fn collated(text: &str) -> String {
 /// The decomposition UnicodeData.txt writes for a code point, tag and
 /// all. Unlisted points, including Hangul syllables, have no database mapping.
 pub fn decomposition(point: u32) -> String {
+    // ASCII has no Unicode decomposition; do not initialize the database.
+    if point < 128 { return String::new(); }
     use std::collections::BTreeMap;
     use std::sync::OnceLock;
     static WRITTEN: OnceLock<BTreeMap<u32, String>> = OnceLock::new();
