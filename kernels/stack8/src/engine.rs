@@ -1125,12 +1125,12 @@ impl<'a> Engine<'a> {
             let Some((_, held)) = source.iter().find(|(n, _)| n == key) else { continue };
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
-            let held = match held {
-                Value::Array(row) => Value::array(row.to_vec()),
-                Value::Tuple(row) if self.lang.notes_member.as_deref() == Some(key) => Value::array(row.to_vec()),
-                _ if self.lang.notes_member.as_deref() == Some(key) => continue,
-                other => other.clone(),
-            };
+            let held = if self.lang.notes_member.as_deref() == Some(key) {
+                match held.contents() {
+                    Value::Array(row) | Value::Tuple(row) => Value::array(row.to_vec()).held(false),
+                    _ => continue,
+                }
+            } else { held.clone() };
             match target.iter_mut().find(|(n, _)| n == key) {
                 Some(place) => place.1 = held,
                 None => target.push((key.clone(), held)),
@@ -1256,9 +1256,8 @@ impl<'a> Engine<'a> {
             let key = self.lang.notes_member.clone().unwrap_or_default();
             let mut fields = object.fields.borrow_mut();
             match fields.iter_mut().find(|(n, _)| *n == key) {
-                Some((_, Value::Array(row))) => Rc::make_mut(row).push(args[0].clone()),
-                Some(_) => return Err("TypeError: __notes__ is not a list".into()),
-                None => fields.push((key, Value::array(args.to_vec()))),
+                Some((_, notes)) => { if !Self::append_fault_note(notes, args[0].clone()) { return Err("TypeError: __notes__ is not a list".into()); } }
+                None => fields.push((key, Value::array(args.to_vec()).held(false))),
             }
             return Ok(Value::Null);
         }
@@ -6647,6 +6646,15 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn append_fault_note(notes: &mut Value, note: Value) -> bool {
+        if matches!(notes, Value::Array(_)) { *notes = notes.clone().held(false); }
+        let Value::Collection(cell, _) = notes else { return false };
+        let mut contents = cell.borrow_mut();
+        let Value::Array(items) = &mut *contents else { return false };
+        Rc::make_mut(items).push(note);
+        true
+    }
+
     /// A note put on a fault's own object, so that `__notes__` holds
     /// the reading the element's place asked for.
     fn attach_note(&self, value: &Value, note: &str) {
@@ -6654,9 +6662,8 @@ impl<'a> Engine<'a> {
         let Some(key) = &self.lang.notes_member else { return };
         let mut fields = object.fields.borrow_mut();
         match fields.iter_mut().find(|(n, _)| n == key) {
-            Some((_, Value::Array(row))) => Rc::make_mut(row).push(Value::text(note)),
-            Some(_) => return,
-            None => fields.push((key.clone(), Value::array(vec![Value::text(note)]))),
+            Some((_, notes)) => { Self::append_fault_note(notes, Value::text(note)); }
+            None => fields.push((key.clone(), Value::array(vec![Value::text(note)]).held(false))),
         }
     }
 
@@ -7437,6 +7444,13 @@ impl<'a> Engine<'a> {
     /// them back out: the one safe way to let a value holding a
     /// surrogate this reading cannot spell answer it, from a
     /// stand-in text built for exactly this reading.
+    pub(super) fn surrogate_case_operation(&self, name: &str) -> Option<crate::strings::TextOp> {
+        use crate::strings::TextOp;
+        [("ext.builtin.text.lower",TextOp::Lower), ("ext.builtin.text.upper",TextOp::Upper),
+         ("ext.builtin.text.casefold",TextOp::Casefold), ("ext.builtin.text.swapcase",TextOp::Swapcase)]
+            .into_iter().find_map(|(label,op)| self.lang.text_words.get(label)
+                .filter(|spellings| Lang::spells(spellings,name)).map(|_| op))
+    }
     fn surrogate_safe_text_op(op: crate::strings::TextOp) -> bool {
         use crate::strings::TextOp::*;
         matches!(op, Istitle | Isidentifier | Isprintable | Isdecimal | Isnumeric | Isascii)
@@ -9579,7 +9593,12 @@ impl<'a> Engine<'a> {
             }
         }
         let size_only = op == Builtin::Length;
-        if changed && (size_only || !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_)))) {
+        // Measuring or walking a native container does not call its elements.
+        // A subclass's retained row may contain arbitrary Python objects.
+        let container_only = settled.len() == 1
+            && matches!(op, Builtin::Length | Builtin::Tuple | Builtin::List | Builtin::Iter | Builtin::Bool)
+            && matches!(settled[0], Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_));
+        if changed && (size_only || container_only || !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_)))) {
             // A thing over a real that is not a number hashes as itself,
             // the way CPython's own hash of a NaN does, and not as the
             // worth that stood in for it here.
@@ -12214,6 +12233,7 @@ impl<'a> Engine<'a> {
                 // A walk, a row, a map or a set hands over the walking
                 // pair and the container members as methods bound to it.
                 subject if self.native_special(&subject, name) => Value::ValueMethod(Rc::new((subject.held(false), name.to_string()))),
+                string @ Value::Codepoints(_) if self.surrogate_case_operation(name).is_some() => Value::ValueMethod(Rc::new((string,name.to_string()))),
                 subject @ Value::Codepoints(_) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => Value::ValueMethod(Rc::new((subject, name.to_string()))),
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
@@ -17279,6 +17299,11 @@ impl<'a> Engine<'a> {
             if !args.is_empty() { return Err(format!("TypeError: {owner}.__getnewargs__() takes no arguments ({} given)", args.len())); }
         }
         if let Value::Codepoints(codes) = &contents {
+            if let Some(op) = self.surrogate_case_operation(operation) {
+                let mut parameters = vec![contents.clone()]; parameters.extend(args);
+                crate::strings::keywords(op, &mut parameters, named, self.lang)?;
+                return crate::strings::run(op, operation, &parameters, self.lang, &self.wording());
+            }
             if operation == "__getnewargs__" {
                 let mut supplied = vec![contents.clone()]; supplied.extend(args);
                 crate::strings::keywords(crate::strings::TextOp::Getnewargs, &mut supplied, named, self.lang)?;
@@ -18574,32 +18599,37 @@ impl<'a> Engine<'a> {
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
-        self.byte_transcode(false, &row, args)
+        self.byte_transcode(false, &row, args, true)
     }
 
     fn codec_library(&mut self, member: &str, args: Vec<Value>) -> Res<Value> {
-        let module = self.route_module("codecs")?;
+        let module = self.route_module("_codec_runtime")?;
         let routine = self.member_of(module, member)?.ok_or_else(|| self.byte_fault("unready"))?;
         self.call_held(routine, args)
     }
 
-    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value]) -> Res<Value> {
+    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value], text_method: bool) -> Res<Value> {
         if args.is_empty() || args.len() > 3 { return Err(self.byte_fault("arguments")); }
         let policy = match args.get(2) {
             None => "strict".to_owned(),
             Some(Value::Text(s)) => s.to_string(),
             _ => return Err(self.byte_fault("arguments")),
         };
+        if policy.contains('\0') || args.get(1).is_some_and(|v| matches!(v, Value::Text(word) if word.contains('\0'))) {
+            return Err("ValueError: embedded null character".into());
+        }
+        if text_method && !encode && row.is_empty() && args.get(1).map_or(true, |v| matches!(v, Value::Text(_)))
+            && std::env::var("LUMEN_PYTHON_DEV_MODE").ok().as_deref() != Some("1") {
+            return Ok(Value::text(""));
+        }
         let codec = match self.byte_codec(args.get(1)) {
             Ok(n) if n < 3 => n,
-            _ => return self.codec_library(if encode { "_encode" } else { "_decode" }, args.to_vec()),
+            _ => return self.codec_library(match (encode, text_method) { (true, true) => "_text_encode", (false, true) => "_text_decode", (true, false) => "_encode", (false, false) => "_decode" }, args.to_vec()),
         };
-        // A policy the codecs module has never heard of is refused here,
-        // before the fold below could pass it over on an empty or clean
-        // input where no error would ever bring it to light.
-        if policy != "strict" && policy != "ignore" && policy != "replace" {
+        if text_method && args.len() == 3 && std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|flag| flag == "1") {
             self.codec_library("lookup_error", vec![Value::text(&policy)])?;
         }
+        // Resolve custom error handlers only when a conversion actually fails.
         if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
         let name = self.byte_codec_name(codec);
         let mut output = Vec::new();
@@ -18867,7 +18897,7 @@ impl<'a> Engine<'a> {
         if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
             let decode = task == 3;
             let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
-            let result = self.byte_transcode(!decode, &row, args)?;
+            let result = self.byte_transcode(!decode, &row, args, true)?;
             if task == 1 {
                 if let Value::Bytes(cell, ..) = result { return Ok(self.byte_make(cell.borrow().clone(), true)); }
             }
@@ -19492,6 +19522,11 @@ impl<'a> Engine<'a> {
             // stands for its numbers as plainly as a list does. Gather
             // the walk into a row first so that a walk backwards over a
             // byte string can be built straight back into one.
+            Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
+                if args.is_empty() { return Err(self.byte_fault("arguments")); }
+                let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+                self.byte_transcode(task == 2, &data, &args, false)?
+            }
             Builtin::Bytes(task) => {
                 if task == 0 && args.len() == 1 {
                     if let Value::Object(object) = &args[0] {
@@ -20603,6 +20638,17 @@ impl<'a> Engine<'a> {
                     if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
                     if matches!(args[1], Value::Flag(true)) { return Ok(self.sys_path_source(&path).map(|(file, _)| file).or_else(|| self.library_module_file(&path)).map_or(Value::Null, |file| Value::text(&file))); }
                 }
+                if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "source") {
+                    let name = args[0].display(&sp);
+                    if let Some((_, source)) = self.sys_path_source(&name) {
+                        let tokenizer = self.route_module("_tokenize")?;
+                        let decode = self.member_of(tokenizer, "_decode_source")?.ok_or("ImportError: source decoder is unavailable")?;
+                        let input = self.byte_make(source, false);
+                        return self.call_held(decode, vec![input]);
+                    }
+                    return self.module_sources.get(&name).map(|source| Value::text(source))
+                        .ok_or_else(|| format!("ImportError: source for {name} is unavailable"));
+                }
                 arity(1)?;
                 match self.import_module(&args[0].display(&sp)) {
                     Ok(module) => module,
@@ -20627,6 +20673,7 @@ impl<'a> Engine<'a> {
                     constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None),
                 }))
             }
+            Builtin::Multibyte => return crate::multibyte::call(args),
             Builtin::Sre => return crate::sre::call(args),
             Builtin::UnicodeDecomposition => return crate::sre::decompose(args),
             Builtin::CopyValue => {
@@ -24935,6 +24982,20 @@ impl Engine<'_> {
                 }
             }
         }
+        if self.lang.module_path.is_some() {
+            if let Some(system) = self.modules.get("sys").cloned() {
+                if let Some(custom) = self.member_of(system, "_find_custom")? {
+                    let locations = parent.and_then(|(owner, _)| self.modules.get(owner).cloned())
+                        .map(|owner| self.member_of(owner, "__path__")).transpose()?.flatten().unwrap_or(Value::Null);
+                    let found = self.call_held(custom, vec![Value::text(path), locations])?;
+                    if let Value::Tuple(answer) = found.contents() {
+                        if matches!(answer.first(), Some(Value::Flag(false))) {
+                            return Ok(answer.get(1).cloned().unwrap_or(Value::Null));
+                        }
+                    }
+                }
+            }
+        }
         let from_disk = self.sys_path_source(path);
         let (source, own_file) = match &from_disk {
             Some((file, bytes)) => {
@@ -25084,6 +25145,17 @@ impl Engine<'_> {
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
             self.modules.remove(path); self.module_addresses_ready.set(false); self.refresh_module_cache(path); return Err(fault);
+        }
+        if self.lang.module_path.is_some() {
+            let maker = self.modules.get("sys").cloned()
+                .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
+            if let (Some(factory), Some(file)) = (maker, own_file.as_deref()) {
+                let spec = self.call_held(factory, vec![Value::text(path), Value::text(file)])?;
+                if let Value::Object(namespace) = &module {
+                    let mut attrs = namespace.fields.borrow_mut();
+                    if let Some((_, value)) = attrs.iter_mut().find(|(key, _)| key == "__spec__") { *value = spec; }
+                }
+            }
         }
         // Module code may replace its own entry in the Python import cache.
         // CPython returns that replacement after the module body completes.

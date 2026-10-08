@@ -184,6 +184,7 @@ struct Invocation {
     emit: Option<Language>,
     program_args: Vec<String>,
     python: Option<&'static python_versions::PythonVersion>,
+    dev_mode: bool,
     module_source: Option<String>,
     module_name: Option<String>,
 }
@@ -553,6 +554,7 @@ fn run_all() {
     // to a file to say this: the words travel with the run.
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
+    std::env::set_var("LUMEN_PYTHON_DEV_MODE", if inv.dev_mode { "1" } else { "0" });
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
     if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
@@ -870,6 +872,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
     let mut python: Option<String> = None;
+    let mut dev_mode = false;
     let mut file: Option<String> = None;
     let mut module_source = None;
     let mut module_name = None;
@@ -921,6 +924,18 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 python = Some(said(&rest[1]));
                 rest = &rest[2..];
+            }
+            Some(flag) if file.is_none() && (flag == "-X" || flag.starts_with("-Xdev")) => {
+                let (option, used) = if flag == "-X" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                if option.split('=').next() != Some("dev") {
+                    eprintln!("Error: unsupported Python -X option '{option}'");
+                    process::exit(1);
+                }
+                dev_mode = true;
+                rest = &rest[used..];
             }
             Some("--serve") => {
                 if rest.len() < 2 {
@@ -1048,6 +1063,10 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     });
 
+    if dev_mode && language.name() != "python" {
+        eprintln!("Error: -X dev requires the Python language");
+        process::exit(1);
+    }
     let mut language = language;
     let python = if language.name() == "python" {
         let version = python_versions::select(python.as_deref(), &file).unwrap_or_else(|e| { eprintln!("{e}"); process::exit(1) });
@@ -1067,7 +1086,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             program_args.extend(selection.split(',').filter(|name| !name.is_empty()).map(str::to_owned));
         }
     }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args }
+    Invocation { kernel, file, serve, language, emit, python, dev_mode, module_source, module_name, program_args }
 }
 
 /// The language whose embedded definition claims the file's extension.

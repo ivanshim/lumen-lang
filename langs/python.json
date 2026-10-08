@@ -640,10 +640,10 @@
     "bytes"
   ],
   "ext.builtin.bytes.decode": [
-    "decode"
+    "decode", "__codec_decode"
   ],
   "ext.builtin.bytes.encode": [
-    "encode"
+    "encode", "__codec_encode"
   ],
   "ext.builtin.bytes.find": [
     "find"
@@ -727,6 +727,9 @@
   "ext.builtin.clock.parts": true,
   "ext.builtin.unicodedata.decomposition": ["__unicode_decomposition"],
   "ext.builtin.unicodedata.decomposition.metadata": ["decomposition", "unicodedata"],
+  "ext.builtin.multibyte": [
+    "__multibyte_native"
+  ],
   "ext.builtin.sre": [
     "__sre_native"
   ],

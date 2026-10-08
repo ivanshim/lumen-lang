@@ -5322,8 +5322,10 @@ impl<'a> Compiler<'a> {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let source_at = self.pos;
             let from = self.mark();
+            // A Python iterator source admits the whole conditional expression.
+            let source_level = if lang.range_marks.is_empty() && !lang.comprehension_for.is_empty() { 0 } else { tier + 1 };
             if self.on_any(&lang.array_spread) { self.scope_value()?; }
-            else { self.expr(tier + 1)?; self.scope_tail(from)?; }
+            else { self.expr(source_level)?; self.scope_tail(from)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().spelling())) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {

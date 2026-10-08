@@ -27,9 +27,14 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
+from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
+meta_path = [_SourceFinder()]
+path_hooks = []
+path_importer_cache = {}
 _recursion_limit = 1000
 
-# Stub: startup flags describe the fixed library environment.
+# Startup flags retain the fixed library environment and the requested dev mode.
+_startup_environment = __posix('environ')[1]
 class _Flags:
     debug = 0
     inspect = 0
@@ -44,7 +49,7 @@ class _Flags:
     quiet = 0
     hash_randomization = 0
     isolated = 1
-    dev_mode = False
+    dev_mode = _startup_environment.get(b'LUMEN_PYTHON_DEV_MODE', b'0') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
     safe_path = True
