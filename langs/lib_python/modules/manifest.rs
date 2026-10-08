@@ -120,7 +120,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("html.entities", include_str!("html/entities.py"), "html/entities.py"),
     ("html.parser", include_str!("html/parser.py"), "html/parser.py"),
     ("http", include_str!("http/__init__.py"), "http/__init__.py"),
-    ("http.client", include_str!("runtime_adapters/native_http_client.py"), "http/client.py"),
+    ("http.client", include_str!("http/client.py"), "http/client.py"),
     ("http.cookiejar", include_str!("http/cookiejar.py"), "http/cookiejar.py"),
     ("http.cookies", include_str!("http/cookies.py"), "http/cookies.py"),
     ("importlib", concat!(include_str!("importlib/__init__.py"), "\n", include_str!("runtime_adapters/importlib.py")), "importlib/__init__.py"),
