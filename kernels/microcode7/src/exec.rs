@@ -13550,7 +13550,7 @@ impl<'a> Machine<'a> {
         let mut outcome = (|| -> Res {
             let items = self.core_collect(sequence)?;
             let mut acquired = Vec::with_capacity(items.len());
-            for supplied in &items {
+            for (index, supplied) in items.iter().enumerate() {
                 let plain = Self::underlying(supplied).unwrap_or_else(|| supplied.settled());
                 let buffer = match plain {
                     Value::Octets { ref cell, changeable, .. } => {
@@ -13560,10 +13560,12 @@ impl<'a> Machine<'a> {
                     _ => {
                         let builtins = self.load_namespace("builtins")?;
                         let factory = self.read_class_member(builtins, "_buffer_view", false)?;
-                        let window = self.apply_class_member(factory, vec![supplied.clone(), Value::Small(0), Value::text("")])?;
+                        let complaint = format!("TypeError: sequence item {index}: expected a bytes-like object, {} found", supplied.kind_word());
+                        let window = self.apply_class_member(factory, vec![supplied.clone(), Value::Small(0), Value::text("")])
+                            .map_err(|_| Escape::Error(complaint.clone()))?;
                         windows.push(window.clone());
                         let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
-                        if !contiguous.is_true() { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()); }
+                        if !contiguous.is_true() { return Err(complaint.into()); }
                         window
                     }
                 };

@@ -18504,7 +18504,7 @@ impl<'a> Engine<'a> {
         let mut result = (|| -> Flow<Value> {
             let parts = self.core_members(source)?;
             let mut buffers = Vec::with_capacity(parts.len());
-            for item in &parts {
+            for (position, item) in parts.iter().enumerate() {
                 let held = Self::worth_of(item).unwrap_or_else(|| item.contents());
                 if let Value::Bytes(cell, mutable, _) = &held {
                     if *mutable { leases.push(ByteExport::acquire(cell)); }
@@ -18512,10 +18512,12 @@ impl<'a> Engine<'a> {
                 } else {
                     let module = self.import_module("builtins")?;
                     let acquire = self.class_get(module, "_buffer_view", false)?;
-                    let view = self.class_apply(acquire, vec![item.clone(), Value::Small(0), Value::text("")])?;
+                    let invalid = format!("TypeError: sequence item {position}: expected a bytes-like object, {} found", item.core_kind());
+                    let view = self.class_apply(acquire, vec![item.clone(), Value::Small(0), Value::text("")])
+                        .map_err(|_| Fault::Note(invalid.clone()))?;
                     views.push(view.clone());
                     if !self.class_get(view.clone(), "c_contiguous", false)?.is_true() {
-                        return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into());
+                        return Err(invalid.into());
                     }
                     buffers.push(view);
                 }
