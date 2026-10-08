@@ -83,15 +83,39 @@ thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static LISTENING: Cell<usize> = const { Cell::new(0) };
     static LISTENERS: RefCell<Vec<Rc<Dim>>> = const { RefCell::new(Vec::new()) };
-    // Queued work, anchored finalizers, and polled method listeners.
-    static STIRRED: Cell<u8> = const { Cell::new(0) };
+    // Wrapped methods have no drop notification; only their listeners
+    // need polling. Class and instance listeners are notified on departure.
+    // Every reason to look at the weak holds at a step, in one cell:
+    // a step asks once and stands down where none is set.
+    static GHOST_STATE: Cell<u8> = const { Cell::new(0) };
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
+    // The addresses of the things a listener is on. A thing leaving
+    // sets the lost flag only where its address is one of these.
+    static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    // A listener whose kind has no notification of its own forces the
+    // broad check: every departure is then worth the lost flag.
+    static UNHOOKED: Cell<bool> = const { Cell::new(false) };
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
+}
+
+/// The three reasons a step must look at what is going.
+const G_STIRRED: u8 = 1;
+const G_POLL: u8 = 2;
+const G_ANCHOR: u8 = 4;
+
+fn ghost_raise(mask: u8) {
+    let _ = GHOST_STATE.try_with(|s| s.set(s.get() | mask));
+}
+fn ghost_drop(mask: u8) {
+    let _ = GHOST_STATE.try_with(|s| s.set(s.get() & !mask));
+}
+fn ghost_set(mask: u8, on: bool) {
+    let _ = GHOST_STATE.try_with(|s| s.set(if on { s.get() | mask } else { s.get() & !mask }));
 }
 
 /// Mark every reference to a lost knot before handing any callback to
@@ -135,6 +159,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             false
         });
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
+        ghost_set(G_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
         notices.into_iter().rev().collect()
     }).unwrap_or_default()
 }
@@ -143,7 +168,7 @@ pub fn anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         if !all.iter().any(|item| Rc::ptr_eq(item, thing)) { all.push(thing.clone()); }
-        let _ = STIRRED.try_with(|state| state.set(state.get() | 2));
+        ghost_set(G_ANCHOR, !all.is_empty());
     });
 }
 
@@ -155,13 +180,13 @@ pub fn release_anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         all.retain(|item| !Rc::ptr_eq(item, thing));
-        if all.is_empty() { let _ = STIRRED.try_with(|state| state.set(state.get() & !2)); }
+        ghost_set(G_ANCHOR, !all.is_empty());
     });
 }
 
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
-    let _ = STIRRED.try_with(|state| state.set(state.get() & !2));
+    ghost_drop(G_ANCHOR);
 }
 
 fn anchor_ready() -> bool {
@@ -182,15 +207,27 @@ pub fn bidding() -> bool {
 /// Whether the machine has anything to attend to before its next step.
 #[inline(always)]
 pub fn stirred() -> bool {
-    let status = STIRRED.try_with(Cell::get).unwrap_or(0);
-    if status == 0 { return false; }
-    let gone_method = status & 4 != 0 && LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
-    if gone_method { anything_departing(); }
-    status & 1 != 0 || gone_method || (status & 2 != 0 && anchor_ready())
+    let flags = GHOST_STATE.try_with(|s| s.get()).unwrap_or(0);
+    if flags == 0 { return false; }
+    if flags & G_POLL != 0 {
+        let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
+        if gone_method {
+            // The poll found work. Attend now rather than trust the state
+            // read before it, since raising the lost flag happened after
+            // that read; this keeps a wrapped method's callback on the same
+            // step it departed, as reading the stirred flag after polling
+            // did before.
+            anything_departing();
+            return true;
+        }
+    }
+    if flags & G_STIRRED != 0 { return true; }
+    if flags & G_ANCHOR != 0 { return anchor_ready(); }
+    false
 }
 
 fn stir() {
-    let _ = STIRRED.try_with(|s| s.set(s.get() | 1));
+    ghost_raise(G_STIRRED);
 }
 
 /// Something a listener might be listening for has gone.
@@ -198,6 +235,46 @@ pub fn anything_departing() {
     if LISTENING.try_with(|l| l.get()).unwrap_or(0) == 0 { return; }
     let _ = LOST.try_with(|l| l.set(true));
     stir();
+}
+
+/// A thing at this address is going. Where any listener is on its
+/// kind, the broad check runs; where none is, only a watched address
+/// is worth the lost flag. Most departures are neither, so the work
+/// of walking the listeners is left undone for them.
+pub fn departing_at(here: usize) {
+    if UNHOOKED.try_with(|u| u.get()).unwrap_or(false) { anything_departing(); return; }
+    let watched = WATCHED.try_with(|w| {
+        let mut w = w.borrow_mut();
+        if w.is_empty() { false } else { w.remove(&here) }
+    }).unwrap_or(false);
+    if watched {
+        let _ = LOST.try_with(|l| l.set(true));
+        stir();
+    }
+}
+
+/// A thing whose address cannot be read at its going: only the broad
+/// check can serve it, and only while a listener wants one.
+pub fn departing_generic() {
+    if UNHOOKED.try_with(|u| u.get()).unwrap_or(false) { anything_departing(); }
+}
+
+/// Note the addresses a listener is on, so that their going can set
+/// the lost flag without every other departure doing so as well.
+fn watch_ghost(ghost: &Ghost) {
+    let note = |ptr: usize| { let _ = WATCHED.try_with(|w| { w.borrow_mut().insert(ptr); }); };
+    match ghost {
+        Ghost::Thing(w) => note(w.as_ptr() as usize),
+        Ghost::Blueprint(w) => note(w.as_ptr() as usize),
+        Ghost::Routine(w) => note(w.as_ptr() as usize),
+        Ghost::Bound(p, e) => { note(p.as_ptr() as usize); note(e.as_ptr() as usize); }
+        Ghost::Method(p, t, i) => { note(p.as_ptr() as usize); note(t.as_ptr() as usize); note(i.as_ptr() as usize); }
+        // A cell, a walk and a set sit behind a borrow flag whose
+        // address the value itself does not carry, so their kinds
+        // keep the broad check.
+        Ghost::Cell(_) | Ghost::Walk(_) | Ghost::Set(_) => { let _ = UNHOOKED.try_with(|u| u.set(true)); }
+        Ghost::WrappedMethod(_) | Ghost::Lasting(_) | Ghost::StaticKind(_) => {}
+    }
 }
 
 /// The farewell method of a class, looked for among its programs first
@@ -236,7 +313,7 @@ pub fn thing_departing(going: &mut Thing) {
             stir();
         }
     }
-    anything_departing();
+    departing_at(here);
 }
 
 /// A walk asleep inside a try is going: the machine rebuilt it around
@@ -251,12 +328,12 @@ pub fn walk_departing(again: Rc<RefCell<Suspension>>) {
 /// is cleared; more may gather while the machine works, so it asks
 /// again until nothing comes back.
 pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
-    let _ = STIRRED.try_with(|s| s.set(s.get() & !1));
+    ghost_drop(G_STIRRED);
     let mut farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
-        let _ = STIRRED.try_with(|state| state.set(if kept.is_empty() { state.get() & !2 } else { state.get() | 2 }));
+        ghost_set(G_ANCHOR, !kept.is_empty());
         *all = kept;
         ready
     }).unwrap_or_default();
@@ -281,9 +358,8 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
+            ghost_set(G_POLL, still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
             still.reverse();
-            let methods = still.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)));
-            let _ = STIRRED.try_with(|state| state.set(if methods { state.get() | 4 } else { state.get() & !4 }));
             *all = still;
         });
     }
@@ -315,6 +391,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
 pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     note(ghost.clone());
     let wants_telling = notify.is_some();
+    if wants_telling { watch_ghost(&ghost); }
     let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None), detached: Cell::new(false) });
     REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
@@ -322,11 +399,9 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
         refs.push(Rc::downgrade(&held));
     });
     if wants_telling {
-        if matches!(held.ghost, Ghost::WrappedMethod(_)) {
-            let _ = STIRRED.try_with(|state| state.set(state.get() | 4));
-        }
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
+        if matches!(held.ghost, Ghost::WrappedMethod(_)) { ghost_raise(G_POLL); }
     }
     Value::Dim(held)
 }
