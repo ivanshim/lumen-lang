@@ -1261,11 +1261,12 @@ impl<'a> Cursor<'a> {
                 s.push(self.step());
             }
             if number_spelling(&s, lang).is_err() && !lang.syntax_members.is_empty() {
-                for keyword in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                // Try the shorter suffix first: a base digit can precede it.
+                for keyword in ["else", "not", "and", "or", "in", "if", "is", "for"] {
                     if let Some(prefix) = s.strip_suffix(keyword) {
                         if !prefix.is_empty() && number_spelling(prefix, lang).is_ok()
                             && !(prefix == "0" && keyword == "or")
-                            && !(prefix.starts_with("0x") && matches!(keyword, "and" | "else")) {
+                            && !((prefix.starts_with("0x") || prefix.starts_with("0X")) && matches!(keyword, "and" | "else")) {
                             let kept = prefix.len();
                             self.at -= keyword.len();
                             self.column -= keyword.len();
@@ -1275,6 +1276,7 @@ impl<'a> Cursor<'a> {
                             let base = if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
                                 else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
                                 else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+                                else if prefix.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c)) { "imaginary" }
                                 else { "decimal" };
                             self.push(Shape::EscapeWarning, format!("invalid {base} literal"), 0, line, col);
                             s.truncate(kept);
