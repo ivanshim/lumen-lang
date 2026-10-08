@@ -23571,6 +23571,9 @@ impl<'a> Machine<'a> {
                 let (_,places,_)=self.span_selection(bounds,values.len())?;
                 Value::tuple(places.into_iter().map(|i|values[i].clone()).collect())
             }else{
+                // A flag reads as a place only where a language works
+                // sequences; anywhere else the key is refused by kind.
+                if matches!(at, Value::Flag(_)) && !self.works_sequences() { return Err(as_index(at).unwrap_err()); }
                 let index=at.as_big()?;let index=if index<BigInt::from(0){index+values.len()}else{index};
                 let beyond = || match self.works_sequences() {
                     true => format!("\0{}", self.place_beyond(target)),
