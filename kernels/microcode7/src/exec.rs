@@ -13554,7 +13554,8 @@ impl<'a> Machine<'a> {
                 let plain = Self::underlying(supplied).unwrap_or_else(|| supplied.settled());
                 let buffer = match plain {
                     Value::Octets { ref cell, changeable, .. } => {
-                        if changeable { native_exports.push(OctetLease::new(cell)); }
+                        native_exports.push(changeable.then(|| OctetLease::new(cell)));
+                        windows.push(None);
                         plain
                     }
                     _ => {
@@ -13563,7 +13564,8 @@ impl<'a> Machine<'a> {
                         let complaint = format!("TypeError: sequence item {index}: expected a bytes-like object, {} found", supplied.kind_word());
                         let window = self.apply_class_member(factory, vec![supplied.clone(), Value::Small(0), Value::text("")])
                             .map_err(|_| Escape::Error(complaint.clone()))?;
-                        windows.push(window.clone());
+                        windows.push(Some(window.clone()));
+                        native_exports.push(None);
                         let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
                         if !contiguous.is_true() { return Err(complaint.into()); }
                         window
@@ -13589,9 +13591,12 @@ impl<'a> Machine<'a> {
             }
             Ok(self.octets(output, false))
         })();
-        for window in windows {
-            let release = self.read_class_member(window, "release", false).and_then(|f| self.apply_class_member(f, vec![]));
-            if let Err(escape) = release { if outcome.is_ok() { outcome = Err(escape); } }
+        for (native, window) in native_exports.into_iter().zip(windows) {
+            drop(native);
+            if let Some(window) = window {
+                let release = self.read_class_member(window, "release", false).and_then(|f| self.apply_class_member(f, vec![]));
+                if let Err(escape) = release { if outcome.is_ok() { outcome = Err(escape); } }
+            }
         }
         let value = outcome.map_err(|escape| self.carried_native_fault(escape))?;
         self.octet_contents(&value, false)

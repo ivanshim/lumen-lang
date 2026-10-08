@@ -18507,7 +18507,8 @@ impl<'a> Engine<'a> {
             for (position, item) in parts.iter().enumerate() {
                 let held = Self::worth_of(item).unwrap_or_else(|| item.contents());
                 if let Value::Bytes(cell, mutable, _) = &held {
-                    if *mutable { leases.push(ByteExport::acquire(cell)); }
+                    leases.push(if *mutable { Some(ByteExport::acquire(cell)) } else { None });
+                    views.push(None);
                     buffers.push(held);
                 } else {
                     let module = self.import_module("builtins")?;
@@ -18515,7 +18516,8 @@ impl<'a> Engine<'a> {
                     let invalid = format!("TypeError: sequence item {position}: expected a bytes-like object, {} found", item.core_kind());
                     let view = self.class_apply(acquire, vec![item.clone(), Value::Small(0), Value::text("")])
                         .map_err(|_| Fault::Note(invalid.clone()))?;
-                    views.push(view.clone());
+                    views.push(Some(view.clone()));
+                    leases.push(None);
                     if !self.class_get(view.clone(), "c_contiguous", false)?.is_true() {
                         return Err(invalid.into());
                     }
@@ -18537,9 +18539,12 @@ impl<'a> Engine<'a> {
             }
             Ok(self.byte_make(joined, false))
         })();
-        for view in views {
-            let released = self.class_get(view, "release", false).and_then(|method| self.class_apply(method, Vec::new()));
-            if result.is_ok() { if let Err(fault) = released { result = Err(fault); } }
+        for (lease, view) in leases.into_iter().zip(views) {
+            drop(lease);
+            if let Some(view) = view {
+                let released = self.class_get(view, "release", false).and_then(|method| self.class_apply(method, Vec::new()));
+                if result.is_ok() { if let Err(fault) = released { result = Err(fault); } }
+            }
         }
         match result {
             Ok(Value::Bytes(cell, ..)) => Ok(cell.borrow().clone()),
