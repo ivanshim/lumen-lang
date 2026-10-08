@@ -19,7 +19,7 @@ def index(a):
                               DeprecationWarning, stacklevel=2)
             return int.__index__(answer)
         raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
-    raise 'TypeError: value cannot be interpreted as an integer'
+    raise TypeError("'" + type(a).__name__ + "' object cannot be interpreted as an integer")
 
 
 

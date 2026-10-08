@@ -142,6 +142,16 @@ def _kind_name(kind):
         return repr(kind)
 
 
+# A class outside the builtins is written with the module it lives in.
+def _class_path(kind):
+    name = _kind_name(kind)
+    if isinstance(kind, type):
+        module = getattr(kind, '__module__', None)
+        if isinstance(module, str) and module != 'builtins':
+            return module + '.' + name
+    return name
+
+
 # A kind named with the kinds it was given, as list[int] is.
 class GenericAlias:
     def __init__(self, origin, args):
@@ -171,7 +181,7 @@ class GenericAlias:
         shown = []
         for given in self.__args__:
             shown.append(_kind_name(given))
-        return _kind_name(self.__origin__) + '[' + ', '.join(shown) + ']'
+        return _class_path(self.__origin__) + '[' + ', '.join(shown) + ']'
 
     def __iter__(self):
         return _GenericAliasIterator(self)
