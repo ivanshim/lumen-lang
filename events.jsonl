@@ -8710,3 +8710,17 @@
 {"t":"2026-10-08T12:25:45Z","event":"review-queued","job":"dsflash-platform-sol","review":"review-auto-dsflash-platform-sol-1225"}
 {"t":"2026-10-08T12:25:51Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-08T12:30:40Z","event":"review-started","job":"dsflash-platform-sol","review":"review-auto-dsflash-platform-sol-1225"}
+{"t":"2026-10-08T12:34:28Z","event":"exited","job":"review-auto-dsflash-platform-sol-1225","code":0}
+{"t":"2026-10-08T12:34:31Z","event":"returned","job":"dsflash-genericalias","review":"review-auto-dsflash-genericalias-1205","commit":"0bad8bbde","round":2,"note":"(2nd; integrity finding: sys.py synthetic refcount fallback returns literal 1; parameter_chaining kernel disagreement, ParamSpec subst, pickle 150 subtests, evil_repr3, gh150146, deepcopy memo; 0->37 run ~31 pass both kernels kept) -> or-resume queued (DS Flash 12/12)"}
+{"t":"2026-10-08T12:34:31Z","event":"returned","job":"dsflash-pyclbr","review":"review-auto-dsflash-pyclbr-1220","commit":"65f012d33","round":2,"note":"(2nd; test_others still fails (_escape_decode runtime/source mismatch); ast.parse turns invalid source into successful trees; def params discarded -> inspect text signatures wrong; fake module + ';' loop fixed) -> held-resumes (DS Flash full)"}
+{"t":"2026-10-08T12:34:57Z","event":"quota","codex_week_used":74,"codex_credits":0,"claude_week_used":9,"claude_5h_used":11,"kimi_5h_used":0,"kimi_month_used":0.9759,"kimi_code_used":0,"deepseek_usd":298.25}
+{"t":"2026-10-08T12:35:04Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":74,"expected":75.9,"gap":-1.9,"status":"ok"}
+{"t":"2026-10-08T12:35:10Z","event":"checkin","status":"done","actions":"RETURN dsflash-genericalias (2nd; synthetic sys.py refcount fallback, union/ParamSpec subst + kernel disagreement, pickle, deepcopy memo) -> returns + or-resume queued (DS Flash 12/12); RETURN dsflash-pyclbr (2nd; test_others _escape_decode mismatch, ast.parse accepts invalid source, def params dropped) -> returns + held-resumes (DS Flash full); prune-merged 0MB; luna FINDINGS appended","notes":"PR #540 (21e) CI still red, integrate-21e Sol repair running; box load 6.2, 12.6 GB avail, disk 80%; Mac disk 86%; Sol 11 feature + review slot (platform-sol review); DS Pro tstring; Kimi type-comments queued; Sonnet claude-pstats; Codex week 74%; Claude 5h 11% week 9%; luna alert 53 = expected OpenClaw session, gap -1.9 ok"}
+{"t":"2026-10-08T12:35:41Z","event":"resumed","job":"dsflash-genericalias","model":"deepseek-flash","session":"ses_ee8130d07ffeOAvtOzU70kb4wK"}
+{"t":"2026-10-08T12:37:30Z","event":"exited","job":"dsflash-marshal","code":0}
+{"t":"2026-10-08T12:41:29Z","event":"finished","job":"dsflash-marshal","exit_time":"2026-10-08T12:37:30Z"}
+{"t":"2026-10-08T12:41:29Z","event":"review-queued","job":"dsflash-marshal","review":"review-auto-dsflash-marshal-1241"}
+{"t":"2026-10-08T12:41:39Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T12:41:42Z","event":"review-started","job":"dsflash-marshal","review":"review-auto-dsflash-marshal-1241"}
+{"t":"2026-10-08T12:46:07Z","event":"exited","job":"review-auto-dsflash-marshal-1241","code":0}
+{"t":"2026-10-08T12:49:48Z","event":"exited","job":"stdlib-http-cookiejar","code":0}
