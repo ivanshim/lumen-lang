@@ -2043,8 +2043,7 @@ def _parse_field_expr(source, s, e, row, col):
 _STMT_WORDS = ('def', 'class', 'if', 'elif', 'else', 'for', 'while', 'try',
                'except', 'finally', 'with', 'return', 'yield', 'raise',
                'import', 'from', 'pass', 'break', 'continue', 'global',
-               'nonlocal', 'assert', 'del', 'async', 'await', 'match',
-               'case', 'lambda')
+               'nonlocal', 'assert', 'del', 'async', 'await', 'lambda')
 
 _BINOPS = {'+': Add, '-': Sub, '*': Mult, '/': Div, '//': FloorDiv,
            '%': Mod, '@': MatMult, '<<': LShift, '>>': RShift,
@@ -2079,11 +2078,15 @@ class _Parser:
             _syntax('invalid syntax')
         return self.pop()
 
-    def parse_module(self):
-        return Module(body=self.parse_block(0), type_ignores=[])
+    def parse_module(self, single=False):
+        self._inline_tail = 0
+        body = self.parse_block(0, single)
+        if single and self._inline_tail >= len(self.source.split('\n')):
+            raise SyntaxError('invalid syntax')
+        return Module(body=body, type_ignores=[])
 
     # Read a block at one indentation level, stopping at its dedent.
-    def parse_block(self, indent):
+    def parse_block(self, indent, single=False):
         body = []
         while True:
             while self.peek().kind == 'newline':
@@ -2099,9 +2102,20 @@ class _Parser:
                 self.pop()
                 if self.peek().kind in ('end', 'newline'):
                     break
-                body.append(self.parse_stmt())
+                item = self.parse_stmt()
+                if _compound_statement(item):
+                    raise SyntaxError('invalid syntax')
+                body.append(item)
             if self.peek().kind not in ('end', 'newline') and self.peek().srow <= body[-1].end_lineno:
                 _syntax('invalid syntax')
+            if single:
+                while self.peek().kind == 'newline':
+                    self.pop()
+                if self.peek().kind != 'end':
+                    if _compound_statement(body[0]):
+                        raise SyntaxError('invalid syntax')
+                    raise SyntaxError('multiple statements found while compiling a single statement')
+                return body
 
     # Read either a one-line suite or an indented suite after its colon.
     def parse_suite(self, header):
@@ -2112,13 +2126,19 @@ class _Parser:
                 self.pop()
                 if self.peek().kind in ('end', 'newline'):
                     break
-                body.append(self.parse_stmt())
+                item = self.parse_stmt()
+                if _compound_statement(item):
+                    raise SyntaxError('invalid syntax')
+                body.append(item)
+            self._inline_tail = body[-1].end_lineno
             return body
         while self.peek().kind == 'newline':
             self.pop()
         if self.peek().kind == 'end' or self.peek().scol <= header.scol:
             raise IndentationError('expected an indented block')
-        return self.parse_block(self.peek().scol)
+        body = self.parse_block(self.peek().scol)
+        self._inline_tail = 0
+        return body
 
     # Build a located node from its first token and last syntactic element.
     def located(self, cls, first, last, **fields):
@@ -3242,19 +3262,9 @@ def _check_type_comments(toks, comments):
         seg.append(tok.text)
         after_comma = False
 
-def _several_statements(toks):
-    # One statement alone may be a single text read; a second beginning
-    # past a line's end makes the text more than one.
-    body = False
-    for tok in toks:
-        if tok.kind == 'newline' or tok.kind == 'end':
-            if body and tok.kind == 'newline':
-                body = 'broken'
-            continue
-        if body == 'broken':
-            return True
-        body = True
-    return False
+def _compound_statement(node):
+    return isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, If, While,
+                            For, AsyncFor, With, AsyncWith, Try, TryStar, Match))
 
 def _parse_for_compile(source, filename, mode, type_comments, optimize):
     # compile() with PyCF_ONLY_AST hands the text here with the flags
@@ -3321,10 +3331,8 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
     toks = _lex(source, 0, len(source), 1, 0, False, comments)
     if type_comments:
         _check_type_comments(toks, comments)
-    if mode == 'single' and _several_statements(toks):
-        raise SyntaxError('multiple statements found while compiling a single statement')
     parser = _Parser(source, toks)
-    tree = parser.parse_module()
+    tree = parser.parse_module(single=mode == 'single')
     if type_comments:
         for row, column, text in comments:
             payload = text[1:].lstrip(' \t')
@@ -3334,6 +3342,8 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
                         (ord(payload[6]) < 128 and not payload[6].isalnum())):
                     tree.type_ignores.append(TypeIgnore(lineno=row, tag=payload[6:]))
     if mode == 'single':
+        if not tree.body:
+            raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
     return tree
@@ -3984,7 +3994,32 @@ def _compile_source(tree, mode):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
     _validate_node(tree)
     _validate_contexts(tree)
-    return unparse(tree)
+    source = unparse(tree)
+    generated = parse(source, mode='exec' if mode == 'single' else mode)
+    if mode == 'single':
+        generated = Interactive(body=generated.body)
+    positions = []
+    _compile_positions(tree, generated, positions, source.split('\n'))
+    return source, tuple(positions)
+
+# Match regenerated nodes by their ASDL fields, carrying the current tree's locations.
+def _compile_positions(original, generated, positions, lines):
+    if isinstance(original, AST) and isinstance(generated, AST):
+        if 'lineno' in original._attributes and 'lineno' in generated._attributes:
+            # Scanner columns count characters; AST columns count UTF-8 bytes.
+            start_col = len(lines[generated.lineno - 1].encode('utf-8')[:generated.col_offset].decode('utf-8'))
+            end_col = len(lines[generated.end_lineno - 1].encode('utf-8')[:generated.end_col_offset].decode('utf-8'))
+            positions.append((generated.lineno, start_col, generated.end_lineno, end_col) +
+                             (original.lineno, original.col_offset,
+                              original.end_lineno if original.end_lineno is not None else original.lineno,
+                              original.end_col_offset if original.end_col_offset is not None else original.col_offset))
+        if type(original) is type(generated):
+            for field in original._fields:
+                _compile_positions(getattr(original, field), getattr(generated, field), positions, lines)
+    elif isinstance(original, list) and isinstance(generated, list):
+        for old, new in zip(original, generated):
+            _compile_positions(old, new, positions, lines)
+
 
 # Check target contexts separately so ordinary expression children remain loads.
 def _validate_contexts(node, context=Load):

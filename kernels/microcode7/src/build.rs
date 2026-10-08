@@ -31,6 +31,49 @@ thread_local! {
     static PARENT_PAYLOAD: Rc<Vec<Value>> = Rc::new(Vec::new());
 }
 
+// Keep syntax coordinates separate from the positions attached to a supplied tree.
+thread_local! {
+    static TREE_SITES: std::cell::RefCell<Vec<[u32; 8]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub fn using_tree_sites<R>(sites: &[[u32; 8]], build: impl FnOnce() -> R) -> R {
+    let previous = TREE_SITES.with(|slot| slot.replace(sites.to_owned()));
+    let built = build();
+    TREE_SITES.with(|slot| { slot.replace(previous); });
+    built
+}
+
+fn tree_bounds(written: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
+    TREE_SITES.with(|slot| {
+        let sites = slot.borrow();
+        let first = (written.0, written.1);
+        let last = (written.2, written.3);
+        let mut selected = None;
+        let mut rank = (0u8, 0u64);
+        for site in sites.iter() {
+            let a = (site[0], site[1]);
+            let z = (site[2], site[3]);
+            let width = ((z.0 as u64) << 32 | z.1 as u64).saturating_sub((a.0 as u64) << 32 | a.1 as u64);
+            let priority = if a == first && z == last { (3, 0) }
+                else if first <= a && z <= last { (2, width) }
+                else if a <= first && last <= z { (1, u64::MAX - width) }
+                else { continue };
+            if priority >= rank { selected = Some(site); rank = priority; }
+        }
+        match selected { Some(site) => (site[4], site[5], site[6], site[7]), None => written }
+    })
+}
+
+fn tree_row(line: u32, offset: usize) -> u32 {
+    TREE_SITES.with(|slot| {
+        let sites = slot.borrow();
+        let col = offset.saturating_sub(1) as u32;
+        if let Some(site) = sites.iter().find(|site| site[0] == line && site[1] == col) { return site[4]; }
+        let nearest = sites.iter().filter(|site| site[0] == line && site[1] <= col).max_by_key(|site| site[1]);
+        nearest.map_or(line, |site| site[4])
+    })
+}
+
 /// What reading a class body gathers. `arms` counts the arms of
 /// conditionals open around the member being read: only one arm of a
 /// conditional runs, so a member named within one may go unwritten, and
@@ -2831,7 +2874,7 @@ impl<'a> Builder<'a> {
             self.past_library = true;
         }
         if self.tells_place && self.look().row > self.before {
-            let row = self.look().row - self.before;
+            let row = tree_row(self.look().row - self.before, self.look().column);
             let while_loop = self.table.has_any("ext.builtin.trace_native") && self.key("stmt.while");
             let made = self.plain_or_kind()?;
             return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
@@ -3161,7 +3204,7 @@ impl<'a> Builder<'a> {
                 return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true, otherwise: None });
             }
             if self.key("stmt.while") {
-                let loop_row = self.look().row.saturating_sub(self.before);
+                let loop_row = tree_row(self.look().row.saturating_sub(self.before), self.look().column);
                 self.advance();
                 let test_at = self.pos;
                 return self.cycle(
@@ -5849,7 +5892,7 @@ impl<'a> Builder<'a> {
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let explicit = table.flag("ext.stmt.class.this.explicit");
@@ -6338,7 +6381,7 @@ impl<'a> Builder<'a> {
             // A case whose test fits everything leaves no subject for a
             // later case, which the reference refuses to read.
             if unreachable { return Err(self.bad_case()); }
-            let case_row = (self.look().row as u32).saturating_sub(self.before);
+            let case_row = tree_row(self.look().row.saturating_sub(self.before), self.look().column);
             self.advance();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
@@ -7043,7 +7086,7 @@ impl<'a> Builder<'a> {
     }
 
     fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
-        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, 0, Box::new(expression)) }
+        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(tree_bounds(bounds), 0, Box::new(expression)) }
         else { expression }
     }
 
@@ -7618,7 +7661,7 @@ impl<'a> Builder<'a> {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
         }
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
@@ -7833,7 +7876,7 @@ impl<'a> Builder<'a> {
         let mut unavailable = self.outside_lambda.clone();
         unavailable.extend(enclosing);
         let prior = std::mem::replace(&mut self.outside_lambda, unavailable);
-        self.declared_at = (self.tokens[keyword_at].row as u32).saturating_sub(self.before);
+        self.declared_at = tree_row((self.tokens[keyword_at].row as u32).saturating_sub(self.before), self.tokens[keyword_at].column);
         let lambda_ident = table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
         let mut function = self.routine(lambda_ident, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
@@ -7891,7 +7934,7 @@ impl<'a> Builder<'a> {
     /// nowhere to say which of them it wants.
     fn short_func(&mut self) -> Res<Form> {
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column);
         if table.flag("ext.syntax.call.bind_names") {
             let (params, spares, _, _) = self.parameters(ANONYMOUS, true)?;
             let manners = self.taking.take();
@@ -7972,7 +8015,7 @@ impl<'a> Builder<'a> {
             // The one expression stands where it is written, so whatever
             // is said while it runs names that line and not the line the
             // call was made from.
-            let row = (r.look().row as u32).saturating_sub(r.before);
+            let row = tree_row((r.look().row as u32).saturating_sub(r.before), r.look().column);
             let body = r.expr(0)?;
             items.push(Form::OnLine(row, 0, Box::new(body)));
             Ok(sequence(items))
@@ -9295,6 +9338,13 @@ impl<'a> Builder<'a> {
     /// what was written — but not where the write is the whole
     /// statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
+        let first = self.pos;
+        let form = self.expr_read(floor, may_write)?;
+        if self.on_writing() || self.on_any("ext.op.assign.expression") || TREE_SITES.with(|sites| sites.borrow().is_empty()) { Ok(form) }
+        else { Ok(self.located(self.span_since(first), form)) }
+    }
+
+    fn expr_read(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let origin = self.pos;
         let blocked = std::mem::take(&mut self.named_blocked);
@@ -9579,7 +9629,7 @@ impl<'a> Builder<'a> {
         let Some(binary) = t.dyadic.get(&first) else { return Ok(None); };
         // Barry turns the two-character spelling into the mistake and
         // keeps the old diamond for the operator.
-        if self.barry_as_flufl && matches!(binary.prim, Prim::Ne) {
+        if self.barry_as_flufl && matches!(binary.prim, Prim::Ne) && TREE_SITES.with(|sites| sites.borrow().is_empty()) {
             let here = self.look().clone();
             self.range_end = Some((here.column + here.lexeme.chars().count(), here.row));
             return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
@@ -9635,6 +9685,15 @@ impl<'a> Builder<'a> {
     /// A piece of an expression, with a step written before or after it
     /// where the language spells one.
     fn monadic_expr(&mut self) -> Res<Form> {
+        let began = self.pos;
+        let node = self.monadic_read()?;
+        let mapping = TREE_SITES.with(|sites| !sites.borrow().is_empty());
+        if mapping && !self.on_writing() && !self.on_any("ext.op.assign.expression") {
+            Ok(self.located(self.span_since(began), node))
+        } else { Ok(node) }
+    }
+
+    fn monadic_read(&mut self) -> Res<Form> {
         if let Some(by) = self.step_by(&self.look().clone()) {
             self.advance();
             let target = self.monadic_expr()?;

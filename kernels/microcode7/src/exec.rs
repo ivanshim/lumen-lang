@@ -27325,6 +27325,75 @@ impl<'a> Machine<'a> {
         open
     }
 
+    fn single_reading(words: Vec<crate::scan::Token>, text: &str) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+        use crate::scan::Shape;
+        let mut nesting = 0usize;
+        let mut beginning = true;
+        let mut header = None;
+        let mut decorating = false;
+        let mut tail = None;
+        let mut separated = false;
+        for (index, word) in words.iter().enumerate() {
+            if word.shape == Shape::Open { nesting += 1; continue; }
+            if word.shape == Shape::Close { nesting = nesting.saturating_sub(1); continue; }
+            if word.shape == Shape::LineEnd { beginning = true; separated = false; continue; }
+            if matches!(word.shape, Shape::Lead | Shape::Finish) { continue; }
+            if separated && ["def", "class", "async", "with", "try", "while", "for", "if"].contains(&word.spelling()) {
+                return Err((String::from("SyntaxError: invalid syntax"), word.row, word.column));
+            }
+            if beginning && nesting == 0 {
+                let name = word.spelling();
+                match header {
+                    Some(block) => {
+                        let arm = block && ["else", "elif", "finally", "except"].contains(&name);
+                        let declaration = decorating && ["def", "class", "async", "@"].contains(&name);
+                        if !arm && !declaration {
+                            let reason = if block { "invalid syntax" } else { "multiple statements found while compiling a single statement" };
+                            return Err((format!("SyntaxError: {reason}"), word.row, word.column));
+                        }
+                    }
+                    None => {
+                        let mut is_block = ["class", "def", "async", "with", "try", "for", "while", "if", "@"].contains(&name);
+                        if name == "match" {
+                            let mut brackets = Vec::new();
+                            let mut cursor = index + 1;
+                            while let Some(next) = words.get(cursor) {
+                                if matches!(next.shape, Shape::LineEnd | Shape::Open | Shape::Finish) { break; }
+                                if ["(", "[", "{"].contains(&next.lexeme.as_str()) { brackets.push(()); }
+                                else if [")", "]", "}"].contains(&next.lexeme.as_str()) { brackets.pop(); }
+                                else if next.lexeme == ":" && brackets.is_empty() && cursor > index + 1 { is_block = true; break; }
+                                cursor += 1;
+                            }
+                        }
+                        header = Some(is_block);
+                    }
+                }
+                decorating = name == "@";
+            }
+            tail = match nesting { 0 => Some(word.row.max(word.end_row)), _ => None };
+            separated = word.lexeme == ";";
+            beginning = false;
+        }
+        if header == Some(true) {
+            if let Some(row) = tail.filter(|row| *row as usize >= text.split('\n').count()) {
+                return Err((String::from("SyntaxError: invalid syntax"), row, 0));
+            }
+        }
+        match header { Some(_) => Ok(words), None => Err(("SyntaxError: invalid syntax".to_owned(), 0, 0)) }
+    }
+
+    fn tree_site_values(stored: &Value) -> Result<Vec<[u32; 8]>, String> {
+        let fault = || "TypeError: invalid AST position mapping".to_owned();
+        let Value::Tuple(entries) = stored.settled() else { return Err(fault()); };
+        entries.iter().map(|entry| {
+            let Value::Tuple(values) = entry.settled() else { return Err(fault()); };
+            let integers = values.iter().map(|v| match v.settled() {
+                Value::Small(n) => Ok(n as u32), _ => Err(fault()),
+            }).collect::<Result<Vec<_>, _>>()?;
+            integers.try_into().map_err(|_| fault())
+        }).collect()
+    }
+
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
@@ -27339,6 +27408,7 @@ impl<'a> Machine<'a> {
                 return self.core_run(&read, handed);
             }
         }
+        let mut sites_value = Value::tuple(Vec::new());
         let source = match v[0].settled() {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
@@ -27346,8 +27416,10 @@ impl<'a> Machine<'a> {
                 let owner = self.load_namespace("ast")?;
                 let function = self.attribute(&owner, "_compile_source").ok_or_else(|| self.source_refused())?;
                 let converted = self.core_run(&function, vec![Value::Thing(tree), Value::Text(manner.clone())])?;
-                if let Value::Text(code) = converted.settled() { code }
-                else { return Err(self.source_refused()); }
+                let Value::Tuple(pair) = converted.settled() else { return Err(self.source_refused()); };
+                if pair.len() != 2 { return Err(self.source_refused()); }
+                sites_value = pair[1].clone();
+                match pair[0].settled() { Value::Text(code) => code, _ => return Err(self.source_refused()) }
             }
             _ => return Err(self.source_refused()),
         };
@@ -27384,7 +27456,10 @@ impl<'a> Machine<'a> {
             &counted_txt
         } else { &source };
         self.report_escape_notices(&source, &file, None)?;
-        let tokens = match self.text_tokens(&source, mode) {
+        let tokens = match self.text_tokens(&source, mode).and_then(|words| {
+            if mode != 2 || matches!(v[0].settled(), Value::Thing(_)) { Ok(words) }
+            else { Self::single_reading(words, &source) }
+        }) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => {
                 if incomplete_ok {
@@ -27395,7 +27470,8 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
             }
         };
-        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits) {
+        let sites = Self::tree_site_values(&sites_value)?;
+        let built = match crate::build::using_tree_sites(&sites, || crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits)) {
             Ok(built) => built,
             Err((said, row, cols)) => {
                 if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
@@ -27449,6 +27525,7 @@ impl<'a> Machine<'a> {
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
+        if !sites.is_empty() { holds.push(("\0ast_positions".to_owned(), sites_value)); }
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -27609,6 +27686,10 @@ impl<'a> Machine<'a> {
             }
         }
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
+        let sites = if let Value::Thing(code) = &first {
+            let found = code.holds.borrow().iter().find(|(name, _)| name == "\0ast_positions").map(|(_, value)| value.clone());
+            match found { Some(value) => Self::tree_site_values(&value)?, None => Vec::new() }
+        } else { Vec::new() };
         let literals = match &first {
             Value::Thing(code) if code.holds.borrow().iter().any(|(word, _)| word == "\0literal_overrides") =>
                 code.holds.borrow().iter().find(|(word, _)| word == "co_consts").and_then(|(_, worth)| match worth { Value::Tuple(row) => Some(row.as_ref().clone()), _ => None }),
@@ -27663,8 +27744,8 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals),
-                None => self.perform_here(&source, file, mode, top_await, literals),
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, &sites),
+                None => self.perform_here(&source, file, mode, top_await, literals, &sites),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -27704,17 +27785,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near, top_await, literals)
+        self.perform_booked(&source, file, mode, outer, near, top_await, literals, &sites)
     }
 
     /// Text run where the call stands: within the reading under way, in
     /// its dictionaries; else among the outermost names.
-    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>, sites: &[[u32; 8]]) -> Result<Value, String> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals),
-                None => self.perform_booked(source, file, mode, near, None, top_await, literals),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals, sites),
+                None => self.perform_booked(source, file, mode, near, None, top_await, literals, sites),
             };
         }
         let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| self.imported.get(module)).cloned();
@@ -27727,7 +27808,7 @@ impl<'a> Machine<'a> {
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }
-            return self.perform_booked(source, file, mode, book, None, top_await, None);
+            return self.perform_booked(source, file, mode, book, None, top_await, None, sites);
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -27735,7 +27816,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None)?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None, sites)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
@@ -27753,7 +27834,7 @@ impl<'a> Machine<'a> {
     /// writes to a frame of its own, standing apart from the routine's,
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>, sites: &[[u32; 8]]) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -27792,7 +27873,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get()) {
+        let mut built = match crate::build::using_tree_sites(sites, || crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get())) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -27826,7 +27907,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, sites: &[[u32; 8]]) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -27850,7 +27931,7 @@ impl<'a> Machine<'a> {
             Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
             None => Value::Mutable(self.natives_kept(), true),
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone(), sites)?;
         // What the build noted about how the text is written is said
         // under the name the handed globals give the text, each warning
         // through the warnings module.
@@ -27879,9 +27960,9 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, sites: &[[u32; 8]]) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get())
+        crate::build::using_tree_sites(sites, || crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get()))
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
