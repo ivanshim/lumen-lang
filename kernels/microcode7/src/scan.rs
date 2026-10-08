@@ -478,7 +478,7 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
         }
         if src[pos] == '\n' { row += 1; pos += 1; continue; }
         if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
-            let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
+            let mut quote = Quotation { gate: None, source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
             if quote.literal(body, &end, raw, fields, 0).is_ok() {
                 for token in &quote.made {
                     if token.shape == Shape::EscapeNotice { notices.push((token.lexeme.clone(), token.row)); }
@@ -574,14 +574,14 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
 
 fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let mut ended = (1, 1);
-    scan_code_from(source, table, 1, &mut ended)
+    scan_code_from(source, table, 1, &mut ended, None)
 }
 
 /// The same, begun at a given row, so that a run of code woven into a
 /// page names the rows of the page and not its own.
 fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Token>, (String, u32)> {
     let mut ended = (first, 1);
-    scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended.0))
+    scan_code_from(source, table, first, &mut ended, None).map_err(|said| (said, ended.0))
 }
 
 /// The marks and letters opening a string, found before names are cut.
@@ -643,8 +643,11 @@ fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String>
     })
 }
 
-struct Quotation<'a> {
-    source: &'a [char],
+type NameGate<'a> = std::rc::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
+
+struct Quotation<'s, 'a> {
+    gate: Option<NameGate<'a>>,
+    source: &'s [char],
     next: usize,
     table: &'a Table,
     row: u32,
@@ -665,7 +668,7 @@ struct Quotation<'a> {
 /// ordinary program reaches it keeps its more generic word instead.
 const NESTED_UNTERMINATED_DEPTH: u32 = 8;
 
-impl Quotation<'_> {
+impl Quotation<'_, '_> {
     fn here(&self) -> Option<char> { self.source.get(self.next).copied() }
     fn forward(&mut self, count: usize) {
         let stop = (self.next + count).min(self.source.len());
@@ -819,6 +822,7 @@ impl Quotation<'_> {
                 if self.here() == Some('}') && self.next != begin + 3 {
                     let name: String = self.source[begin + 3..self.next].iter().collect();
                     self.forward(1);
+                    if let Some(gate) = self.gate.as_ref() { gate.borrow_mut()()?; }
                     match crate::unicode::name_value(&name) {
                         Some(found) => text.push_str(&found),
                         None if table.single("ext.lexical.escape.named.unknown").is_some() => {
@@ -1046,7 +1050,7 @@ impl Quotation<'_> {
         let left = self.table.single("syntax.group.open").ok_or_else(|| self.bad())?.to_owned();
         let right = self.table.single("syntax.group.close").ok_or_else(|| self.bad())?.to_owned();
         self.token(Shape::Sign, left);
-        let tokens = match scan_position(&code, self.table) {
+        let tokens = match scan_with_gate(&code, self.table, self.gate.clone()) {
             Ok(tokens) => tokens,
             Err((message, relative_row, relative_column)) => {
                 let mut line = 1;
@@ -1108,7 +1112,7 @@ fn continued_past_end(tokens: &[Token], position: &mut (u32, usize)) -> String {
     }
 }
 
-fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usize)) -> Result<Vec<Token>, String> {
+fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u32, usize), gate: Option<NameGate<'a>>) -> Result<Vec<Token>, String> {
     let paired_ending = source.as_bytes().ends_with(b"\r\n");
     let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
@@ -1207,7 +1211,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 continue;
             }
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
-                let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
+                let mut quote = Quotation { gate: gate.clone(), source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
                 if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
                     if !fields && table.has_any("ext.builtin.exceptions.syntax") && words.starts_with("SyntaxError: unterminated ") {
                         let mut detected = quote.row;
@@ -1839,12 +1843,16 @@ pub fn check_numeral(word: &str, table: &Table) -> Result<(), String> {
 
 /// Keep the scanner cursor when a text operation cannot produce tokens.
 pub fn scan_position(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32, usize)> {
+    scan_with_gate(source, table, None)
+}
+
+pub fn scan_with_gate<'a>(source: &str, table: &'a Table, gate: Option<NameGate<'a>>) -> Result<Vec<Token>, (String, u32, usize)> {
     if source.contains('\0') && table.has_any("ext.builtin.exceptions.syntax") { return Err(("SyntaxError: source code string cannot contain null bytes".to_owned(), 0, 0)); }
     if table.flag("ext.lexical.template") {
         return scan_at(source, table).map_err(|(message, row)| (message, row, 1));
     }
     let mut cursor = (1, 1);
-    let mut read = scan_code_from(source, table, 1, &mut cursor).map_err(|message| (message, cursor.0, cursor.1))?;
+    let mut read = scan_code_from(source, table, 1, &mut cursor, gate).map_err(|message| (message, cursor.0, cursor.1))?;
     read.retain(|item| item.shape != Shape::EscapeNotice);
     Ok(read)
 }

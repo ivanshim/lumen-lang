@@ -1758,9 +1758,16 @@ impl<'a> Engine<'a> {
     /// The tokens of text read in, or the words for why it could not be
     /// read, with the line it stopped on counted from the program's own
     /// first line rather than the text's.
+    pub(super) fn unicode_tokens(&mut self, source: &str) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        let lang = self.lang;
+        if lang.syntax_members.is_empty() { return crate::lex::lex_position(source, lang); }
+        let loader = Rc::new(RefCell::new(|| self.import_module("unicodedata").map(|_| ()).map_err(|_| "SyntaxError: (unicode error) \\N escapes not supported (can't load unicodedata module)".to_string())));
+        crate::lex::lex_loaded(source, lang, Some(loader))
+    }
+
     fn tokens_of_text(&mut self, source: &str) -> Res<Vec<crate::lex::Token>> {
         let ahead = self.lines_ahead();
-        let read = crate::lex::lex_at(source, self.lang).and_then(|tokens| crate::layout::layout(tokens, self.lang, ahead));
+        let read = self.unicode_tokens(source).map_err(|(s, r, _)| (s, r)).and_then(|tokens| crate::layout::layout(tokens, self.lang, ahead));
         match read {
             Ok(tokens) => Ok(tokens),
             Err((said, row)) => Err(self.text_amiss(said, row)),
@@ -1772,7 +1779,7 @@ impl<'a> Engine<'a> {
         // a file stands as itself, and is read from its own first line.
         let tokens = match &came_from {
             None => self.tokens_of_text(source)?,
-            Some(_) => crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?,
+            Some(_) => crate::layout::layout(self.unicode_tokens(source).map_err(|(s, _, _)| s)?, self.lang, 0).map_err(|(said, _)| said)?,
         };
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from)) {
             Ok(program) => program,
@@ -24798,8 +24805,6 @@ impl Engine<'_> {
         if self.lang.module_path.is_none() {
             if let Some((above, _)) = parent { self.import_module(above)?; }
         }
-        let offset = self.registry.idents.len();
-        let mut local = crate::compile::Registry::with_outside_slots(offset);
         let filename = own_file.as_deref().unwrap_or(path);
         let tokens = match self.text_tokens(&source, 0) {
             Ok(tokens) => tokens,
@@ -24808,6 +24813,8 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
+        let offset = self.registry.idents.len();
+        let mut local = crate::compile::Registry::with_outside_slots(offset);
         // A module's routines are made beside the module's own face:
         // the very holdings names are read from and written to, so a
         // name they read, `globals()` asked from within them, an
@@ -26400,7 +26407,7 @@ impl Engine<'_> {
     /// same complaint a file being run keeps, so text read through
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
-    fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+    fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let word = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -26412,7 +26419,7 @@ impl Engine<'_> {
             }
         }
 
-        crate::lex::lex_position(source, self.lang)
+        self.unicode_tokens(source)
             .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))
     }
 

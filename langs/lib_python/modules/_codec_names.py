@@ -1,6 +1,13 @@
 # Unicode character names for the namereplace error handler.
 # Algorithmic names are computed without storing their ranges.
 def name(number):
+    try:
+        import unicodedata
+    except ImportError:
+        raise ImportError('PyCapsule_Import could not import module "unicodedata"')
+    return unicodedata.name(chr(number), None)
+
+def _table_name(number):
     if 0xac00 <= number <= 0xd7a3:
         lead = ('G', 'GG', 'N', 'D', 'DD', 'R', 'M', 'B', 'BB', 'S', 'SS', '', 'J', 'JJ', 'C', 'K', 'T', 'P', 'H')
         vowel = ('A', 'AE', 'YA', 'YAE', 'EO', 'E', 'YEO', 'YE', 'O', 'WA', 'WAE', 'OE', 'YO', 'U', 'WEO', 'WE', 'WI', 'YU', 'EU', 'YI', 'I')
@@ -33,11 +40,11 @@ def lookup(spelling):
                 number = int(spelling[len(prefix):], 16)
             except ValueError:
                 break
-            if name(number) == spelling:
+            if _table_name(number) == spelling:
                 return chr(number)
     if spelling.startswith('HANGUL SYLLABLE '):
         for number in range(0xac00, 0xd7a4):
-            if name(number) == spelling:
+            if _table_name(number) == spelling:
                 return chr(number)
     raise KeyError('undefined character name ' + spelling)
 

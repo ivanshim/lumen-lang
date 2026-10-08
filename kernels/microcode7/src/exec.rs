@@ -3597,7 +3597,7 @@ impl<'a> Machine<'a> {
     /// there are none, counting its lines from the program's own first.
     fn text_scanned(&mut self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
         let ahead = self.lines_ahead();
-        match crate::scan::scan_at(source, self.table).and_then(|read| crate::indent::indent(read, self.table, ahead)) {
+        match self.unicode_scan(source).map_err(|(s, r, _)| (s, r)).and_then(|read| crate::indent::indent(read, self.table, ahead)) {
             Ok(tokens) => Ok(tokens),
             Err((said, row)) => Err(self.text_would_not_read(said, row)),
         }
@@ -3610,7 +3610,7 @@ impl<'a> Machine<'a> {
         let reading_text = came_out_of.is_none();
         let tokens = match reading_text {
             true => self.text_scanned(source)?,
-            false => crate::indent::indent(crate::scan::scan(source, self.table)?, self.table, 0).map_err(|(said, _)| said)?,
+            false => crate::indent::indent(self.unicode_scan(source).map_err(|(s, _, _)| s)?, self.table, 0).map_err(|(said, _)| said)?,
         };
         let built = match reading_text {
             true => match crate::build::build_from_at(&tokens, self.table, &self.idents, HashMap::new(), true, 0) {
@@ -25215,13 +25215,13 @@ impl Machine<'_> {
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() {
             if let Some((owner, _)) = split { self.load_namespace(owner)?; }
         }
-        let beginning = self.idents.len();
-        let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
         let filename = own_file.as_deref().unwrap_or(path);
         let ready = match self.text_tokens(&text, 0) {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
         };
+        let beginning = self.idents.len();
+        let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
         // The routines of a module are built beside the dictionary of
         // the module's own names, so that what they read as their world
         // names reads that dictionary and no other.
@@ -26783,7 +26783,19 @@ impl<'a> Machine<'a> {
     /// the same complaint a file being run keeps, so text read through
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_unreadable_at`.
-    fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+    pub(super) fn unicode_scan(&mut self, source: &str) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+        let table = self.table;
+        if !table.has_any("ext.builtin.exceptions.syntax") { return crate::scan::scan_position(source, table); }
+        let gate = Rc::new(RefCell::new(|| {
+            match self.load_namespace("unicodedata") {
+                Ok(_) => Ok(()),
+                Err(_) => Err(String::from("SyntaxError: (unicode error) \\N escapes not supported (can't load unicodedata module)")),
+            }
+        }));
+        crate::scan::scan_with_gate(source, table, Some(gate))
+    }
+
+    fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let head = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -26795,7 +26807,7 @@ impl<'a> Machine<'a> {
             }
         }
 
-        crate::scan::scan_position(source, self.table)
+        self.unicode_scan(source)
             .and_then(|read| crate::indent::indent_position(read, self.table, 0))
     }
 

@@ -263,7 +263,10 @@ fn continued_names(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<String,
     std::rc::Rc::new(names)
 }
 
+type NameLoader<'a> = std::rc::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
+
 struct Cursor<'a> {
+    names: Option<NameLoader<'a>>,
     lang: &'a Lang,
     continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
     text: Vec<char>,
@@ -743,6 +746,7 @@ impl<'a> Cursor<'a> {
                 if self.look(0) == Some('}') && self.at > begin + 3 {
                     let name: String = self.text[begin + 3..self.at].iter().collect();
                     self.step();
+                    if let Some(load) = &self.names { (load.borrow_mut())()?; }
                     match crate::unicode::named_text(&name) {
                         Some(found) => text.push_str(&found),
                         None if lang.named_unknown.is_some() => {
@@ -929,7 +933,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut inner = Cursor { names: self.names.clone(), lang: self.lang, continued: self.continued.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(message) = inner.run(false) {
             self.row = inner.row;
             self.column = inner.column;
@@ -1184,7 +1188,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, continued: self.continued.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+            let mut inner = Cursor { names: self.names.clone(), lang, continued: self.continued.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1496,7 +1500,11 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 const BRACKET_LEVELS: usize = 200;
 
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
-    let mut tokens = lex_notices(source, lang)?;
+    lex_loaded(source, lang, None)
+}
+
+pub fn lex_loaded<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>) -> Result<Vec<Token>, (String, usize, usize)> {
+    let mut tokens = lex_notices(source, lang, names)?;
     tokens.retain(|t| t.shape != Shape::EscapeWarning);
     Ok(tokens)
 }
@@ -1512,12 +1520,12 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+    let mut cur = Cursor { names: None, lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
 
-fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
+fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>) -> Result<Vec<Token>, (String, usize, usize)> {
     let final_crlf = source.ends_with("\r\n");
     let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
         .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
@@ -1527,7 +1535,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+            let mut cur = Cursor { names, lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1722,7 +1730,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut cur = Cursor { names: None, lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }

@@ -497,6 +497,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // asked how much room it has taken answers for what it has taken
     // itself and not for what it cost to be made ready.
     lumen_room::mark();
+    if source.contains("\\N{") { machine.unicode_scan(&source).map_err(|(said, _, _)| said)?; }
     if let Err(told) = machine.run_main(&reduced.program) {
         let _ = machine.run_afterward();
         machine.let_things_go();
