@@ -1,8 +1,5 @@
-# There is no CPython bytecode here to disassemble. This runtime compiles
-# Python to its own instructions, which carry none of the opnames, oparg
-# numbering or stack discipline that dis reports on, so inventing an opname
-# table would only mislead a caller who asked what a function compiles to.
-# Every entry point says that plainly.
+# Native instruction inspection. Opcode spellings and offsets describe the
+# active kernel's compiled representation, rather than CPython bytecode.
 
 COMPILER_FLAG_NAMES = {
     1: 'OPTIMIZED',
@@ -41,8 +38,38 @@ def distb(tb=None, *, file=None, show_caches=False, adaptive=False):
 def disco(co, lasti=-1, *, file=None):
     _refuse()
 
+hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
+
+class Positions:
+    def __init__(self, values):
+        self.lineno, self.end_lineno, self.col_offset, self.end_col_offset = values
+
+class Instruction:
+    def __init__(self, offset, opcode, argval, is_jump, positions):
+        self.offset = offset
+        self.opcode = self.opname = opcode
+        self.arg = self.argval = argval
+        self.argrepr = '' if argval is None else str(argval)
+        self.positions = Positions(positions)
+        self.starts_line = self.positions.lineno
+        self.is_jump_target = False
+        self.is_jump = is_jump
+
+
 def get_instructions(x, *, first_line=None, show_caches=False, adaptive=False):
-    _refuse()
+    """Yield real native instructions and their retained source coordinates."""
+    rows = __trace_native__(2, x)
+    adjustment = 0
+    if first_line is not None:
+        code = getattr(x, '__code__', x)
+        adjustment = first_line - code.co_firstlineno
+    targets = {row[2] for row in rows if row[3] and row[2] is not None}
+    for offset, opcode, arg, jump, positions in rows:
+        if adjustment:
+            positions = (positions[0] + adjustment, positions[1] + adjustment if positions[1] is not None else None, positions[2], positions[3])
+        instruction = Instruction(offset, opcode, arg, jump, positions)
+        instruction.is_jump_target = offset in targets
+        yield instruction
 
 def findlinestarts(code):
     _refuse()

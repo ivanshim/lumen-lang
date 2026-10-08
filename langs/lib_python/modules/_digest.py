@@ -14,6 +14,7 @@ def _buffer(data):
         return data.tobytes()
     try:
         view = memoryview(data)
+        view._check()
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
         return view.tobytes()
