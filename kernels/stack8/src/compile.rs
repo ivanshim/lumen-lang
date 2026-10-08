@@ -13502,14 +13502,30 @@ fn same_constant(left: &Value, right: &Value) -> bool {
 fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (Vec<Value>, Vec<String>) {
     let mut constants: Vec<Value> = doc.as_ref().map(|text| Value::text(text)).into_iter().collect();
     let mut names = Vec::new();
+    let mut constant_buckets: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (at, value) in constants.iter().enumerate() {
+        if let Some(hash) = Value::code_field_hash(value) { constant_buckets.entry(hash).or_default().push(at); }
+    }
     for (at, word) in words.iter().enumerate() {
         if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
         match word {
             Instr::Const(value) => {
                 if let Value::Routine(r) = value {
-                    if let Some(a) = &r.annotation { constants.push(Value::Routine(a.clone())); }
+                    if let Some(a) = &r.annotation {
+                        let annotation = Value::Routine(a.clone());
+                        if let Some(hash) = Value::code_field_hash(&annotation) { constant_buckets.entry(hash).or_default().push(constants.len()); }
+                        constants.push(annotation);
+                    }
                 }
-                if !constants.iter().any(|old| same_constant(old, value)) { constants.push(value.clone()); }
+                let hash = Value::code_field_hash(value);
+                let found = match hash {
+                    Some(key) => constant_buckets.get(&key).is_some_and(|indices| indices.iter().any(|at| same_constant(&constants[*at], value))),
+                    None => constants.iter().any(|old| same_constant(old, value)),
+                };
+                if !found {
+                    if let Some(key) = hash { constant_buckets.entry(key).or_default().push(constants.len()); }
+                    constants.push(value.clone());
+                }
             }
             Instr::Read(cell) | Instr::Write(cell) if cell.near.is_empty() && !cell.free => {
                 let name = cell.ident.to_string();

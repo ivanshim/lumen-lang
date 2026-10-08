@@ -11283,7 +11283,10 @@ impl<'a> Builder<'a> {
             }
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
+        // Keep literal width out of the form tree's recursion depth.
+        let accumulator = self.gensym("literal");
+        let initial = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
+        let mut steps = vec![Form::Write(accumulator.clone(), Box::new(initial))];
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spreading { self.advance(); }
@@ -11315,13 +11318,15 @@ impl<'a> Builder<'a> {
                 self.pos = beginning;
                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
             }
-            value = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![value, item]);
+            let extended = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![Form::Take(accumulator.clone()), item]);
+            steps.push(Form::Write(accumulator.clone(), Box::new(extended)));
             if self.sign(&closing) { break; }
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
-        if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { value = prim_call(Prim::DistinctObjects, vec![value]); }
-        Ok(value)
+        let result = Form::Read(accumulator);
+        steps.push(if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { prim_call(Prim::DistinctObjects, vec![result]) } else { result });
+        Ok(sequence(steps))
     }
 
     /// The source of a comprehension clause. An assignment expression
@@ -12742,12 +12747,25 @@ fn constant_key_matches(a: &Value, b: &Value) -> bool {
 }
 
 fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
-    fn literal(value: &Value, constants: &mut Vec<Value>) {
+    let mut indexed: HashMap<i64, Vec<usize>> = HashMap::new();
+    for at in 0..constants.len() {
+        if let Some(key) = Value::code_worth_hash(&constants[at]) { indexed.entry(key).or_default().push(at); }
+    }
+    inspect_indexed_form(form, locals, constants, names, suspension, &mut indexed);
+}
+
+fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool, indexed: &mut HashMap<i64, Vec<usize>>) {
+    fn literal(value: &Value, constants: &mut Vec<Value>, indexed: &mut HashMap<i64, Vec<usize>>) {
         if let Value::Routine(p) = value {
             if p.frameless { return; }
-            if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants); }
+            if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants, indexed); }
         }
-        if constants.iter().all(|v| !constant_key_matches(v, value)) { constants.push(value.clone()); }
+        if let Some(key) = Value::code_worth_hash(value) {
+            let positions = indexed.entry(key).or_default();
+            if positions.iter().any(|index| constant_key_matches(&constants[*index], value)) { return; }
+            positions.push(constants.len());
+        } else if constants.iter().any(|prior| constant_key_matches(prior, value)) { return; }
+        constants.push(value.clone());
     }
     fn named(name: &str, locals: &[String], names: &mut Vec<String>) {
         if !name.is_empty() && !name.starts_with('#') && !locals.iter().any(|s| s == name) && !names.iter().any(|s| s == name) { names.push(name.to_owned()); }
@@ -12755,7 +12773,7 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
     let mut children: Vec<&Form> = Vec::new();
     match form {
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
-        Form::Const(v) => literal(v, constants),
+        Form::Const(v) => literal(v, constants, indexed),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
         Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
         Form::Apply(callee, args) => {
@@ -12770,7 +12788,7 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
             for input in [a, b] {
                 match input {
                     Input::Form(f) => children.push(f),
-                    Input::Const(v) => literal(v, constants),
+                    Input::Const(v) => literal(v, constants, indexed),
                     Input::Address(a) => if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); },
                 }
             }
@@ -12790,5 +12808,5 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         Form::Assert { condition, message } => children.extend([condition.as_ref(), message.as_ref()]),
         _ => {}
     }
-    for child in children { inspect_form(child, locals, constants, names, suspension); }
+    for child in children { inspect_indexed_form(child, locals, constants, names, suspension, indexed); }
 }
