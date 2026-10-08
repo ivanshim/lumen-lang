@@ -12,6 +12,8 @@ COMPILER_FLAG_NAMES = {
     128: 'COROUTINE',
     256: 'ITERABLE_COROUTINE',
     512: 'ASYNC_GENERATOR',
+    1 << 26: 'HAS_DOCSTRING',
+    1 << 27: 'METHOD',
 }
 
 _REFUSAL = 'NotImplementedError: there is no CPython bytecode here to disassemble'
@@ -37,6 +39,9 @@ def distb(tb=None, *, file=None, show_caches=False, adaptive=False):
 
 def disco(co, lasti=-1, *, file=None):
     _refuse()
+
+# CPython opcode catalogue data, independent of native instruction inspection.
+from opcode import opmap, opname, hasarg, hasjrel, hasjabs, hasexc
 
 hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
 
