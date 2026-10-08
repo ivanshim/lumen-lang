@@ -956,7 +956,7 @@ impl<'a> Engine<'a> {
             // encoding and the reason are text, the two positions are
             // whole numbers, and the object worked on is text for an
             // encoding or translation but a row of bytes for a reading.
-            let words = |at: usize| args.get(at).and_then(Value::text_codes).is_some();
+            let words = |at: usize| args.get(at).and_then(|held| held.type_text().text_codes()).is_some();
             let counts = |at: usize| matches!(args.get(at), Some(Value::Small(_) | Value::Huge(_) | Value::Flag(_)));
             let shaped = if self.stands_on(&class, 45) {
                 words(0) && counts(1) && counts(2) && words(3)

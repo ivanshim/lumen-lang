@@ -1334,7 +1334,7 @@ impl<'a> Machine<'a> {
             // characters, the two positions are whole numbers, and the
             // object is characters for an encoding or translation but
             // octets for a reading.
-            let chars_here = |at: usize| row.get(at).and_then(Value::character_numbers).is_some();
+            let chars_here = |at: usize| row.get(at).and_then(|held| held.type_text().character_numbers()).is_some();
             let whole_here = |at: usize| matches!(row.get(at), Some(Value::Small(_) | Value::Huge(_) | Value::Flag(_)));
             let right_shape = if self.stands_under(&kind, 45) {
                 chars_here(0) && whole_here(1) && whole_here(2) && chars_here(3)
