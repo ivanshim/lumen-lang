@@ -15,6 +15,19 @@ class _Sentinel:
 DEFAULT = _Sentinel('DEFAULT')
 
 
+# The double-underscore names the reference lets a test put on a stand-in:
+# a name here is put on the stand-in's own class, because the reader looks
+# such a name up on the class and never on the thing itself.
+_MAGIC_NUMERICS = ('add sub mul matmul truediv floordiv mod lshift rshift and xor or pow').split()
+_SETTABLE_MAGICS = frozenset(
+    ['__' + word + '__' for word in (
+        'lt gt le ge eq ne getitem setitem delitem len contains iter hash str '
+        'sizeof enter exit divmod rdivmod neg pos abs invert complex int float '
+        'index round trunc floor ceil bool next fspath aiter').split()]
+    + ['__' + word + '__' for word in _MAGIC_NUMERICS]
+    + ['__i' + word + '__' for word in _MAGIC_NUMERICS]
+    + ['__r' + word + '__' for word in _MAGIC_NUMERICS])
+
 class _Call:
     # The reference library records each call as the arguments it was
     # given and the keywords it was given, and that pair also answers
@@ -46,6 +59,26 @@ class _Call:
 
 
 class Mock:
+    def __new__(cls, *args, **kwargs):
+        # Each stand-in has a class of its own, so that a name put on it
+        # is seen by no other stand-in.
+        own = type(cls.__name__, (cls,), {'__doc__': cls.__doc__})
+        return object.__new__(own)
+
+    def __setattr__(self, name, value):
+        if name in _SETTABLE_MAGICS:
+            if isinstance(value, Mock):
+                # A stand-in is called as it stands, with no thing before
+                # the arguments the operation gives it.
+                setattr(type(self), name, value)
+            else:
+                function = value
+                def method(self, /, *args, **kwargs):
+                    return function(self, *args, **kwargs)
+                setattr(type(self), name, method)
+            return
+        object.__setattr__(self, name, value)
+
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
         self._mock_name = name
         self._mock_wraps = wraps
@@ -254,6 +287,16 @@ class MagicMock(Mock):
         return self._magic['__exit__'](kind, value, traceback)
 
 
+def _is_module(target):
+    import types
+    return isinstance(target, types.ModuleType)
+
+
+def _builtin_names():
+    import builtins
+    return frozenset(name for name in dir(builtins) if not name.startswith('_'))
+
+
 class _Patch:
     def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=Mock):
         if new_callable is not None and new is not DEFAULT:
@@ -415,6 +458,68 @@ class _Patcher:
         return _MultiplePatch(target, extra, create, new_callable)
 
 patch = _Patcher()
+
+
+class _OpenHandle(MagicMock):
+    def __init__(self, read_data):
+        MagicMock.__init__(self, name='handle')
+        self._read_data = read_data
+        self._position = 0
+        self.read = Mock(name='read', side_effect=self._read)
+        self.readline = Mock(name='readline', side_effect=self._readline)
+        self.readlines = Mock(name='readlines', side_effect=self._readlines)
+        self.write = Mock(name='write', return_value=None)
+        self.close = Mock(name='close', return_value=None)
+        self._magic['__enter__'] = Mock(name='__enter__', return_value=self)
+        self._magic['__iter__'].side_effect = self._iterate
+
+    def __enter__(self):
+        return self._magic['__enter__']()
+
+    def _read(self, size=-1):
+        start = self._position
+        end = len(self._read_data) if size is None or size < 0 else min(start + size, len(self._read_data))
+        self._position = end
+        return self._read_data[start:end]
+
+    def _readline(self, size=-1):
+        start = self._position
+        newline = b'\n' if isinstance(self._read_data, bytes) else '\n'
+        end = self._read_data.find(newline, start)
+        end = len(self._read_data) if end < 0 else end + 1
+        if size is not None and size >= 0:
+            end = min(end, start + size)
+        self._position = end
+        return self._read_data[start:end]
+
+    def _readlines(self, hint=-1):
+        result = []
+        total = 0
+        while self._position < len(self._read_data):
+            line = self._readline()
+            result.append(line)
+            total += len(line)
+            if hint > 0 and total >= hint:
+                break
+        return result
+
+    def _iterate(self):
+        while self._position < len(self._read_data):
+            yield self.readline()
+
+
+def mock_open(mock=None, read_data=''):
+    if not isinstance(read_data, (str, bytes)):
+        raise TypeError('initial_value must be str or bytes, not ' + type(read_data).__name__)
+    if mock is None:
+        mock = MagicMock(name='open')
+    handle = _OpenHandle(read_data)
+    mock.return_value = handle
+    def reset_data(*args, **kwargs):
+        handle._position = 0
+        return DEFAULT
+    mock.side_effect = reset_data
+    return mock
 
 
 def __getattr__(name):

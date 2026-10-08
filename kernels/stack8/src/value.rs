@@ -16,6 +16,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use crate::code::Routine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Sort {
     Integer,
     Rational,
@@ -44,6 +45,7 @@ impl Sort {
 
 /// p/q in lowest terms, q > 1.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Frac {
     pub p: BigInt,
     pub q: BigInt,
@@ -61,6 +63,7 @@ pub struct Frac {
 /// for where numbers are worked and set against one another and nowhere
 /// else.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Real {
     pub floating: bool,
     pub p: BigInt,
@@ -1123,6 +1126,29 @@ impl Value {
             many => Self::tuple_text(many, sp),
         })
     }
+    /// Repeated bounds on immutable text need not recheck every byte.
+    /// Weak references keep addresses distinct without retaining owners.
+    pub fn text_ascii(text: &Rc<str>) -> bool {
+        if text.len() < 256 { return text.is_ascii(); }
+        thread_local! {
+            static ASCII_FLAGS: RefCell<std::collections::VecDeque<(std::rc::Weak<str>, bool)>> = RefCell::new(std::collections::VecDeque::new());
+        }
+        ASCII_FLAGS.with(|saved| {
+            let mut entries = saved.borrow_mut();
+            entries.retain(|(owner, _)| owner.strong_count() != 0);
+            if let Some(at) = entries.iter().position(|(owner, _)| std::ptr::eq(owner.as_ptr(), Rc::as_ptr(text))) {
+                let entry = entries.remove(at).unwrap();
+                let answer = entry.1;
+                entries.push_front(entry);
+                return answer;
+            }
+            let answer = text.is_ascii();
+            entries.push_front((Rc::downgrade(text), answer));
+            entries.truncate(16);
+            answer
+        })
+    }
+
     pub fn text_codes(&self) -> Option<Vec<u32>> {
         match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
     }
@@ -2079,6 +2105,7 @@ pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
 /// How far a member of a class may be reached from: from anywhere, from
 /// the class and those standing on it, or from the class alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Reach {
     Open,
     Guarded,

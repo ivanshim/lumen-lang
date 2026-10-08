@@ -4103,6 +4103,14 @@ only. The extension labels so far, all from PHP:
   of making a thing, and hand over what walking the class yields. Each
   is given the class first. These stand in for a metaclass's `__call__`
   and `__iter__`, which an enumeration needs.
+- `ext.builtin.partial_repr`: native partial representation bridge. It retains
+  the callable, positional tuple and keyword dictionary before user code runs,
+  renders positional and keyword values first, then the callable, and reads
+  inherited slot storage without invoking overridden attribute getters.
+- `ext.builtin.annotation_call`: private adapter that calls an annotator with
+  format 2 and an isolated name lookup scope. Missing names become symbolic in
+  the first forward-reference attempt; all global, closure and class names do
+  in STRING and the second attempt. Ordinary calls retain their own lookups.
 - `ext.stmt.class.annotations`: the word under which a class carries a
   map of the names annotated in its body, in the order written, each
   standing for nothing; the annotations themselves are read past.
@@ -4498,8 +4506,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
+| `ext.builtin.abc.instancecheck` | - | - | `__abc_instancecheck` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
+| `ext.builtin.annotation_call` | - | - | `__annotation_call__` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
 | `ext.builtin.args.all.outside` | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - | - | - | - |
@@ -4524,8 +4534,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
@@ -4556,6 +4566,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.code.cache` | - | - | `_code_pack` `_code_unpack` `_code_abi` `_code_filename` | - | - | - | - | - | - | - |
 | `ext.builtin.compile` | - | - | `compile` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.incomplete` | - | - | `_IncompleteInputError` `incomplete input` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.kind` | - | - | `code` | - | - | - | - | - | - | - |
@@ -4825,6 +4836,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.multibyte` | - | - | `__multibyte_native` | - | - | - | - | - | - | - |
 | `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
@@ -4834,6 +4846,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.partial_repr` | - | - | `__partial_repr__` | - | - | - | - | - | - | - |
 | `ext.builtin.pickle_buffer` | - | - | `__pickle_buffer_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
@@ -6107,9 +6120,45 @@ Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
+The Python codec search registry also supplies Shift-JIS through `_codec_sjis`.
+Its forward mapping is the committed hexadecimal table in the PHP mbstring
+adapter, embedded once as data rather than copied into a second table. Reverse
+lookups are cached per character; ASCII, half-width katakana, yen, and overline
+follow the codec's single-byte rules. Stateless, incremental, and stream codecs
+share the error-handler registry. The stream base class bodies come unchanged
+from CPython 3.14.8 in `runtime_adapters/codecs.py`.
+
+The `_py_abc` runtime adapter keeps protocol instance and registration searches
+on the underlying ABC path. Runtime protocols can then inspect data attributes
+through typing's unchanged static instance checks, while explicit subclass
+checks retain the restriction on protocols with data members.
+
+Bytes joins read the stored bytes of subclasses, including ZIP extra-field
+records, without invoking an overridden conversion method. Suspended generators
+in microcode7 use Python truth protocols in loops, conditional expressions and
+short-circuit expressions; stack8 already follows the ordinary truth path.
+Actual `-m` runs bind module metadata in both the main namespace and its cells,
+resolve relative imports against the module's parent, and search the working
+directory. File runs retain their isolated import path.
+
+`time.strptime` delegates to the unchanged CPython 3.14.8 `_strptime` source,
+with `struct_time`'s two named fields preserved. The unittest runtime supports
+class cleanup stacks and class context managers, drains cleanups after failed
+setup as well as normal teardown, and records cleanup exceptions as errors.
+
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.code.cache` exposes the Python compiled-code cache writer, reader,
+and ABI identity. Cache payloads preserve stack8 instructions or microcode7
+forms and their binding metadata, with distinct format tags for each kernel.
+They are native Lumen caches and do not claim CPython bytecode compatibility.
+`ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.
 The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
+Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
+
+`ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.

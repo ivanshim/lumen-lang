@@ -1,3 +1,4 @@
+import errno
 import os
 import warnings
 from collections.abc import MutableMapping
@@ -505,3 +506,111 @@ class FakePath:
             raise self.path
         else:
             return self.path
+
+
+# From CPython v3.14.8; PSF License.
+def fd_count():
+    """Count the number of open file descriptors.
+    """
+    if sys.platform.startswith(('linux', 'android', 'freebsd', 'emscripten')):
+        fd_path = "/proc/self/fd"
+    elif support.is_apple:
+        fd_path = "/dev/fd"
+    else:
+        fd_path = None
+
+    if fd_path is not None:
+        try:
+            names = os.listdir(fd_path)
+            # Subtract one because listdir() internally opens a file
+            # descriptor to list the content of the directory.
+            return len(names) - 1
+        except FileNotFoundError:
+            pass
+
+    MAXFD = 256
+    if hasattr(os, 'sysconf'):
+        try:
+            MAXFD = os.sysconf("SC_OPEN_MAX")
+        except OSError:
+            pass
+
+    old_modes = None
+    if sys.platform == 'win32':
+        # bpo-25306, bpo-31009: Call CrtSetReportMode() to not kill the process
+        # on invalid file descriptor if Python is compiled in debug mode
+        try:
+            import msvcrt
+            msvcrt.CrtSetReportMode
+        except (AttributeError, ImportError):
+            # no msvcrt or a release build
+            pass
+        else:
+            old_modes = {}
+            for report_type in (msvcrt.CRT_WARN,
+                                msvcrt.CRT_ERROR,
+                                msvcrt.CRT_ASSERT):
+                old_modes[report_type] = msvcrt.CrtSetReportMode(report_type,
+                                                                 0)
+
+    try:
+        count = 0
+        for fd in range(MAXFD):
+            try:
+                # Prefer dup() over fstat(). fstat() can require input/output
+                # whereas dup() doesn't.
+                fd2 = os.dup(fd)
+            except OSError as e:
+                if e.errno != errno.EBADF:
+                    raise
+            else:
+                os.close(fd2)
+                count += 1
+    finally:
+        if old_modes is not None:
+            for report_type in (msvcrt.CRT_WARN,
+                                msvcrt.CRT_ERROR,
+                                msvcrt.CRT_ASSERT):
+                msvcrt.CrtSetReportMode(report_type, old_modes[report_type])
+
+    return count
+# CPython v3.14.8 Lib/test/support/os_helper.py, POSIX cleanup; PSF License.
+import stat
+def _rmtree(path):
+    import shutil
+    try:
+        shutil.rmtree(path)
+        return
+    except OSError:
+        pass
+
+    def _rmtree_inner(path):
+        from test.support import _force_run
+        # Clear file flags (e.g. UF_IMMUTABLE, UF_NOUNLINK on BSD).
+        if hasattr(os, 'chflags'):
+            try:
+                os.chflags(path, 0)
+            except OSError:
+                pass
+        for name in _force_run(path, os.listdir, path):
+            fullname = os.path.join(path, name)
+            try:
+                mode = os.lstat(fullname).st_mode
+            except OSError:
+                mode = 0
+            if hasattr(os, 'lchflags'):
+                try:
+                    os.lchflags(fullname, 0)
+                except OSError:
+                    pass
+            if stat.S_ISDIR(mode):
+                _rmtree_inner(fullname)
+                _force_run(path, os.rmdir, fullname)
+            else:
+                _force_run(path, os.unlink, fullname)
+    _rmtree_inner(path)
+    os.rmdir(path)
+
+
+def _longpath(path):
+    return path

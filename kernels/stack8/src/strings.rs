@@ -8,6 +8,7 @@ use crate::value::{Value, Wording};
 use crate::unicode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum TextOp {
     Getnewargs, Splitlines, Partition, Rpartition, Expandtabs, Swapcase, Casefold,
     Capitalize, Title, Istitle, Isidentifier, Isprintable, Isdecimal,
@@ -304,10 +305,38 @@ fn split_units_text(args: &[Value], reverse: bool, lang: &Lang) -> Result<Value,
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
+    if let Some(Value::Codepoints(points)) = args.first() {
+        if matches!(op, TextOp::Lower | TextOp::Upper | TextOp::Casefold | TextOp::Swapcase) {
+            if args.len() != 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name, args.len()-1)); }
+            let mut output = Vec::new(); let mut scalar_run = String::new();
+            for point in points.iter().copied().chain(std::iter::once(0x110000)) {
+                if let Some(character) = char::from_u32(point) { scalar_run.push(character); }
+                else {
+                    let changed = run(op,_name,&[Value::text(&scalar_run)],lang,words)?;
+                    output.extend(changed.text_codes().unwrap_or_default());
+                    if point <= 0x10ffff { output.push(point); }
+                    scalar_run.clear();
+                }
+            }
+            return Ok(Value::from_codes(output));
+        }
+    }
     let opened: Vec<Value> = args.iter().map(Value::contents).collect();
     let args = opened.as_slice();
 
     use TextOp::*;
+    // Native descriptors use the same code-point operations as bound methods.
+    let unit_operation = match op { Find => "find", Rfind => "rfind", Index => "index", Rindex => "rindex", Replace => "replace", Lower => "lower", Upper => "upper", _ => "" };
+    if !unit_operation.is_empty() && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(3).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::codepoint_operation(&args[0].text_codes().unwrap(), unit_operation, &args[1..], &|key| fault(lang, key));
+    }
+    // Native and bound splitting share the code-point path for surrogate text.
+    if matches!(op, Split | Rsplit) && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::call(&args[0], if op == Rsplit { "rsplit" } else { "split" }, &args[1..], &[], words,
+            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), true);
+    }
     if op == Maketrans {
         return translated_table(args,lang);
     }
@@ -315,9 +344,104 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         if args.len() != 1 { return Err(fault(lang,"arguments")); }
         return Ok(Value::text(&repr(&args[0],words)));
     }
+    if op == Count && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+        if args.len() < 2 { return Err("TypeError: count expected at least 1 argument, got 0".into()); }
+        if args.len() > 4 { return Err(format!("TypeError: count expected at most 3 arguments, got {}", args.len() - 1)); }
+        let source = args[0].text_codes().ok_or_else(|| fault(lang, "receiver"))?;
+        let needle = args[1].text_codes().ok_or_else(|| format!("TypeError: count() argument 1 must be str, not {}", args[1].core_kind()))?;
+        let length = source.len();
+        let offset = |at: usize, fallback: i64| -> Result<usize, String> {
+            let n = match args.get(at) { None | Some(Value::Null) => fallback, Some(v) => integer(v, lang).map_err(|_| "TypeError: slice indices must be integers or None or have an __index__ method".to_string())? };
+            Ok(if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length.saturating_add(1)) })
+        };
+        let left = offset(2, 0)?;
+        let right = offset(3, length as i64)?.min(length);
+        if left > right { return Ok(Value::Small(0)); }
+        if needle.is_empty() { return Ok(Value::Small((right - left + 1) as i64)); }
+        let mut position = left;
+        let mut count = 0;
+        while needle.len() <= right.saturating_sub(position) {
+            if source[position..position + needle.len()] == needle {
+                count += 1;
+                position += needle.len();
+            } else { position += 1; }
+        }
+        return Ok(Value::Small(count));
+    }
     if args.iter().any(|value| matches!(value, Value::Codepoints(_)) || matches!(value, Value::Tuple(row) if row.iter().any(|item| matches!(item, Value::Codepoints(_))))) {
         let codes=match args.first(){Some(Value::Codepoints(row))=>row.clone(),Some(Value::Text(word))=>Rc::new(word.chars().map(u32::from).collect()),_=>return Err(fault(lang,"receiver"))};
         let code_row=|value:&Value| -> Result<Vec<u32>,String> {match value {Value::Text(text)=>Ok(text.chars().map(u32::from).collect()),Value::Codepoints(row)=>Ok(row.to_vec()),_=>Err(format!("TypeError: must be str, not {}",value.core_kind()))}};
+        if op == Splitlines {
+            if args.len() > 2 { return Err(fault(lang, "arguments")); }
+            let keep = args.get(1).map_or(Ok(0), |v| integer(v, lang))? != 0;
+            let mut lines = Vec::new(); let mut start = 0; let mut index = 0;
+            while index < codes.len() {
+                let at = index; let unit = codes[index]; index += 1;
+                if matches!(unit, 10 | 13 | 11 | 12 | 28 | 29 | 30 | 133 | 8232 | 8233) {
+                    if unit == 13 && codes.get(index) == Some(&10) { index += 1; }
+                    lines.push(Value::from_codes(codes[start..if keep { index } else { at }].to_vec()));
+                    start = index;
+                }
+            }
+            if start < codes.len() { lines.push(Value::from_codes(codes[start..].to_vec())); }
+            return Ok(Value::array(lines));
+        }
+        if matches!(op, Lower | Upper | Casefold) {
+            if args.len() != 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), args.len()-1)); }
+            let mut output = Vec::new(); let mut run = String::new();
+            for &unit in codes.iter() {
+                if let Some(ch) = char::from_u32(unit) { run.push(ch); }
+                else {
+                    output.extend(recase(&run, op).chars().map(u32::from)); run.clear(); output.push(unit);
+                }
+            }
+            output.extend(recase(&run, op).chars().map(u32::from));
+            return Ok(Value::from_codes(output));
+        }
+        if matches!(op, Partition | Rpartition) {
+            let arity = if matches!(op, Partition | Rpartition) { 2..=2 } else { 2..=4 };
+            if !arity.contains(&args.len()) { return Err(fault(lang, "arguments")); }
+            let needle = args[1].text_codes().ok_or_else(|| if op == Count {
+                format!("TypeError: count() argument 1 must be str, not {}", args[1].core_kind())
+            } else { format!("TypeError: must be str, not {}", args[1].core_kind()) })?;
+            if matches!(op, Partition | Rpartition) {
+                if needle.is_empty() { return Err(fault(lang, "separator")); }
+                let at = if op == Partition { codes.windows(needle.len()).position(|v| v == needle) }
+                    else { codes.windows(needle.len()).rposition(|v| v == needle) };
+                let parts = match at {
+                    Some(i) => [codes[..i].to_vec(), needle.clone(), codes[i+needle.len()..].to_vec()],
+                    None if op == Partition => [codes.to_vec(), Vec::new(), Vec::new()],
+                    None => [Vec::new(), Vec::new(), codes.to_vec()],
+                };
+                return Ok(Value::tuple(parts.into_iter().map(Value::from_codes).collect()));
+            }
+            let size = codes.len() as i64;
+            let first = args.get(2).filter(|v| !matches!(v, Value::Null)).map_or(Ok(0), |v| integer(v, lang))?;
+            let last = args.get(3).filter(|v| !matches!(v, Value::Null)).map_or(Ok(size), |v| integer(v, lang))?;
+            let left = if first < 0 { first.saturating_add(size).max(0) } else { first };
+            let right = if last < 0 { last.saturating_add(size).max(0) } else { last.min(size) };
+            if op != Count {
+                let at = if left > right { None }
+                    else if needle.is_empty() { Some(if matches!(op, Rfind | Rindex) { right } else { left }) }
+                    else {
+                        let window = &codes[left as usize..right as usize];
+                        let offset = if matches!(op, Rfind | Rindex) { window.windows(needle.len()).rposition(|row| row == needle) }
+                            else { window.windows(needle.len()).position(|row| row == needle) };
+                        offset.map(|i| left + i as i64)
+                    };
+                if let Some(at) = at { return Ok(Value::Small(at)); }
+                if matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
+                return Ok(Value::Small(-1));
+            }
+            if left > right { return Ok(Value::Small(0)); }
+            if needle.is_empty() { return Ok(Value::Small(right - left + 1)); }
+            let mut found = 0; let mut i = left as usize;
+            while i.saturating_add(needle.len()) <= right as usize {
+                if codes[i..i+needle.len()] == needle[..] { found += 1; i += needle.len(); }
+                else { i += 1; }
+            }
+            return Ok(Value::Small(found));
+        }
         if matches!(op, Strip | Lstrip | Rstrip) {
             let word = match op { Strip => "strip", Lstrip => "lstrip", _ => "rstrip" };
             if args.len() > 2 { return Err(format!("TypeError: {word} expected at most 1 argument, got {}", args.len() - 1)); }
@@ -567,7 +691,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 if matches!(op,Index|Rindex) {return Err(fault(lang,"missing"));}
                 return Ok(Value::Small(-1));
             }
-            if s.is_ascii() && matches!(op, Count | Find | Rfind | Index | Rindex) {
+            if (if lang.python_numbers { Value::text_ascii(source) } else { s.is_ascii() }) && matches!(op, Count | Find | Rfind | Index | Rindex) {
                 let size = s.len();
                 let trim = |value: i64| if value < 0 { (size as i64).saturating_add(value).max(0) as usize } else { value as usize };
                 let lower = trim(match params.get(1) { None | Some(Value::Null) => 0, Some(value) => integer(value, lang)? });
@@ -651,6 +775,12 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
+            // Keep the sole exact str object; subclass elements still need a base str.
+            if lang.python_numbers && items.len() == 1 {
+                if matches!(items[0], Value::Text(_) | Value::Codepoints(_)) {
+                    return Ok(items[0].clone());
+                }
+            }
             let separator: Vec<u32> = s.chars().map(u32::from).collect();
             let mut joined = Vec::new();
             for (i, item) in items.iter().enumerate() {
@@ -702,7 +832,9 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         let mut entries = cache.borrow_mut();
         let address = text.as_ptr() as usize;
         if let Some((_, length)) = entries.get(&address) { return *length; }
-        if entries.len() >= 1024 { entries.retain(|_, (text, _)| text.strong_count() != 0); }
+        // Weak str owners retain the allocation itself; discard dead buffers promptly.
+        entries.retain(|_, (owner, _)| owner.strong_count() != 0);
+        if entries.len() >= 16 { entries.clear(); }
         let count = text.chars().count();
         entries.insert(address, (Rc::downgrade(text), count));
         count
