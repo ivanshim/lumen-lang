@@ -10478,7 +10478,7 @@ impl<'a> Compiler<'a> {
             }
             // A dotted builtin spelling still reads the program's binding
             // of its owner when that owner has been shadowed.
-            Shape::Instr if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::ValueMethod))
+            Shape::Instr if tok.lexeme.contains('.') && lang.builtins.contains_key(&tok.lexeme)
                 && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)) => {
                 self.take();
                 let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");
