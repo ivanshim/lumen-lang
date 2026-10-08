@@ -223,6 +223,9 @@ pub struct Generator {
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
     pub resuming: bool,
+    /// Whether the body stands on the stack right now, so that entering
+    /// it again is refused the way the reference refuses it.
+    pub running: bool,
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     pub held: Vec<Value>,
@@ -239,7 +242,7 @@ impl Generator {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
-            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
+            resume: Vec::new(), resuming: false, running: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
 

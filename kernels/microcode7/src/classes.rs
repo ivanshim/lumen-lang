@@ -4802,9 +4802,9 @@ impl<'a> Machine<'a> {
             let running=self.table.strings("ext.stmt.yield.running");
             if !self.is_async_generator(&value) && running.first().map_or(false,|w|w==key) {
                 // Running exactly while its own frame is on the way
-                // through the machine, which is exactly when the cell
-                // that holds it cannot be borrowed a second time.
-                return Ok(Value::Flag(state.try_borrow().is_err()));
+                // through the machine, and marked for as long as the
+                // step lasts, so a reentrant reading sees it too.
+                return Ok(Value::Flag(state.try_borrow().map_or(true, |held| held.running)));
             }
         }else if let Value::Wrapped(tag,items)=&value {
             if *tag==4||*tag==5 {
