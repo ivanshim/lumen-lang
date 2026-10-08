@@ -191,7 +191,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `re.py` | runtime adapter / implementation | `a803e6a068b211d46f3188662b366dc69984ac61bda074c502e82fbadf8824af` | `741a9de729ed8207bfa19db990f8826f1bf3661f33d0970a80c08cd1338ebc35` |
 | `reprlib.py` | unchanged release copy | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` |
 | `runtime_adapters/copy.py` | runtime adapter / implementation | `c0a733b4c73e2c77f4b8b769717b771a44758ee169d27a99c755ebf2d16eacc4` | `15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69` |
-| `runtime_adapters/inspect.py` | runtime adapter / implementation | `a790b26bf64917e525f66099310e0055b66da97b06e9e273c592dedf15c50240` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
+| `runtime_adapters/inspect.py` | runtime adapter / implementation | `488b6e4f11602eacfbfc7592a6678305e30ce4c6f7c1875a267f1b5b597eaa91` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
 | `runtime_adapters/copyreg.py` | runtime adapter / implementation | `bc1e513213cb47877a24e1aa3f8b34c43e85332804558618fa8680739b511ce1` | `6376eb5722806396f5842997ac18add369ea9ac3ff4fcfe1460c41a088cac425` |
 | `runtime_adapters/functools.py` | runtime adapter / implementation | `1fd5b65b99cc8a2e6217822bce27baf6a833acc2a49cfbf4c942d9e1dd6976e4` | `9db56d38172c4c9e689b21cc58c8538008b09d86b682faf4dd193b529cdd79d5` |
 | `runtime_adapters/heapq.py` | runtime adapter / implementation | `6a33f1c1a941416c31a4c9375a3a4bcb3fd3c06fab0dc3961d48ec27b9ddd8b0` | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` |
@@ -352,6 +352,11 @@ native wrapper shape, and native disassembly currently lacks global/attribute
 reference kinds. Frame positions use retained native instruction offsets
 rather than CPython two-byte offsets. Closure cells can be inspected, but functions with named
 references raise `NotImplementedError` instead of silently losing globals.
+Native annotation evaluators can refuse unresolved FORWARDREF signatures;
+this adapter reports `ValueError` for that unavailable signature instead of
+letting evaluation errors escape from callers that handle uninspectable
+callables. VALUE annotation errors retain their original exception.
+Type flags include the abstract bit from the class's own abstract-method set.
 The kernels expose asynchronous-generator suspension state and retain the
 v3.14 docstring and method code flags, with class scopes excluded from nested
 function flags. Frames expose their retained native `f_lasti`; `dis.Positions`

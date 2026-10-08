@@ -53,3 +53,19 @@ def _get_code_position(code, instruction_index):
         return (None, None, None, None)
     return next(instruction.positions for instruction in dis.get_instructions(code)
                 if instruction.offset == instruction_index)
+
+
+# Native annotation evaluators cannot resolve every FORWARDREF expression yet.
+_signature_from_function_source = _signature_from_function
+
+def _signature_from_function(cls, func, skip_bound_arg=True,
+                             globals=None, locals=None, eval_str=False,
+                             *, annotation_format=Format.VALUE):
+    try:
+        return _signature_from_function_source(
+            cls, func, skip_bound_arg, globals, locals, eval_str,
+            annotation_format=annotation_format)
+    except (NameError, NotImplementedError) as error:
+        if annotation_format != Format.FORWARDREF:
+            raise
+        raise ValueError('native annotation metadata cannot provide a forward-reference signature') from error

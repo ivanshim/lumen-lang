@@ -4265,6 +4265,9 @@ impl<'a> Machine<'a> {
                     if Self::native_beneath(b).is_none() { bits |= 4; }
                 }
                 if let Some(Value::Small(protocol)) = self.inherited_entry(b, "__abc_tpflags__").map(|v| v.settled()) { bits |= protocol & 96; }
+                if let Some(marker) = self.rules.words_ext_stmt_class_detail_abstract.first() {
+                    if Self::own_entry(b, marker).is_some_and(|held| held.settled().is_true()) { bits |= 1048576; }
+                }
                 return Ok(Value::Small(bits));
             }
             if (Self::native_word(b).as_deref() == Some("float") || Self::native_beneath(b).as_deref() == Some("float")) && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
