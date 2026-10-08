@@ -8,8 +8,23 @@ import contextlib
 import warnings
 from warnings import catch_warnings
 
+class _WarningsChecker:
+    # The reference's checker is a recorder that hands itself back from
+    # __enter__; a caller reads the warnings it gathered from `.warnings`.
+    def __init__(self, *filters, quiet=True):
+        self._recorder = catch_warnings(record=True)
+        self.warnings = []
+
+    def __enter__(self):
+        self.warnings = self._recorder.__enter__()
+        return self
+
+    def __exit__(self, *exc_info):
+        return self._recorder.__exit__(*exc_info)
+
+
 def check_warnings(*filters, quiet=True):
-    return catch_warnings(record=True)
+    return _WarningsChecker(*filters, quiet=quiet)
 
 def ignore_warnings(*args, **kwargs):
     return _identity

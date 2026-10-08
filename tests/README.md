@@ -26,6 +26,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_patma.py` | `Lib/test/test_patma.py` (unchanged; SHA-256 `ce4a802e1722fdd02ca6da58138a465a050edd360a150bbbba829586b3d15f55`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/{test_pickle,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_pkgutil.py` | `Lib/test/test_pkgutil.py` (unchanged; SHA-256 `eda1ff4820942ddbe0ca4581f16cb1b8b76ac4d3496fa2b13b27d7ff1a2cef7f`) and the support packages its name-resolution tests import, `Lib/test/test_import/data/package3` and `package4` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/` (pkgutil) | [python/cpython](https://github.com/python/cpython) `Lib/pkgutil.py` (unchanged; SHA-256 `c0ae4cc6a6d36be016d77764cf846c0da4b1b85229d94f090ac994495fc2f203`), the library it and its test import that the runtime lacked: `Lib/logging/handlers.py`, the `Lib/zipfile/` package (`__init__.py`, `__main__.py`, `_path/__init__.py`, `_path/glob.py`) and `Lib/zipimport.py`, which is CPython's pure-Python module with its two frozen-import lines given an `importlib` fallback | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
@@ -34,7 +36,10 @@ modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
 The suite also holds `test_ordered_dict.py` and `test_defaultdict.py`,
 copied byte for byte from `v3.14.8`; the support they import
 (`test/mapping_tests.py` and `test/support/import_helper.py`) was already
-present unchanged at that commit.
+present unchanged at that commit. The `test_pkgutil` test also imports
+`test.test_importlib.util.uncache`; `langs/lib_python/modules/test/test_importlib/`
+holds CPython's unchanged `__init__.py` and a `util.py` reduced to that one
+context manager, which is copied from the same release.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a

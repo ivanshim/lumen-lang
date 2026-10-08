@@ -28,3 +28,19 @@ def import_module(name, package=None):
         remainder = name[level:]
         name = parts[0] + '.' + remainder if remainder else parts[0]
     return __load_module(name)
+
+# The reader answers `import` itself; the reference machinery a library
+# asks after is installed here beside it, once, so `path_hooks`,
+# `meta_path` and `path_importer_cache` hold the finders CPython's own
+# FileFinder, PathFinder and zipimporter provide.
+import sys as _machinery_sys
+
+if not getattr(_machinery_sys, '_lumen_importers_ready', False):
+    try:
+        import importlib._bootstrap as _machinery_bootstrap
+        import importlib._bootstrap_external as _machinery_external
+    except ImportError:
+        pass
+    else:
+        _machinery_external._install(_machinery_bootstrap)
+        _machinery_sys._lumen_importers_ready = True

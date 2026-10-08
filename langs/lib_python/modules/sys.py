@@ -10,6 +10,14 @@ argv = __program_namespace()['__program_argv']
 # Callers add other directories explicitly; a program's directory is not
 # placed ahead of the embedded library merely because it contains a script.
 path = [__file__.rsplit('/', 1)[0]]
+# The import machinery's own bookkeeping: the finders a name is looked
+# for through, the hooks a directory on `path` is asked of, and the
+# finder each path entry settled on. They stand empty until importlib
+# installs the external importers, then a program may read or extend
+# them exactly as the reference does.
+meta_path = []
+path_hooks = []
+path_importer_cache = {}
 maxsize = 9223372036854775807
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'
@@ -52,6 +60,10 @@ class _Flags:
     context_aware_warnings = 0
 
 flags = _Flags()
+
+# The runtime writes no bytecode beside a source file, so the
+# reference's flag for it is set the same way `flags` reports it.
+dont_write_bytecode = True
 
 # Stub: compatibility records advertise binary64 and 32-bit limbs;
 # they are not a probe of every arithmetic operation in the kernel.
