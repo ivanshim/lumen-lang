@@ -12788,6 +12788,9 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
             if let Form::Const(Value::Text(member)) = child.as_ref() { named(member, &[], names); }
         }
         Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Apply(Callee::Prim(Prim::Kept, spelling), args) if spelling.is_empty() => {
+            children.extend(args.iter().take(2));
+        }
         Form::Apply(Callee::Prim(Prim::Of | Prim::Onto | Prim::HasMember | Prim::SetMember | Prim::Pluck, spelling), args) if spelling.is_empty() => {
             for (at, argument) in args.iter().enumerate() {
                 if let (1, Form::Const(Value::Text(member))) = (at, argument) {
