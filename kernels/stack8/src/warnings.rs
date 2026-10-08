@@ -292,6 +292,11 @@ impl Engine<'_> {
     fn finder_import(&mut self, path: &str) -> Flow<Option<Value>> {
         let Some(sys) = self.modules.get("sys").cloned() else { return Ok(None); };
         let Some(finders) = self.member_of(sys, "meta_path")? else { return Ok(None); };
+        let search_path = if let Some((parent, _)) = path.rsplit_once('.') {
+            let owner = self.import_module(parent)?;
+            if self.module_cache_value(path).is_some() { return self.import_module(path).map(Some); }
+            self.member_of(owner, "__path__")?.unwrap_or(Value::Null)
+        } else { Value::Null };
         let finders = self.core_members(&finders)?;
         self.finder_active.insert(path.to_string());
         let result: Res<Option<Value>> = (|| {
@@ -301,28 +306,23 @@ impl Engine<'_> {
                     if self.lang.warning_backend.first().is_some_and(|word| word == path) || self.module_sources.contains_key(path) || self.sys_path_source(path).is_some() { return Ok(None); }
                     continue;
                 }
-                let search_path = if let Some((parent, _)) = path.rsplit_once('.') {
-                    let owner = self.import_module(parent).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
-                    self.member_of(owner, "__path__")?.unwrap_or(Value::Null)
-                } else { Value::Null };
-                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), search_path, Value::Null])?;
+                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), search_path.clone(), Value::Null])?;
                 if matches!(spec.contents(), Value::Null) { continue; }
-                let loader = self.warning_member(spec.clone(), "loader")?;
-                let supplied = self.warning_method(loader.clone(), "create_module", vec![spec.clone()])?;
-                let module = if matches!(supplied.contents(), Value::Null) {
-                    let class = self.kind_class("module"); self.made += 1;
-                    Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
-                        fields: RefCell::new(vec![("__name__".into(), Value::text(path)), ("__doc__".into(), Value::Null)]) }))
-                } else { supplied };
                 let bootstrap = self.import_module("importlib._bootstrap").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
-                self.warning_method(bootstrap, "_init_module_attrs", vec![spec, module.clone()])?;
-                self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.refresh_module_cache(path);
-                if let Err(fault) = self.warning_method(loader, "exec_module", vec![module.clone()]) {
-                    self.modules.remove(path); self.module_addresses_ready.set(false); self.refresh_module_cache(path);
-                    return Err(fault);
-                }
+                // The pinned loader owns namespace creation, replacement and failure cleanup.
+                let loaded = self.warning_method(bootstrap, "_load_unlocked", vec![spec]);
+                let module = match loaded {
+                    Ok(value) => value.contents(),
+                    Err(fault) => {
+                        self.modules.remove(path);
+                        self.module_addresses_ready.set(false);
+                        return Err(fault);
+                    }
+                };
+                self.modules.insert(path.to_string(), module.clone());
+                self.module_addresses_ready.set(false);
                 if let Some((parent, child)) = path.rsplit_once('.') {
-                    if let Some(owner) = self.modules.get(parent).cloned() {
+                    if let Some(owner) = self.module_cache_value(parent).or_else(|| self.modules.get(parent).cloned()) {
                         let setter = self.builtin_named("setattr")?.unwrap();
                         self.call_held(setter, vec![owner, Value::text(child), module.clone()])?;
                     }

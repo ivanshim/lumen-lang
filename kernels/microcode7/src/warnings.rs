@@ -316,6 +316,18 @@ impl Machine<'_> {
         let Some(system) = self.imported.get("sys").cloned() else { return Ok(None); };
         if self.attribute(&system, "meta_path").is_none() { return Ok(None); }
         let searchers = self.warning_get(system, "meta_path")?;
+        let location = match qualified.rsplit_once('.') {
+            Some((ancestor, _)) => {
+                let parent = self.load_namespace(ancestor)?;
+                if self.cached_import(qualified).is_some() { return self.load_namespace(qualified).map(Some); }
+                if self.attribute(&parent, "__path__").is_some() { self.warning_get(parent, "__path__")? }
+                else { match self.read_class_member(parent, "__path__", false) {
+                    Ok(value) => value, Err(fault) if self.missing_member_escape(&fault) => Value::Nil,
+                    Err(fault) => return Err(self.carried_native_fault(fault)),
+                } }
+            }
+            None => Value::Nil,
+        };
         let searchers = self.gathered_members(&searchers)?;
         self.finding_import.insert(qualified.to_owned());
         let answer = (|| {
@@ -326,39 +338,17 @@ impl Machine<'_> {
                     if exists { return Ok(None); }
                     continue;
                 }
-                let location = match qualified.rsplit_once('.') {
-                    Some((ancestor, _)) => {
-                        let parent = self.load_namespace(ancestor)?;
-                        if self.attribute(&parent, "__path__").is_some() { self.warning_get(parent, "__path__")? }
-                        else { match self.read_class_member(parent, "__path__", false) {
-                            Ok(value) => value, Err(fault) if self.missing_member_escape(&fault) => Value::Nil,
-                            Err(fault) => return Err(self.carried_native_fault(fault)),
-                        } }
-                    }
-                    None => Value::Nil,
-                };
-                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), location, Value::Nil])?;
+                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), location.clone(), Value::Nil])?;
                 if matches!(specification.settled(), Value::Nil) { continue; }
-                let loader = self.warning_get(specification.clone(), "loader")?;
-                let created = self.warning_send(loader.clone(), "create_module", vec![specification.clone()])?;
-                let namespace = match created.settled() {
-                    Value::Nil => {
-                        self.made += 1;
-                        let holds = vec![(String::from("__doc__"), Value::Nil), (String::from("__name__"), Value::text(qualified))];
-                        Value::Thing(Rc::new(Thing { of: self.native_kind("module"), reclassified: RefCell::new(None), turn: self.made, holds: RefCell::new(holds) }))
-                    }
-                    _ => created,
-                };
                 let bootstrap_module = self.load_namespace("importlib._bootstrap")?;
-                self.warning_send(bootstrap_module, "_init_module_attrs", vec![specification, namespace.clone()])?;
-                self.imported.insert(qualified.to_owned(), namespace.clone()); self.namespace_places.borrow_mut().take(); self.refresh_import_table(qualified);
-                let completion = self.warning_send(loader, "exec_module", vec![namespace.clone()]);
-                if completion.is_err() {
-                    self.imported.remove(qualified); self.namespace_places.borrow_mut().take(); self.refresh_import_table(qualified);
-                }
-                completion?;
+                // Let the upstream load transaction choose the final public cache entry.
+                let completion = self.warning_send(bootstrap_module, "_load_unlocked", vec![specification]);
+                if completion.is_err() { self.imported.remove(qualified); }
+                self.namespace_places.borrow_mut().take();
+                let namespace = completion?.settled();
+                self.imported.insert(qualified.to_owned(), namespace.clone());
                 if let Some((ancestor, member)) = qualified.rsplit_once('.') {
-                    if let Some(parent) = self.imported.get(ancestor).cloned() {
+                    if let Some(parent) = self.cached_import(ancestor).or_else(|| self.imported.get(ancestor).cloned()) {
                         self.alter_class_member(parent, member, Some(namespace.clone()), false).map_err(|fault| self.carried_native_fault(fault))?;
                     }
                 }

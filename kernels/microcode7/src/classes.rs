@@ -3870,7 +3870,7 @@ impl<'a> Machine<'a> {
                 }
                 if key == self.detail("qualified") { return Ok(Value::text(spelling)); }
                 if key == self.detail("name") { return Ok(Value::text(spelling.rsplit('.').next().unwrap_or(spelling))); }
-                if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
+                if key == self.detail("module") { return Ok(self.intrinsic_home(working, spelling)); }
                 if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                     return Ok(Self::wrap(135, vec![Value::text(spelling)]));
                 }

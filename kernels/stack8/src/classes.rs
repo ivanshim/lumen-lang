@@ -3250,7 +3250,7 @@ impl<'a> Engine<'a> {
                 }
                 if name == self.class_word("name") { return Ok(Value::text(word.rsplit('.').next().unwrap_or(word))); }
                 if name == self.class_word("qualified") { return Ok(Value::text(word)); }
-                if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                if name == self.class_word("module") { return Ok(self.callable_home(op, word)); }
                 if self.lang.class_special.get(79).is_some_and(|label| label == name) {
                     return Ok(Self::adapter(132, vec![Value::text(word)]));
                 }
