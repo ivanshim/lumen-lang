@@ -8487,3 +8487,31 @@
 {"t":"2026-10-08T08:40:30Z","event":"exited","job":"review-auto-dsflash-source-encoding-0829","code":0}
 {"t":"2026-10-08T08:45:00Z","event":"started","job":"dsflash-marshal","model":"deepseek-flash","via":"ds-run"}
 {"t":"2026-10-08T08:48:24Z","event":"exited","job":"dsflash-future-stmt","code":0}
+{"t":"2026-10-08T08:50:03Z","event":"finished","job":"dsflash-future-stmt","exit_time":"2026-10-08T08:48:24Z"}
+{"t":"2026-10-08T08:50:03Z","event":"review-queued","job":"dsflash-future-stmt","review":"review-auto-dsflash-future-stmt-0850"}
+{"t":"2026-10-08T08:50:09Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T08:50:57Z","event":"exited","job":"stdlib-http-cookiejar","code":0}
+{"t":"2026-10-08T08:51:00Z","event":"review-started","job":"dsflash-future-stmt","review":"review-auto-dsflash-future-stmt-0850"}
+{"t":"2026-10-08T08:53:47Z","event":"returned","job":"dsflash-source-encoding","review":"review-auto-dsflash-source-encoding-0829","commit":"0016eee18","round":2,"note":"(2nd; 49->93/93 both kernels, prior 5 points fixed; microcode7 numeric-warning collector skips leading-dot floats: .5and 2 kernel disagreement) -> returns + queue (DS Flash 12/12)"}
+{"t":"2026-10-08T08:53:47Z","event":"returned","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-0824","commit":"1356c39ae","round":1,"note":"(1st; tempfile 100->106/118 both; assertWarnsRegex keyword names + unittest.mock.mock_open missing, 118-test subject no partial accept) -> returns + queue"}
+{"t":"2026-10-08T08:53:47Z","event":"queued","job":"dsflash-source-encoding","model":"deepseek-flash","line":"or-resume dsflash-source-encoding deepseek-flash ses_ee748a8a5ffeZ1O82pyP6MDnWB","note":"2nd return; DS Flash 12/12"}
+{"t":"2026-10-08T08:53:47Z","event":"queued","job":"stdlib-tempfile","model":"gpt-6.1-sol","line":"sol-resume stdlib-tempfile","note":"1st return; Sol 10/11 feature"}
+{"t":"2026-10-08T08:54:52Z","event":"note","text":"prune-archive: removed 0 files (0 MB); 0 finished jobs"}
+{"t":"2026-10-08T08:55:02Z","event":"note","text":"archive-sync: archived to lumenlang2:coord-archive; pruned 12 old local items (active kept: claude-deque dsflash-charmapcodec dsflash-contextlib-async dsflash-descrtut dsflash-frame dsflash-genericalias dsflash-json-speed dsflash-json-speed-sol dsflash-marshal dsflash-memoryview dsflash-pkgutil dsflash-platform dsflash-pyclbr dsflash-robotparser dsflash-robotparser-sol dsflash-type-aliases dsflash-type-aliases-sol dsflash-univnewlines dspro-tstring review-auto-dsflash-future-stmt-0850 stdlib-coroutines stdlib-descr stdlib-tarfile stdlib-traceback stdlib-unittest stdlib-warnings stdlib-zipfile )"}
+{"t":"2026-10-08T08:55:06Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-08T08:55:16Z","event":"finished","job":"stdlib-http-cookiejar","exit_time":"2026-10-08T08:50:57Z"}
+{"t":"2026-10-08T08:55:16Z","event":"review-queued","job":"stdlib-http-cookiejar","review":"review-auto-stdlib-http-cookiejar-0855"}
+{"t":"2026-10-08T08:55:19Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T08:55:40Z","event":"queued","job":"stdlib-shutil","model":"gpt-6.1-sol","line":"sol-new stdlib-shutil","note":"new 3.14.8 subject (profile-scope not-yet library, large, ~177 tests): test_shutil + faithful shutil.py copy (was a runtime adapter); worktree at 5ee3e1212 (21d); fills Sol 11/11 feature slots"}
+{"t":"2026-10-08T08:56:01Z","event":"exited","job":"review-auto-dsflash-future-stmt-0850","code":0}
+{"t":"2026-10-08T08:56:02Z","event":"resumed","job":"dsflash-source-encoding","model":"deepseek-flash","session":"ses_ee748a8a5ffeZ1O82pyP6MDnWB"}
+{"t":"2026-10-08T08:56:07Z","event":"quota","codex_week_used":66,"codex_credits":0,"claude_week_used":7,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.9632,"kimi_code_used":0,"deepseek_usd":301.91}
+{"t":"2026-10-08T08:56:13Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":66,"expected":67.7,"gap":-1.7,"status":"ok"}
+{"t":"2026-10-08T08:56:31Z","event":"checkin","status":"done","actions":"returned dsflash-source-encoding (2nd; mc7 leading-dot numeric warning disagreement) -> queue; returned stdlib-tempfile (1st; assertWarnsRegex kwargs, mock_open) -> queue; queued sol-new stdlib-shutil (worktree at 5ee3e1212); prune-merged 0 MB; deleted target/ of idle accepted dsflash-bufio (2.3 GB, box 81%->80%); luna FINDINGS appended","notes":"box load 2.7, 13.2 GB avail, disk 80%; Mac disk 84%; PR #540 (21e) open, pr-merge-watch running; stdlib-http-cookiejar finished -> review queued; Codex week 66%; Claude 5h 2%/week 7%; luna no new alerts, gap -1.7 ok; held: colorize+code-module (await stdlib-unittest), dspro-type-annotations (DS Pro busy), claude-pstats (Sonnet busy)"}
+{"t":"2026-10-08T09:01:03Z","event":"resumed","job":"stdlib-tempfile","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T09:04:26Z","event":"exited","job":"stdlib-traceback","code":0}
+{"t":"2026-10-08T09:05:32Z","event":"finished","job":"stdlib-traceback","exit_time":"2026-10-08T09:04:26Z"}
+{"t":"2026-10-08T09:05:32Z","event":"review-queued","job":"stdlib-traceback","review":"review-auto-stdlib-traceback-0905"}
+{"t":"2026-10-08T09:05:35Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T09:05:51Z","event":"exited","job":"dsflash-platform","code":0}
+{"t":"2026-10-08T09:06:03Z","event":"review-started","job":"stdlib-http-cookiejar","review":"review-auto-stdlib-http-cookiejar-0855"}
