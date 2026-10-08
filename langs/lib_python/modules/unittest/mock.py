@@ -81,7 +81,7 @@ class Mock:
         if self.return_value is DEFAULT:
             if self._mock_wraps is not None:
                 return self._mock_wraps(*args, **kwargs)
-            self.return_value = Mock(name='()')
+            self.return_value = type(self)(name='()')
         return self.return_value
 
     def reset_mock(self):
@@ -127,7 +127,7 @@ class Mock:
         # for, so what looks inside a mock sees what is really there.
         if name[:1] == '_':
             raise AttributeError(name)
-        child = Mock(name=name)
+        child = type(self)(name=name)
         setattr(self, name, child)
         return child
 
@@ -225,7 +225,7 @@ class MagicMock(Mock):
 
 
 class _Patch:
-    def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=Mock):
+    def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=MagicMock):
         if new_callable is not None and new is not DEFAULT:
             raise ValueError("Cannot use 'new' and 'new_callable' together")
         self.target = target
