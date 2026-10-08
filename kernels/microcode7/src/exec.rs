@@ -18273,7 +18273,7 @@ impl<'a> Machine<'a> {
                 {
                     let cells = self.outermost.cells.borrow();
                     for (word, value) in self.idents.iter().zip(cells.iter()) {
-                        if !word.starts_with('\0') && !word.contains('\0') && !matches!(value, Value::Unset) {
+                        if !word.starts_with('\0') && !word.contains('\0') && !matches!(value.settled(), Value::Unset) {
                             bindings.push((Value::text(word), value.clone()));
                         }
                     }
@@ -18285,7 +18285,9 @@ impl<'a> Machine<'a> {
                 let extra = self.world_kept();
                 if let Value::Dict(pairs) = extra.borrow().clone() {
                     for (key, value) in pairs.iter() {
-                        if !bindings.iter().any(|(kept, _)| kept.equals(key)) { bindings.push((key.clone(), value.clone())); }
+                        if !matches!(value.settled(), Value::Unset) && !bindings.iter().any(|(kept, _)| kept.equals(key)) {
+                            bindings.push((key.clone(), value.clone()));
+                        }
                     }
                 }
                 Value::Dict(Rc::new(bindings.into()))
@@ -24503,6 +24505,11 @@ impl<'a> Machine<'a> {
 
     /// Write a slot's name into the dictionary it lives in, or strike it out.
     fn booked_write(&mut self, at: usize, name: &str, worth: Option<Value>) {
+        // Clearing a Python binding removes the dictionary key as well
+        // as its slot; an exception target must not remain as an unset value.
+        let worth = if self.names_in_calls && self.rules.closes_over {
+            worth.filter(|value| !matches!(value.settled(), Value::Unset))
+        } else { worth };
         match self.book_holding(at) {
             Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down(&self.namespace_books[index].1, name, worth) },
             Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },
