@@ -8622,3 +8622,28 @@
 {"t":"2026-10-08T11:05:25Z","event":"started","job":"dsflash-time","model":"deepseek-flash","via":"ds-run"}
 {"t":"2026-10-08T11:09:57Z","event":"exited","job":"dsflash-frame","code":0}
 {"t":"2026-10-08T11:10:27Z","event":"started","job":"dsflash-codeccallbacks","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-08T11:11:45Z","event":"exited","job":"review-auto-dsflash-charmapcodec-1042","code":0}
+{"t":"2026-10-08T11:13:44Z","event":"finished","job":"dsflash-frame","exit_time":"2026-10-08T11:09:56Z"}
+{"t":"2026-10-08T11:13:44Z","event":"review-queued","job":"dsflash-frame","review":"review-auto-dsflash-frame-1113"}
+{"t":"2026-10-08T11:13:49Z","event":"returned","job":"claude-deque","review":"review-auto-claude-deque-1042","commit":"d152e1f74","round":2,"note":"(2nd; introduced iterator __reduce__ regression: offset uses size cached at iterator creation, stale after growth/shrink; both 1st-return blockers fixed; deque 77 pass/3 skip both kept) -> returns/claude-deque.md, held for the Sonnet slot (claude-pstats running)"}
+{"t":"2026-10-08T11:13:49Z","event":"integrity","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-1042","commit":"974e84a70","model":"deepseek-v4.1-flash","round":2,"note":"edited CPython copy: _escape_buffer appended to codecs.py (README/report claim unchanged); otherwise clean 1195/0, test_charmapcodec 0->4/4 both; fix = restore codecs.py byte-for-byte, move helper into runtime_adapters overlay"}
+{"t":"2026-10-08T11:13:49Z","event":"queued","job":"dsflash-charmapcodec","model":"deepseek-flash","line":"or-resume dsflash-charmapcodec deepseek-flash ses_ee73f6e22ffeP8mCdrMlaOKyu6","note":"integrity return, 2nd; DS Flash 11/12 -> 12/12"}
+{"t":"2026-10-08T11:13:50Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T11:14:52Z","event":"quota","codex_week_used":71,"codex_credits":0,"claude_week_used":8,"claude_5h_used":8,"kimi_5h_used":0,"kimi_month_used":0.964,"kimi_code_used":0,"deepseek_usd":299.39}
+{"t":"2026-10-08T11:14:59Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":71,"expected":72.3,"gap":-1.3,"status":"ok"}
+{"t":"2026-10-08T11:15:07Z","event":"checkin","status":"done","actions":"RETURN claude-deque (2nd; stale iterator __reduce__ offset) -> returns + held for Sonnet slot; REJECT (integrity) dsflash-charmapcodec (2nd; edited codecs.py copy) -> returns + or-resume queued (DS Flash 12/12); dsflash-frame review queued (review-queue); deleted target/ of idle accepted dsflash-robotparser (2.0 GB, box 82%->81%); prune-merged 0 MB; luna FINDINGS appended","notes":"PR #540 (21e) reference CI red, integrate-21e running, not merged; Mac disk 86%, box 81%; codex week 71%"}
+{"t":"2026-10-08T11:15:27Z","event":"review-started","job":"dsflash-contextlib-async","review":"review-auto-dsflash-contextlib-async-1042"}
+{"t":"2026-10-08T11:18:19Z","event":"exited","job":"stdlib-warnings","code":0}
+{"t":"2026-10-08T11:18:59Z","event":"finished","job":"stdlib-warnings","exit_time":"2026-10-08T11:18:19Z"}
+{"t":"2026-10-08T11:18:59Z","event":"review-queued","job":"stdlib-warnings","review":"review-auto-stdlib-warnings-1118"}
+{"t":"2026-10-08T11:19:01Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T11:19:31Z","event":"exited","job":"review-auto-dsflash-contextlib-async-1042","code":0}
+{"t":"2026-10-08T11:20:28Z","event":"review-started","job":"stdlib-unittest","review":"review-auto-stdlib-unittest-1053"}
+{"t":"2026-10-08T11:21:18Z","event":"exited","job":"stdlib-descr","code":0}
+{"t":"2026-10-08T11:24:09Z","event":"finished","job":"stdlib-descr","exit_time":"2026-10-08T11:21:18Z"}
+{"t":"2026-10-08T11:24:09Z","event":"review-queued","job":"stdlib-descr","review":"review-auto-stdlib-descr-1124"}
+{"t":"2026-10-08T11:24:12Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T11:25:28Z","event":"review-started","job":"dsflash-frame","review":"review-auto-dsflash-frame-1113"}
+{"t":"2026-10-08T11:28:28Z","event":"exited","job":"review-auto-stdlib-unittest-1053","code":0}
+{"t":"2026-10-08T11:29:05Z","event":"exited","job":"review-auto-dsflash-frame-1113","code":0}
+{"t":"2026-10-08T11:30:30Z","event":"resumed","job":"dsflash-charmapcodec","model":"deepseek-flash","session":"ses_ee73f6e22ffeP8mCdrMlaOKyu6"}
