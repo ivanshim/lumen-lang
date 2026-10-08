@@ -468,6 +468,10 @@ class Expression(AST):
     _fields = ('body',)
     _attributes = ()
 
+class Interactive(AST):
+    _fields = ('body',)
+    _attributes = ()
+
 class stmt(AST):
     pass
 
@@ -1615,6 +1619,28 @@ def _check_type_comments(toks, comments):
         seg.append(tok.text)
         after_comma = False
 
+def _several_statements(toks):
+    # One statement alone may be a single text read; a second beginning
+    # past a line's end makes the text more than one.
+    body = False
+    for tok in toks:
+        if tok.kind == 'newline' or tok.kind == 'end':
+            if body and tok.kind == 'newline':
+                body = 'broken'
+            continue
+        if body == 'broken':
+            return True
+        body = True
+    return False
+
+def _parse_for_compile(source, filename, mode, type_comments, optimize):
+    # compile() with PyCF_ONLY_AST hands the text here with the flags
+    # already read: whether type comments are wanted, and the
+    # optimisation setting, both positional here because the kernels'
+    # own call carries no keywords.
+    return parse(source, filename, mode, type_comments=bool(type_comments),
+                 optimize=optimize)
+
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1):
     if type(source) != type(''):
@@ -1628,15 +1654,20 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         tree = Expression(body=node)
         tree._lumen_tree_source = source
         return tree
-    if mode != 'exec':
+    if mode != 'exec' and mode != 'single':
         _no_tree()
     comments = []
     toks = _lex(source, 0, len(source), 1, 0, False, comments)
     if type_comments:
         _check_type_comments(toks, comments)
+    if mode == 'single' and _several_statements(toks):
+        raise SyntaxError('multiple statements found while compiling a single statement')
     parser = _Parser(source, toks)
     tree = parser.parse_module()
     tree._lumen_tree_source = source
+    if mode == 'single':
+        tree = Interactive(body=tree.body)
+        tree._lumen_tree_source = source
     return tree
 
 def unparse(ast_obj):
