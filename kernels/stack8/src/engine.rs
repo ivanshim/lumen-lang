@@ -19277,7 +19277,7 @@ impl<'a> Engine<'a> {
         } else { Ok(self.keep_collection(result)) }
     }
 
-    fn replace_item(&self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+    fn replace_item(&self, pairs: &mut KeyedPairs, key: Value, value: Value) {
         if self.lang.bind_names {
             if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| self.keys_alike(k, &key)) {
                 *old = value;
@@ -22118,10 +22118,10 @@ impl<'a> Engine<'a> {
                     }
                     // Any other key makes it a map, its places the keys.
                     Value::Array(items) | Value::Tuple(items) => {
-                        let mut pairs: Vec<(Value, Value)> =
+                        let mut pairs: KeyedPairs =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
                         self.replace_item(&mut pairs, at, v);
-                        Value::Map(Rc::new(pairs.into()))
+                        Value::Map(Rc::new(pairs))
                     }
                     Value::Map(mut pairs) => {
                         let held = Rc::make_mut(&mut pairs);
@@ -22501,7 +22501,7 @@ fn store_insert_new(pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) {
 /// pairs held apart from any store: `replace_item`'s own road for a
 /// language whose names are not bound to cells, where a single write
 /// stands alone rather than growing a literal key by key.
-fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+fn put_key(pairs: &mut KeyedPairs, key: Value, value: Value) {
     match pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
         // A place holding a cell that names share is written through,
         // not written over.
@@ -27632,3 +27632,27 @@ mod heap;
 
 #[path = "binascii.rs"]
 mod binascii;
+
+#[cfg(test)]
+mod map_write_tests {
+    use super::*;
+
+    #[test]
+    fn replacement_tracks_entries_before_erase() {
+        for bind_names in [false, true] {
+            let mut lang = Lang::parse(include_str!("../../../langs/php.json")).unwrap();
+            lang.bind_names = bind_names;
+            let mut engine = Engine::new(&lang, crate::compile::Registry::default());
+            let mut pairs = KeyedPairs::from(Vec::new());
+            engine.replace_item(&mut pairs, Value::text("first"), Value::Small(1));
+            engine.replace_item(&mut pairs, Value::text("second"), Value::Small(2));
+            engine.replace_item(&mut pairs, Value::text("second"), Value::Small(3));
+            assert_eq!(pairs.slots_synced(), vec![0, 1]);
+            let mut args = vec![Value::Map(Rc::new(pairs)), Value::text("first")];
+            let Value::Map(left) = engine.builtin_values(Builtin::Erase, "erase", &mut args).unwrap() else { panic!("expected map"); };
+            assert_eq!(left.slots_synced(), vec![1]);
+            assert_eq!(left.len(), 1);
+            assert!(matches!(left[0].1, Value::Small(3)));
+        }
+    }
+}
