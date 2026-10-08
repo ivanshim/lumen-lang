@@ -62,12 +62,18 @@ class Lock:
     def locked(self):
         return self._held
 
+    # Entering and leaving a block is the commonest use of a lock, so the
+    # two methods do what acquire and release do without calling them.
     def __enter__(self):
-        self.acquire()
+        if self._held:
+            raise 'RuntimeError: this lock is held and no other thread can release it'
+        self._held = True
         return self
 
     def __exit__(self, kind, value, tb):
-        self.release()
+        if not self._held:
+            raise 'RuntimeError: release unlocked lock'
+        self._held = False
         return False
 
 allocate_lock = Lock

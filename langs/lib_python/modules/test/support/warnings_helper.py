@@ -169,6 +169,13 @@ def check_no_warnings(testcase, message='', category=Warning, force_gc=False):
             gc_collect()
     testcase.assertEqual(warns, [])
 
+
+# Written as the reference suite writes them: the context managers that
+# check no warning, or no ResourceWarning, is emitted inside them.
+@contextlib.contextmanager
+def check_no_resource_warning(testcase):
+    with check_no_warnings(testcase, category=ResourceWarning, force_gc=True):
+        yield
 @contextlib.contextmanager
 def save_restore_warnings_filters():
     old_filters = warnings.filters[:]

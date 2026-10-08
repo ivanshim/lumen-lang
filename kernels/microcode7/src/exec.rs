@@ -103,6 +103,21 @@ fn ask_host_for_signals() {
     unsafe { signal(2, note_signal) };
 }
 
+/// Keep a cancellable alarm attached to the owning interpreter's lifetime.
+struct TimedSignal {
+    until: std::time::Instant,
+    wake: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    task: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for TimedSignal {
+    fn drop(&mut self) {
+        let (flag, condition) = &*self.wake;
+        *flag.lock().unwrap() = true;
+        condition.notify_one();
+        self.task.take().map(|task| task.join());
+    }
+}
+
 pub enum Escape {
     Error(String),
     /// The run is over and no clause may take it back: a limit the
@@ -714,6 +729,10 @@ pub struct Machine<'a> {
     /// The member last sought and not found, with what it was sought
     /// on, for the attribute fault that will tell of it.
     sought_in_vain: Option<(String, Value)>,
+    /// What each spelling named, asked of a row of bytes of either kind,
+    /// since the answer comes of the definition alone and finding it
+    /// walks every member of the kind and spells two labels for each.
+    octet_names: [RefCell<HashMap<String, Option<&'static str>, crate::table::FxBuildHasher>>; 2],
     /// The key last found absent, where the words of the fault cannot
     /// carry it: the complaint for a key names the key itself, and a
     /// key of any kind but a text or a whole number is kept here whole
@@ -768,6 +787,7 @@ pub struct Machine<'a> {
     /// the mark for the signal's own way. A number never given one
     /// keeps its own way.
     signal_takers: Vec<(i64, Value)>,
+    timer: Option<TimedSignal>,
     /// Whether the run watches the edge between one statement and the
     /// next for signals left waiting (ext.builtin.signal).
     watches_signals: bool,
@@ -2060,6 +2080,7 @@ impl<'a> Machine<'a> {
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
             sought_in_vain: None,
+            octet_names: [RefCell::new(HashMap::default()), RefCell::new(HashMap::default())],
             key_in_vain: RefCell::new(None),
             standing: 0,
             would_not_read: None,
@@ -2075,7 +2096,7 @@ impl<'a> Machine<'a> {
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
             builds_places: table.flag("ext.op.index.makes"),
-            signal_takers: Vec::new(),
+            signal_takers: Vec::new(), timer: None,
             watches_signals: table.has_any("ext.builtin.signal"),
             names_in_calls: table.flag("ext.syntax.call.bind_names"),
             words: words_of(table),
@@ -2937,6 +2958,15 @@ impl<'a> Machine<'a> {
         self.reaping = true;
         let mut web = self.round_web(&[]);
         let mut original = web.unreachable();
+        // With no lost knot there is nothing to silence or farewell, and
+        // the web just woven still describes the machine: reuse it.
+        if original.is_empty() {
+            self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !web.unowned(&function)));
+            drop(web);
+            self.attend_to_gone();
+            self.reaping = false;
+            return 0;
+        }
         original.sort_by_key(|node| match node { Knot::Held(Value::Thing(thing)) => thing.turn, _ => usize::MAX });
         let notices = crate::ghost::silence_group(&original);
         for (notify, bearer) in notices {
@@ -5438,6 +5468,7 @@ impl<'a> Machine<'a> {
 
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
+        self.let_manager_go(address, frame)?;
         if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned();
         let arguments = match raised {
@@ -5457,6 +5488,13 @@ impl<'a> Machine<'a> {
         let answer = asked?.ok_or_else(|| self.bad_answer())?;
         let answer = if async_context { self.context_await(answer)? } else { answer };
         Ok(raised.is_some() && self.object_truth(&answer)?)
+    }
+
+    /// The place that held a manager lets go of it as the block ends, so
+    /// that the manager is freed with the block and not with the frame.
+    fn let_manager_go(&mut self, address: &Address, frame: &Rc<Env>) -> Result<(), Escape> {
+        if !self.rules.has_any_ext_builtin_exceptions { return Ok(()); }
+        self.value_of(&Form::Forget(address.clone()), frame).map(|_| ())
     }
 
     /// The clause that takes what was raised, with the place it is to be
@@ -6711,6 +6749,7 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
+                    self.let_manager_go(address, frame)?;
                     if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned().into());
@@ -7680,6 +7719,9 @@ impl<'a> Machine<'a> {
                                 if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
                             })?;
                             value = Value::Vector(crate::tuples::Sequence::plain(members));
+                        }
+                        if matches!(f.cells.borrow()[i].settled(), Value::Octets { .. }) && matches!(value.settled(), Value::Thing(_)) {
+                            if let Some(bytes) = self.buffer_exported(&value)? { value = self.octets(bytes, false); }
                         }
                         match self.value_cell(&f, i) {
                             Some(cell) => {
@@ -10428,6 +10470,10 @@ impl<'a> Machine<'a> {
                 };
             }
         }
+        // What was read of the receiver above is let go before a dictionary
+        // is written into, so that it is held by its place alone and is
+        // written where it stands rather than copied.
+        drop(actual);
         if matches!(receiver.settled(), Value::Set(_)) {
             let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None }
                 .filter(|code| !(Self::set_alters(*code) && receiver.set_sealed()));
@@ -11285,6 +11331,29 @@ impl<'a> Machine<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Carry signal exceptions through operations whose native result is text.
+    fn observe_host_interrupts(&mut self) -> Result<(), String> {
+        let delivered = self.signals_due_now();
+        // Resolve a callback's native bridge before another cleanup call
+        // can consume it. Plain host words become their Python exception
+        // here too, rather than losing its identity at the native boundary.
+        let delivered = match delivered {
+            Err(Escape::Error(words)) => match self.got_away.take() {
+                Some(raised) => Err(raised),
+                None => self.raised_if_error(Err(Escape::Error(words))),
+            },
+            outcome => outcome,
+        };
+        match delivered {
+            Ok(()) => Ok(()),
+            Err(Escape::Error(words)) => Err(words),
+            Err(raised) => {
+                self.got_away = Some(raised);
+                Err(self.argument_fault("ext.builtin.stream.failed", None))
+            }
+        }
     }
 
     /// As `apply_held`, for an operation that answers plain words: an
@@ -12756,6 +12825,14 @@ impl<'a> Machine<'a> {
     /// ahead of it answers by its bare tail as well, which is the name
     /// a row of bytes keeps the method under.
     pub(super) fn octet_member(&self, spelling: &str, changeable: bool) -> Option<&'static str> {
+        let remembered = &self.octet_names[usize::from(changeable)];
+        if let Some(known) = remembered.borrow().get(spelling) { return *known; }
+        let found = self.octet_member_found(spelling, changeable);
+        remembered.borrow_mut().insert(spelling.to_owned(), found);
+        found
+    }
+
+    fn octet_member_found(&self, spelling: &str, changeable: bool) -> Option<&'static str> {
         let carries = |label: String| self.table.loose_strings(&label).iter()
             .any(|word| word == spelling || word.rsplit('.').next() == Some(spelling));
         let among = self.value_method_named(spelling);
@@ -13018,7 +13095,22 @@ impl<'a> Machine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and a row of numbers or a text hands
     /// over one byte for each of its members.
+    // The bytes an instance that exports a buffer gives up, as the buffer
+    // shows them whatever the items are; none for anything that exports
+    // no buffer.
+    fn buffer_exported(&mut self, value: &Value) -> Result<Option<Vec<u8>>, String> {
+        let Value::Thing(thing) = value.settled() else { return Ok(None); };
+        if self.inherited_entry(&thing.blueprint(), "__buffer__").is_none() { return Ok(None); }
+        let module = self.namespace_for("builtins")?;
+        let routine = self.attribute(&module, "_buffer_bytes").ok_or_else(|| self.octet_error("arguments"))?;
+        match self.apply_within(routine, vec![value.clone()])?.settled() {
+            Value::Octets { cell, .. } => Ok(Some(cell.borrow().to_vec())),
+            _ => Ok(None),
+        }
+    }
+
     fn octet_lengthening(&mut self, source: &Value) -> Result<Vec<u8>, String> {
+        if let Some(bytes) = self.buffer_exported(source)? { return Ok(bytes); }
         match &source.settled() {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
@@ -14368,17 +14460,20 @@ impl<'a> Machine<'a> {
         if let Some(words) = self.cannot_key(&arguments[0]) { return Err(words); }
         let hashed = self.hash_key(&arguments[0])?;
         let mut current = receiver.settled();
-        let (pairs, found, keyed, slots, span, mut budget) = loop {
+        let (store, found, keyed) = loop {
             let Value::Dict(store) = current else { return Err(self.method_fault("unready")); };
             let located = self.map_locate(&store, Some(&store), &hashed)?;
             current = receiver.settled();
             if matches!(&current, Value::Dict(now) if now.serial != store.serial) { continue; }
-            break (store.to_vec(), located.0, located.1, store.slots_synced(), store.span, store.entry_budget);
+            break (store, located.0, located.1);
         };
+        let slots = store.slots_synced();
+        let span = store.span;
+        let mut budget = store.entry_budget;
         if let Some(index) = found {
-            let answer = pairs[index].1.clone();
+            let answer = store[index].1.clone();
             if name == "pop" {
-                let mut remaining = pairs;
+                let mut remaining = store.to_vec();
                 remaining.remove(index);
                 let mut slots = slots.clone();
                 slots.remove(index);
@@ -14391,7 +14486,19 @@ impl<'a> Machine<'a> {
         }
         let answer = arguments.get(1).cloned().unwrap_or(Value::Nil);
         if name == "setdefault" {
-            let mut grown = pairs;
+            // The new entry goes into the dictionary where it stands, so
+            // that the entries already there are not copied to make room.
+            if let Value::Mutable(cell, _) | Value::Shared(cell) = receiver {
+                if crate::members::circular(&answer, cell, 0) || crate::members::circular(&keyed, cell, 0) { return Err(self.method_fault("unready")); }
+                drop(store);
+                drop(current);
+                let taken = cell.replace(Value::Nil);
+                let Value::Dict(mut entries) = taken else { cell.replace(taken); return Err(self.method_fault("unready")); };
+                store_insert_new(&mut entries, keyed, answer.clone());
+                cell.replace(Value::Dict(entries));
+                return Ok(answer);
+            }
+            let mut grown = store.to_vec();
             grown.push((keyed, answer.clone()));
             let (slots, span) = self.grown_slots(&grown, &slots, span, &mut budget);
             self.replace_dict(receiver, grown, slots, span, budget)?;
@@ -18555,6 +18662,9 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
+                if which == 1 {
+                    if let Some(bytes) = self.buffer_exported(&plain)? { return Ok(self.octets(bytes, true)); }
+                }
                 let already = matches!(plain, Value::Octets { .. } | Value::Vector(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 if !already {
                     if let Ok(numbers) = self.core_collect(&plain) { return self.octet_routine(which, &[Value::Vector(crate::tuples::Sequence::plain(numbers))]); }
@@ -20470,7 +20580,20 @@ impl<'a> Machine<'a> {
             Prim::Bided => {
                 n(1)?;
                 let tiny = as_index(&v[0])?;
-                std::thread::sleep(std::time::Duration::from_micros(tiny as u64));
+                let span = std::time::Duration::from_micros(tiny as u64);
+                let mut remaining = libc::timespec { tv_sec: span.as_secs() as _, tv_nsec: i64::from(span.subsec_nanos()) as _ };
+                self.observe_host_interrupts()?;
+                loop {
+                    let mut unused = unsafe { std::mem::zeroed::<libc::timespec>() };
+                    let slept = unsafe { libc::nanosleep(&remaining, &mut unused) };
+                    let errno = if slept < 0 { Some(std::io::Error::last_os_error()) } else { None };
+                    self.observe_host_interrupts()?;
+                    match errno {
+                        None => break,
+                        Some(problem) if problem.raw_os_error() == Some(libc::EINTR) => remaining = unused,
+                        Some(problem) => return Err(format!("OSError: {problem}")),
+                    }
+                }
                 Value::Nil
             }
             Prim::Reached => {
@@ -20780,6 +20903,18 @@ impl<'a> Machine<'a> {
                     0 => {
                         n(3)?;
                         let number = as_index(&v[1])? as i64;
+                        let disposition = match v[2].settled() {
+                            Value::Small(mark) if mark == 0 => libc::SIG_DFL,
+                            Value::Small(mark) if mark == 1 => libc::SIG_IGN,
+                            _ => note_signal as *const () as usize,
+                        };
+                        let changed = unsafe {
+                            let mut entry = std::mem::zeroed::<libc::sigaction>();
+                            libc::sigemptyset(&mut entry.sa_mask);
+                            entry.sa_sigaction = disposition;
+                            libc::sigaction(number as i32, &entry, std::ptr::null_mut())
+                        };
+                        if changed == -1 { return Err(format!("OSError: {}", std::io::Error::last_os_error())); }
                         match self.signal_takers.iter().position(|(held, _)| *held == number) {
                             Some(at) => std::mem::replace(&mut self.signal_takers[at].1, v[2].clone()),
                             None => { self.signal_takers.push((number, v[2].clone())); Value::Nil }
@@ -20796,6 +20931,40 @@ impl<'a> Machine<'a> {
                         if (1..=64).contains(&number) {
                             SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
                         }
+                        Value::Nil
+                    }
+                    3 => {
+                        n(2)?;
+                        let amount = v[1].as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
+                        let old = self.timer.take();
+                        let left = old.as_ref().map(|alarm| alarm.until.saturating_duration_since(std::time::Instant::now()));
+                        let left = left.map_or(0, |time| time.as_secs() + if time.subsec_nanos() == 0 { 0 } else { 1 });
+                        drop(old);
+                        if amount != 0 {
+                            let span = std::time::Duration::from_secs(u64::from(amount as u32));
+                            let until = std::time::Instant::now() + span;
+                            let wake = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+                            let waiter = wake.clone();
+                            let owner = unsafe { libc::pthread_self() };
+                            let task = std::thread::Builder::new().stack_size(128 * 1024).spawn(move || {
+                                let (lock, condition) = &*waiter;
+                                let (cancelled, _) = condition.wait_timeout_while(lock.lock().unwrap(), span, |done| !*done).unwrap();
+                                if !*cancelled { unsafe { libc::pthread_kill(owner, libc::SIGALRM); } }
+                            }).map_err(|failure| format!("OSError: {failure}"))?;
+                            self.timer = Some(TimedSignal { until, wake, task: Some(task) });
+                        }
+                        Value::Small(left as i64)
+                    }
+                    4 => {
+                        n(1)?;
+                        let mut mask = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+                        let mut original = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+                        unsafe { libc::sigfillset(&mut mask); libc::pthread_sigmask(libc::SIG_BLOCK, &mask, &mut original); }
+                        if SIGNALS_DUE.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                            unsafe { libc::sigsuspend(&original); }
+                        }
+                        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &original, std::ptr::null_mut()); }
+                        self.observe_host_interrupts()?;
                         Value::Nil
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),
@@ -23628,6 +23797,21 @@ impl<'a> Machine<'a> {
         if let Value::Shared(cell) = handed {
             let contents = cell.borrow().clone();
             return self.span_written(held, bounds, &contents);
+        }
+        // What an object exporting a buffer hands to a row of bytes is
+        // read out before the row is borrowed, since reading it runs code.
+        if matches!(handed.settled(), Value::Thing(_)) {
+            let into_octets = match held {
+                Value::Octets { .. } => true,
+                Value::Mutable(cell, _) | Value::Shared(cell) => matches!(&*cell.borrow(), Value::Octets { .. }),
+                _ => false,
+            };
+            if into_octets {
+                if let Some(bytes) = self.buffer_exported(handed)? {
+                    let row = self.octets(bytes, false);
+                    return self.span_written(held, bounds, &row);
+                }
+            }
         }
         if let Value::Mutable(cell, _) = held { return self.span_written(&mut cell.borrow_mut(), bounds, handed); }
         // A place shared with another name -- a module's own global

@@ -170,7 +170,8 @@ def valid_signals():
     return result
 
 def alarm(seconds):
-    raise 'NotImplementedError: signal.alarm cannot deliver SIGALRM here'
+    import operator
+    return __signal(3, operator.index(seconds))
 
 def pause():
-    raise 'NotImplementedError: no signal can arrive to end a pause'
+    return __signal(4)
