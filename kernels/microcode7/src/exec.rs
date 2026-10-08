@@ -27325,7 +27325,7 @@ impl<'a> Machine<'a> {
         open
     }
 
-    fn single_reading(words: Vec<crate::scan::Token>, text: &str) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+    fn single_reading(words: &[crate::scan::Token], text: &str) -> Result<(), (String, u32, usize)> {
         use crate::scan::Shape;
         let mut nesting = 0usize;
         let mut beginning = true;
@@ -27379,7 +27379,7 @@ impl<'a> Machine<'a> {
                 return Err((String::from("SyntaxError: invalid syntax"), row, 0));
             }
         }
-        match header { Some(_) => Ok(words), None => Err(("SyntaxError: invalid syntax".to_owned(), 0, 0)) }
+        match header { Some(_) => Ok(()), None => Err(("SyntaxError: invalid syntax".to_owned(), 0, 0)) }
     }
 
     fn tree_site_values(stored: &Value) -> Result<Vec<[u32; 8]>, String> {
@@ -27456,10 +27456,7 @@ impl<'a> Machine<'a> {
             &counted_txt
         } else { &source };
         self.report_escape_notices(&source, &file, None)?;
-        let tokens = match self.text_tokens(&source, mode).and_then(|words| {
-            if mode != 2 || matches!(v[0].settled(), Value::Thing(_)) { Ok(words) }
-            else { Self::single_reading(words, &source) }
-        }) {
+        let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => {
                 if incomplete_ok {
@@ -27482,6 +27479,11 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, cols.0, Some((cols.2, cols.1)), &source));
             }
         };
+        if mode == 2 && !matches!(v[0].settled(), Value::Thing(_)) {
+            if let Err((said, row, column)) = Self::single_reading(&tokens, &source) {
+                return Err(self.text_unreadable_at(mode, said, &file, row, column, None, &source));
+            }
+        }
         if incomplete_ok && mode != 0 && tokens.iter().all(|piece| matches!(piece.shape, crate::scan::Shape::Lead | crate::scan::Shape::LineEnd | crate::scan::Shape::Open | crate::scan::Shape::Close | crate::scan::Shape::Finish)) {
             // A text without so much as a word is neither one statement
             // nor one expression; with the flag the reference calls it

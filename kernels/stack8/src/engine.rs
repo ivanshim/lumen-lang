@@ -26965,7 +26965,7 @@ impl Engine<'_> {
         open
     }
 
-    fn single_text_tokens(tokens: Vec<crate::lex::Token>, source: &str) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+    fn single_text_tokens(tokens: &[crate::lex::Token], source: &str) -> Result<(), (String, usize, usize)> {
         use crate::lex::Shape;
         let (mut depth, mut line_start, mut seen, mut compound, mut decorators) = (0usize, true, false, false, false);
         let mut last_top = None;
@@ -27016,7 +27016,7 @@ impl Engine<'_> {
             return Err(("SyntaxError: invalid syntax".into(), last_top.unwrap(), 0));
         }
         if !seen { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
-        Ok(tokens)
+        Ok(())
     }
 
     fn ast_position_rows(value: &Value) -> Res<Vec<[u32; 8]>> {
@@ -27093,10 +27093,7 @@ impl Engine<'_> {
         } else { std::borrow::Cow::Borrowed(source.as_ref()) };
         let counted = effective.as_ref();
         self.source_escape_warnings(&source, &file, None)?;
-        let tokens = match self.text_tokens(&source, mode).and_then(|tokens| {
-            if mode == 2 && !matches!(args[0].contents(), Value::Object(_)) { Self::single_text_tokens(tokens, &source) }
-            else { Ok(tokens) }
-        }) {
+        let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => {
                 if allow_incomplete {
@@ -27124,6 +27121,11 @@ impl Engine<'_> {
                 return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
             }
         };
+        if mode == 2 && !matches!(args[0].contents(), Value::Object(_)) {
+            if let Err((said, row, column)) = Self::single_text_tokens(&tokens, &source) {
+                return Err(self.text_syntax(mode, said, &file, row, column, None, &source));
+            }
+        }
         if allow_incomplete && mode != 0 && tokens.iter().all(|token| matches!(token.shape, crate::lex::Shape::Lead | crate::lex::Shape::LineEnd | crate::lex::Shape::Open | crate::lex::Shape::Close | crate::lex::Shape::Finish)) {
             // A text without so much as a word is neither one statement
             // nor one expression; with the flag the reference calls it

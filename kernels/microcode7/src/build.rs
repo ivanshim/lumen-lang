@@ -231,6 +231,7 @@ pub struct Builder<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    first_adornment: Option<u32>,
     /// The slots the routine being built fills from what it carried
     /// away with it, gathered while its names are read.
     carrying: Vec<usize>,
@@ -706,7 +707,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -3654,9 +3655,11 @@ impl<'a> Builder<'a> {
     /// after it rebind the name, taking the gathered values backwards.
     fn decorate(&mut self) -> Res<Form> {
         let mut forms = Vec::new();
+        let mut first_site = None;
         let mut decorators = Vec::new();
         loop {
             let mark = self.advance().lexeme;
+            first_site.get_or_insert_with(|| tree_row(self.look().row.saturating_sub(self.before), self.look().column));
             if !self.adornment_head_ok() {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
             }
@@ -3696,6 +3699,7 @@ impl<'a> Builder<'a> {
             let shared = self.skip_reference();
             named = self.need_word("after the function keyword")?;
             self.giving_cells.push(shared);
+            self.first_adornment = TREE_SITES.with(|sites| if sites.borrow().is_empty() { None } else { first_site });
             let definition = self.func(named.clone(), true);
             self.giving_cells.pop();
             forms.push(definition?);
@@ -4701,9 +4705,11 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             return Ok(false);
         }
+        let mut first_site = None;
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
             self.advance();
+            first_site.get_or_insert_with(|| tree_row(self.look().row.saturating_sub(self.before), self.look().column));
             if !self.adornment_head_ok() { return Err(table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()); }
             let expression=self.expr_at(0,false)?;let address=self.gensym("member_wrapper");
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
@@ -4712,6 +4718,7 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).spelling()) { self.advance(); self.coroutine_next = true; }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
+            self.first_adornment = TREE_SITES.with(|sites| if sites.borrow().is_empty() { None } else { first_site });
             self.advance();
             let method_name = self.need_word("as the method name")?;
             let title = self.original_words[self.pos - 1].lexeme.clone();
@@ -5162,8 +5169,10 @@ impl<'a> Builder<'a> {
     /// is taken as a parent; the others are read without being run.
     fn member_adornments(&mut self, setup: &mut Vec<Form>) -> Res<(String, Address)> {
         let mut waiting = Vec::new();
+        let mut first_site = None;
         while self.on_any("ext.stmt.decorator") {
             self.advance();
+            first_site.get_or_insert_with(|| tree_row(self.look().row.saturating_sub(self.before), self.look().column));
             let mut manner = 'd';
             // With the descriptor protocol in the table, every decorator
             // is an expression applied to the member, the three wrapping
@@ -5211,6 +5220,7 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             word = self.need_word("as the method name")?;
+            self.first_adornment = TREE_SITES.with(|sites| if sites.borrow().is_empty() { None } else { first_site });
             let (routine, spares) = self.method(&word)?;
             let resume = self.pos;
             let mut default_values = Vec::new();
@@ -5892,7 +5902,7 @@ impl<'a> Builder<'a> {
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
-        self.declared_at = tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column);
+        self.declared_at = self.first_adornment.take().unwrap_or_else(|| tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column));
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let explicit = table.flag("ext.stmt.class.this.explicit");
@@ -7661,7 +7671,7 @@ impl<'a> Builder<'a> {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
         }
         let table = self.table;
-        self.declared_at = tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column);
+        self.declared_at = self.first_adornment.take().unwrap_or_else(|| tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column));
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
@@ -7934,7 +7944,7 @@ impl<'a> Builder<'a> {
     /// nowhere to say which of them it wants.
     fn short_func(&mut self) -> Res<Form> {
         let table = self.table;
-        self.declared_at = tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column);
+        self.declared_at = self.first_adornment.take().unwrap_or_else(|| tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column));
         if table.flag("ext.syntax.call.bind_names") {
             let (params, spares, _, _) = self.parameters(ANONYMOUS, true)?;
             let manners = self.taking.take();
