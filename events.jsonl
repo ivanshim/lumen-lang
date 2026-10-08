@@ -8020,3 +8020,19 @@
 {"t":"2026-10-07T23:54:50Z","event":"checkin","status":"done","actions":"released held dsflash-type-aliases resume to queue (DS Flash 11/12); removed _int21d/target 5.2 GB (integrated, idle) - box disk 93%->89%; prune-merged 0 MB; luna FINDINGS appended","notes":"no pending verdicts; PR 539 (batch21d) CI pending, merge watcher running; box load 5.9, 12.6 GB available; Mac disk 82%; Sol 12/12 full, sol-resume stdlib-warnings + dsflash-shelve-dbm-sol queued; luna meter gap -0.8 ok; Claude week 4%"}
 {"t":"2026-10-07T23:55:37Z","event":"exited","job":"review-auto-dsflash-descrtut-2351","code":0}
 {"t":"2026-10-07T23:58:00Z","event":"resumed","job":"dsflash-type-aliases","model":"deepseek-flash","session":"ses_ee8fee25bffe3Mny5KuB13xGHH"}
+{"t":"2026-10-08T00:09:28Z","event":"exited","job":"dsflash-gettext","code":0}
+{"t":"2026-10-08T00:10:23Z","event":"exited","job":"dsflash-yieldfrom-sol","code":0}
+{"t":"2026-10-08T00:11:03Z","event":"resumed","job":"stdlib-warnings","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T00:11:47Z","event":"finished","job":"dsflash-gettext","exit_time":"2026-10-08T00:09:28Z"}
+{"t":"2026-10-08T00:11:47Z","event":"review-queued","job":"dsflash-gettext","review":"review-auto-dsflash-gettext-0011"}
+{"t":"2026-10-08T00:11:50Z","event":"finished","job":"dsflash-yieldfrom-sol","exit_time":"2026-10-08T00:10:23Z"}
+{"t":"2026-10-08T00:11:50Z","event":"review-queued","job":"dsflash-yieldfrom-sol","review":"review-auto-dsflash-yieldfrom-sol-0011"}
+{"t":"2026-10-08T00:11:54Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T00:13:45Z","event":"integrity","job":"dsflash-descrtut","review":"review-auto-dsflash-descrtut-2351","commit":"34d750336","model":"deepseek-v4.1-flash","round":1,"note":"test-path special case: doctest.py _reference_module recognises /tests/python/test_ and substitutes test.<file> for exception __module__; descrtut 8/8 both kernels, copy faithful; coverage re-certify (calendar/io timeouts) -> returns + held-resumes (DS Flash full)"}
+{"t":"2026-10-08T00:14:41Z","event":"quota","codex_week_used":49,"codex_credits":0,"claude_week_used":4,"claude_5h_used":6,"kimi_5h_used":0,"kimi_month_used":0.9424,"kimi_code_used":0,"deepseek_usd":318.86}
+{"t":"2026-10-08T00:14:46Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":49,"expected":49.6,"gap":-0.6,"status":"ok"}
+{"t":"2026-10-08T00:14:57Z","event":"checkin","status":"done","actions":"integrity dsflash-descrtut (1st, doctest test-path module spoof) -> returns + held-resumes; released dsflash-ucn to queue (DS Flash 12/12); prune-merged freed 0","notes":"box disk 89% (Mac 82%), no idle accepted target/ to clear; PR #539 (21d) CI in progress, watcher running; json-speed recert2 build had failed 20:55Z, worker resumed on its return; luna ok gap -0.6"}
+{"t":"2026-10-08T00:16:04Z","event":"review-started","job":"dsflash-gettext","review":"review-auto-dsflash-gettext-0011"}
+{"t":"2026-10-08T00:18:23Z","event":"exited","job":"review-auto-dsflash-gettext-0011","code":0}
+{"t":"2026-10-08T00:21:06Z","event":"review-started","job":"dsflash-yieldfrom-sol","review":"review-auto-dsflash-yieldfrom-sol-0011"}
+{"t":"2026-10-08T00:24:08Z","event":"exited","job":"review-auto-dsflash-yieldfrom-sol-0011","code":0}
