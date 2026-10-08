@@ -372,7 +372,9 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     if action == 11 {
         let supplied = input.get(1).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
-        let codes = supplied.type_text().character_numbers().ok_or_else(|| {
+        let plain = supplied.type_text();
+        if matches!(&plain, Value::Text(text) if text.is_ascii()) { return Ok(plain); }
+        let codes = plain.character_numbers().ok_or_else(|| {
             let kind = match supplied.settled() { Value::Nil => "None".to_string(), other => other.kind_word() };
             format!("TypeError: normalize() argument 2 must be str, not {kind}")
         })?;
@@ -512,3 +514,25 @@ fn character_category(number: u32) -> &'static str {
 
 fn alphabetic(n: u32) -> bool { matches!(character_category(n), "Lu" | "Ll" | "Lt" | "Lm" | "Lo") }
 fn white(n: u32) -> bool { matches!(n, 28..=31) || char::from_u32(n).is_some_and(char::is_whitespace) }
+
+// Return the database mapping for one Unicode character, including surrogate halves.
+pub fn decompose(args: &[Value]) -> Result<Value, String> {
+    let [source] = args else { return Err(format!("TypeError: decomposition() takes exactly one argument ({} given)", args.len())); };
+    let invalid = || {
+        let kind = match source.settled() { Value::Nil => "None".to_owned(), other => other.kind_word() };
+        format!("TypeError: decomposition() argument must be a unicode character, not {kind}")
+    };
+    let point = match source.type_text() {
+        Value::Text(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(point), None) => point as u32,
+                _ => return Err(invalid()),
+            }
+        }
+        Value::Unpaired(points) if points.len() == 1 => points[0],
+        Value::Unpaired(_) => return Err(invalid()),
+        _ => return Err(invalid()),
+    };
+    Ok(Value::text(&crate::unicode::decomposition(point)))
+}

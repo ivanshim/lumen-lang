@@ -129,6 +129,8 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
         };
         if place < initial || used.contains(&place) { return Err(fault(lang, "arguments")); }
         used.push(place);
+        // An errors-only encoder call leaves encoding at its UTF-8 default.
+        if op == TextOp::Encode && args.len() == 1 && place == 2 { args.push(Value::text("utf-8")); }
         while args.len() <= place { args.push(Value::Null); }
         args[place] = value;
     }

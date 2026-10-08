@@ -3722,9 +3722,10 @@ pub fn collated(text: &str) -> String {
 }
 
 /// The decomposition UnicodeData.txt writes for a code point, tag and
-/// all. A Hangul syllable is not listed: it comes apart by the same
-/// arithmetic UAX #15 names, and every other unlisted point is empty.
+/// all. Unlisted points, including Hangul syllables, have no database mapping.
 pub fn decomposition(point: u32) -> String {
+    // ASCII has no Unicode decomposition; do not initialize the database.
+    if point < 128 { return String::new(); }
     use std::collections::BTreeMap;
     use std::sync::OnceLock;
     static WRITTEN: OnceLock<BTreeMap<u32, String>> = OnceLock::new();
@@ -3737,11 +3738,5 @@ pub fn decomposition(point: u32) -> String {
         }
         table
     });
-    let syllable = point.wrapping_sub(0xAC00);
-    if syllable < 19 * 21 * 28 {
-        let tail = syllable % 28;
-        let head = format!("{:04X} {:04X}", 0x1100 + syllable / (21 * 28), 0x1161 + syllable % (21 * 28) / 28);
-        return if tail == 0 { head } else { format!("{head} {:04X}", 0x11A7 + tail) };
-    }
     written.get(&point).cloned().unwrap_or_default()
 }

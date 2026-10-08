@@ -6,7 +6,31 @@ use crate::data::Value;
 
 thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
-    static RESERVE: RefCell<Vec<Rc<Vec<Value>>>> = const { RefCell::new(Vec::new()) };
+    static RESERVE: RefCell<TupleReserve> = const { RefCell::new(TupleReserve { allocations: Vec::new(), retained_bytes: 0 }) };
+}
+
+// Budget accounting belongs to the pool, not to each released tuple.
+struct TupleReserve { allocations: Vec<Rc<Vec<Value>>>, retained_bytes: usize }
+impl TupleReserve {
+    fn acquire(&mut self, needed: usize) -> Option<Rc<Vec<Value>>> {
+        let mut best = None;
+        let mut capacity = usize::MAX;
+        let mut cursor = self.allocations.len();
+        while cursor > 0 {
+            cursor -= 1;
+            let available = self.allocations[cursor].capacity();
+            if available < needed || available >= capacity { continue; }
+            capacity = available;
+            best = Some(cursor);
+            if available == needed { break; }
+        }
+        best.map(|at| {
+            let row = self.allocations.swap_remove(at);
+            self.retained_bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
+            row
+        })
+    }
+    fn clear(&mut self) { self.allocations.clear(); self.retained_bytes = 0; }
 }
 
 #[derive(Debug, Clone)]
@@ -37,9 +61,7 @@ impl Sequence {
         let available = if tuple {
             RESERVE.with(|reserve| {
                 let mut reserve = reserve.borrow_mut();
-                let capacity = reserve.iter().map(|row| row.capacity()).filter(|size| *size >= values.len()).min();
-                capacity.and_then(|size| reserve.iter().rposition(|row| row.capacity() == size))
-                    .map(|position| reserve.swap_remove(position))
+                reserve.acquire(values.len())
             })
         } else { None };
         let row = match available {
@@ -62,9 +84,9 @@ impl Drop for Sequence {
         let cost = values.capacity().saturating_mul(std::mem::size_of::<Value>());
         let _ = RESERVE.try_with(|reserve| {
             let mut reserve = reserve.borrow_mut();
-            let occupied: usize = reserve.iter().map(|entry| entry.capacity().saturating_mul(std::mem::size_of::<Value>())).sum();
-            if reserve.len() < 256 && cost <= (1024usize * 1024).saturating_sub(occupied) {
-                reserve.push(self.row.clone());
+            if reserve.allocations.len() < 256 && cost <= (1024usize * 1024).saturating_sub(reserve.retained_bytes) {
+                reserve.retained_bytes += cost;
+                reserve.allocations.push(self.row.clone());
             }
         });
     }

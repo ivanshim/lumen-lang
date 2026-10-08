@@ -8,7 +8,29 @@ const LIMIT: usize = 1024 * 1024;
 const SLOTS: usize = 256;
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
-    static FREE: RefCell<Vec<Rc<Vec<Value>>>> = const { RefCell::new(Vec::new()) };
+    static FREE: RefCell<Released> = const { RefCell::new(Released { rows: Vec::new(), bytes: 0 }) };
+}
+
+// Budget accounting belongs to the pool, not to each released tuple.
+struct Released { rows: Vec<Rc<Vec<Value>>>, bytes: usize }
+impl Released {
+    fn take(&mut self, needed: usize) -> Option<Rc<Vec<Value>>> {
+        let mut best = None;
+        let mut capacity = usize::MAX;
+        for (at, row) in self.rows.iter().enumerate().rev() {
+            let size = row.capacity();
+            if size >= needed && size < capacity {
+                best = Some(at); capacity = size;
+                if size == needed { break; }
+            }
+        }
+        best.map(|at| {
+            let row = self.rows.swap_remove(at);
+            self.bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
+            row
+        })
+    }
+    fn clear(&mut self) { self.rows.clear(); self.bytes = 0; }
 }
 
 /// An ordinary Rc for arrays, or the final-owner release boundary for tuples.
@@ -41,9 +63,7 @@ impl Items {
         let stored = if recycle {
             FREE.with(|free| {
                 let mut free = free.borrow_mut();
-                let at = free.iter().enumerate().rev().filter(|(_, row)| row.capacity() >= parts.len())
-                    .min_by_key(|(_, row)| row.capacity()).map(|(at, _)| at);
-                at.map(|at| free.swap_remove(at))
+                free.take(parts.len())
             })
         } else { None };
         let storage = if let Some(mut storage) = stored {
@@ -64,9 +84,9 @@ impl Drop for Items {
         let bytes = parts.capacity().saturating_mul(std::mem::size_of::<Value>());
         let _ = FREE.try_with(|free| {
             let mut free = free.borrow_mut();
-            let retained = free.iter().map(|row| row.capacity().saturating_mul(std::mem::size_of::<Value>())).sum::<usize>();
-            if free.len() < SLOTS && bytes <= LIMIT.saturating_sub(retained) {
-                free.push(self.storage.clone());
+            if free.rows.len() < SLOTS && bytes <= LIMIT.saturating_sub(free.bytes) {
+                free.bytes += bytes;
+                free.rows.push(self.storage.clone());
             }
         });
     }

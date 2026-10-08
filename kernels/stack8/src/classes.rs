@@ -1496,6 +1496,9 @@ impl<'a> Engine<'a> {
             Value::Bond(cell) => { let held = cell.borrow().clone(); self.class_apply(held, args) },
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             Value::Native(operation, name) => {
+                if operation == Builtin::UnicodeDecomposition && args.iter().all(|arg| !matches!(arg, Value::Tie(_))) {
+                    return Ok(crate::sre::decompose(&args)?);
+                }
                 let items = self.call_items_named(&name, args)?;
                 let answer = self.builtin_call(operation, &name, items);
                 if let Some(raised) = self.carried.take() { return Err(raised); }
@@ -3283,6 +3286,18 @@ impl<'a> Engine<'a> {
             if let Some(owner) = owner { return Ok(Value::ValueMethod(Rc::new((owner, String::from("float_getformat"))))); }
         }
         if let Value::Native(op, word) = &subject {
+            if *op == Builtin::UnicodeDecomposition {
+                let detail = &self.lang.decomposition_callable;
+                if [self.class_word("name"), self.class_word("qualified")].contains(&name) {
+                    if let Some(title) = detail.first() { return Ok(Value::text(title)); }
+                }
+                if name == self.class_word("module") {
+                    if let Some(home) = detail.get(1) { return Ok(Value::text(home)); }
+                }
+                if self.lang.class_special.get(79).is_some_and(|label| label == name) {
+                    if let Some(title) = detail.first() { return Ok(Self::adapter(132, vec![Value::text(title)])); }
+                }
+            }
             if !Self::kind_builtin(op) && !self.class_word("name").is_empty() {
                 if let Some((family, method)) = word.rsplit_once('.') {
                     if let Some(owner) = self.spelled_kind(family) {
@@ -4142,7 +4157,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("globals") {
                     if let Some(globe)=&f.globe { return Ok(globe.clone()); }
                 }
-                if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.constructor_book(f).unwrap_or_else(|| self.outer_book_made()))); }
+                if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.outer_book_made())); }
                 // The builtins a routine reads its unbound names from.
                 if self.lang.module_builtins.iter().any(|word| word == name) {
                     return self.routine_builtins(f);
@@ -4602,7 +4617,6 @@ impl<'a> Engine<'a> {
         fresh
     }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        self.constructor_indices.borrow_mut().clear();
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
         let class = self.root_class();
         self.made += 1;

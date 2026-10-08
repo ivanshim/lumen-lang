@@ -63,7 +63,7 @@ impl<'a> Machine<'a> {
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
         if matches!(self.table.prims.get(word), Some(Prim::Uniques | Prim::Unchanging | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Backwards)) {
-            if let Some(method) = self.table.strings("ext.stmt.class.special").get(79) {
+            if let Some(method) = self.rules.specials.get(79) {
                 protocols.push((method.to_owned(), Self::wrap(136, vec![Value::text(word)])));
             }
         }
@@ -1598,6 +1598,9 @@ impl<'a> Machine<'a> {
             Value::Intrinsic(Prim::ClassWork(op), _) if !self.rules.words_ext_stmt_class_builder.is_empty() => self.work_on_class(op, values),
             Value::Intrinsic(Prim::SortOf, _) if !self.rules.words_ext_stmt_class_builder.is_empty() => self.class_from_type(values),
             Value::Intrinsic(operation, name) => {
+                if operation == Prim::UnicodeDecomposition && values.iter().all(|arg| !matches!(arg, Value::Couple(_))) {
+                    return Ok(crate::sre::decompose(&values)?);
+                }
                 let (mut input, keywords) = self.arguments_for_native(&name, values)?;
                 if let Some(answer) = self.builtin_names(operation, &name, &mut input, keywords)? { return Ok(answer); }
                 let result = self.prim(operation, &name, &input);
@@ -3488,17 +3491,9 @@ impl<'a> Machine<'a> {
         fresh
     }
     pub(super) fn routine_storage(&mut self, code: &Value) -> usize {
-        self.constructor_records.borrow_mut().clear();
         match self.routine_members.iter().position(|(candidate, _)| candidate.revive().is_some_and(|key| key.equals(code))) {
             Some(found) => found,
             None => {
-                // A new namespace can change only this routine's lookup.
-                // Keep unrelated negative records: clearing them all makes
-                // ordinary calls rescan every function after each definition.
-                // The collector still clears the cache when it moves records.
-                if let Value::Routine(body) | Value::Bound(body, _) = code {
-                    self.constructor_records.borrow_mut().remove(&(Rc::as_ptr(body) as usize));
-                }
                 let of = self.common_ancestor(); self.made += 1;
                 let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
@@ -3736,7 +3731,7 @@ impl<'a> Machine<'a> {
 
         if let Value::Wrapped(134, kept) = &value {
             if key == self.detail("module") { return self.read_class_member(kept[1].clone(), key, direct); }
-            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|word| word == key) { return Ok(Self::wrap(135, vec![kept[0].clone()])); }
+            if self.rules.specials.get(79).is_some_and(|word| word == key) { return Ok(Self::wrap(135, vec![kept[0].clone()])); }
         }
         match &value {
             Value::Wrapped(133|134,parts) if matches!(key,"__doc__"|"__qualname__"|"__name__")=>{
@@ -3865,7 +3860,7 @@ impl<'a> Machine<'a> {
         }
         let raw_descriptor = matches!(&value, Value::Wrapped(4 | 5, _)) || matches!(&value, Value::Wrapped(60, parts) if parts.len() == 3);
         if raw_descriptor {
-            if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == key).filter(|slot| [79, 81].contains(slot)) {
+            if let Some(slot) = self.rules.specials.iter().position(|word| word == key).filter(|slot| [79, 81].contains(slot)) {
                 let operation = if slot == 79 { "descriptor_reduce" } else { "descriptor_reduce_ex" };
                 return Ok(Value::Member(Rc::new(value.clone()), operation.to_owned()));
             }
@@ -3908,7 +3903,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::text(&format!("{}.{}", defining, word)));
             }
             if key == self.detail("module") { return Ok(Value::Nil); }
-            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+            if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                 let restore = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
                 return Ok(Self::wrap(135, vec![Value::tuple(vec![restore, Value::tuple(vec![receiver, Value::text(&word)])])]));
             }
@@ -3931,7 +3926,7 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Wrapped(60, description) = &value {
-            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+            if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                 let class = self.kind_by_word(&description[0].bare()).ok_or_else(|| self.class_unready())?;
                 let restore = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
                 let arguments = Value::tuple(vec![class, description[1].clone()]);
@@ -3943,6 +3938,19 @@ impl<'a> Machine<'a> {
         }
         match &value {
             Value::Intrinsic(working, spelling) if !working.names_a_kind() && !self.detail("name").is_empty() => {
+                if *working == Prim::UnicodeDecomposition {
+                    let detail = self.table.strings("ext.builtin.unicodedata.decomposition.metadata");
+                    if [self.detail("name"), self.detail("qualified")].contains(&key) {
+                        if let Some(title) = detail.first() { return Ok(Value::text(title)); }
+                    }
+                    if key == self.detail("module") {
+                        if let Some(home) = detail.get(1) { return Ok(Value::text(home)); }
+                    }
+                    if self.rules.specials.get(79).is_some_and(|label| label == key) {
+                        if let Some(title) = detail.first() { return Ok(Self::wrap(135, vec![Value::text(title)])); }
+                    }
+                }
+
                 if let Some((owner_word, member)) = spelling.rsplit_once('.') {
                     if let Some(kind) = self.kind_by_word(owner_word) {
                         let bound_to_type = ["fromkeys", "fromhex", "from_bytes", "from_number", "__getformat__"].contains(&member);
@@ -3950,7 +3958,7 @@ impl<'a> Machine<'a> {
                         if key == self.detail("receiver") && (bound_to_type || unbound_static) { return Ok(if bound_to_type { kind.clone() } else { Value::Nil }); }
                         if key == "__objclass__" && !(bound_to_type || unbound_static) { return Ok(kind.clone()); }
                         if key == self.detail("module") && (bound_to_type || unbound_static) { return Ok(Value::Nil); }
-                        if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                        if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                             let lookup = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
                             let pair = Value::tuple(vec![lookup, Value::tuple(vec![kind, Value::text(member)])]);
                             return Ok(Self::wrap(135, vec![pair]));
@@ -3960,7 +3968,7 @@ impl<'a> Machine<'a> {
                 if key == self.detail("qualified") { return Ok(Value::text(spelling)); }
                 if key == self.detail("name") { return Ok(Value::text(spelling.rsplit('.').next().unwrap_or(spelling))); }
                 if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
-                if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
+                if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                     return Ok(Self::wrap(135, vec![Value::text(spelling)]));
                 }
             }
@@ -4611,7 +4619,7 @@ impl<'a> Machine<'a> {
                 }
             }
             if Self::underlying(&value).is_some_and(|base| matches!(base.settled(), Value::Set(_))) {
-                if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == key).filter(|slot| *slot == 79 || *slot == 81) {
+                if let Some(slot) = self.rules.specials.iter().position(|word| word == key).filter(|slot| *slot == 79 || *slot == 81) {
                     let method = if slot == 79 { "set_reduce" } else { "set_reduce_ex" };
                     return Ok(Value::Member(Rc::new(value.clone()), method.to_owned()));
                 }
@@ -4739,7 +4747,7 @@ impl<'a> Machine<'a> {
                 // handed; one the program wrote answers the outermost
                 // dictionary of the run it was written in.
                 if let Some(globe)=&code.globe { return Ok(globe.clone()); }
-                if code.written_in.is_none(){return Ok(Value::Shared(self.constructor_world(&code).unwrap_or_else(||self.book_about(true))));}
+                if code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
             }
             // The builtins a routine reaches its unbound names through.
             if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key) {
