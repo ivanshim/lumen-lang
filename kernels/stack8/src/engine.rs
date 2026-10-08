@@ -6187,14 +6187,11 @@ impl<'a> Engine<'a> {
             return Some(Value::Null);
         }
         if index != 12 { return None; }
-        let held = object.fields.borrow().iter().find(|(name, _)| name == "\0locals_proxy").map(|(_, value)| value.clone());
-        if let Some(proxy) = held {
-            if let Value::Object(instance) = &proxy { self.locals_rebuild(instance); }
-            return Some(proxy);
-        }
-        let value = self.locals_make(object);
-        object.fields.borrow_mut().push(("\0locals_proxy".to_string(), value.clone()));
-        Some(value)
+        // A fresh proxy for every read, as the reference makes one: a
+        // proxy holds its frame, and a frame holding its proxy back
+        // would be a round nothing could ever break, keeping the frame
+        // and every local in it alive for the rest of the run.
+        Some(self.locals_make(object))
     }
 
     fn refresh_frame(&mut self, object: &Rc<Instance>) {
