@@ -536,6 +536,7 @@ struct ExecutionRules<'a> {
     lone_system_real_render: Option<&'a str>,
     specials: &'a [String],
     trace_words: &'a [String],
+    builtin_namespace_words: &'a [String],
 }
 
 pub struct Machine<'a> {
@@ -2016,6 +2017,7 @@ impl<'a> Machine<'a> {
                 lone_system_real_render: table.lone("system.real.render"),
                 specials: table.strings("ext.stmt.class.special"),
                 trace_words: table.strings("ext.builtin.exceptions.traceback"),
+                builtin_namespace_words: table.strings("ext.system.module.builtins"),
             },
             fault_kinds,
             library_sources: HashMap::new(),
@@ -12443,14 +12445,20 @@ impl<'a> Machine<'a> {
     }
 
     fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
-        // Where every place is an ordinary one, none of the worths given
-        // carries a name or a scattering, and there are exactly as many
-        // of them as there are places, the row given is already the row
-        // wanted; the sorting below would only build it again.
-        if manners.len() == values.len()
-            && manners.iter().all(|how| matches!(how, 'b' | 'p'))
-            && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset)) {
-            return Ok(values);
+        // Plain positional arguments already occupy their final slots. Missing
+        // optional positions retain the frame's live defaults, including named-
+        // only defaults. Named, spread, variadic and erroneous calls still sort.
+        if values.len() <= manners.len()
+            && manners.iter().all(|how| matches!(how, 'b' | 'p' | 'n'))
+            && manners[..values.len()].iter().all(|how| matches!(how, 'b' | 'p'))
+            && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset))
+            && (values.len()..manners.len()).all(|at| {
+                let slot = program.formal_slots[at];
+                program.carried.contains(&slot) || program.local_defaults.contains(&slot)
+            }) {
+            let mut fitted = values;
+            fitted.resize(manners.len(), Value::Unset);
+            return Ok(fitted);
         }
         let (positional, named) = self.open_arguments(values)?;
         let mut fitted = vec![Value::Unset; manners.len()];
@@ -12823,6 +12831,16 @@ impl<'a> Machine<'a> {
     }
 
     fn invoke_body(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        // Internal branch arms already use the caller frame and take no arguments.
+        // Their bodies are omitted from exposed code constants and cannot be
+        // rewritten. Other functions' rewrites do not disable this shortcut.
+        // Keep normal drive checkpoints without building a temporary callable.
+        if program.frameless && !program.generator && program.taking.is_none()
+            && program.formals.is_empty() && program.least == 0 && program.gather_from.is_none()
+            && args.is_empty() {
+            if self.reads_handed { self.pending.clear(); }
+            return self.drive(program, env);
+        }
         let callable = Value::Bound(program.clone(), env.clone());
         let (program, env) = self.as_now_written(program, env);
         let titles = if program.generator {
@@ -15319,31 +15337,51 @@ impl<'a> Machine<'a> {
         Self::carries_instance_past(value, false)
     }
 
+    /// Leaves can be classified by borrowing them. Containers and cells need
+    /// the cycle-aware walk; none of their members are retained here.
+    fn immediate_instance(value: &Value, into_sets: bool) -> Option<bool> {
+        match value {
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => Some(true),
+            Value::Blueprint(plan) => Some(Self::builder_over(plan).is_some()),
+            Value::Shared(_) | Value::Mutable(..) | Value::Row(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) => None,
+            Value::Set(_) if into_sets => None,
+            _ => Some(false),
+        }
+    }
+
     /// Walk cells once without following a deep row through the call stack.
     /// A nested list can still hold a custom object whose repr must run.
     fn carries_instance_past(value: &Value, into_sets: bool) -> bool {
+        if let Some(answer) = Self::immediate_instance(value, into_sets) { return answer; }
         let mut passed = std::collections::HashSet::new();
         let mut pending = vec![value.clone()];
         while let Some(value) = pending.pop() {
-            match value {
-                Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => return true,
-                Value::Blueprint(plan) if Self::builder_over(&plan).is_some() => return true,
-                Value::Shared(cell) | Value::Mutable(cell, _) => {
-                    if passed.insert(Rc::as_ptr(&cell) as usize) {
-                        pending.push(cell.borrow().clone());
-                    }
+            if let Some(answer) = Self::immediate_instance(&value, into_sets) {
+                if answer { return true; }
+                continue;
+            }
+            let mut remember = |part: &Value| -> bool {
+                match Self::immediate_instance(part, into_sets) {
+                    Some(answer) => answer,
+                    None => { pending.push(part.clone()); false },
                 }
-                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => pending.extend(items.iter().cloned()),
+            };
+            match value {
+                Value::Shared(cell) | Value::Mutable(cell, _) => {
+                    if passed.insert(Rc::as_ptr(&cell) as usize) && remember(&cell.borrow()) { return true; }
+                }
+                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => {
+                    if items.iter().any(&mut remember) { return true; }
+                }
                 Value::Dict(items) => {
                     for (key, held) in items.iter() {
-                        pending.push(key.clone());
-                        pending.push(held.clone());
+                        if remember(key) || remember(held) { return true; }
                     }
                 }
                 Value::Set(store) if into_sets => {
                     if passed.insert(Rc::as_ptr(&store) as *const () as usize) {
                         if let Ok(held) = store.try_borrow() {
-                            pending.extend(held.entries.iter().map(|(_, item)| item.clone()));
+                            if held.entries.iter().any(|(_, item)| remember(item)) { return true; }
                         }
                     }
                 }
@@ -26360,20 +26398,32 @@ fn spells_key(key: &Value, name: &str) -> bool {
 
 /// The value a dictionary in a cell keeps under a name.
 fn looked_up(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
+    looked_up_slot(book, name, None)
+}
+
+/// Read through a namespace's structural index when the compiler gave a slot.
+fn looked_up_slot(book: &Rc<RefCell<Value>>, name: &str, slot: Option<usize>) -> Option<Value> {
     if let Value::Attributes(space) = &*book.borrow() {
         return space.holds.borrow().iter().find(|(word, _)| word == name).map(|(_, kept)| kept.clone());
     }
     let Value::Dict(entries) = &*book.borrow() else { return None };
-    let position = entries.namespace_position(name).unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
+    let indexed = match slot { Some(at) => entries.namespace_slot_position(at, name), None => entries.namespace_position(name) };
+    let position = indexed.unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
     position.map(|at| entries[at].1.clone())
 }
 
 /// Set a value down under a name in such a dictionary; given nothing,
 /// strike the name out.
 fn set_down(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>) {
+    set_down_slot(book, name, worth, None);
+}
+
+/// Locate a compiled namespace store without retaining the value it replaces.
+fn set_down_slot(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>, slot: Option<usize>) {
     let Value::Dict(entries) = &mut *book.borrow_mut() else { return };
     let entries = Rc::make_mut(entries);
-    let place = entries.namespace_position(name).unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
+    let indexed = match slot { Some(at) => entries.namespace_slot_position(at, name), None => entries.namespace_position(name) };
+    let place = indexed.unwrap_or_else(|()| entries.iter().position(|(key, _)| spells_key(key, name)));
     match (place, worth) {
         (Some(place), Some(worth)) => entries.overwrite_namespace(place, worth),
         (Some(place), None) => { entries.remove(place); }
@@ -26443,7 +26493,7 @@ impl<'a> Machine<'a> {
         match self.book_holding(at)? {
             Held::Namespace(index) => {
                 if !Self::visible_name(name) { return None; }
-                let found = looked_up(&self.namespace_books[index].1, name);
+                let found = looked_up_slot(&self.namespace_books[index].1, name, Some(at));
                 if let Some(found) = found {
                     if let Value::Shared(place) = &found {
                         let world = self.outermost.cells.borrow();
@@ -26463,7 +26513,7 @@ impl<'a> Machine<'a> {
             }
             Held::World => {
                 let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up(book, name) {
+                if let Some(worth) = looked_up_slot(book, name, Some(at)) {
                     if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
                 }
@@ -26541,8 +26591,8 @@ impl<'a> Machine<'a> {
     /// Write a slot's name into the dictionary it lives in, or strike it out.
     fn booked_write(&mut self, at: usize, name: &str, worth: Option<Value>) {
         match self.book_holding(at) {
-            Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down(&self.namespace_books[index].1, name, worth) },
-            Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },
+            Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down_slot(&self.namespace_books[index].1, name, worth, Some(at)) },
+            Some(Held::World) => if let Some(book) = &self.world_book { set_down_slot(book, name, worth, Some(at)) },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];
                 let goes_to = match &book.outer {
@@ -26566,7 +26616,7 @@ impl<'a> Machine<'a> {
 
     /// Whether this word is the name the definition gives the builtins.
     fn names_the_builtins(&self, word: &str) -> bool {
-        self.table.strings("ext.system.module.builtins").iter().any(|given| given == word)
+        self.rules.builtin_namespace_words.iter().any(|given| given == word)
     }
 
     /// Whether a value read from a book is the kernel's own dictionary

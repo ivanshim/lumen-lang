@@ -59,6 +59,40 @@ impl Ghost {
     }
 }
 
+// Record addresses without retaining targets. RefCell-backed values report
+// their inner address from Drop; ordinary Rc values report the allocation.
+fn callback_places(dim: &Dim, places: &mut HashSet<usize>) {
+    places.insert(dim.bearer.as_ptr() as usize);
+    match &dim.ghost {
+        Ghost::Thing(w) => { places.insert(w.as_ptr() as usize); }
+        Ghost::Blueprint(w) => { places.insert(w.as_ptr() as usize); }
+        Ghost::Routine(w) => { places.insert(w.as_ptr() as usize); }
+        Ghost::Bound(p, e) => { places.insert(p.as_ptr() as usize); places.insert(e.as_ptr() as usize); }
+        Ghost::Method(p, t, mark) => {
+            places.extend([p.as_ptr() as usize, t.as_ptr() as usize, mark.as_ptr() as usize]);
+        }
+        Ghost::Walk(w) => { if let Some(target) = w.upgrade() { places.insert(target.as_ptr() as usize); } }
+        Ghost::Set(w) => { if let Some(target) = w.upgrade() { places.insert(target.as_ptr() as usize); } }
+        Ghost::Cell(_) | Ghost::StaticKind(_) | Ghost::WrappedMethod(_) | Ghost::Lasting(_) => {}
+    }
+}
+
+fn refresh_callback_places(listeners: &[Rc<Dim>]) {
+    let _ = CALLBACK_PLACES.try_with(|indexed| {
+        let mut indexed = indexed.borrow_mut();
+        indexed.clear();
+        for listener in listeners { callback_places(listener, &mut indexed); }
+    });
+}
+
+/// Queue callback inspection only for a watched target or its weakref owner.
+pub fn target_departing(address: usize) {
+    if LISTENING.try_with(Cell::get).unwrap_or(0) == 0 { return; }
+    if CALLBACK_PLACES.try_with(|places| places.borrow().contains(&address)).unwrap_or(false) {
+        anything_departing();
+    }
+}
+
 /// A weak hold as the program carries it: what it is on, the program's
 /// own reference object bearing it, and what to call with that object
 /// once the thing has gone.
@@ -88,6 +122,8 @@ thread_local! {
     // Every reason to look at the weak holds at a step, in one cell:
     // a step asks once and stands down where none is set.
     static GHOST_STATE: Cell<u8> = const { Cell::new(0) };
+
+    static CALLBACK_PLACES: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
@@ -158,6 +194,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             }
             false
         });
+        refresh_callback_places(&listeners);
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
         ghost_set(G_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
         notices.into_iter().rev().collect()

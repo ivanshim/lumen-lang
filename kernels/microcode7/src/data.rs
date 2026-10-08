@@ -439,6 +439,7 @@ pub struct MapStore {
     pub entry_budget: (usize, usize, bool),
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     spellings: RefCell<Option<Result<std::collections::HashMap<Rc<str>, usize>, ()>>>,
+    namespace_slots: RefCell<Vec<Option<(Rc<str>, usize)>>>,
 }
 
 impl MapStore {
@@ -472,6 +473,22 @@ impl MapStore {
         }
     }
 
+    /// Reuse a compiled slot's row while keys retain their spelling and order.
+    /// Cache positions only; every read still observes the current value.
+    pub fn namespace_slot_position(&self, slot: usize, name: &str) -> Result<Option<usize>, ()> {
+        if let Some(Some((word, at))) = self.namespace_slots.borrow().get(slot) {
+            if word.as_ref() == name { return Ok(Some(*at)); }
+        }
+        let found = self.namespace_position(name)?;
+        if let Some(at) = found {
+            let mut slots = self.namespace_slots.borrow_mut();
+            if slots.len() <= slot { slots.resize(slot + 1, None); }
+            slots[slot] = Some((Rc::from(name), at));
+        }
+        Ok(found)
+    }
+
+    /// Replace a value while retaining its unchanged namespace key positions.
     pub fn overwrite_namespace(&mut self, at: usize, value: Value) {
         self.serial = dictionary_turn();
         self.place.get_mut().take();
@@ -644,7 +661,7 @@ impl MapStore {
     /// the clear-history the map already had.
     pub fn kept(pairs: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64, entry_budget: (usize, usize, bool)) -> Self {
         assert_eq!(pairs.len(), slots.len());
-        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None), namespace_slots: RefCell::new(Vec::new()) }
     }
 
     /// Empty the pairs and mark the map's places as begun again: the
@@ -682,7 +699,7 @@ impl From<Vec<(Value, Value)>> for MapStore {
         let mut table_size = if span == 0 { 1 } else { 8 };
         while table_size * 2 / 3 < span { table_size *= 2; }
         let entry_budget = (table_size, table_size * 2 / 3 - span, pairs.iter().all(|entry| Self::string_key(&entry.0)));
-        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None), namespace_slots: RefCell::new(Vec::new()) }
     }
 }
 
@@ -698,7 +715,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, place: RefCell::new(None), spellings: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, place: RefCell::new(None), spellings: RefCell::new(None), namespace_slots: RefCell::new(Vec::new()) }
     }
 }
 
@@ -712,6 +729,7 @@ impl std::ops::DerefMut for MapStore {
         self.serial = dictionary_turn();
         *self.place.borrow_mut() = None;
         self.spellings.get_mut().take();
+        self.namespace_slots.get_mut().clear();
         &mut self.pairs
     }
 }
