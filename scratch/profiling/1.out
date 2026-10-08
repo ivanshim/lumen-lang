@@ -1,0 +1,37 @@
+direct_good ('ok', 5)
+[('call', '__iter__'), ('return', '__iter__'), ('c_call', 'max'), ('c_return', 'max')]
+alias_good ('ok', 5)
+[('call', '__iter__'), ('return', '__iter__'), ('c_call', 'max'), ('c_return', 'max')]
+method_good ('ok', None)
+[('c_call', 'extend'), ('call', '__iter__'), ('return', '__iter__'), ('c_return', 'extend')]
+method_spread ('error', 'TypeError')
+[('call', '__iter__'), ('return', '__iter__'), ('c_call', 'append'), ('c_exception', 'append')]
+method_one ('ok', None)
+[('call', '__iter__'), ('return', '__iter__'), ('c_call', 'append'), ('c_return', 'append')]
+alias_method_one ('ok', None)
+[('call', '__iter__'), ('return', '__iter__'), ('c_call', 'append'), ('c_return', 'append')]
+direct_bad ('error', 'ValueError')
+[('call', '__iter__'), ('return', '__iter__')]
+alias_bad ('error', 'ValueError')
+[('call', '__iter__'), ('return', '__iter__')]
+method_bad ('error', 'ValueError')
+[('call', '__iter__'), ('return', '__iter__')]
+tail_good ('ok', 5)
+[('call', '__iter__'), ('return', '__iter__'), ('c_call', 'max'), ('c_return', 'max')]
+tail_bad ('error', 'ValueError')
+[('call', '__iter__'), ('return', '__iter__')]
+kw_good ('ok', 7)
+[('call', 'keywords'), ('return', 'keywords'), ('c_call', 'max'), ('c_return', 'max')]
+kw_alias ('ok', 7)
+[('call', 'keywords'), ('return', 'keywords'), ('c_call', 'max'), ('c_return', 'max')]
+kw_bad ('error', 'ValueError')
+[('call', 'bad_keywords'), ('return', 'bad_keywords')]
+kw_duplicate ('error', 'TypeError')
+[]
+method_kw_duplicate ('error', 'TypeError')
+[]
+kw_nonmapping ('error', 'TypeError')
+[]
+__iter__ 1 [('run', 1)]
+run 1 []
+<built-in method builtins.max> 1 [('run', 1)]

@@ -6054,7 +6054,8 @@ impl<'a> Machine<'a> {
     fn call_told(&mut self, stands: Value, target: &Form, args: &[Form], frame: &Rc<Env>) -> Res {
         // The arguments are worked out first, once and in order, so that
         // what they call is not taken for part of the builtin.
-        let given: Vec<Form> = self.value_list(args, frame)?.into_iter().map(Form::Const).collect();
+        let values = self.value_list(args, frame)?;
+        let given = self.native_arguments(values)?;
         let standing = self.active_trace.clone();
         self.natives_told.set(true);
         let answer = match self.tell_watcher("c_call", &standing, stands.clone()) {
@@ -7036,7 +7037,7 @@ impl<'a> Machine<'a> {
                     (Prim::ValueMethod, Some(receiver)) => Value::Member(Rc::new(receiver.clone()), name.to_string()),
                     _ => Value::Intrinsic(*op, name.clone()),
                 };
-                let forms: Vec<Form> = values.into_iter().map(Form::Const).collect();
+                let forms = self.native_arguments(values)?;
                 let standing = self.active_trace.clone();
                 self.natives_told.set(true);
                 let answer = match self.tell_watcher("c_call", &standing, callable.clone()) {
@@ -8087,6 +8088,20 @@ impl<'a> Machine<'a> {
         let (mut given, keywords) = self.open_arguments(values)?;
         given.extend(keywords.into_iter().map(|(word, value)| Value::Couple(Rc::new((Value::text(&word), value)))));
         Ok(given)
+    }
+
+    /// Open spreads before builtin events; retain only ordinary keyword markers.
+    fn native_arguments(&mut self, values: Vec<Value>) -> Res<Vec<Form>> {
+        let (positions, names) = self.open_arguments(values)?;
+        let mut used = std::collections::HashSet::new();
+        let mut ready: Vec<Form> = positions.into_iter().map(Form::Const).collect();
+        for (key, value) in names {
+            if !used.insert(key.clone()) {
+                return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into());
+            }
+            ready.push(Form::Const(Value::Couple(Rc::new((Value::text(&key), value)))));
+        }
+        Ok(ready)
     }
 
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {

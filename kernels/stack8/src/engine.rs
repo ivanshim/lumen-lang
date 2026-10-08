@@ -11120,6 +11120,7 @@ impl<'a> Engine<'a> {
                         let mut positional = Vec::new();
                         let mut named = Vec::new();
                         for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
+                        self.call_site.set(true);
                         let result = self.value_method(&method.0, &method.1, positional, named);
                         if let Some(fled) = self.carried.take() { return Err(fled); }
                         self.data.push(result?);
@@ -11129,6 +11130,7 @@ impl<'a> Engine<'a> {
                         let args = self.drop_many(argc - 1)?;
                         let items = self.call_items(args)?;
                         let word = self.byte_kind_word(mutable).to_string();
+                        self.call_site.set(true);
                         let answer = self.builtin_call(Builtin::Bytes(u8::from(mutable)), &word, items)?;
                         self.data.push(answer);
                         Ok(())
@@ -11136,6 +11138,7 @@ impl<'a> Engine<'a> {
                     Value::Native(b, word) => {
                         let args = self.drop_many(argc - 1)?;
                         let items = self.call_items_named(&word, args)?;
+                        self.call_site.set(true);
                         let answer = self.builtin_call(b, &word, items);
                         // A builtin reached as a value runs the same
                         // work as one named where it is called, and
@@ -11168,6 +11171,7 @@ impl<'a> Engine<'a> {
                         let mut args = self.drop_many(argc - 1)?;
                         if op != crate::strings::TextOp::Maketrans { args.insert(0, Value::Text(subject)); }
                         let opened = self.call_items(args)?;
+                        self.call_site.set(true);
                         let answer = self.builtin_call(Builtin::Text(op), &called, opened)?;
                         self.data.push(answer);
                         Ok(())
@@ -13210,6 +13214,7 @@ impl<'a> Engine<'a> {
                 }
                 let result = if self.lang.bind_names {
                     let items = self.call_items_named(name, std::mem::take(&mut args))?;
+                    self.call_site.set(true);
                     self.builtin_call(*builtin, name, items)
                 } else { self.builtin(*builtin, name, &mut args) };
                 // What the builtin was given is let go now, not when the
@@ -16404,6 +16409,12 @@ impl<'a> Engine<'a> {
         if !self.call_site.replace(false) || self.profiler.borrow().is_none() || self.profiling.get() || self.native_open.get() {
             return self.builtin_call_inner(builtin, name, items);
         }
+        let mut keywords = std::collections::HashSet::new();
+        for (key, _) in &items {
+            if let Some(key) = key {
+                if !keywords.insert(key) { return Err(Self::named_fault(&self.lang.call_duplicate, key)); }
+            }
+        }
         let callable = Value::Native(builtin, Rc::from(name));
         self.around_native(callable, |this| this.builtin_call_inner(builtin, name, items))
     }
@@ -16694,6 +16705,11 @@ impl<'a> Engine<'a> {
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if !self.call_site.replace(false) || self.profiler.borrow().is_none() || self.profiling.get() || self.native_open.get() || operation.starts_with("__") {
             return self.value_method_inner(receiver, operation, args, named);
+        }
+        for (index, (key, _)) in named.iter().enumerate() {
+            if named[..index].iter().any(|(earlier, _)| earlier == key) {
+                return Err(Self::named_fault(&self.lang.call_duplicate, key));
+            }
         }
         let callable = Value::ValueMethod(Rc::new((receiver.clone(), operation.to_string())));
         self.around_native(callable, |this| this.value_method_inner(receiver, operation, args, named))
