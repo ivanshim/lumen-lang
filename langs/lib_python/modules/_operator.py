@@ -4,7 +4,30 @@
 __doc__ = 'Operator accelerator supplied by the Python runtime.'
 __all__ = ['index']
 
-def index(a):
+
+class _BuiltinOperator:
+    """Callable with the non-binding behavior of a C builtin.
+
+    CPython's _operator is a C module, so its functions carry no
+    ``__get__``: a plain assignment such as ``concat_path = operator.add``
+    stays a function instead of turning into a bound method.  A Python
+    ``def`` would bind ``self``, so this adapter hands ``Lib/operator.py``
+    instances of this class through its ``from _operator import *``.
+    """
+
+    def __init__(self, name, func):
+        self.__name__ = name
+        self.__doc__ = getattr(func, '__doc__', None)
+        self._func = func
+
+    def __call__(self, *args, **kwargs):
+        return self._func(*args, **kwargs)
+
+    def __repr__(self):
+        return '<built-in function ' + self.__name__ + '>'
+
+
+def _index(a):
     if isinstance(a, int):
         return int.__index__(a)
     method = getattr(type(a), '__index__', None)
@@ -21,6 +44,41 @@ def index(a):
         raise TypeError('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + ')')
     raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
 
+
+index = _BuiltinOperator('index', _index)
+
+
+def _replace_operator_functions():
+    """Give Lib/operator.py builtin-style functions instead of descriptors.
+
+    ``operator.py`` runs ``from _operator import *`` near its end, so this
+    adapter normally sees a module whose definitions already exist.  When
+    this adapter is loaded first, importing operator completes that module
+    and the replacements are written into it directly, aliases included.
+    """
+    import sys
+    module = sys.modules.get('operator')
+    if module is None:
+        import operator as module
+    replacements = {}
+    for name in list(getattr(module, '__all__', ())):
+        if name == 'index':
+            continue
+        value = getattr(module, name, None)
+        if value is None or isinstance(value, type) or not callable(value):
+            continue
+        replacements[id(value)] = _BuiltinOperator(name, value)
+    namespace = globals()
+    for wrapper in replacements.values():
+        namespace[wrapper.__name__] = wrapper
+        __all__.append(wrapper.__name__)
+    for name, member in list(module.__dict__.items()):
+        wrapper = replacements.get(id(member))
+        if wrapper is not None:
+            setattr(module, name, wrapper)
+
+
+_replace_operator_functions()
 
 
 _native_compare = __crypto
