@@ -4202,6 +4202,7 @@ impl<'a> Engine<'a> {
                 if name=="__objclass__" {
                     if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
                 }
+                if name==self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject.clone()])); }
             }
             Value::Adapter(w) if matches!(w.0, 3 | 131) => {
                 if w.0 == 3 && name == self.class_word("kind") { return self.class_type(vec![subject.clone()]); }

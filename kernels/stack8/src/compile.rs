@@ -1239,6 +1239,34 @@ impl<'a> Compiler<'a> {
         false
     }
 
+    /// A name the class body has bound at compile time is read from the
+    /// place the body keeps it, rather than from any reading beyond the
+    /// body. True where the name was such a member and the reading is
+    /// done -- used both where the live body namespace does not answer
+    /// and where no namespace stands before the body.
+    fn read_class_alias(&mut self, name: &str) -> bool {
+        let at = self.default_depth.unwrap_or(self.pieces.len());
+        let alias = self.class_names.last().filter(|(depth, _)| *depth == at).and_then(|(_, names)| names.get(name)).cloned();
+        let Some(alias) = alias else { return false; };
+        let slot = self.cell_to_read(&alias, false);
+        if self.lang.shadow_builtins && self.lang.builtins.contains_key(name)
+            && self.gathering().uncertain.iter().any(|word| word == name) {
+            match slot.near.first() {
+                Some(at) => { self.put(Instr::Missing(*at)); }
+                None => { self.put(Instr::Unwritten(slot.far)); }
+            }
+            let present = self.skip();
+            self.read_fallback(name);
+            let done = self.leap();
+            self.land(present);
+            self.put(Instr::Read(slot));
+            self.land(done);
+        } else {
+            self.put(Instr::Read(slot));
+        }
+        true
+    }
+
     fn read(&mut self, name: &str) {
         if let Some((owner, members)) = &self.annotation_namespace {
             if self.reading_annotation && members.contains(name) {
@@ -1272,27 +1300,7 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        let at = self.default_depth.unwrap_or(self.pieces.len());
-        let alias = self.class_names.last().filter(|(depth, _)| *depth == at).and_then(|(_, names)| names.get(name)).cloned();
-        if let Some(alias) = alias {
-            let slot = self.cell_to_read(&alias, false);
-            if self.lang.shadow_builtins && self.lang.builtins.contains_key(name)
-                && self.gathering().uncertain.iter().any(|word| word == name) {
-                match slot.near.first() {
-                    Some(at) => { self.put(Instr::Missing(*at)); }
-                    None => { self.put(Instr::Unwritten(slot.far)); }
-                }
-                let present = self.skip();
-                self.read_fallback(name);
-                let done = self.leap();
-                self.land(present);
-                self.put(Instr::Read(slot));
-                self.land(done);
-            } else {
-                self.put(Instr::Read(slot));
-            }
-            return;
-        }
+        if self.read_class_alias(name) { return; }
         // A name the class body has never bound at compile time may
         // still be one `locals()[k] = v` bound there while the body
         // ran, past what the body itself ever wrote: CPython looks
@@ -5845,7 +5853,10 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.class_words) {
             named = self.look_ahead(1).lexeme.clone();
             self.explicit_class()?;
-            self.read(&named);
+            // The member just made stands in the body's own place, not
+            // yet in its live namespace; read it from the place, then
+            // put the finished member there once.
+            if !self.read_class_alias(&named) { self.read(&named); }
         } else {
             if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
@@ -5882,6 +5893,7 @@ impl<'a> Compiler<'a> {
         let slot = self.gensym("decorated_member");
         self.write(&slot);
         self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
+        self.mirror_member(&named, &slot)?;
         Ok((named, slot))
     }
 
@@ -6196,7 +6208,7 @@ impl<'a> Compiler<'a> {
         } else if self.on_keyword(&lang.class_words) {
             let named = self.look_ahead(1).lexeme.clone();
             self.explicit_class()?;
-            self.read(&named);
+            if !self.read_class_alias(&named) { self.read(&named); }
             for place in decorators.into_iter().rev() { self.read(&place); self.act(Action::Invoke(Rc::from("")), 2); }
             let slot = self.member_place(&named, "nested");
             self.write(&slot);
@@ -6517,7 +6529,6 @@ impl<'a> Compiler<'a> {
         if self.in_class_body() {
             let private = self.gensym("class"); self.write(&private);
             self.class_names.last_mut().expect("enclosing class").1.insert(name.clone(), private.clone());
-            self.mirror_member(&name, &private)?;
         } else { self.write(&name); }
         Ok(unready)
     }

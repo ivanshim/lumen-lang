@@ -514,3 +514,5 @@ def gettrace():
 
 def settrace(trace):
     __trace_native__(1, trace)
+def getdefaultencoding():
+    return "utf-8"

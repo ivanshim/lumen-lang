@@ -23734,7 +23734,7 @@ impl Engine<'_> {
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(match args.first() { Some(value) => self.special_truth(value)?, None => false }) }
-            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
+            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..)) || matches!(&args[0], Value::Adapter(w) if matches!(w.0, 0..=4 | 8..=12 | 14 | 15 | 17..=27 | 29 | 30 | 40..=48 | 63 | 64 | 77..=80 | 131))) }
             Builtin::Repr => {
                 arity(1, 1)?;
                 // A whole number is quoted only where it holds no more

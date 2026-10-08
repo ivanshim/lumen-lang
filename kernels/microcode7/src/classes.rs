@@ -3900,6 +3900,7 @@ impl<'a> Machine<'a> {
                 if key=="__objclass__" {
                     if let Some(owner)=self.kind_by_word(kind) { return Ok(owner); }
                 }
+                if key==self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value.clone()])); }
             }
         }
         if let Some(member) = self.activation_member(&value, key) { return Ok(member); }

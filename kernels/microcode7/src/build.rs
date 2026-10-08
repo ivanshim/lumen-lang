@@ -1752,6 +1752,30 @@ impl<'a> Builder<'a> {
         self.address_to_read(name)
     }
 
+    /// A name the class body already keeps a place for is read from
+    /// that place, taken before any reading beyond the body. None where
+    /// the body has no such member; used where a live body namespace
+    /// does not answer, and where none stands before the body.
+    fn class_alias_read(&mut self, name: &str) -> Option<Form> {
+        let at = self.default_depth.unwrap_or(self.layers.len());
+        let slot = {
+            let (depth, names) = self.class_bindings.last()?;
+            if *depth != at { return None; }
+            names.get(name).cloned()?
+        };
+        // A place kept for the body's own depth is further off from
+        // anywhere deeper the name is read, by just how much deeper.
+        let slot = if at == self.layers.len() { slot } else { let mut moved = slot; moved.up += self.layers.len() - at; moved };
+        let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
+            && self.table.prims.contains_key(name)
+            && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
+        if conditional {
+            let fallback = self.read_fallback(name);
+            return Some(self.choose(Form::Missing(slot.clone()), fallback, Form::Read(slot)));
+        }
+        Some(Form::Read(slot))
+    }
+
     fn read(&mut self, name: &str) -> Form {
         if let Some((class, entries)) = &self.annotation_owner {
             if self.annotation_lookup && entries.iter().any(|entry| entry == name) {
@@ -1780,25 +1804,7 @@ impl<'a> Builder<'a> {
                 return sequence(vec![Form::Write(found, Box::new(read)), selected]);
             }
         }
-        let at = self.default_depth.unwrap_or(self.layers.len());
-        if let Some((depth, names)) = self.class_bindings.last() {
-            if *depth == at {
-                if let Some(slot) = names.get(name).cloned() {
-                    // A place kept for the body's own depth is further
-                    // off from anywhere deeper the name is read, by
-                    // just how much deeper that is.
-                    let slot = if at == self.layers.len() { slot } else { let mut moved = slot; moved.up += self.layers.len() - at; moved };
-                    let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
-                        && self.table.prims.contains_key(name)
-                        && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
-                    if conditional {
-                        let fallback = self.read_fallback(name);
-                        return self.choose(Form::Missing(slot.clone()), fallback, Form::Read(slot));
-                    }
-                    return Form::Read(slot);
-                }
-            }
-        }
+        if let Some(alias) = self.class_alias_read(name) { return alias; }
         // A name the class body has never bound at compile time may
         // still be one `locals()[k] = v` bound there while the body
         // ran, past what the body itself ever wrote: CPython looks
@@ -4747,7 +4753,7 @@ impl<'a> Builder<'a> {
             let value = if self.key("ext.stmt.class") {
                 let member = self.glance(1).lexeme.clone();
                 setup.push(self.class_with_receiver()?.0);
-                let mut nested = self.read(&member);
+                let mut nested = self.class_alias_read(&member).unwrap_or_else(|| self.read(&member));
                 while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
                 Some((member, nested))
             } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling()) {
@@ -5134,7 +5140,10 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.class") {
             word = self.glance(1).lexeme.clone();
             setup.push(self.class_with_receiver()?.0);
-            decorated = self.read(&word);
+            // The member just made stands in the body's own place, not
+            // yet in its live namespace; read it from the place, then
+            // put the finished member there once.
+            decorated = self.class_alias_read(&word).unwrap_or_else(|| self.read(&word));
         } else {
             if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
             if !self.key("stmt.function") {
@@ -5169,6 +5178,7 @@ impl<'a> Builder<'a> {
         let address = self.gensym("adorned_method");
         setup.push(Form::Write(address.clone(), Box::new(decorated)));
         self.class_bindings.last_mut().expect("the class namespace").1.insert(word.clone(), address.clone());
+        if let Some(mirror) = self.mirror_member(&word, &address) { setup.push(mirror); }
         Ok((word, address))
     }
 
@@ -5209,7 +5219,6 @@ impl<'a> Builder<'a> {
             let slot = self.gensym("inner_class");
             self.class_bindings.last_mut().expect("outer class").1.insert(named.clone(), slot.clone());
             setup.push(Form::Write(slot.clone(), Box::new(made)));
-            if let Some(mirror) = self.mirror_member(&named, &slot) { setup.push(mirror); }
         } else { setup.push(self.write(&named, made)); }
         Ok((sequence(setup), cannot))
     }
