@@ -2619,3 +2619,34 @@ test_pickletools 149/164 on both kernels by method groups (whole files exceed th
 174 → 176, test_posixpath 84 → 87, test_str 127 → 128, test_urlparse 73 → 74. The full check of the final commit
 agrees on 1195 scratch programs with no mismatch, passes every gate, and shows no regression or kernel disagreement;
 kernel independence reports no problem; provenance exact 540, adapter 20, no mismatch.
+
+### 1bh. Batch 21d merged as #539; batch 21e: syntax, reprlib, shlex, wave, enum, netrc, cmd, cookies, codeop
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, DeepSeek V4 Pro, Kimi K3 and GPT-6.1 Sol workers, several finished by GPT-6.1
+Sol after reviews.
+
+- fix/dsflash-syntax (SyntaxError cases), fix/dsflash-reprlib (reprlib; one Python-only formatter, the earlier
+  stream-name spoof kept removed), fix/dsflash-shlex (shlex), fix/dspro-wave (wave with CPython's audio tests and
+  fixtures), fix/dsflash-enum (enum), fix/dsflash-netrc (netrc and fileinput; the UTF-7 boundary fix),
+  fix/stdlib-cmd (cmd, native descriptor binding and receiver validation), fix/dspro-leftovers (forward dictionary
+  iteration; list, dict and exception corners), fix/dsflash-http-cookies (http.cookies, one copy and one
+  registration), fix/dsflash-datetime-speed (microcode7 weakref callback order; one ghost-state machine keeping both
+  behaviours), fix/dsflash-nturl2path (nturl2path), fix/kimi-codeop (codeop, _IncompleteInputError, code-content
+  hashing; the strict warnings_helper checks kept).
+
+One integration fix followed the merges: _io emits a real ResourceWarning for unclosed owned descriptors (four
+garbage-collection cases restored), and stack8 symbol reservation and both kernels' live dictionary positions were
+made cheaper. The batch keeps one canonical test.support subTests that awaits coroutine test methods;
+inspect.iscoroutinefunction unwraps partial and partialmethod; a failing async test and a failing async partial both
+fail on both kernels.
+
+Measured: 11260 (stack8) of 12451 and 11180 (microcode7) of 12361, over 147 files, from 10994 of 12200 and 10417 of
+11557 over 140. New files: test_wave 113/113, test_netrc 23/24, test_fileinput 56/57, test_cmd 4/5,
+test_http_cookies 32/33, test_nturl2path 4/6 (two skips), test_codeop 13/13. test_syntax 38 → 40, test_reprlib
+24 → 29, test_shlex 42 → 44, test_enum 1066 → 1069, test_dataclasses 244 → 246, test_list 65 → 66, test_dict
+111 → 112, test_exceptions 97 → 98 on both kernels; test_calendar stack8 72 → 76, microcode7 61 → 62; microcode7
+test_datetime now completes whole (499/553, 870 s timeout → 725 s) and test_statistics 364 → 365. The full check of
+the final commit agrees on 1195 scratch programs with no mismatch, passes every gate, and shows no regression, length
+change, broken progress line or kernel disagreement; kernel independence reports no problem. Still timing out in
+parts: decimal, bytes, tokenize, io and microcode7 calendar's CommandLineTestCase.
