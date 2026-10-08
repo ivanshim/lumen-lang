@@ -555,6 +555,7 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     into[at].1 = Value::Map(std::rc::Rc::new(inside.into()));
 }
 mod sre;
+mod multibyte;
 
 
 mod statistics;

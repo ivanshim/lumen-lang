@@ -1,7 +1,7 @@
 # Helpers that run a second interpreter. The host runs a file, so the
 # CPython-style arguments a test hands over (options, a `-c` with code,
 # a file) are turned into a file to run plus the program's own words;
-# options that mean nothing to this host are dropped, and `-c code` is
+# supported startup settings are preserved, other options are dropped, and `-c code` is
 # written to a scratch file first.
 
 import os
@@ -16,6 +16,7 @@ def _to_file_args(args):
     args = list(args)
     file = None
     rest = []
+    startup = []
     i = 0
     n = len(args)
     while i < n:
@@ -32,8 +33,12 @@ def _to_file_args(args):
             rest = args[i + 1:]
             break
         elif a in ('-X', '-W', '-Q') and i + 1 < n:
+            if a == '-X' and args[i + 1].split('=', 1)[0] == 'dev':
+                startup.extend((a, args[i + 1]))
             i += 2
         elif len(a) > 2 and a[:2] in ('-X', '-W', '-Q'):
+            if a[:2] == '-X' and a[2:].split('=', 1)[0] == 'dev':
+                startup.append(a)
             i += 1
         elif a in ('-E', '-I', '-s', '-S', '-u', '-B', '-d', '-v', '-q',
                    '-O', '-OO', '-P', '-R', '-t', '-tt', '-b', '-bb', '-i', '-x'):
@@ -42,6 +47,8 @@ def _to_file_args(args):
             file = a
             rest = args[i + 1:]
             break
+    if startup:
+        return startup[0], startup[1:] + [file] + rest
     return file, rest
 
 

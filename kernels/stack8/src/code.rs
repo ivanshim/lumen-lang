@@ -512,6 +512,7 @@ pub enum Builtin {
     CopyValue,
     Sre,
     UnicodeDecomposition,
+    Multibyte,
     ModuleLoad,
     MemberSet,
     MemberGet,

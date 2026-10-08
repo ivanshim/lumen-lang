@@ -66,6 +66,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let number = |i: usize| integer(&a[i]);
     let pathname = |i: usize| CString::new(raw(&a[i])?).map_err(|_| "ValueError: embedded null byte".to_owned());
     let output: Result<Value, i32> = unsafe { match op.as_ref() {
+        "locale_encoding" => Ok(bytes(CStr::from_ptr(libc::nl_langinfo(libc::CODESET)).to_bytes().to_vec())),
         "getpid" => Ok(Value::Small(libc::getpid() as i64)),
         "getuid" => Ok(Value::Small(libc::getuid() as i64)),
         "geteuid" => Ok(Value::Small(libc::geteuid() as i64)),
