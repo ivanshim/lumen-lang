@@ -11625,26 +11625,32 @@ impl<'a> Machine<'a> {
         opened
     }
     pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let (positions, names) = self.open_arguments_raw(values)?;
+        let mut named = Vec::new();
+        for (key, value) in names {
+            match key {
+                Value::Text(text) => named.push((text.to_string(), value)),
+                _ => return Err(String::from("TypeError: keywords must be strings").into()),
+            }
+        }
+        Ok((positions, named))
+    }
+    /// The same opening, keeping each named thing's key as it was given:
+    /// only a `**` mapping can bring a name that is no text, and the
+    /// reference holds such a name until every mapping is merged.
+    pub(super) fn open_arguments_raw(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
+                Value::Text(key) => names.push((Value::text(key), pair.1.clone())),
                 Value::Flag(true) => {
-                    let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
-                    let spread = match pair.1.settled() {
-                        Value::Dict(_) => pair.1.settled(),
-                        _ => Self::underlying(&pair.1).map(|under| under.settled()).unwrap_or_else(|| pair.1.settled()),
+                    let pairs = match self.mapping_pairs(&pair.1)? {
+                        Some(pairs) => pairs,
+                        None => return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None).into()),
                     };
-                    if let Value::Dict(entries) = spread {
-                        for (k, v) in entries.iter() {
-                            match k {
-                                Value::Text(text) => names.push((text.to_string(), v.clone())),
-                                _ => return Err(fault().into()),
-                            }
-                        }
-                    } else { return Err(fault().into()); }
+                    names.extend(pairs);
                 }
                 Value::Flag(false) => {
                     match &pair.1.settled() {
@@ -11701,11 +11707,25 @@ impl<'a> Machine<'a> {
     fn keyword_twice(&self, program: &Routine, key: &str) -> String {
         let words = self.table.strings("ext.syntax.call.amiss.keyword");
         if words.len() < 3 { return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)); }
-        let called = match (self.namespace_named(), self.routine_called(program)) {
+        // A routine the text was read with its own dictionary answers to
+        // the name that dictionary gave itself, exactly as its
+        // `__module__` does; only a routine the program wrote falls
+        // back on the namespace the running source belongs to.
+        let space = program.framed_in.as_ref().map(|named| named.to_string()).or_else(|| self.namespace_named());
+        let called = match (space, self.routine_called(program)) {
             (Some(space), title) if !title.is_empty() => space + "." + &title,
             (_, title) => title,
         };
         self.whole_complaint([words[0].as_str(), &called, &words[1], key, &words[2]].concat())
+    }
+
+    /// The name a keyword goes by in a complaint: its own text, or for a
+    /// key of another kind what the plain printer writes of it.
+    fn key_label(&self, key: &Value) -> String {
+        match key {
+            Value::Text(text) => text.to_string(),
+            other => self.told(other, self.wording()),
+        }
     }
 
     /// A complaint whose words already open with the kind of fault they
@@ -11823,7 +11843,7 @@ impl<'a> Machine<'a> {
             && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset)) {
             return Ok(values);
         }
-        let (positional, named) = self.open_arguments(values)?;
+        let (positional, named) = self.open_arguments_raw(values)?;
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
             .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
@@ -11844,12 +11864,28 @@ impl<'a> Machine<'a> {
         // that they read, weigh and compare as the language says.
         if let Some(slot) = gather { fitted[slot] = Value::tuple(remaining); }
         let keys: Vec<String> = match manners.contains(&'p') {
-            true => named.iter().map(|(key, _)| key.clone()).collect(),
+            true => named.iter().filter_map(|(key, _)| match key { Value::Text(text) => Some(text.to_string()), _ => None }).collect(),
             false => Vec::new(),
         };
         let mut spare_names = Vec::new();
-        let mut already = std::collections::HashSet::new();
+        // A name handed twice is spoken of before any name is put in a
+        // place, and before a name of another kind is refused: the
+        // reference merges every `**` mapping first and only then asks
+        // that every key be text.
+        {
+            let mut seen: Vec<&Value> = Vec::new();
+            for (key, _) in named.iter() {
+                for earlier in seen.iter() {
+                    if self.keys_agree(earlier, key)? {
+                        return Err(self.keyword_twice(program, &self.key_label(key)).into());
+                    }
+                }
+                seen.push(key);
+            }
+        }
         for (key, worth) in named {
+            let Value::Text(text) = &key else { return Err(String::from("TypeError: keywords must be strings").into()); };
+            let key = text.to_string();
             // A place given twice over, once in order and once by name,
             // is worded with the routine the call was meant for, under
             // the name it goes by where it was written.
@@ -11857,7 +11893,6 @@ impl<'a> Machine<'a> {
                 [opening, between, closing] => self.whole_complaint(opening.clone() + &self.routine_called(program) + between + &key + closing),
                 _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)),
             };
-            if !already.insert(key.clone()) { return Err(self.keyword_twice(program, &key).into()); }
             let found = program.formals.iter().enumerate()
                 .find(|(at, name)| **name == key && matches!(manners[*at], 'b' | 'n'));
             if let Some((at, _)) = found {
@@ -14185,7 +14220,10 @@ impl<'a> Machine<'a> {
     /// place with its value overwritten, and a new key is added last.
     fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
         let incoming = if expanded {
-            self.mapping_pairs(item)?
+            match self.mapping_pairs(item)? {
+                Some(pairs) => pairs,
+                None => return Err(self.mapping_amiss(item)),
+            }
         } else {
             match item.settled() {
                 Value::Couple(pair) => vec![pair.as_ref().clone()],
@@ -17223,30 +17261,30 @@ impl<'a> Machine<'a> {
     /// own pairs, or the keys another thing's `keys` member hands over,
     /// each read back by subscript. A thing answering to no such member
     /// is no mapping at all.
-    fn mapping_pairs(&mut self, source: &Value) -> Result<Vec<(Value, Value)>, String> {
+    fn mapping_pairs(&mut self, source: &Value) -> Result<Option<Vec<(Value, Value)>>, String> {
         let candidate = match source.settled() {
             Value::Dict(_) => source.settled(),
             _ => Self::underlying(source).map(|under| under.settled()).unwrap_or_else(|| source.settled()),
         };
         match candidate {
-            Value::Dict(entries) => Ok(entries.to_vec()),
-            Value::Attributes(owner) => Ok(self.attribute_entries(&owner)),
+            Value::Dict(entries) => Ok(Some(entries.to_vec())),
+            Value::Attributes(owner) => Ok(Some(self.attribute_entries(&owner))),
             value @ Value::Thing(_) => {
                 let reader = match self.read_class_member(value.clone(), "keys", false) {
                     Ok(method) => Some(method),
                     Err(escaped) if self.missing_member_escape(&escaped) => { self.sought_in_vain = None; None },
                     Err(escaped) => return Err(self.suspension_fault(escaped)),
                 };
-                let Some(reader) = reader else { return Err(self.mapping_amiss(&value)); };
+                let Some(reader) = reader else { return Ok(None); };
                 let keys = self.apply_class_member(reader, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
                 let mut pairs = Vec::new();
                 for key in self.gathered_members(&keys)? {
                     let item = self.prim(Prim::At, "", &[value.clone(), key.clone()])?;
                     pairs.push((key, item));
                 }
-                Ok(pairs)
+                Ok(Some(pairs))
             }
-            value => Err(self.mapping_amiss(&value)),
+            _ => Ok(None),
         }
     }
 
@@ -18947,7 +18985,10 @@ impl<'a> Machine<'a> {
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
                     let incoming = if expanded {
-                        self.mapping_pairs(&v[1])?
+                        match self.mapping_pairs(&v[1])? {
+                            Some(pairs) => pairs,
+                            None => return Err(self.mapping_amiss(&v[1])),
+                        }
                     } else {
                         match &v[1] {
                             Value::Couple(pair) => vec![pair.as_ref().clone()],

@@ -3386,11 +3386,27 @@ impl<'a> Engine<'a> {
         }
     }
     fn call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+        let raw = self.call_items_raw(args)?;
+        let mut items = Vec::new();
+        for (key, value) in raw {
+            match key {
+                Some(Value::Text(name)) => items.push((Some(name.to_string()), value)),
+                Some(_) => return Err("TypeError: keywords must be strings".into()),
+                None => items.push((None, value)),
+            }
+        }
+        Ok(items)
+    }
+
+    /// The same opening, keeping each named thing's key as it was given:
+    /// only a `**` mapping can bring a name that is no text, and the
+    /// reference holds such a name until every mapping is merged.
+    fn call_items_raw(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<Value>, Value)>> {
         let mut items = Vec::new();
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
-                    Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
+                    Value::Text(name) => items.push((Some(Value::text(name)), pair.1.clone())),
                     Value::Flag(false) => match &pair.1.contents() {
                         // Spreading a walk over the arguments asks it for
                         // every member it has, and that asking may run
@@ -3433,15 +3449,11 @@ impl<'a> Engine<'a> {
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
                     },
                     Value::Flag(true) => {
-                        let source = match pair.1.contents() {
-                            Value::Map(_) => pair.1.contents(),
-                            _ => Self::worth_of(&pair.1).map(|worth| worth.contents()).unwrap_or_else(|| pair.1.contents()),
+                        let pairs = match self.mapping_entries(&pair.1)? {
+                            Some(pairs) => pairs,
+                            None => return Err(self.lang.spread_pairs_amiss[0].clone().into()),
                         };
-                        let Value::Map(m) = source else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
-                        for (key, held) in m.iter() {
-                            let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
-                            items.push((Some(name.to_string()), held.clone()));
-                        }
+                        for (key, held) in pairs { items.push((Some(key), held)); }
                     }
                     _ => return Err(self.lang.call_amiss[0].clone().into()),
                 },
@@ -3501,6 +3513,15 @@ impl<'a> Engine<'a> {
             _ => qualified,
         };
         self.said_whole(format!("{}{}{}{}{}", words[0], called, words[1], name, words[2]))
+    }
+
+    /// The name a keyword goes by in a complaint: its own text, or for a
+    /// key of another kind what the plain printer writes of it.
+    fn key_label(&self, key: &Value) -> String {
+        match key {
+            Value::Text(text) => text.to_string(),
+            other => self.told(other, &self.wording()),
+        }
     }
 
     /// The words for a place filled twice over: once by an argument
@@ -3624,7 +3645,7 @@ impl<'a> Engine<'a> {
             && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank)) {
             return Ok(args);
         }
-        let items = self.call_items(args)?;
+        let items = self.call_items_raw(args)?;
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
         let rest = rules.iter().position(|r| *r == 3);
@@ -3641,14 +3662,30 @@ impl<'a> Engine<'a> {
         }
         // The names the call gave, kept only where some place may be
         // taken in order alone and a stray keyword must be told apart.
-        let spoken: Vec<String> = if rules.contains(&1) { items.iter().filter_map(|(name, _)| name.clone()).collect() } else { Vec::new() };
-        let mut keywords = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for (name, value) in items {
-            let Some(name) = name else { continue };
-            if !seen.insert(name.clone()) {
-                return Err(self.keyword_twice(program, &name).into());
+        let spoken: Vec<String> = if rules.contains(&1) {
+            items.iter().filter_map(|(name, _)| match name { Some(Value::Text(text)) => Some(text.to_string()), _ => None }).collect()
+        } else { Vec::new() };
+        // A name handed twice is spoken of before any name is put in a
+        // place, and before a name of another kind is refused: the
+        // reference merges every `**` mapping first and only then asks
+        // that every key be text.
+        {
+            let mut seen: Vec<&Value> = Vec::new();
+            for (name, _) in items.iter() {
+                let Some(key) = name else { continue };
+                for earlier in seen.iter() {
+                    if self.special_keys_equal(earlier, key)? {
+                        return Err(self.keyword_twice(program, &self.key_label(key)).into());
+                    }
+                }
+                seen.push(key);
             }
+        }
+        let mut keywords = Vec::new();
+        for (name, value) in items {
+            let Some(key) = name else { continue };
+            let Value::Text(text) = &key else { return Err("TypeError: keywords must be strings".into()); };
+            let name = text.to_string();
             let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
             match slot {
                 Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
@@ -11419,7 +11456,10 @@ impl<'a> Engine<'a> {
                         // A `**` item takes any mapping, by the same
                         // protocol the reference reads one, so a thing
                         // of the program's own is spread as well.
-                        self.mapping_entries(&next)?
+                        match self.mapping_entries(&next)? {
+                            Some(pairs) => pairs,
+                            None => return Err(self.mapping_amiss(&next).into()),
+                        }
                     } else {
                         match next.contents() {
                             Value::Tie(p) => vec![(p.0.clone(), p.1.clone())],
@@ -17570,9 +17610,12 @@ impl<'a> Engine<'a> {
     /// pairs, or the keys another thing's `keys` method hands over, each
     /// read back by subscript. A thing answering to no such method is no
     /// mapping, and is said of by its kind.
-    fn mapping_entries(&mut self, source: &Value) -> Res<Vec<(Value, Value)>> {
+    fn mapping_entries(&mut self, source: &Value) -> Res<Option<Vec<(Value, Value)>>> {
         let held = source.contents();
-        if let Value::Map(pairs) = &held { return Ok(pairs.to_vec()); }
+        if let Value::Map(pairs) = &held { return Ok(Some(pairs.to_vec())); }
+        if let Some(worth) = Self::worth_of(source).map(|worth| worth.contents()) {
+            if let Value::Map(pairs) = &worth { return Ok(Some(pairs.to_vec())); }
+        }
         if let Some(reader) = self.member_of(held.clone(), "keys")? {
             let window = self.call_held(reader, Vec::new())?;
             let mut entries = Vec::new();
@@ -17580,9 +17623,9 @@ impl<'a> Engine<'a> {
                 let value = self.special_dyad(&Action::At, &held, &key)?;
                 entries.push((key, value));
             }
-            return Ok(entries);
+            return Ok(Some(entries));
         }
-        Err(self.mapping_amiss(&held).into())
+        Ok(None)
     }
 
     /// The complaint a value that is no mapping draws: the label's two
