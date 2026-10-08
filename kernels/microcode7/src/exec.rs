@@ -25946,7 +25946,7 @@ impl<'a> Machine<'a> {
 
     /// The dictionary the program now running reads its world names
     /// through: the namespace it was built beside, where its maker    /// passed one in; failing that, the world's own standing one.
-    fn standing_world(&mut self) -> Rc<RefCell<Value>> {
+    pub(super) fn standing_world(&mut self) -> Rc<RefCell<Value>> {
         let made_beside = self.frames_named.last().and_then(|program| program.globe.clone());
         match made_beside {
             Some(Value::Shared(cell)) | Some(Value::Mutable(cell, _)) => cell,
@@ -26331,7 +26331,7 @@ impl<'a> Machine<'a> {
     /// its blueprint does not. A key neither carries answers with
     /// nothing, as a plain dictionary answers a key it has not;
     /// anything else the reading raises goes uncaught.
-    fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
+    pub(super) fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
         match held {
             Value::Mutable(cell, _) | Value::Shared(cell) => { let value = cell.borrow().clone(); self.mapping_read(&value, name) },
             Value::Dict(entries) => Ok(entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, v)| v.clone())),

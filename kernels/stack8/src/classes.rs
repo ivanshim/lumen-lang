@@ -1812,7 +1812,7 @@ impl<'a> Engine<'a> {
                 }
                 46 if args.len() == 5 => {
                     let class = self.kind_class(&args[1].plain());
-                    let parameter = self.typing_instance(class, vec![args[0].clone()])?;
+                    let parameter = self.typing_instance(class, vec![args[0].clone()], true)?;
                     let Value::Object(instance) = &parameter else { unreachable!() };
                     let mut fields = instance.fields.borrow_mut();
                     if !matches!(args[2], Value::Null) {
@@ -2257,7 +2257,7 @@ impl<'a> Engine<'a> {
         let result = module.fields.borrow().iter().find(|(key, _)| key == "NoDefault").expect("type default sentinel").1.clone();
         result
     }
-    fn typing_instance(&mut self, class: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+    fn typing_instance(&mut self, class: Rc<Class>, args: Vec<Value>, syntax_parameter: bool) -> Flow<Value> {
         let mut positional = Vec::new();
         let mut keywords = Vec::new();
         for (key, value) in self.call_items(args)? {
@@ -2272,10 +2272,12 @@ impl<'a> Engine<'a> {
         let Some(Value::Text(name)) = positional.first().map(Value::contents) else {
             return Err("TypeError: name must be a str".into());
         };
-        let caller = self.trace_frame.as_ref().and_then(|frame| frame.fields.borrow().iter().find_map(|(key, value)|
-            if key == "\0routine" { if let Value::Routine(code) = value { Some(code.clone()) } else { None } } else { None }));
-        let module = caller.as_ref().map(|code| self.routine_module(code).plain()).or_else(|| self.module_named()).unwrap_or_else(|| "__main__".into());
-        let mut fields: Vec<(String, Value)> = vec![("__name__".into(), Value::Text(name.clone())), ("__module__".into(), Value::text(&module)),
+        let module = if syntax_parameter { Value::text("typing") } else {
+            let globals = Value::Bond(self.running_outer());
+            let module_key = self.lang.module_names.first().cloned().unwrap_or_default();
+            self.dyn_lookup(&globals, &module_key)?.unwrap_or(Value::Null)
+        };
+        let mut fields: Vec<(String, Value)> = vec![("__name__".into(), Value::Text(name.clone())), ("__module__".into(), module),
             ("\0typing_repr".into(), Value::Text(name))];
         if class.name == "TypeAliasType" {
             if positional.len() != 2 { return Err("TypeError: TypeAliasType requires a name and a value".into()); }
@@ -2323,7 +2325,7 @@ impl<'a> Engine<'a> {
     fn lazy_type_alias(&mut self, evaluator: Value) -> Flow<Value> {
         let Value::Routine(routine) = evaluator.contents() else { return Err(self.class_refusal()); };
         let class = self.kind_class("TypeAliasType");
-        let mut alias = self.typing_instance(class, vec![Value::text(&routine.ident), Value::Null])?;
+        let mut alias = self.typing_instance(class, vec![Value::text(&routine.ident), Value::Null], false)?;
         if let Value::Object(instance) = &mut alias {
             let mut fields = instance.fields.borrow_mut();
             fields.retain(|(key, _)| key != "__value__");
@@ -2335,7 +2337,7 @@ impl<'a> Engine<'a> {
         self.validate_class_spreads(&c, &args)?;
         if self.lang.fuller_classes && Self::super_descended(&c) { return self.super_made(c, args); }
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
-            return self.typing_instance(c, args);
+            return self.typing_instance(c, args, false);
         }
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());

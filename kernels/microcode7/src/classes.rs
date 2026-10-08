@@ -1747,7 +1747,7 @@ impl<'a> Machine<'a> {
                     }
                     46 if values.len() == 5 => {
                         let kind = self.native_kind(&values[1].bare());
-                        let parameter = self.make_type_parameter(kind, vec![values[0].clone()])?;
+                        let parameter = self.make_type_parameter(kind, vec![values[0].clone()], true)?;
                         if let Value::Thing(object) = &parameter {
                             let mut attributes = object.holds.borrow_mut();
                             if !matches!(values[2], Value::Nil) {
@@ -2377,7 +2377,7 @@ impl<'a> Machine<'a> {
             _ => unreachable!(),
         }
     }
-    fn make_type_parameter(&mut self, kind: Rc<Blueprint>, input: Vec<Value>) -> Res {
+    fn make_type_parameter(&mut self, kind: Rc<Blueprint>, input: Vec<Value>, syntax_parameter: bool) -> Res {
         let (values, options) = self.open_arguments(input)?;
         if kind.name == "NoDefaultType" {
             if !values.is_empty() || !options.is_empty() { return Err(String::from("TypeError: NoDefaultType takes no arguments").into()); }
@@ -2389,12 +2389,13 @@ impl<'a> Machine<'a> {
             Some(Value::Text(title)) => title,
             _ => return Err(String::from("TypeError: name must be a str").into()),
         };
-        let origin = match self.frames_named.last() {
-            Some(frame) => self.routine_module(frame).bare(),
-            None => self.namespace_named().unwrap_or_else(|| String::from("__main__")),
+        let origin = if syntax_parameter { Value::text("typing") } else {
+            let global_names = Value::Shared(self.standing_world());
+            let module_name = self.table.single("ext.system.module.name").unwrap_or_default().to_owned();
+            self.mapping_read(&global_names, &module_name)?.unwrap_or(Value::Nil)
         };
         let mut attributes = vec![(String::from("__name__"), Value::Text(title.clone())),
-            (String::from("__module__"), Value::text(&origin)), (String::from("\0type-display"), Value::Text(title))];
+            (String::from("__module__"), origin), (String::from("\0type-display"), Value::Text(title))];
         if kind.name == "TypeAliasType" {
             if values.len() != 2 { return Err(String::from("TypeError: TypeAliasType requires a name and a value").into()); }
             attributes.extend([(String::from("__type_params__"), Value::tuple(Vec::new())),
@@ -2450,7 +2451,7 @@ impl<'a> Machine<'a> {
             _ => return Err(self.class_unready()),
         };
         let kind = self.native_kind("TypeAliasType");
-        let alias = self.make_type_parameter(kind, vec![Value::text(&code.ident), Value::Nil])?;
+        let alias = self.make_type_parameter(kind, vec![Value::text(&code.ident), Value::Nil], false)?;
         if let Value::Thing(instance) = &alias {
             let mut attributes = instance.holds.borrow_mut();
             attributes.retain(|entry| entry.0 != "__value__");
@@ -2461,7 +2462,7 @@ impl<'a> Machine<'a> {
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         if self.has_class_order() && Self::parent_kind_descended(&class) { return self.parent_constructed(class, given); }
         if Self::native_word(&class).is_some() && matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
-            return self.make_type_parameter(class, given);
+            return self.make_type_parameter(class, given, false);
         }
 
         if Self::native_word(&class).as_deref() == Some("function") && !self.rules.trace_words.is_empty() {

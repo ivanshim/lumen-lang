@@ -25610,7 +25610,7 @@ impl Engine<'_> {
     /// behind the frame at the top answers for it, since a builtin
     /// called through a name rather than spelled out still stands
     /// inside the call it was made in.
-    fn running_outer(&mut self) -> Rc<RefCell<Value>> {
+    pub(super) fn running_outer(&mut self) -> Rc<RefCell<Value>> {
         let stands = self.trace_frame.as_ref().and_then(|frame| {
             frame.fields.borrow().iter().find(|(name, _)| name == "\0routine").and_then(|(_, held)| match held {
                 Value::Routine(code) => Some(code.clone()),
