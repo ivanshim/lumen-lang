@@ -7039,7 +7039,8 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if self.spread_override(name, *op).is_some() => {
+            Form::Apply(Callee::Prim(op, name), args) if self.has_wildcard_imports()
+                && self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
             }
@@ -28672,9 +28673,9 @@ impl Machine<'_> {
             let message = &self.table.strings("ext.builtin.core.dict.changed")[0];
             return Err(format!("\0{message}"));
         }
-        let positions = entries.slots_synced();
-        let candidate = positions.iter().enumerate().find(|(_, slot)| **slot >= *offset);
-        let Some((index, entry_position)) = candidate else { return Ok(None) };
+        assert_eq!(entries.len(), entries.slots.len(), "dictionary rows lost their positions");
+        let index = entries.slots.partition_point(|slot| *slot < *offset);
+        let Some(entry_position) = entries.slots.get(index) else { return Ok(None) };
         if balance.1 == 0 {
             *offset = usize::MAX;
             let complaint = &self.table.strings("ext.builtin.core.dict.changed")[1];

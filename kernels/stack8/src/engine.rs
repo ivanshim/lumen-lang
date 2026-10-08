@@ -11982,8 +11982,7 @@ impl<'a> Engine<'a> {
                         let destination = self.module_slots.get(&self.source).and_then(|(base, path)| self.modules.get(path).cloned().map(|module| (*base, module)));
                         let at = if let Some((base, Value::Object(target))) = &destination {
                             let prefix = format!("\0module:{base}:");
-                            let suffix = format!(":{name}");
-                            self.registry.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix))
+                            self.registry.wildcard_slot(*base, &name)
                                 .unwrap_or_else(|| self.registry.slot(&format!("{prefix}{}:{name}", target.class.name)))
                         } else { self.registry.slot(&name) };
                         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -23546,7 +23545,8 @@ impl Engine<'_> {
             counts.0 = usize::MAX;
             return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][0]));
         }
-        let slots = pairs.slots_synced();
+        assert_eq!(pairs.slots.len(), pairs.len(), "map positions must follow every row mutation");
+        let slots = &pairs.slots;
         let row = slots.partition_point(|slot| *slot < *place);
         let Some(&key_slot) = slots.get(row) else { return Ok(None) };
         if counts.1 == 0 {
@@ -24796,9 +24796,8 @@ impl Engine<'_> {
         if self.lang.module_path.is_none() {
             if let Some((above, _)) = parent { self.import_module(above)?; }
         }
-        let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
-        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        let mut local = crate::compile::Registry::with_outside_slots(offset);
         let filename = own_file.as_deref().unwrap_or(path);
         let tokens = match self.text_tokens(&source, 0) {
             Ok(tokens) => tokens,
@@ -27427,8 +27426,7 @@ impl Engine<'_> {
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         let offset = self.registry.idents.len();
-        let mut local = crate::compile::Registry::default();
-        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        let mut local = crate::compile::Registry::with_outside_slots(offset);
         // A dynamic namespace can bind any builtin spelling, including
         // after this code is compiled. Use the name lookup path for each.
         local.program_bound.extend(self.lang.builtins.keys().cloned());

@@ -44,6 +44,7 @@ thread_local! {
 pub struct Registry {
     index: HashMap<String, usize>,
     module_index: HashMap<String, HashMap<String, usize>>,
+    wildcard_index: HashMap<usize, (usize, HashMap<String, usize>)>,
     pub idents: Vec<String>,
     /// Whether the next reading is of one expression alone, as text
     /// handed over to be weighed is: nothing may follow it. The mark is
@@ -124,6 +125,22 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// A fresh imported or dynamic scope reserves the world's existing addresses.
+    /// These placeholder names are unique, so no lookup is needed before insertion.
+    pub fn with_outside_slots(count: usize) -> Self {
+        let mut registry = Self {
+            index: HashMap::with_capacity(count),
+            idents: Vec::with_capacity(count),
+            ..Self::default()
+        };
+        for at in 0..count {
+            let name = format!("\0outside:{at}");
+            registry.index.insert(name.clone(), at);
+            registry.idents.push(name);
+        }
+        registry
+    }
+
     pub fn slot(&mut self, name: &str) -> usize {
         if let Some(&slot) = self.index.get(name) {
             return slot;
@@ -143,6 +160,26 @@ impl Registry {
     /// for every member each time eval or exec is called.
     pub fn module_slot(&self, path: &str, member: &str) -> Option<usize> {
         self.module_index.get(path)?.get(member).copied()
+    }
+
+    /// Wildcard imports use the first matching symbol in their module scope.
+    /// Index a scope once, then inspect only symbols appended since its last import.
+    pub fn wildcard_slot(&mut self, base: usize, name: &str) -> Option<usize> {
+        let prefix = format!("\0module:{base}:");
+        if name.contains(':') {
+            let suffix = format!(":{name}");
+            return self.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix));
+        }
+        let (scanned, members) = self.wildcard_index.entry(base).or_default();
+        for (at, word) in self.idents.iter().enumerate().skip(*scanned) {
+            if word.starts_with(&prefix) {
+                if let Some((_, member)) = word.rsplit_once(':') {
+                    members.entry(member.to_owned()).or_insert(at);
+                }
+            }
+        }
+        *scanned = self.idents.len();
+        members.get(name).copied()
     }
 }
 
@@ -464,12 +501,19 @@ pub fn compile_within(
 ) -> Res<Rc<Routine>> {
     table.stopped_end = 0;
     table.stopped_end_row = 0;
+    // Compiling a module introduces many symbols. Reserve once rather than
+    // rehashing all earlier symbols as this source is read, bounded for large literals.
+    let symbol_capacity = tokens.len().min(65_536);
+    table.index.reserve(symbol_capacity);
+    table.idents.reserve(symbol_capacity);
     let future_bits = std::mem::take(&mut table.future_bits);
     let mut plans = HashMap::new();
     let wants_value = std::mem::take(&mut table.value_only);
     let interactive = std::mem::take(&mut table.interactive);
     if lang.closes_over {
         let mut survey = Registry::default();
+        survey.index.reserve(symbol_capacity);
+        survey.idents.reserve(symbol_capacity);
         survey.allow_top_level_await = table.allow_top_level_await;
         survey.future_bits = future_bits;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
