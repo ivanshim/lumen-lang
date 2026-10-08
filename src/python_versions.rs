@@ -62,11 +62,6 @@ impl PythonVersion {
         serde_json::to_string(&data).map_err(|e| e.to_string())
     }
 
-    /// The directory holding this release's reference test files.
-    pub fn tests_dir(&self) -> &'static str {
-        self.tests
-    }
-
     pub fn module_source(&self, name: &str, source: &str) -> String {
         // The shared sources remain the 3.14 library. Identity follows the pin,
         // including when a later version supplies its own source overlay.
@@ -80,7 +75,6 @@ impl PythonVersion {
                 let components = self.tests.split('/').map(|part| format!("{part:?}")).collect::<Vec<_>>().join(", ");
                 source.replace("'tests', 'python'", &components)
             }
-            "doctest" => source.replace("/tests/python/test_", &format!("/{}/test_", self.tests)),
             "platform" => format!("{source}\ndef python_version():\n    return '{}'\n", self.release),
             _ => source.to_string(),
         }

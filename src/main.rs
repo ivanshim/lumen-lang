@@ -188,18 +188,6 @@ struct Invocation {
     module_name: Option<String>,
 }
 
-/// The package name a reference-suite test file stands under: a file
-/// written directly in the suite's tests directory is a top-level module
-/// of the `test` package, exactly as the reference layout has it, so its
-/// classes and exceptions carry that name rather than `__main__`.
-fn suite_test_module(tests: &str, file: &str) -> Option<String> {
-    let marker = format!("{tests}/");
-    let rest = &file[file.find(&marker)? + marker.len()..];
-    let stem = rest.strip_suffix(".py")?;
-    if stem.contains('/') { return None; }
-    Some(format!("test.{stem}"))
-}
-
 /// Whether a language holds text as the bytes it was written in rather
 /// than as the letters those bytes spell. It is the definition that
 /// says so, not the kernel, so a program is read the same way whichever
@@ -570,13 +558,6 @@ fn run_all() {
     if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
     else { std::env::remove_var("LUMEN_RUN_MODULE"); }
     if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
-    // A suite test file is a module of the test package, so it runs under
-    // that name and the runtime runs its tests, the guard having gone
-    // unmet: nothing about the file's own text is special-cased.
-    match inv.python.and_then(|version| suite_test_module(version.tests_dir(), &inv.file)) {
-        Some(name) => std::env::set_var("LUMEN_TEST_MODULE", name),
-        None => std::env::remove_var("LUMEN_TEST_MODULE"),
-    }
 
     let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
@@ -588,13 +569,6 @@ fn run_all() {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };
     let source = without_shebang(source);
-    // A suite test file is a module of the test package, so it runs under
-    // that name; its guard, written for `__main__`, stands false, so its
-    // tests are run here, the way the reference runner runs them.
-    let source = match inv.python.and_then(|version| suite_test_module(version.tests_dir(), &inv.file)) {
-        Some(_) => format!("{source}\nimport unittest as _lumen_suite\n_lumen_suite.main()\n"),
-        None => source,
-    };
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();

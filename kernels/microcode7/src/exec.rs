@@ -25712,15 +25712,7 @@ impl<'a> Machine<'a> {
             Held::World => {
                 let book = self.world_book.as_ref()?;
                 if let Some(worth) = looked_up(book, name) {
-                    if self.names_the_builtins(name) && self.is_our_natives(&worth) {
-                        // Only the main module keeps the builtins as a
-                        // module; a suite file is an imported module and
-                        // keeps the dictionary, as the reference does.
-                        if std::env::var("LUMEN_TEST_MODULE").is_ok() {
-                            return Some(Ok(Value::Mutable(self.natives_kept(), true)));
-                        }
-                        return Some(self.builtins_stand_in());
-                    }
+                    if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
                 }
                 let cell = self.outermost.cells.borrow()[at].clone();
@@ -26134,17 +26126,8 @@ impl<'a> Machine<'a> {
         };
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: Rc::new(kind), holds: RefCell::new(vec![("\0dictionary".to_string(), Value::Shared(book))]), turn: self.made }));
-        self.imported.insert(main.clone(), value.clone()); self.namespace_places.borrow_mut().take();
+        self.imported.insert(main.clone(), value); self.namespace_places.borrow_mut().take();
         self.refresh_import_table(&main);
-        // A suite test file is a module of the test package: its own name
-        // reaches the cache beside `__main__`, as the reference runner
-        // would have imported it.
-        if let Ok(name) = std::env::var("LUMEN_TEST_MODULE") {
-            if name != main {
-                self.imported.insert(name.clone(), value);
-                self.refresh_import_table(&name);
-            }
-        }
     }
 
     /// The dictionary of the names where the run stands: the reading

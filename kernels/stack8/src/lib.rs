@@ -328,13 +328,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     machine.module_files = request.iter().filter(|(kind, ..)| kind == "MODULE_FILE").map(|(_, name, file, _)| (name.clone(), file.clone())).collect();
     machine.module_aliases = request.iter().filter(|(kind, ..)| kind == "MODULE_ALIAS").map(|(_, name, member, _)| (name.clone(), member.clone())).collect();
-    // A suite test file stands under its package name rather than as
-    // `__main__`, so what its classes and exceptions carry is the name
-    // the reference runner gives them. Its own guard, written for
-    // `__main__`, then stands false, and its tests are run from here.
-    let suite_module = std::env::var("LUMEN_TEST_MODULE").ok();
     for name in &lang.module_names {
-        machine.define(name, Value::text(suite_module.as_deref().unwrap_or("__main__")));
+        machine.define(name, Value::text("__main__"));
     }
     // A module with no opening documentation keeps nothing under the
     // name, rather than no name at all.
