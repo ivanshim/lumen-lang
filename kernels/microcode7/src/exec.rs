@@ -14709,6 +14709,15 @@ impl<'a> Machine<'a> {
     }
 
     fn converted_string(&mut self, subject: &Value, representation: bool) -> Result<Value, String> {
+        // A routine the table keeps together with the thing it was
+        // read from is written as a bound method, not through the
+        // member its kind would answer with.
+        if let Value::Wrapped(3, parts) = subject {
+            if !self.rules.detail_main.is_empty() && parts.len() == 2
+                && matches!(parts.first(), Some(Value::Routine(_) | Value::Bound(..))) {
+                return self.object_words(subject, true).map(|word| Value::text(&word));
+            }
+        }
         let slot = usize::from(representation || self.appointment(subject, 0).is_none());
         match self.ask_special(subject, slot, &[])? {
             Some(result) => {
@@ -14877,20 +14886,24 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            Value::Wrapped(3, parts) if !self.rules.detail_main.is_empty() => {
-                let named = match parts.first() {
-                    Some(Value::Routine(code) | Value::Bound(code, _)) => if code.qualification.is_empty() { code.ident.clone() } else { code.qualification.clone() },
-                    _ => String::new(),
-                };
-                let of = match parts.get(1) { Some(receiver) => self.object_words(receiver, true)?, None => String::new() };
-                Ok(format!("<bound method {named} of {of}>"))
-            }
             // A bound method is written by the routine's own full name
             // and the thing it is bound to, as CPython writes it; a
             // language with no word for the running module keeps the
             // old writing.
             Value::Method(routine, receiver, _) if !self.rules.detail_main.is_empty() => {
                 let of = self.object_words(&Value::Thing(receiver.clone()), true)?;
+                let named = if routine.qualification.is_empty() { routine.ident.as_str() } else { routine.qualification.as_str() };
+                Ok(format!("<bound method {named} of {of}>"))
+            }
+            // A routine the table keeps together with the thing it was
+            // read from is the same bound method, written the same way.
+            Value::Wrapped(3, parts)
+                if !self.rules.detail_main.is_empty()
+                    && parts.len() == 2
+                    && matches!(parts.first(), Some(Value::Routine(_) | Value::Bound(..))) =>
+            {
+                let routine = match &parts[0] { Value::Routine(code) | Value::Bound(code, _) => code, _ => unreachable!() };
+                let of = self.object_words(&parts[1], true)?;
                 let named = if routine.qualification.is_empty() { routine.ident.as_str() } else { routine.qualification.as_str() };
                 Ok(format!("<bound method {named} of {of}>"))
             }
@@ -28395,6 +28408,13 @@ impl Machine<'_> {
                 if let Some(owner) = &window_owner {
                     let rendering = self.object_words(owner, true)?;
                     return Ok(Value::text(&format!("mappingproxy({rendering})")));
+                }
+                if let Value::Wrapped(3, parts) = &input[0] {
+                    if !self.rules.detail_main.is_empty() && parts.len() == 2
+                        && matches!(parts.first(), Some(Value::Routine(_) | Value::Bound(..))) {
+                        let rendered = self.object_words(&input[0], true)?;
+                        return Ok(Value::text(&rendered));
+                    }
                 }
                 let quoted = input[0].quoted(self.rules.lone_system_real_render == Some("shortest"));
                 // A window upon a dictionary is quoted under its own name.
