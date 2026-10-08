@@ -6240,14 +6240,20 @@ impl<'a> Machine<'a> {
         let Value::Bound(body, environment) = &kept[5].1 else { return Vec::new() };
         let (body, environment) = (body.clone(), environment.clone());
         drop(kept);
-        if let Some((owner, Some(book))) = &self.body_namespace {
-            if Rc::ptr_eq(owner, &body) { return Self::locals_pairs_in_book(book); }
-        }
+        // A class body shows the book it fills, and still shows the
+        // frame's own names beside it: an inlined comprehension's
+        // variable is a name of the frame, not of the book.
         let mut entries = Vec::new();
+        if let Some((owner, Some(book))) = &self.body_namespace {
+            if Rc::ptr_eq(owner, &body) { entries = Self::locals_pairs_in_book(book); }
+        }
         for (word, held) in body.idents.iter().zip(environment.cells.borrow().iter()) {
             let value = held.settled();
             let shown = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
-            if Self::visible_name(shown) && !matches!(value, Value::Unset) { entries.push((Value::text(shown), value)); }
+            if Self::visible_name(shown) && !matches!(value, Value::Unset)
+                && !entries.iter().any(|(key, _)| key.bare() == shown) {
+                entries.push((Value::text(shown), value));
+            }
         }
         for slot in &body.reaching {
             if !Self::visible_name(&slot.ident) || entries.iter().any(|(word, _)| word.bare() == slot.ident.as_ref()) { continue; }
