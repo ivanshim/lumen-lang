@@ -3420,6 +3420,22 @@ impl<'a> Engine<'a> {
                             Value::Map(_) => pair.1.contents(),
                             _ => Self::worth_of(&pair.1).map(|worth| worth.contents()).unwrap_or_else(|| pair.1.contents()),
                         };
+                        if !matches!(source,Value::Map(_)) && self.lang.python_numbers && matches!(pair.1.contents(),Value::Object(_)) {
+                            let reader=match self.class_get(pair.1.clone(),"keys",false) {
+                                Ok(reader)=>reader,
+                                Err(error) if self.attribute_fault(&error)=>return Err(self.lang.spread_pairs_amiss[0].clone().into()),
+                                Err(error)=>return Err(error),
+                            };
+                            let offered=self.class_apply(reader,Vec::new())?;
+                            let keys=self.core_members(&offered).map_err(Fault::Note)?;
+                            for key in keys {
+                                let raw=Self::worth_of(&key).unwrap_or_else(||key.contents());
+                                let Value::Text(name)=raw else{return Err("TypeError: keywords must be strings".into())};
+                                let member=self.special_dyad(&Action::At,&pair.1,&key).map_err(|note|self.carried.take().unwrap_or(Fault::Note(note)))?;
+                                items.push((Some(name.to_string()),member));
+                            }
+                            continue;
+                        }
                         let Value::Map(m) = source else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                         for (key, held) in m.iter() {
                             let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
@@ -7049,6 +7065,9 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(held, Value::Set(_)) {
+            if self.lang.class_details.get("root.members").and_then(|words| words.get(10)).is_some_and(|word| word == name) {
+                return Ok(Some(Self::adapter(3, vec![Self::adapter(30, vec![Value::text(name)]), value.clone()])));
+            }
             if let Some(slot) = self.lang.class_special.iter().position(|word| word == name).filter(|at| matches!(at, 79 | 81)) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), if slot == 79 { "set_reduce" } else { "set_reduce_ex" }.to_owned())))));
             }
@@ -11540,6 +11559,9 @@ impl<'a> Engine<'a> {
                 // for on, as reading one is: a name a place was taken
                 // out of stands for its cell from then on.
                 let held = { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } };
+                if matches!(held, Value::Set(_)) && self.lang.class_details.get("root.members").and_then(|words|words.get(10)).is_some_and(|word|word==name.as_ref()) {
+                    self.data.push(Value::Flag(true)); return Ok(());
+                }
                 // A super's member is known by whether reading it would
                 // answer, so that a call through the proxy takes the
                 // ordinary road rather than the language's fallback.

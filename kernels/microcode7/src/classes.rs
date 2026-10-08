@@ -1793,7 +1793,13 @@ impl<'a> Machine<'a> {
             let Value::Couple(pair)=item else{continue};
             if !matches!(pair.0,Value::Flag(true)){continue}
             let expanded=Self::underlying(&pair.1).unwrap_or_else(||pair.1.settled());
-            if !matches!(expanded,Value::Dict(_)|Value::Attributes(_)) {
+            let keys_declared=if let Value::Thing(mapping)=pair.1.settled() {
+                self.inherited_entry(&mapping.blueprint(),"keys").is_some()
+                    || mapping.holds.borrow().iter().any(|(name,_)|name=="keys")
+                    || self.table.single("ext.stmt.class.reader").is_some_and(|word| self.inherited_entry(&mapping.blueprint(), word).is_some())
+                    || self.inherited_entry(&mapping.blueprint(),self.detail("get")).is_some()
+            } else {false};
+            if !keys_declared && !matches!(expanded,Value::Dict(_)|Value::Attributes(_)) {
                 let namespace=Self::own_entry(class,self.detail("module"));
                 let title=namespace.filter(|home|home.bare()!=self.builtin_module()).map_or_else(||class.name.clone(),|home|format!("{}.{}",home.bare(),class.name));
                 return Err(format!("TypeError: {title}() argument after ** must be a mapping, not {}",pair.1.kind_word()).into());
@@ -3524,7 +3530,12 @@ impl<'a> Machine<'a> {
             },
             Some(8)=>self.prim(Prim::Quoted,"",&[first])?,
             Some(9)=>self.ordinary_directory(&first),
-            Some(10)=>self.object_state_fields(&first)?,
+            Some(10)=>{
+                if values.iter().skip(1).any(|value|matches!(value,Value::Couple(_))) {return Err(format!("TypeError: {}.{named}() takes no keyword arguments",self.detail("root")).into());}
+                let provided=values.len().saturating_sub(1);
+                if provided!=0 {return Err(format!("TypeError: {}.{named}() takes no arguments ({provided} given)",self.detail("root")).into());}
+                self.object_state_fields(&first)?
+            },
             Some(11|12)=>{
                 let required=if which==Some(11){1}else{2};
                 if values.len()!=required {return Err("TypeError: invalid number of reduction arguments".to_owned().into());}
@@ -3568,6 +3579,11 @@ impl<'a> Machine<'a> {
     }
     /// Build object reduction tuples using type-level hooks and the selected pickle protocol.
     fn object_reduction(&mut self, object:Value, protocol:i64)->Res {
+        if matches!(object.settled(),Value::Set(_)) {
+            i32::try_from(protocol).map_err(|_|Escape::from("OverflowError: Python int too large to convert to C int".to_owned()))?;
+            return self.reduction_of_set(&object);
+        }
+
         if let Some(native)=Self::underlying(&object) {
             if matches!(native.settled(),Value::Set(_)){return self.reduction_of_set(&object);}
             let version=protocol.to_i32().ok_or_else(||Escape::Error("OverflowError: Python int too large to convert to C int".to_owned()))?;
@@ -3932,6 +3948,12 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if self.rules.words_ext_stmt_class_detail_root_members.get(10).is_some_and(|word|word==key) && matches!(value.settled(),Value::Set(_)) {
+            let ancestor=self.common_ancestor();
+            let member=self.from_the_root(key,false,&ancestor).ok_or_else(||self.class_unready())?;
+            return Ok(Self::wrap(3,vec![member,value.settled()]));
+        }
+
         if matches!(&value,Value::Wrapped(9,fields) if fields.is_empty()) {
             let word=self.table.strings("ext.stmt.class.parent").first().cloned().unwrap_or_default();let class=self.native_kind(&word);
             return self.read_class_member(Value::Blueprint(class),key,direct);

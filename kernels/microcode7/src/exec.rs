@@ -8749,6 +8749,10 @@ impl<'a> Machine<'a> {
             return Some(self.kind_named_after(&value.settled()));
         }
         if matches!(value, Value::Set(_)) {
+            if self.rules.words_ext_stmt_class_detail_root_members.get(10).is_some_and(|word| word == name) {
+                let root = Value::Wrapped(36, Rc::new(vec![Value::text(name)]).into());
+                return Some(Value::Wrapped(3, Rc::new(vec![root, value.settled()]).into()));
+            }
             if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == name).filter(|slot| *slot == 79 || *slot == 81) {
                 let word = if slot == 81 { "set_reduce_ex" } else { "set_reduce" };
                 return Some(Value::Member(Rc::new(value.clone()), word.to_owned()));
@@ -11392,6 +11396,22 @@ impl<'a> Machine<'a> {
                                 Value::Text(text) => names.push((text.to_string(), v.clone())),
                                 _ => return Err(fault().into()),
                             }
+                        }
+                    } else if self.table.has_class_order && matches!(pair.1.settled(),Value::Thing(_)) {
+                        let keys=match self.read_class_member(pair.1.clone(),"keys",false) {
+                            Ok(method)=>method,
+                            Err(escaped) if self.missing_member_escape(&escaped)=>return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss",None).into()),
+                            Err(escaped)=>return Err(escaped),
+                        };
+                        let listed=self.apply_class_member(keys,vec![])?;
+                        for key in self.object_members(&listed)? {
+                            let bare=Self::underlying(&key).unwrap_or_else(||key.settled());
+                            let Value::Text(word)=bare else{return Err("TypeError: keywords must be strings".to_owned().into())};
+                            let value=match self.prim(Prim::At,"",&[pair.1.clone(),key]) {
+                                Ok(value)=>value,
+                                Err(note)=>return Err(self.got_away.take().unwrap_or(Escape::Error(note))),
+                            };
+                            names.push((word.to_string(),value));
                         }
                     } else { return Err(fault().into()); }
                 }
@@ -18845,6 +18865,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Flag(true));
                 }
                 n(2)?;
+                if matches!(v[0].settled(),Value::Set(_)) && self.rules.words_ext_stmt_class_detail_root_members.get(10).is_some_and(|word|word==&v[1].bare()) { return Ok(Value::Flag(true)); }
                 if matches!(v[0], Value::OctetKind { .. }) || matches!(v[0], Value::Octets { changeable, .. } if v[1].bare() == "__buffer__" || changeable && v[1].bare() == "__release_buffer__") { return Ok(Value::Flag(true)); }
                 // A kind read as a class answers for its own making, the
                 // way a class does, whatever word spells the kind.

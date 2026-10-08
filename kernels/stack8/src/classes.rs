@@ -1688,7 +1688,14 @@ impl<'a> Engine<'a> {
     pub(super) fn validate_class_spreads(&self, class: &Rc<Class>, args: &[Value]) -> Flow<()> {
         for argument in args {
             if let Value::Tie(pair)=argument {
-                if matches!(pair.0,Value::Flag(true)) && !matches!(Self::worth_of(&pair.1).unwrap_or_else(||pair.1.contents()).contents(),Value::Map(_)|Value::Fields(_)) {
+                let mapping_protocol=match pair.1.contents() {
+                    Value::Object(instance)=>self.class_value(&instance.class_now(),"keys").is_some()
+                        || instance.fields.borrow().iter().any(|(key,_)|key=="keys")
+                        || self.lang.reader.as_deref().is_some_and(|word| self.class_value(&instance.class_now(), word).is_some())
+                        || self.class_value(&instance.class_now(),self.class_word("get")).is_some(),
+                    _=>false,
+                };
+                if matches!(pair.0,Value::Flag(true)) && !mapping_protocol && !matches!(Self::worth_of(&pair.1).unwrap_or_else(||pair.1.contents()).contents(),Value::Map(_)|Value::Fields(_)) {
                     let title=class.python_title().unwrap_or_else(||class.name.clone());
                     return Err(format!("TypeError: {title}() argument after ** must be a mapping, not {}",pair.1.core_kind()).into());
                 }
@@ -2918,7 +2925,11 @@ impl<'a> Engine<'a> {
                 other => Value::text(&self.special_text(other,true).map_err(Fault::Note)?),
             },
             9 => self.default_directory(&subject),
-            10 => self.object_state(&subject)?,
+            10 => {
+                if args.iter().skip(1).any(|arg|matches!(arg,Value::Tie(_))) { return Err(format!("TypeError: {}.{name}() takes no keyword arguments",self.class_word("root")).into()); }
+                if args.len()!=1 { return Err(format!("TypeError: {}.{name}() takes no arguments ({} given)",self.class_word("root"),args.len()-1).into()); }
+                self.object_state(&subject)?
+            },
             11 | 12 => {
                 let count=if place==12 {2}else{1};
                 if args.len()!=count{return Err("TypeError: invalid number of reduction arguments".into());}
@@ -2963,6 +2974,11 @@ impl<'a> Engine<'a> {
     }
     /// Follow object pickle hooks without consulting instance attribute fallbacks.
     fn reduce_object(&mut self, value:Value, version:i64)->Flow<Value> {
+        if matches!(value.contents(),Value::Set(_)) {
+            i32::try_from(version).map_err(|_|Fault::Note("OverflowError: Python int too large to convert to C int".into()))?;
+            return self.set_reduction(&value);
+        }
+
         if Self::worth_of(&value).is_some() {
             let protocol=i32::try_from(version).map_err(|_|Fault::Note("OverflowError: Python int too large to convert to C int".into()))?;
             if matches!(Self::worth_of(&value).unwrap().contents(),Value::Set(_)){return self.set_reduction(&value);}
@@ -3445,6 +3461,10 @@ impl<'a> Engine<'a> {
                 };
                 match next { Some(value) => subject = value, None => break }
             }
+        }
+        if self.lang.class_details.get("root.members").and_then(|fields|fields.get(10)).is_some_and(|field|field==name) && matches!(subject.contents(),Value::Set(_)) {
+            let inherited=self.root_member(name,None).ok_or_else(||self.class_refusal())?;
+            return Ok(Self::adapter(3,vec![inherited,subject]));
         }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &subject {
