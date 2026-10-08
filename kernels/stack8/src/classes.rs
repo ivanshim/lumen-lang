@@ -389,7 +389,10 @@ impl<'a> Engine<'a> {
             if let Value::Adapter(record)=&wrapper {if let Value::Binding(flag)=&record.1[2] {flag.replace(Value::Flag(true));}}
             wrapper
         } else {self.builtin_call(op, word, items).map_err(|words| self.carried.take().unwrap_or(Fault::Note(words)))?};
-        let made = if word == "str" { Self::worth_of(&made).unwrap_or(made) } else { made };
+        let made = match word {
+            "str" | "bytes" | "bytearray" => Self::worth_of(&made).unwrap_or(made),
+            _ => made,
+        };
         let kept = match made.contents() {
             held @ (Value::Array(_) | Value::Map(_)) => Value::Collection(Rc::new(RefCell::new(held)), true),
             other => other,

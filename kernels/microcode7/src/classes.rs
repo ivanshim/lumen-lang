@@ -600,7 +600,7 @@ impl<'a> Machine<'a> {
             if let Value::Wrapped(_,parts)=&shell {if let Value::Mutable(flag,_)=&parts[2]{flag.replace(Value::Flag(true));}}
             shell
         } else if self.rules.class_builder && op == Prim::Dictionary { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{let mut arguments=positional;match self.builtin_names(op,word,&mut arguments,named)?{Some(result)=>result,None=>self.prim(op,word,&arguments)?}};
-        let made = if word == "str" { Self::underlying(&made).unwrap_or(made) } else { made };
+        let made = if matches!(word, "str" | "bytes" | "bytearray") { Self::underlying(&made).unwrap_or(made) } else { made };
         let kept=match made.settled(){
             held @ (Value::Vector(_)|Value::Dict(_))=>Value::Mutable(Rc::new(RefCell::new(held)),true),
             other=>other,
