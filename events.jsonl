@@ -8036,3 +8036,23 @@
 {"t":"2026-10-08T00:18:23Z","event":"exited","job":"review-auto-dsflash-gettext-0011","code":0}
 {"t":"2026-10-08T00:21:06Z","event":"review-started","job":"dsflash-yieldfrom-sol","review":"review-auto-dsflash-yieldfrom-sol-0011"}
 {"t":"2026-10-08T00:24:08Z","event":"exited","job":"review-auto-dsflash-yieldfrom-sol-0011","code":0}
+{"t":"2026-10-08T00:26:08Z","event":"resumed","job":"dsflash-ucn","model":"deepseek-flash","session":"ses_ee90380bdffeO0OuLcY2tzI32S"}
+{"t":"2026-10-08T00:30:36Z","event":"exited","job":"dsflash-future-stmt","code":0}
+{"t":"2026-10-08T00:30:45Z","event":"exited","job":"stdlib-unittest","code":0}
+{"t":"2026-10-08T00:31:10Z","event":"resumed","job":"dsflash-shelve-dbm-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T00:32:17Z","event":"finished","job":"dsflash-future-stmt","exit_time":"2026-10-08T00:30:36Z"}
+{"t":"2026-10-08T00:32:17Z","event":"review-queued","job":"dsflash-future-stmt","review":"review-auto-dsflash-future-stmt-0032"}
+{"t":"2026-10-08T00:32:23Z","event":"finished","job":"stdlib-unittest","exit_time":"2026-10-08T00:30:45Z"}
+{"t":"2026-10-08T00:32:23Z","event":"review-queued","job":"stdlib-unittest","review":"review-auto-stdlib-unittest-0032"}
+{"t":"2026-10-08T00:32:25Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T00:34:14Z","event":"returned","job":"dsflash-gettext","review":"review-auto-dsflash-gettext-0011","commit":"9d87486d3","round":1,"note":"(1st; test_gettext 29/32 both kernels: addClassCleanup missing (12 class-setup errors), patched Mock not iterable (2), partial warning attribution, nonnumeric round() TypeError not behind Python labels; conflicts 21d frame-global handlers + 21e dynamic/pkg/builtin) -> held-resumes (DS Flash full after descrtut release)"}
+{"t":"2026-10-08T00:34:14Z","event":"accepted","job":"dsflash-yieldfrom-sol","review":"review-auto-dsflash-yieldfrom-sol-0011","batch":"21e","commit":"9d3ddf739","branch":"fix/dsflash-yieldfrom","note":"test_yield_from absent->43/43 + test_generator_stop 2/2 both kernels; clean final check 1194/0; byte-exact tests vs 3.14.8; calendar 15/19->17/19 regression repaired; conflicts 21d engine/exec + inspect.py (keep 21d CPython-derived inspect, adapt runtime support), 21e dynamic tracing + dataclasses/functools/rlcompleter inspect.py; FOLLOW-UPS: implicit-GC finalization omits unraisable diagnostic; coordinator to re-certify bytes/json/userstring/decimal/calendar/tokenize/io coverage"}
+{"t":"2026-10-08T00:36:10Z","event":"review-started","job":"dsflash-future-stmt","review":"review-auto-dsflash-future-stmt-0032"}
+{"t":"2026-10-08T00:36:38Z","event":"quota","codex_week_used":50,"codex_credits":0,"claude_week_used":4,"claude_5h_used":7,"kimi_5h_used":0,"kimi_month_used":0.9439,"kimi_code_used":0,"deepseek_usd":318.54}
+{"t":"2026-10-08T00:36:43Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":50,"expected":50.6,"gap":-0.6,"status":"ok"}
+{"t":"2026-10-08T00:36:55Z","event":"checkin","status":"done","actions":"returned dsflash-gettext (1st; 29/32 both kept; addClassCleanup, patched Mock iteration, partial warning attribution, round() TypeError not behind Python labels) -> returns/dsflash-gettext.md + held-resumes (DS Flash full); accepted dsflash-yieldfrom-sol (9d3ddf739, 21e; yield_from absent->43/43 + generator_stop 2/2 both, calendar regression repaired); released held dsflash-descrtut resume to queue (DS Flash 11->12); prune-merged freed 0MB; removed idle accepted dsflash-yieldfrom target/ (box disk 90->89%)","notes":"box load 6.2/8, 12.2 GB available, disk 89%; Mac disk 82%; Sol 11 feature + reviews future-stmt/unittest queued; DS Flash 11 running + descrtut queued (full); DS Pro type-annotations, Kimi module resume, Sonnet deque; PR 539 (21d): push-run reference check failed on 1 kernel disagreement (test_genericpath stack8 error vs mc7 differs), PR-event reference still pending, merge watcher running; luna: no new alerts, meter gap -0.6 ok (Codex week 50%); Claude 5h 7% week 4%"}
+{"t":"2026-10-08T00:39:05Z","event":"exited","job":"review-auto-dsflash-future-stmt-0032","code":0}
+{"t":"2026-10-08T00:39:57Z","event":"note","text":"PR #539 merge notice: sent message 8016"}
+{"t":"2026-10-08T00:39:58Z","event":"note","text":"PR #539: completed success"}
+{"t":"2026-10-08T00:39:59Z","event":"merged","pr":539,"branch":"batch21d","main":"5ee3e1212"}
+{"t":"2026-10-08T00:41:11Z","event":"review-started","job":"stdlib-unittest","review":"review-auto-stdlib-unittest-0032"}
