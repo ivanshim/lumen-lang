@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/http/__init__.py; PSF License.
 from enum import StrEnum, IntEnum, _simple_enum
 
 __all__ = ['HTTPStatus', 'HTTPMethod']

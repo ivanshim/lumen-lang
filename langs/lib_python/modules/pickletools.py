@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/pickletools.py; PSF License.
 '''"Executable documentation" for the pickle module.
 
 Extensive comments about the pickle protocols and pickle-machine opcodes

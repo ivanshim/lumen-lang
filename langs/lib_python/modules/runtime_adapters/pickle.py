@@ -34,3 +34,27 @@ save_picklebuffer.__qualname__ = '_Pickler.save_picklebuffer'
 _Pickler.save_picklebuffer = save_picklebuffer
 _Pickler.dispatch[PickleBuffer] = save_picklebuffer
 del save_picklebuffer
+
+# Decode protocol-0 byte escapes with the shared native codec, warning only
+# after successful decoding and attributing it outside the pickle frames.
+def _escape_decode(data):
+    decoded, consumed, warning = __escape_decode_native__(data, None)
+    if warning is not None:
+        import warnings
+        warnings.warn(warning, DeprecationWarning,
+                      skip_file_prefixes=(__file__,))
+    return decoded
+
+# Preserve the canonical STRING parser and bind its byte codec to caller warnings.
+def load_string(self):
+    data = self.readline()[:-1]
+    if len(data) >= 2 and data[0] == data[-1] and data[0] in b'"\'':
+        data = data[1:-1]
+    else:
+        raise UnpicklingError("the STRING opcode argument must be quoted")
+    self.append(self._decode_string(_escape_decode(data)))
+
+load_string.__qualname__ = '_Unpickler.load_string'
+_Unpickler.load_string = load_string
+_Unpickler.dispatch[STRING[0]] = load_string
+del load_string

@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/_compat_pickle.py; PSF License.
 # This module is used to map the old Python 2 names to the new names used in
 # Python 3 for the pickle module.  This needed to make pickle streams
 # generated with Python 2 loadable by Python 3.

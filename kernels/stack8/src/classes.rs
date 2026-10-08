@@ -43,7 +43,7 @@ impl<'a> Engine<'a> {
         if let Some(doc) = Self::builtin_kind_doc(&name) { root_fields.push((self.class_word("doc").to_string(), Value::text(doc))); }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: std::cell::RefCell::new(vec![]), lineage: std::cell::RefCell::new(vec![]), base: std::cell::RefCell::new(None), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(root_fields), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            methods: vec![], constants: vec![], shared: RefCell::new(root_fields), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         self.class_root = Some(c.clone());
         c
     }
@@ -62,7 +62,7 @@ impl<'a> Engine<'a> {
         let mut hooks = Vec::new();
         if self.lang.parent_words.iter().any(|name| name == word) {
             hooks.push((self.class_word("allocate").to_owned(), self.native_allocator(word)));
-            hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(247, Vec::new())));
+            hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(236, Vec::new())));
             hooks.push((self.class_word("descriptor.get").to_owned(), Self::adapter(248, Vec::new())));
         }
         if matches!(self.lang.builtins.get(word), Some(Builtin::Zip | Builtin::Map | Builtin::Filter)) {
@@ -95,10 +95,13 @@ impl<'a> Engine<'a> {
             }
             hooks.push(("__hash__".to_string(), Value::Null));
         }
+        if word == "super" {
+            hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(236, Vec::new())));
+        }
         let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: std::cell::RefCell::new(vec![root.clone()]), lineage: std::cell::RefCell::new(ancestry), base: std::cell::RefCell::new(Some(root)), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
             for key in [self.class_word("function"),"__wrapped__"] {c.shared.borrow_mut().push((key.to_owned(),Self::adapter(28,vec![Value::text("\0callable")])));}
@@ -180,7 +183,7 @@ impl<'a> Engine<'a> {
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::SortOf).map_or(String::new(), |(w, _)| w.clone());
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: std::cell::RefCell::new(vec![root.clone()]), lineage: std::cell::RefCell::new(vec![root.clone()]), base: std::cell::RefCell::new(Some(root)), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         self.class_maker = Some(c.clone());
         for field in ["doc","qualified","name"] {
             let name=self.class_word(field);
@@ -710,9 +713,38 @@ impl<'a> Engine<'a> {
         if Rc::ptr_eq(class, target) || class.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
         visit(class, target, &mut Vec::new())
     }
-    fn public_class(&self, class: Rc<Class>) -> Value {
+    pub(super) fn class_order(c: &Rc<Class>) -> Vec<Rc<Class>> {
+        let ancestors = c.lineage.borrow();
+        if c.mro_adopted.get() { return c.adopted_order.borrow().iter().filter_map(std::rc::Weak::upgrade).collect(); }
+        std::iter::once(c.clone()).chain(ancestors.iter().cloned()).collect()
+    }
+    fn instance_root_visible(&self, c: &Rc<Class>) -> bool {
+        if !c.mro_adopted.get() { return true; }
+        self.class_root.as_ref().is_some_and(|root| c.adopted_order.borrow().iter()
+            .filter_map(std::rc::Weak::upgrade).any(|base| Rc::ptr_eq(&base, root)))
+    }
+    fn object_receiver(&mut self, value: &Value) -> Flow<(bool, String)> {
+        let actual = self.class_type(vec![value.clone()])?;
+        let name = actual.kind_it_names().ok_or_else(|| self.class_refusal())?;
+        let class = self.super_type_arg(&actual)?;
+        let root = self.root_class();
+        Ok((Self::contains_class(&class, &root), name))
+    }
+    fn generic_instance_access(&self, c: &Rc<Class>) -> bool {
+        if !c.mro_adopted.get() { return true; }
+        Self::class_order(c).iter().any(|base| {
+            self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, base))
+                || Self::own_kind(base).as_deref() == Some("module")
+        })
+    }
+    pub(super) fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
-        Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
+        let visible = Self::own_kind(&class).and_then(|word| self.spelled_kind(&word));
+        match visible {
+            Some(Value::Native(Builtin::Bytes(mode @ 0..=1), _)) if self.lang.bind_names => self.byte_kind(mode == 1),
+            Some(value) => value,
+            None => Value::Class(class),
+        }
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
         if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
@@ -794,8 +826,9 @@ impl<'a> Engine<'a> {
             let layout=self.solid_parent(base);
             if !Self::contains_class(&solid,&layout){return Err(format!("TypeError: mro() returned base with unsuitable layout ('{}')",base.name).into());}
         }
-        if !order.iter().any(|base|Rc::ptr_eq(base,class)){return Err("TypeError: mro() does not contain the new type".into());}
         if epoch==class.base_epoch.get() {
+            class.mro_adopted.set(true);
+            class.adopted_order.replace(order.iter().map(Rc::downgrade).collect());
             *class.mro_place.borrow_mut()=order.iter().enumerate().filter_map(|(at,base)|Rc::ptr_eq(base,class).then_some(at)).collect();
             *class.lineage.borrow_mut()=order.into_iter().filter(|base|!Rc::ptr_eq(base,class)).collect();
             class.mro_ready.set(true);
@@ -902,19 +935,36 @@ impl<'a> Engine<'a> {
                     if touched.iter().any(|(pointer,stamp)|*pointer==Rc::as_ptr(&member)&&*stamp==member.base_epoch.get()) {
                         member.direct.replace(parents);member.base.replace(primary);member.lineage.replace(order);
                         member.mro_place.replace(positions);member.mro_ready.set(ready);member.base_epoch.set(epoch);
+                        member.adopted_order.replace(member.order().iter().map(Rc::downgrade).collect());
                     }
                 }
             }
             return Err(error);
         }
         if class.base_epoch.get()==serial {self.repair_subclasses(class);}
-        self.constructor_indices.borrow_mut().clear();self.concrete_kinds.borrow_mut().clear();
+        self.concrete_kinds.borrow_mut().clear();
         Ok(Value::Null)
     }
     /// The class itself, laid out from its name, its bases, its members
     /// and the metaclass it is to remember. This is the making the kind
     /// builtin does, and what a metaclass reaches for through its
     /// forebears when it has made a namespace of its own.
+    fn merge_class_orders(&self, bases: &[Rc<Class>]) -> Flow<Vec<Rc<Class>>> {
+        let mut lines: Vec<Vec<Rc<Class>>> = bases.iter().map(|b| {
+            Self::class_order(b)
+        }).collect();
+        lines.push(bases.to_vec());
+        let mut lineage = Vec::new();
+        while lines.iter().any(|s| !s.is_empty()) {
+            let head = lines.iter().filter_map(|s| s.first()).find(|head|
+                !lines.iter().any(|s| s.iter().skip(1).any(|tail| Rc::ptr_eq(head, tail)))).cloned()
+                .ok_or_else(|| self.class_word("mro.amiss").to_string())?;
+            if lineage.iter().any(|c| Rc::ptr_eq(c, &head)) { return Err(self.class_word("mro.amiss").to_string().into()); }
+            for line in &mut lines { if line.first().map_or(false, |c| Rc::ptr_eq(c, &head)) { line.remove(0); } }
+            lineage.push(head);
+        }
+        Ok(lineage)
+    }
     pub(super) fn forge_class(&mut self, name: String, bases: Vec<Rc<Class>>, mut members: Vec<(String, Value)>,
         maker: Option<Rc<Class>>, carried: Vec<Value>, title_value: Value) -> Flow<Value> {
         let mut class_cell = None;
@@ -1004,9 +1054,9 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: std::cell::RefCell::new(primary), direct: std::cell::RefCell::new(bases), lineage: std::cell::RefCell::new(lineage), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants,
-            shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), declares_slots: owns_storage, sealed: std::cell::Cell::new(false), python_names: RefCell::new(python_names) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), declares_slots: owns_storage, sealed: std::cell::Cell::new(false), python_names: RefCell::new(python_names) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         if !self.lang.weak_refused.is_empty() { crate::faint::remember(crate::faint::Hold::Class(Rc::downgrade(&c))); }
-        if let Some(cell) = class_cell { let word = self.class_word("cell.contents").to_owned(); self.class_write(cell, &word, Some(Value::Class(c.clone())), true)?; }
+        if let Some(cell) = &class_cell { let word = self.class_word("cell.contents").to_owned(); self.class_write(cell.clone(), &word, Some(Value::Class(c.clone())), true)?; }
 
         if !self.class_word("name").is_empty() {c.mro_ready.set(false);self.recompute_mro(&c)?;}
         self.furnish_slots(&c)?;
@@ -1027,6 +1077,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if c.mro_adopted.get() { self.super_check(&c, &Value::Class(c.clone()))?; }
         if let Some(hook) = c.lineage().iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
             if matches!(&hook,Value::Adapter(w) if w.0==5){let bound=self.bind_class_value(hook,None,c.clone())?;self.class_apply(bound,carried)?;}
             else{let mut given=vec![Value::Class(c.clone())];given.extend(carried);self.class_apply(hook, given)?;}
@@ -1172,6 +1223,10 @@ impl<'a> Engine<'a> {
         }
         let place = self.slot_place(thing, parts)?;
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
+        if parts.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
+            return Ok(o.fields.borrow().iter().find(|(key, _)| key == "\0namespace")
+                .map_or_else(|| Value::Fields(o.clone()), |(_, book)| book.clone()));
+        }
         if parts[0].plain() == "__weakref__" && !self.lang.weak_refused.is_empty() { return Ok(crate::faint::references(thing).into_iter().next().unwrap_or(Value::Null)); }
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") {
             return Ok(o.fields.borrow().iter().find(|(key,_)|key=="\0namespace").map_or_else(||Value::Fields(o.clone()),|(_,book)|book.clone()));
@@ -1223,7 +1278,7 @@ impl<'a> Engine<'a> {
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: std::cell::RefCell::new(vec![root.clone()]), lineage: std::cell::RefCell::new(vec![root.clone()]), base: std::cell::RefCell::new(Some(root)), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            methods: vec![], constants: vec![], shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         self.property_class = Some(c.clone());
         c
     }
@@ -1247,7 +1302,7 @@ impl<'a> Engine<'a> {
                 (self.class_word("descriptor.get").to_string(), Self::adapter(201, vec![])),
                 (self.lang.constructor.clone().unwrap_or_default(), Self::adapter(200, vec![])),
             ]),
-            weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         self.classmethod_class = Some(c.clone());
         c
     }
@@ -1265,7 +1320,7 @@ impl<'a> Engine<'a> {
                 (self.class_word("descriptor.get").to_string(), Self::adapter(203, vec![])),
                 (self.lang.constructor.clone().unwrap_or_default(), Self::adapter(202, vec![])),
             ]),
-            weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) , mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         self.staticmethod_class = Some(c.clone());
         c
     }
@@ -1621,17 +1676,21 @@ impl<'a> Engine<'a> {
     pub(super) fn allocation_is_custom(&self, c: &Class) -> bool {
         if !self.lang.class_details.get("native.protocols").is_some_and(|entries| !entries.is_empty()) { return false; }
         let name = self.class_word("allocate");
-        for base in std::iter::once(c).chain(c.lineage().iter().map(Rc::as_ref)) {
-            if let Some(value) = Self::own_class_value(base, name) { return !matches!(value, Value::Adapter(hook) if hook.0 == 14); }
-            if Self::own_kind(base).is_some_and(|kind| self.kind_owns_protocol(&kind, name)) { return false; }
-        }
-        false
+        Self::ordered_lookup(c, |base| {
+            if let Some(value) = Self::own_class_value(base, name) { return Some(!matches!(value, Value::Adapter(hook) if hook.0 == 14)); }
+            if Self::own_kind(base).is_some_and(|kind| self.kind_owns_protocol(&kind, name)) { return Some(false); }
+            None
+        }).unwrap_or(false)
     }
+    fn ordered_lookup<T>(c: &Class, mut visit: impl FnMut(&Class) -> Option<T>) -> Option<T> {
+        if c.mro_adopted.get() {
+            return c.adopted_order.borrow().iter().filter_map(std::rc::Weak::upgrade).find_map(|base| visit(&base));
+        }
+        std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(visit)
+    }
+
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
-        let inherited=c.lineage();
-        let mut order:Vec<&Class>=inherited.iter().map(Rc::as_ref).collect();
-        for at in c.mro_place.borrow().iter() {order.insert((*at).min(order.len()),c);}
-        order.into_iter().find_map(|base| {
+        Self::ordered_lookup(c, |base| {
             Self::own_class_value(base, name).or_else(|| {
                 if !self.lang.fuller_classes { return None; }
                 let word = Self::own_kind(base)?;
@@ -1717,6 +1776,9 @@ impl<'a> Engine<'a> {
                 self.class_apply(Value::Native(Builtin::Text(operation),name),args)
             }
             Value::Native(operation, name) => {
+                if operation == Builtin::UnicodeDecomposition && args.iter().all(|arg| !matches!(arg, Value::Tie(_))) {
+                    return Ok(crate::sre::decompose(&args)?);
+                }
                 let items = self.call_items_named(&name, args)?;
                 let answer = self.builtin_call(operation, &name, items);
                 if let Some(raised) = self.carried.take() { return Err(raised); }
@@ -1743,6 +1805,7 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
+                236 => self.super_initialised(args),
                 235 => {
                     let items = self.call_items(args)?;
                     let mut positional = Vec::new(); let mut keywords = Vec::new();
@@ -2075,9 +2138,15 @@ impl<'a> Engine<'a> {
                     drop(fields);
                     Ok(parameter)
                 }
+                // A member a native forebear carries, read off the
+                // parent walk: it works upon the worth the thing keeps,
+                // reached past the class the walk was made against, as
+                // the parent call of a method spelled out does.
                 44 if w.1.len() == 3 => {
+                    let receiver = w.1[0].clone();
+                    let owner = w.1[1].plain();
                     let name = w.1[2].plain();
-                    self.class_super(w.1[0].clone(), &w.1[1].plain(), &name, args)
+                    self.class_super(receiver, &owner, &name, args)
                 }
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
@@ -2218,6 +2287,15 @@ impl<'a> Engine<'a> {
                     let kind = args.remove(0);
                     let word = w.1[0].plain();
                     if word == "struct_time" { return self.calendar_sequence(kind, args); }
+                    // The parent class's own allocation lays out a bare
+                    // thing of the class asked for; what it is to hold
+                    // comes from the constructing after.
+                    if self.lang.fuller_classes && word == "super" {
+                        let Value::Class(c) = &kind else { return Err(self.class_refusal()); };
+                        if !Self::super_descended(c) { return Err(self.class_refusal()); }
+                        self.made += 1;
+                        return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c.clone(), fields: RefCell::new(Vec::new()), mark: self.made })));
+                    }
                     if let Value::Native(op @ (Builtin::Set | Builtin::Frozen), name) = &kind {
                         if name.as_ref() != word { return Err(self.class_refusal()); }
                         let mut given = if *op == Builtin::Set { Vec::new() } else { args };
@@ -2282,6 +2360,23 @@ impl<'a> Engine<'a> {
                         } else {
                             Err(self.class_refusal())
                         };
+                    }
+                    if word == "type" && member == self.class_word("order") {
+                        let items = self.call_items(args)?;
+                        let keywords = items.iter().any(|(key, _)| key.is_some());
+                        let mut positional: Vec<_> = items.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
+                        if positional.is_empty() { return Err("TypeError: unbound method type.mro() needs an argument".into()); }
+                        let received = positional.remove(0).contents();
+                        if !self.stands_for_kind(&received) {
+                            return Err(format!("TypeError: descriptor 'mro' for 'type' objects doesn't apply to a '{}' object", self.super_tp_name(&received)).into());
+                        }
+                        let title = if w.1.get(2).is_some_and(Value::is_true) { self.super_tp_name(&received) } else { word };
+                        if keywords { return Err(format!("TypeError: {title}.mro() takes no keyword arguments").into()); }
+                        if !positional.is_empty() { return Err(format!("TypeError: {title}.mro() takes no arguments ({} given)", positional.len()).into()); }
+                        let owner = self.super_type_arg(&received)?;
+                        let mut classes = vec![self.public_class(owner.clone())];
+                        classes.extend(self.merge_class_orders(&owner.direct())?.into_iter().map(|base| self.public_class(base)));
+                        return Ok(self.keep_collection(Value::array(classes)));
                     }
                     let supplied = args.remove(0);
                     let subject = match supplied.contents() { thing @ Value::Object(_) => thing, _ => supplied };
@@ -2410,8 +2505,15 @@ impl<'a> Engine<'a> {
                 }
                 10..=12 => {
                     let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
+                    if w.1.first().is_some_and(|owner| owner.plain() == self.class_word("root")) {
+                        let (valid, actual) = self.object_receiver(&subject)?;
+                        if !valid {
+                            let method = self.class_word(match w.0 { 10 => "get", 11 => "set", _ => "remove" });
+                            return Err(format!("TypeError: descriptor '{method}' requires a '{}' object but received a '{actual}'", self.class_word("root")).into());
+                        }
+                    }
                     let Some(Value::Text(name)) = args.get(1) else { return Err("TypeError: attribute name must be string".to_string().into()); };
-                    if w.0!=10 && w.1.is_empty() && self.stands_for_kind(&subject) {
+                    if w.0!=10 && (w.1.is_empty() || w.1.first().is_some_and(|owner| owner.plain()==self.class_word("root"))) && self.stands_for_kind(&subject) {
                         return Err("TypeError: can't apply this __setattr__ to a type object".into());
                     }
                     if w.0 == 10 { self.class_get(subject,name,true) }
@@ -2497,7 +2599,6 @@ impl<'a> Engine<'a> {
     pub(super) fn typing_module(&mut self) -> Value {
         if let Some(module) = self.modules.get("_typing") { return module.clone(); }
         let mut fields = vec![("__name__".into(), Value::text("_typing"))];
-        fields.push(("_idfunc".into(), Value::Native(Builtin::ClassTool(22), Rc::from("_idfunc"))));
         fields.push(("Union".into(), Value::Class(self.kind_class("Union"))));
         for name in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let class = self.kind_class(name);
@@ -2602,6 +2703,7 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         self.validate_class_spreads(&c, &args)?;
+        if self.lang.fuller_classes && Self::super_descended(&c) { return self.super_made(c, args); }
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.typing_instance(c, args);
         }
@@ -2888,7 +2990,7 @@ impl<'a> Engine<'a> {
             else if name==self.class_word("remove") {12}
             else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
             else {return None};
-        Some(if hook == 1 { self.root_allocator() } else if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else { Self::adapter(hook,vec![]) })
+        Some(if hook == 1 { self.root_allocator() } else if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else if (10..=12).contains(&hook) && !self.lang.class_builder.is_empty() { Self::adapter(hook, vec![Value::text(self.class_word("root"))]) } else { Self::adapter(hook, vec![]) })
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
@@ -3253,10 +3355,18 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let (Value::Native(Builtin::Text(_), word), Some(receiver)) = (&value, &subject) {
-            if let Some((_, member)) = word.rsplit_once('.') { return Ok(Value::ValueMethod(Rc::new((receiver.clone(), member.to_owned())))); }
+            if word.contains('.') { return Ok(Self::adapter(3, vec![value.clone(), receiver.clone()])); }
         }
         if let Value::Adapter(descriptor)=&value {if descriptor.0==205 {return match subject {Some(receiver)=>self.type_field_read(receiver,&descriptor.1[0].plain()),None=>Ok(value)};}}
         if let Value::Adapter(w) = &value {
+            if w.0 == 236 {
+                if let Some(receiver) = subject.as_ref().map(Value::contents) {
+                    if !matches!(&receiver, Value::Object(object) if Self::super_descended(&object.class_now())) {
+                        let actual = self.super_tp_name(&receiver);
+                        return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{actual}' object").into());
+                    }
+                }
+            }
             if w.0==9 && matches!(w.1.as_slice(),[Value::Class(_),Value::Null]) {
                 return Ok(match subject {Some(receiver)=>return self.bind_super_object(value.clone(),receiver),None=>value});
             }
@@ -3292,9 +3402,17 @@ impl<'a> Engine<'a> {
             if w.0 == 29 && w.1[0].plain() == "dict" && self.lang.value_methods.get(&w.1[1].plain()).map(String::as_str) == Some("fromkeys") {
                 return Ok(Value::ValueMethod(Rc::new((Value::Class(class), w.1[1].plain()))));
             }
+            if w.0 == 29 && w.1[0].plain() == "type" && w.1[1].plain() == self.class_word("order") {
+                if let Some(receiver) = subject {
+                    let mut state = w.1.clone();
+                    state.push(Value::Flag(true));
+                    return Ok(Self::adapter(3, vec![Self::adapter(29, state), receiver]));
+                }
+                return Ok(value);
+            }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 133 | 180 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 133 | 180 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -3330,7 +3448,7 @@ impl<'a> Engine<'a> {
         let tuple = self.kind_class("tuple");
         let mut lineage = vec![tuple.clone()]; lineage.extend(tuple.lineage());
         let fields = vec![("__module__".into(), Value::text("time")), ("__new__".into(), self.native_allocator("struct_time")), ("__repr__".into(), Self::adapter(233, vec![])), ("__str__".into(), Self::adapter(233, vec![])), ("__reduce__".into(), Self::adapter(234, vec![])), ("n_sequence_fields".into(), Value::Small(9)), ("n_fields".into(), Value::Small(11)), ("n_unnamed_fields".into(), Value::Small(0))];
-        let kind = Rc::new(Class { name: "struct_time".into(), outline: Some("<class 'time.struct_time'>".into()), base: RefCell::new(Some(tuple.clone())), direct: RefCell::new(vec![tuple]), lineage: RefCell::new(lineage), answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![("\0kind".into(), Value::text("struct_time"))], shared: RefCell::new(fields), weak_storage: std::cell::Cell::new(None), declares_slots: true, sealed: std::cell::Cell::new(true), python_names: RefCell::new(None), mro_place:RefCell::new(vec![0]),mro_ready:std::cell::Cell::new(true),base_epoch:std::cell::Cell::new(0) });
+        let kind = Rc::new(Class { name: "struct_time".into(), outline: Some("<class 'time.struct_time'>".into()), base: RefCell::new(Some(tuple.clone())), direct: RefCell::new(vec![tuple]), lineage: RefCell::new(lineage), answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![("\0kind".into(), Value::text("struct_time"))], shared: RefCell::new(fields), weak_storage: std::cell::Cell::new(None), declares_slots: true, sealed: std::cell::Cell::new(true), python_names: RefCell::new(None), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place:RefCell::new(vec![0]),mro_ready:std::cell::Cell::new(true),base_epoch:std::cell::Cell::new(0) });
         self.kind_classes.push(("struct_time".into(), kind.clone()));
         kind
     }
@@ -3551,54 +3669,26 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err(self.class_refusal()),
                 };
-                let order=dynamic.order();
-                if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
-                    for class in &order[start + 1..] {
-                        if name == self.class_word("allocate") {
-                            if let Some(word) = Self::own_kind(class) {
-                                if word != self.class_word("root") { return Ok(self.native_allocator(&word)); }
-                            }
-                        }
-                        if let Some(value) = Self::own_class_value(class, name) {
-                            let instance=if name == self.class_word("allocate") || matches!(receiver,Value::Class(class) if Rc::ptr_eq(class,&dynamic)){None}else{Some(receiver.clone())};
-                            return self.bind_class_value(value, instance, dynamic);
-                        }
-                        if Self::own_kind(class).is_some() || self.exception_class(class) {
-                            let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");
-                            let native_method = match Self::worth_of(receiver) {
-                                Some(worth) => matches!(self.builtin_member(&worth, name)?, Some(Value::ValueMethod(_))),
-                                None => false,
-                            };
-                            if constructing || native_method {
-                                return Ok(Self::adapter(44, vec![receiver.clone(), Value::text(&owner.name), Value::text(name)]));
-                            }
-                        }
-                        if Self::own_class_value(class, self.class_word("module")).is_none() {
-                            let base_value = Self::own_kind(class).and_then(|word| self.spelled_kind(&word)).unwrap_or_else(|| Value::Class(class.clone()));
-                            match self.class_get(base_value, name, false) {
-                                Ok(value) => return Ok(if matches!(&value, Value::Adapter(payload) if [2, 10, 11, 12, 19, 29, 30, 41, 78].contains(&payload.0)) { Self::adapter(3, vec![value, receiver.clone()]) } else { value }),
-                                Err(fault) if self.attribute_fault(&fault) => (),
-                                Err(fault) => return Err(fault),
-                            }
-                        }
-                        if Self::own_kind(class).is_some() {
-                            if let Some(descriptor) = self.loose_kind_member(&Value::Class(class.clone()), name) {
-                                return Ok(Self::adapter(3, vec![descriptor, receiver.clone()]));
-                            }
-                        }
-                    }
-                    // The walk coming to the root, the root answers with
-                    // its own members as the plain read of a thing does:
-                    // the maker every ordinary class stands on, its
-                    // beginning among them.
-                    if let Some(root) = self.root_member(name, Some(&dynamic)) {
-                        if name == self.class_word("allocate") { return Ok(root); }
-                        let bound = if name == self.class_word("subclass") { Value::Class(dynamic.clone()) } else { receiver.clone() };
-                        return Ok(Self::adapter(3, vec![root, bound]));
-                    }
-                }
+                if let Some(found) = self.super_walk(owner, receiver, dynamic, name)? { return Ok(found); }
                 if name==self.class_word("descriptor.get"){return Ok(Self::adapter(15,vec![subject.clone()]));}
                 return Err(self.missing_member(&subject, name));
+            }
+        }
+        if let Value::Object(instance) = &subject {
+            if Self::super_descended(&instance.class_now()) && Self::worth_of(&subject).is_none() && name != self.class_word("kind") {
+                let (owner, receiver, dynamic) = {
+                    let fields = instance.fields.borrow();
+                    (fields.iter().find(|(key, _)| key == "__thisclass__").map(|(_, value)| value.clone()),
+                     fields.iter().find(|(key, _)| key == "__self__").map(|(_, value)| value.clone()),
+                     fields.iter().find(|(key, _)| key == "\0objtype").map(|(_, value)| value.clone()))
+                };
+                if name == "__self_class__" { return Ok(dynamic.unwrap_or(Value::Null)); }
+                if matches!(name, "__thisclass__" | "__self__") && owner.is_none() { return Ok(Value::Null); }
+                if let (Some(owner), Some(receiver), Some(dynamic)) = (self.super_class_of(owner), receiver, self.super_class_of(dynamic)) {
+                    if !matches!(receiver, Value::Null) {
+                        if let Some(found) = self.super_walk(&owner, &receiver, dynamic, name)? { return Ok(found); }
+                    }
+                }
             }
         }
         let answer = self.class_read(subject.clone(), name, plain);
@@ -3653,7 +3743,7 @@ impl<'a> Engine<'a> {
         if name == "__reduce__" {
             let python_binding = match &subject {
                 Value::Method(owner, code, _) => Some((Value::Object(owner.clone()), Value::Routine(code.clone()))),
-                Value::Adapter(entry) if entry.0 == 3 && matches!(entry.1.first(), Some(Value::Routine(_))) => Some((entry.1[1].clone(), entry.1[0].clone())),
+                Value::Adapter(entry) if entry.0 == 3 && matches!(entry.1.first(), Some(Value::Routine(_) | Value::Native(Builtin::Text(_), _))) => Some((entry.1[1].clone(), entry.1[0].clone())),
                 _ => None,
             };
             if let Some((owner, code)) = python_binding {
@@ -3684,6 +3774,18 @@ impl<'a> Engine<'a> {
             if let Some(owner) = owner { return Ok(Value::ValueMethod(Rc::new((owner, String::from("float_getformat"))))); }
         }
         if let Value::Native(op, word) = &subject {
+            if *op == Builtin::UnicodeDecomposition {
+                let detail = &self.lang.decomposition_callable;
+                if [self.class_word("name"), self.class_word("qualified")].contains(&name) {
+                    if let Some(title) = detail.first() { return Ok(Value::text(title)); }
+                }
+                if name == self.class_word("module") {
+                    if let Some(home) = detail.get(1) { return Ok(Value::text(home)); }
+                }
+                if self.lang.class_special.get(79).is_some_and(|label| label == name) {
+                    if let Some(title) = detail.first() { return Ok(Self::adapter(132, vec![Value::text(title)])); }
+                }
+            }
             if !Self::kind_builtin(op) && !self.class_word("name").is_empty() {
                 if let Some((family, method)) = word.rsplit_once('.') {
                     if let Some(owner) = self.spelled_kind(family) {
@@ -3830,6 +3932,17 @@ impl<'a> Engine<'a> {
             };
         }
         if let Value::Adapter(entry) = &subject {
+            let w = entry;
+            if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
+                if name == self.class_word("name") { return Ok(w.1[0].clone()); }
+                if name == "__objclass__" { return Ok(w.1[1].clone()); }
+                if name == self.class_word("qualified") {
+                    let Value::Class(owner) = &w.1[1] else { return Err(self.class_refusal()); };
+                    let qualified = self.class_get(Value::Class(owner.clone()), name, false)?;
+                    return Ok(Value::text(&format!("{}.{}", qualified.plain(), w.1[0].plain())));
+                }
+                if name == self.class_word("doc") { return Ok(Value::text("dictionary for instance variables")); }
+            }
             if entry.0 == 128 {
                 if ["descriptor.get", "descriptor.set", "descriptor.delete"].iter().any(|part| name == self.class_word(part)) {
                     return Ok(Self::adapter(129, vec![subject.clone(), Value::text(name)]));
@@ -3969,7 +4082,7 @@ impl<'a> Engine<'a> {
         // A routine, a wrapped routine and a slot each read as a member
         // that binds; the slot writes and removes as well.
         if name == self.class_word("descriptor.get") && !name.is_empty()
-            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16 | 29 | 30))) {
+            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16 | 29 | 30 | 236))) {
             return Ok(Self::adapter(15, vec![subject]));
         }
         if let Value::Adapter(metadata)=&subject {if metadata.0==205 {
@@ -4028,6 +4141,14 @@ impl<'a> Engine<'a> {
         if matches!(&subject, Value::ByteKind(..)) {
             if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
         }
+        // A row of bytes answers to the methods its kind holds, whose
+        // words are the ones text goes by, bound to the row they were
+        // read from.
+        if let Value::Bytes(_, changeable, _) = &subject {
+            if let Some(working) = self.byte_member(name, *changeable) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), working.to_string()))));
+            }
+        }
         if matches!(&subject,Value::Native(op,_) if !Self::kind_builtin(op)) {
             if let Some(member)=self.builtin_member(&subject,name)? { return Ok(member); }
         }
@@ -4069,6 +4190,12 @@ impl<'a> Engine<'a> {
                 // The kind read as a class stands on the root and on
                 // nothing else, so that is the whole of its line.
                 if name == self.class_word("bases") { return Ok(Value::tuple(vec![Value::Class(self.root_class())])); }
+                if name == self.class_word("order") && !self.lang.class_builder.is_empty() {
+                    let method = self.held_kind_descriptor("type", name);
+                    if *op == Builtin::SortOf { return Ok(method); }
+                    let maker = self.metaclass_root();
+                    return self.bind_class_value(method, Some(subject.clone()), maker);
+                }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let listed=name==self.class_word("order");
                     let word=word.to_string();
@@ -4141,6 +4268,24 @@ impl<'a> Engine<'a> {
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));
                 }
+                // Byte class methods participate in the same MRO as stored
+                // attributes. Stop at the native owner: a later mixin must
+                // not hide it. Metaclass data descriptors were read above.
+                if matches!(name, "fromhex" | "maketrans")
+                    && matches!(Self::kind_beneath(c).as_deref(), Some("bytes" | "bytearray")) {
+                    for base in std::iter::once(c.as_ref()).chain(c.lineage.borrow().iter().map(Rc::as_ref)) {
+                        if let Some(kind) = Self::own_kind(base).filter(|kind| matches!(kind.as_str(), "bytes" | "bytearray")) {
+                            if name == "maketrans" {
+                                return Ok(Value::Native(Builtin::Bytes(40), Rc::from("bytes.maketrans")));
+                            }
+                            let method = format!("{kind}_fromhex");
+                            return Ok(Value::ValueMethod(Rc::new((subject.clone(), method))));
+                        }
+                        if let Some(entry) = Self::own_class_value(base, name) {
+                            return self.bind_class_value(entry, None, c.clone());
+                        }
+                    }
+                }
                 if name==self.class_word("name") { return Ok(c.python_names.borrow().as_ref().map_or_else(|| Value::text(&c.name), |names| names.0.clone())); }
                 if name==self.class_word("qualified") { return Ok(c.python_names.borrow().as_ref().map(|names| names.1.clone()).unwrap_or_else(|| self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name)))); }
                 if name==self.class_word("bases") { return Ok(Value::tuple(c.direct().iter().cloned().map(|base| self.public_class(base)).collect())); }
@@ -4160,6 +4305,15 @@ impl<'a> Engine<'a> {
                     // members of its own; what it names are the ones a
                     // value of the kind answers to.
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
+                }
+                if name == self.class_word("order") && !self.lang.class_builder.is_empty() {
+                    if let Some(own) = self.class_value(c, name) { return self.bind_class_value(own, None, c.clone()); }
+                    if let Some(maker) = Self::maker_beneath(c) {
+                        if let Some(method) = self.class_value(&maker, name) { return self.bind_class_value(method, Some(subject.clone()), maker); }
+                    }
+                    let method = self.held_kind_descriptor("type", name);
+                    let maker = self.metaclass_root();
+                    return self.bind_class_value(method, Some(subject.clone()), maker);
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     if name==self.class_word("mro") {
@@ -4230,7 +4384,11 @@ impl<'a> Engine<'a> {
                         else if self.lang.constructor.as_deref()==Some(name) || name==self.class_word("subclass") {Some(2)}
                         else if name==self.class_word("get") {Some(10)} else if name==self.class_word("set") {Some(11)}
                         else if name==self.class_word("remove") {Some(12)} else {None};
-                    if let Some(i)=index {return Ok(Self::adapter(i, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] }));}
+                    if let Some(i)=index {
+                        let state = if (10..=12).contains(&i) && !self.lang.class_builder.is_empty() { vec![Value::text(self.class_word("root"))] }
+                            else if name == self.class_word("subclass") { vec![Value::text(name)] } else { Vec::new() };
+                        return Ok(Self::adapter(i,state));
+                    }
                 }
                 if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }
@@ -4337,12 +4495,17 @@ impl<'a> Engine<'a> {
                     let bound=self.bind_class_value(f,Some(subject.clone()),o.class_now())?;
                     return self.class_apply(bound,vec![Value::text(name)]);
                 } }
+                if !self.generic_instance_access(&o.class_now()) && self.lang.reader.as_deref()
+                    .and_then(|reader| self.class_value(&o.class_now(), reader)).is_none() {
+                    return Err(self.missing_member(&subject, name));
+                }
                 if name == self.class_word("kind") {
                     if self.module_holding(&subject).is_some() { return Ok(self.named_kind(&subject)); }
                     let actual = o.class_now().clone();
                     if let Some(overridden) = self.class_value(&actual, name) {
                         return self.bind_class_value(overridden, Some(subject.clone()), actual);
                     }
+                    if !self.instance_root_visible(&actual) { return Err(self.missing_member(&subject,name)); }
                     return Ok(Value::Class(actual));
                 }
                 if name==self.class_word("namespace") {
@@ -4478,7 +4641,7 @@ impl<'a> Engine<'a> {
                 // the root's empty-argument reconstruction of an ordinary object.
                 let native_reduction = [79, 81].iter().any(|at| self.lang.class_special.get(*at).map_or(false, |word| word == name))
                     && Self::worth_of(&subject).map_or(false, |worth| self.native_special(&worth, name));
-                if let Some(root)=self.root_member(name,Some(&o.class_now())).filter(|_| !native_reduction) {
+                if let Some(root)=self.instance_root_visible(&o.class_now()).then(|| self.root_member(name,Some(&o.class_now()))).flatten().filter(|_| !native_reduction) {
                     // The root's own maker takes the class rather than a
                     // thing, and the hook for a class stood on hears
                     // from the class; any other is bound to the thing.
@@ -4526,7 +4689,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("globals") {
                     if let Some(globe)=&f.globe { return Ok(globe.clone()); }
                 }
-                if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.constructor_book(f).unwrap_or_else(|| self.outer_book_made()))); }
+                if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.outer_book_made())); }
                 // The builtins a routine reads its unbound names from.
                 if self.lang.module_builtins.iter().any(|word| word == name) {
                     return self.routine_builtins(f);
@@ -4989,7 +5152,6 @@ impl<'a> Engine<'a> {
         fresh
     }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        self.constructor_indices.borrow_mut().clear();
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
         let class = self.root_class();
         self.made += 1;
@@ -5040,6 +5202,10 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if matches!(&subject,Value::Object(instance) if Self::own_kind(&instance.class_now()).as_deref()==Some("struct_time")) {
+            if ["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"].contains(&name) {return Err("AttributeError: readonly attribute".into())}
+            return Err(format!("AttributeError: 'time.struct_time' object has no attribute '{name}'").into());
+        }
         if let Some(namespace)=self.wrapper_namespace(&subject)? {
             if name=="__wrapped__" || name==self.class_word("function") || name==self.class_word("abstractmethod") {return Err(format!("AttributeError: readonly attribute {name}").into());}
             if name==self.class_word("namespace") {
@@ -5236,6 +5402,10 @@ impl<'a> Engine<'a> {
                             return Err(absent);
                         }
                     }
+                }
+                if !self.generic_instance_access(&o.class_now()) {
+                    let availability = if self.lang.reader.as_deref().and_then(|key| self.class_value(&o.class_now(),key)).is_some() { "only read-only attributes" } else { "no attributes" };
+                    return Err(format!("TypeError: '{}' object has {} ({} .{})", o.class_now().name, availability, if value.is_some() { "assign to" } else { "del" }, name).into());
                 }
                 // A member that takes writes takes this one: a slot keeps
                 // the value, a property's kept accessor refuses, and any
@@ -5621,6 +5791,7 @@ impl<'a> Engine<'a> {
         }
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
+        if !self.lang.class_builder.is_empty() && self.class_root.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),c)) { return false; }
         if matches!(Self::own_kind(c).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let own=Self::own_class_value(c,self.class_word("slots"));
         let Some(own)=own else{return !(c.base().is_none() && c.name==self.class_word("root")) && Self::own_kind(c).map_or(true, |word| word == "module");};
@@ -6066,7 +6237,14 @@ impl<'a> Engine<'a> {
                 return Err(self.unclassed("core.issubclass.subject"));
             }
             // Everything stands beneath the class every other one does.
-            if Rc::ptr_eq(c, &self.root_class()){return Ok(true);}
+            if Rc::ptr_eq(c, &self.root_class()) {
+                if self.lang.class_builder.is_empty() { return Ok(true); }
+                match value {
+                    Value::Class(actual) if subclass => return Ok(Self::contains_class(actual, c)),
+                    Value::Object(object) if !subclass => return Ok(Self::contains_class(&object.class_now(), c)),
+                    _ => return Ok(true),
+                }
+            }
             // The run's own module objects answer to the native module
             // kind, whatever class a module keeps for its members.
             if Self::own_kind(c).as_deref()==Some("module") && self.module_holding(value).is_some(){return Ok(true);}
@@ -6080,7 +6258,7 @@ impl<'a> Engine<'a> {
                 }
             }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
-            if kind.is_some_and(|k|Self::exception_beneath(k,c)||Self::contains_class(k,c)){return Ok(true);}
+            if kind.is_some_and(|k| (!subclass && Rc::ptr_eq(k, c)) || Self::exception_beneath(k,c)||Self::contains_class(k,c)){return Ok(true);}
             // A value not of the kind may still name a class beneath it
             // through its own `__class__`, which is read here and may
             // raise, as the reference asks it. It is the class the value
@@ -6304,7 +6482,7 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Object(module) = &one {
                     let class=module.class_now();
-                    let module_kind=Self::kind_beneath(&class).as_deref() == Some("module");
+                    let module_kind=Self::kind_beneath(&class).as_deref() == Some("module") || class.name == "ModuleType" || class.lineage.borrow().iter().any(|base| base.name == "ModuleType");
                     let class_directory=self.lang.class_special.get(75)
                         .and_then(|word| std::iter::once(class.as_ref()).chain(class.lineage().iter().map(Rc::as_ref))
                             .find_map(|base| Self::own_class_value(base, word))).is_some();
@@ -6768,6 +6946,18 @@ impl<'a> Engine<'a> {
     }
     fn bind_super_object(&mut self, original:Value, instance:Value)->Flow<Value> {
         if matches!(instance.contents(),Value::Null){return Ok(original);}
+        if let Value::Object(object) = &original {
+            if Self::super_descended(&object.class_now()) && Self::worth_of(&original).is_none() {
+                let (owner, receiver) = {
+                    let fields = object.fields.borrow();
+                    (fields.iter().find(|(key, _)| key == "__thisclass__").map(|(_, value)| value.clone()),
+                     fields.iter().find(|(key, _)| key == "__self__").map(|(_, value)| value.clone()))
+                };
+                if receiver.is_some_and(|value| !matches!(value.contents(), Value::Null)) { return Ok(original); }
+                let Some(owner) = owner else { return Ok(original); };
+                return self.super_made(object.class_now(), vec![owner, instance]);
+            }
+        }
         let native=Self::worth_of(&original).unwrap_or_else(||original.clone());
         let Value::Adapter(binding)=native else{return Err(self.class_refusal())};
         if binding.0!=9||binding.1.len()!=2{return Err(self.class_refusal());}
@@ -6777,4 +6967,341 @@ impl<'a> Engine<'a> {
         self.super_binding(arguments)
     }
 
+}
+
+impl<'a> Engine<'a> {
+    /// Whether the class is the parent class or stands beneath it: the
+    /// kind word it or one of its forebears was made with is the parent
+    /// class's own.
+    pub(super) fn super_descended(c: &Rc<Class>) -> bool {
+        std::iter::once(c).chain(c.lineage.borrow().iter()).any(|base| Self::own_kind(base).as_deref() == Some("super"))
+    }
+
+    /// The member a parent reading finds: the lineage of the class the
+    /// thing answers as, walked from just after the class given, each
+    /// member found bound to the thing the reading stands on. Nothing
+    /// where the walk finds no member, so the caller's own reading of
+    /// the parent thing answers instead.
+    fn super_walk(&mut self, owner: &Rc<Class>, receiver: &Value, dynamic: Rc<Class>, name: &str) -> Flow<Option<Value>> {
+        // A thing standing on the very class it answers as reads the
+        // member loose, the reading that class itself takes; anything
+        // else -- a class its maker answers for among them -- reads it
+        // bound to the thing.
+        let loose = matches!(&receiver, Value::Class(c) if Rc::ptr_eq(c, &dynamic));
+        let order = Self::class_order(&dynamic);
+        let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
+        let root_class = self.root_class();
+        for class in &order[start + 1..] {
+            if name == self.class_word("allocate") {
+                if let Some(word) = Self::own_kind(class) {
+                    if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
+                }
+            }
+            if let Some(value) = Self::own_class_value(class, name) {
+                // The subclass hook is a class method: it binds to the
+                // class the thing answers as, loose or not.
+                let subject = if name == self.class_word("subclass") && loose { Some(Value::Class(dynamic.clone())) }
+                    else if name == self.class_word("allocate") || loose { None } else { Some(receiver.clone()) };
+                return Ok(Some(self.bind_class_value(value, subject, dynamic)?));
+            }
+            // Root descriptors belong here only if object is in this suffix.
+            if Rc::ptr_eq(class, &root_class) {
+                if let Some(root) = self.root_member(name, Some(&dynamic)) {
+                    let bound = if name == self.class_word("subclass") { Some(Value::Class(dynamic.clone())) }
+                        else if name == self.class_word("allocate") || loose { None }
+                        else { Some(receiver.clone()) };
+                    return Ok(Some(match bound {
+                        Some(subject) => Self::adapter(3, vec![root, subject]),
+                        None => root,
+                    }));
+                }
+                continue;
+            }
+            if Self::own_kind(class).is_some() || self.exception_class(class) || self.is_metaclass_root(class) {
+                let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");
+                let native_method = match Self::worth_of(receiver) {
+                    Some(worth) => matches!(self.builtin_member(&worth, name)?, Some(Value::ValueMethod(_))),
+                    None => false,
+                };
+                if constructing || native_method {
+                    return Ok(Some(Self::adapter(44, vec![receiver.clone(), Value::text(&owner.name), Value::text(name)])));
+                }
+            }
+            if Self::own_class_value(class, self.class_word("module")).is_none() {
+                let base_value = Self::own_kind(class).and_then(|word| self.spelled_kind(&word)).unwrap_or_else(|| Value::Class(class.clone()));
+                match self.class_get(base_value, name, false) {
+                    Ok(value) => {
+                        // A read on the class itself binds by what the
+                        // member is: the root's hooks bind to the class
+                        // the thing answers as, everything else stands
+                        // as the class's own reading of it stands.
+                        if loose {
+                            if matches!(&value, Value::Adapter(payload) if payload.0 == 2) {
+                                return Ok(Some(Self::adapter(3, vec![value, Value::Class(dynamic)])));
+                            }
+                            return Ok(Some(self.bind_class_value(value, None, dynamic)?));
+                        }
+                        return Ok(Some(if matches!(&value, Value::Adapter(payload) if [2, 10, 11, 12, 19, 29, 30, 41].contains(&payload.0)) { Self::adapter(3, vec![value, receiver.clone()]) } else { value }));
+                    }
+                    Err(fault) if self.attribute_fault(&fault) => (),
+                    Err(fault) => return Err(fault),
+                }
+            }
+            if Self::own_kind(class).is_some() {
+                if let Some(descriptor) = self.loose_kind_member(&Value::Class(class.clone()), name) {
+                    return Ok(Some(if loose { descriptor } else { Self::adapter(3, vec![descriptor, receiver.clone()]) }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// The name the parent class's refusals give a thing's kind: the
+    /// class's own name for a thing of one, the kind word for a plain
+    /// value, and the cell's name for a cell, as the reference names
+    /// them in this very complaint.
+    pub(super) fn super_tp_name(&self, value: &Value) -> String {
+        if let Some(word) = self.kind_spelled(value) { return word.to_string(); }
+        match value {
+            Value::Object(o) => o.class_now().name.clone(),
+            Value::Class(c) => c.name.clone(),
+            Value::Adapter(w) if w.0 == 31 => "cell".to_string(),
+            other => other.core_kind(),
+        }
+    }
+
+    /// The class a kept form names: a class as it stands, or the class
+    /// of a builtin kind word, the two forms the parent thing keeps its
+    /// classes in.
+    fn super_class_of(&mut self, held: Option<Value>) -> Option<Rc<Class>> {
+        match held {
+            Some(Value::Class(c)) => Some(c),
+            Some(Value::Native(op, word)) if Self::kind_builtin(&op) => Some(self.kind_class(&word)),
+            _ => None,
+        }
+    }
+
+    /// Whether two classes are one for the parent walk's purposes:
+    /// the very class, or two standings of one builtin kind, whose
+    /// class is made in more than one place.
+    pub(super) fn super_same_class(a: &Rc<Class>, b: &Rc<Class>) -> bool {
+        Rc::ptr_eq(a, b) || matches!((Self::own_kind(a), Self::own_kind(b)), (Some(x), Some(y)) if x == y)
+    }
+
+    /// The class the first of the parent class's arguments names: a
+    /// class as it stands, the class of a builtin kind word, and
+    /// otherwise the refusal the reference words the same way.
+    fn super_type_arg(&mut self, given: &Value) -> Flow<Rc<Class>> {
+        match given {
+            Value::Class(c) => Ok(c.clone()),
+            Value::Native(op, name) if Self::kind_builtin(op) => Ok(self.kind_class(name.as_ref())),
+            other => Err(format!("TypeError: super() argument 1 must be type, not {}", other.core_kind()).into()),
+        }
+    }
+
+    /// The class a parent thing answers as: the thing given itself for
+    /// a class beneath the type, the thing's own class for a thing of
+    /// one, and otherwise the refusal the reference words the same way.
+    fn super_check(&mut self, owner: &Rc<Class>, receiver: &Value) -> Flow<Rc<Class>> {
+        if let Value::Class(given) = receiver {
+            if Self::class_order(given).iter().any(|base| Self::super_same_class(base, owner)) { return Ok(given.clone()); }
+            // A class the type given makes is one of its things: the
+            // maker answers for it, as its own kind does in the reference.
+            if let Some(maker) = Self::maker_beneath(given) {
+                if Self::class_order(&maker).iter().any(|base| Self::super_same_class(base, owner)) { return Ok(maker); }
+            }
+        }
+        if let Value::Object(o) = receiver {
+            let actual = o.class_now().clone();
+            if Self::class_order(&actual).iter().any(|base| Self::super_same_class(base, owner)) { return Ok(actual); }
+        }
+        if let Value::Native(op, name) = receiver {
+            if Self::kind_builtin(op) {
+                let actual = self.kind_class(name.as_ref());
+                if Self::class_order(&actual).iter().any(|base| Self::super_same_class(base, owner)) { return Ok(actual); }
+            }
+        }
+        let spelled = Self::worth_of(receiver).and_then(|worth| self.kind_spelled(&worth).map(|word| word.to_string()))
+            .unwrap_or_else(|| receiver.core_kind());
+        if !spelled.is_empty() {
+            let actual = self.kind_class(&spelled);
+            if Self::class_order(&actual).iter().any(|base| Self::super_same_class(base, owner)) { return Ok(actual); }
+        }
+        // A proxy's own `__class__` may speak where its own class
+        // cannot: read through the ordinary reading, and where the
+        // answer is a type beneath the one given, it is the class the
+        // thing answers as.
+        let kind_word = self.class_word("kind").to_owned();
+        match self.class_get(receiver.clone(), &kind_word, false) {
+            Ok(exposed) => {
+                if let Ok(shown) = self.super_type_arg(&exposed) {
+                    if Self::class_order(&shown).iter().any(|base| Self::super_same_class(base, owner)) { return Ok(shown); }
+                }
+            }
+            Err(fault) if self.attribute_fault(&fault) => {}
+            Err(fault) => return Err(fault),
+        }
+        let (which, spelled) = match receiver {
+            Value::Class(given) => ("type", given.name.clone()),
+            Value::Native(op, name) if Self::kind_builtin(op) => ("type", name.to_string()),
+            other => ("instance of", self.super_tp_name(other)),
+        };
+        Err(format!("TypeError: super(type, obj): obj ({} {}) is not an instance or subtype of type ({}).", which, spelled, owner.name).into())
+    }
+
+    /// A thing of the parent class made of the class it looks past and
+    /// the thing it stands on, the reference's own checks worded as it
+    /// words them: too many arguments, a first that is no type, and a
+    /// second the type has no hold on.
+    pub(super) fn super_made(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if Self::own_kind(&c).as_deref() == Some("super") {
+            let items = self.call_items(args.clone())?;
+            if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: super() takes no keyword arguments".into()); }
+            if items.len() > 2 { return Err(format!("TypeError: super() expected at most 2 arguments, got {}", items.len()).into()); }
+            if let Some((_, first)) = items.first() {
+                if !self.stands_for_kind(&first.contents()) { return Err(format!("TypeError: super() argument 1 must be a type, not {}", self.super_tp_name(&first.contents())).into()); }
+            }
+        }
+        // A thing of the parent class is built the way any call of a
+        // class builds a thing: the allocation the class names, then
+        // the constructing it answers with, handed the arguments given.
+        let made = self.super_allocated(&c, args.clone())?;
+        let Value::Object(o) = &made else { return Ok(made) };
+        if !Self::super_descended(&o.class_now()) { return Ok(made); }
+        let constructor = self.lang.constructor.clone().unwrap_or_default();
+        if let Some(init) = self.class_value(&o.class_now(), &constructor) {
+            if matches!(&init, Value::Routine(_)) {
+                let bound = self.bind_class_value(init, Some(made.clone()), o.class_now().clone())?;
+                let answer = self.class_apply(bound, args)?;
+                if !matches!(answer, Value::Null) { return Err(format!("TypeError: __init__() should return None, not '{}'", answer.core_kind()).into()); }
+                return Ok(made);
+            }
+            let mut given = vec![made.clone()];
+            given.extend(args);
+            self.class_apply(init, given)?;
+        }
+        Ok(made)
+    }
+
+    /// The allocation a call of the parent class or a class beneath it
+    /// runs: a `__new__` written out, called with the class and the
+    /// arguments given, or a bare thing of the class otherwise.
+    fn super_allocated(&mut self, c: &Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        let allocate = self.class_word("allocate").to_string();
+        if let Some(newer @ Value::Routine(_)) = self.class_value(c, &allocate) {
+            let bound = self.bind_class_value(newer, None, c.clone())?;
+            let mut given = vec![Value::Class(c.clone())];
+            given.extend(args);
+            return self.class_apply(bound, given);
+        }
+        self.made += 1;
+        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c.clone(), fields: RefCell::new(Vec::new()), mark: self.made })))
+    }
+
+    /// A parent call with no argument written: the frame gave the class
+    /// and the thing, and only the parent class itself is filled from
+    /// them at once; a class beneath it is built as any call of it
+    /// builds a thing, its own constructing, where one is written out,
+    /// running with no argument at all.
+    pub(super) fn super_framed(&mut self, c: Rc<Class>, owner: Rc<Class>, receiver: Value) -> Flow<Value> {
+        let made = self.super_allocated(&c, Vec::new())?;
+        let Value::Object(o) = &made else { return Ok(made) };
+        if !Self::super_descended(&o.class_now()) { return Ok(made); }
+        if Self::own_kind(&c).as_deref() == Some("super") {
+            self.super_fill(o, owner, receiver)?;
+            return Ok(made);
+        }
+        // A class beneath the parent class is built as any call of it
+        // builds a thing, its own constructing running with no
+        // argument at all; the parent class's own init, where it is
+        // the one answered, reads the frame the call stands in.
+        let constructor = self.lang.constructor.clone().unwrap_or_default();
+        if let Some(init) = self.class_value(&o.class_now(), &constructor) {
+            if matches!(&init, Value::Routine(_)) {
+                let bound = self.bind_class_value(init, Some(made.clone()), o.class_now().clone())?;
+                let answer = self.class_apply(bound, Vec::new())?;
+                if !matches!(answer, Value::Null) { return Err(format!("TypeError: __init__() should return None, not '{}'", answer.core_kind()).into()); }
+                return Ok(made);
+            }
+            self.class_apply(init, vec![made.clone()])?;
+        }
+        Ok(made)
+    }
+
+    /// The three names a parent thing keeps, filled from the class it
+    /// looks past and the thing it stands on, each class kept in the
+    /// form the program reads it.
+    pub(super) fn super_fill(&mut self, o: &Rc<Instance>, owner: Rc<Class>, receiver: Value) -> Flow<()> {
+        let mut objtype = Value::Null;
+        if !matches!(receiver, Value::Null) {
+            let checked = self.super_check(&owner, &receiver)?;
+            objtype = self.public_class(checked);
+        }
+        let shown_owner = self.public_class(owner);
+        let mut fields = o.fields.borrow_mut();
+        for (key, value) in [("__thisclass__", shown_owner), ("__self__", receiver), ("\0objtype", objtype)] {
+            match fields.iter_mut().find(|(held, _)| held == key) {
+                Some((_, place)) => *place = value,
+                None => fields.push((key.to_string(), value)),
+            }
+        }
+        Ok(())
+    }
+
+    /// The parent class's own constructing called by name: the thing is
+    /// measured against the arguments once more and made over, the way
+    /// the reference lets its constructing run again on a thing made.
+    fn super_initialised(&mut self, args: Vec<Value>) -> Flow<Value> {
+        let items = self.call_items(args)?;
+        let plain: Vec<Value> = items.iter().filter(|(key, _)| key.is_none()).map(|(_, value)| value.contents()).collect();
+        let Some(subject) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".into()); };
+        let o = match subject {
+            Value::Object(o) if Self::super_descended(&o.class_now()) => o,
+            _ => {
+                let received = self.class_type(vec![subject.clone()])?.kind_it_names().ok_or_else(|| self.class_refusal())?;
+                return Err(format!("TypeError: descriptor '__init__' requires a 'super' object but received a '{received}'").into());
+            },
+        };
+        if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: super() takes no keyword arguments".into()); }
+        if plain.len() > 3 { return Err(format!("TypeError: super() takes at most 2 arguments ({} given)", plain.len() - 1).into()); }
+        // Reached with nothing but the thing, the constructing reads
+        // its class and first argument from the frame it was called in.
+        let (owner, receiver) = match plain.get(1) {
+            Some(given) => (self.super_type_arg(given)?, plain.get(2).cloned().unwrap_or(Value::Null)),
+            None => self.super_frame_args()?,
+        };
+        let o = o.clone();
+        self.super_fill(&o, owner, receiver)?;
+        return Ok(Value::Null);
+    }
+
+    /// The class and the first argument a no-argument parent init reads
+    /// from the frame the call stands in: the routine running now, the
+    /// worth its first name holds, and the class cell it closes over,
+    /// each absence said the way the reference says it.
+    fn super_frame_args(&mut self) -> Flow<(Rc<Class>, Value)> {
+        let Some(program) = self.running_routine.clone() else { return Err("RuntimeError: super(): no current frame".into()); };
+        if program.formals.is_empty() { return Err("RuntimeError: super(): no arguments".into()); }
+        let mut first = Value::Blank;
+        if let Some(frame) = &self.trace_frame {
+            let held = frame.fields.borrow();
+            if let Some((_, Value::Tuple(slots))) = held.iter().find(|(name, _)| name == "\0slots") {
+                if let Some(value) = slots.first() {
+                    first = match value { Value::Binding(cell) | Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                }
+            }
+        }
+        if matches!(first, Value::Blank) { return Err("RuntimeError: super(): arg[0] deleted".into()); }
+        for (at, cell_value) in program.enclosed.iter() {
+            if !program.idents[*at].starts_with("#class_cell") { continue; }
+            let (Value::Binding(cell) | Value::Bond(cell)) = cell_value else { return Err("RuntimeError: super(): bad __class__ cell".into()); };
+            let held = cell.borrow().contents();
+            if matches!(held, Value::Blank) { return Err("RuntimeError: super(): empty __class__ cell".into()); }
+            let Value::Class(owner) = held else {
+                return Err(format!("RuntimeError: super(): __class__ is not a type ({})", self.super_tp_name(&held)).into());
+            };
+            return Ok((owner, first));
+        }
+        Err("RuntimeError: super(): __class__ cell not found".into())
+    }
 }

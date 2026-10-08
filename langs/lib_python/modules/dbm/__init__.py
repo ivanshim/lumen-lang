@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/dbm/__init__.py; PSF License.
 """Generic interface to all dbm clones.
 
 Use

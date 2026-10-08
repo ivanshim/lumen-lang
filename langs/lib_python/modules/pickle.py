@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/pickle.py; PSF License.
 """Create portable serialized representations of Python objects.
 
 See module copyreg for a mechanism for registering custom picklers.

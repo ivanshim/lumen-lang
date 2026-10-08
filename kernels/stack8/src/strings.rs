@@ -129,6 +129,8 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
         };
         if place < initial || used.contains(&place) { return Err(fault(lang, "arguments")); }
         used.push(place);
+        // An errors-only encoder call leaves encoding at its UTF-8 default.
+        if op == TextOp::Encode && args.len() == 1 && place == 2 { args.push(Value::text("utf-8")); }
         while args.len() <= place { args.push(Value::Null); }
         args[place] = value;
     }
@@ -217,6 +219,35 @@ pub(crate) fn recase(s: &str, op: TextOp) -> String {
     answer
 }
 
+/// The same case changes `recase` makes, walked over a text that is a
+/// row of code units rather than a `&str`. A unit no `char` can hold
+/// is carried through as itself, while the scalars around it are cased
+/// with the very context `recase` gives them, final sigma included.
+pub(crate) fn recase_units(units: &[u32], op: TextOp) -> Vec<u32> {
+    let stand: Vec<char> = units.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect();
+    let mut prior = false;
+    let mut answer = Vec::with_capacity(units.len());
+    for (at, &unit) in units.iter().enumerate() {
+        let Some(c) = char::from_u32(unit) else { answer.push(unit); prior = false; continue };
+        let bits = unicode::bits(c);
+        let kind = match op {
+            TextOp::Casefold => 3, TextOp::Upper => 1, TextOp::Lower => 0,
+            TextOp::Capitalize => if at == 0 { 2 } else { 0 },
+            TextOp::Title => if prior { 0 } else { 2 },
+            _ if bits & 128 != 0 => 1,
+            _ if bits & 64 != 0 => 0,
+            _ => { answer.push(unit); prior = bits & 16 != 0; continue; }
+        };
+        if kind == 0 && c == '\u{3a3}' && final_sigma(&stand, at) {
+            answer.push('\u{3c2}' as u32);
+        } else {
+            answer.extend(unicode::change(c, kind).chars().map(|x| x as u32));
+        }
+        prior = bits & 16 != 0;
+    }
+    answer
+}
+
 fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     if args.len() == 1 {
         let Value::Map(pairs) = &args[0] else { return Err("TypeError: if you give only one argument to maketrans it must be a dict".into()); };
@@ -251,6 +282,25 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
         else { pairs.push((key,value)); }
     }
     Ok(Value::Map(Rc::new(pairs.into())))
+}
+
+/// Split a text or a row of stowed code units on a separator of
+/// either kind, validating the cut count the way CPython does.
+fn split_units_text(args: &[Value], reverse: bool, lang: &Lang) -> Result<Value, String> {
+    if args.len() > 3 { return Err(fault(lang, "arguments")); }
+    let units = args[0].text_codes().ok_or_else(|| fault(lang, "receiver"))?;
+    let separator = match args.get(1).map(Value::contents) {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.text_codes().ok_or_else(|| fault(lang, "arguments"))?),
+    };
+    let raw = match args.get(2) {
+        None => -1i64,
+        Some(v) => integer(v, lang)?,
+    };
+    let limit = if raw < 0 { usize::MAX } else { raw as usize };
+    let pieces = crate::methods::split_units(&units, separator.as_deref(), limit, reverse)
+        .map_err(|_| fault(lang, "separator"))?;
+    Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true))
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
@@ -351,6 +401,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let mut supplied = args.to_vec(); supplied[0] = Value::text(&clean);
             let result = run(op, _name, &supplied, lang, words)?;
             return Ok(if op == Isascii { Value::Flag(false) } else { result });
+        }
+        if matches!(op, Split | Rsplit) {
+            return split_units_text(args, op == Rsplit, lang);
         }
     }
     let Some(Value::Text(source)) = args.first() else { return Err(fault(lang,"receiver")); };
@@ -458,6 +511,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         Split | Rsplit => {
             let limit=number(1,-1)?; let cap=if limit<0 {usize::MAX} else {limit as usize};
+            if matches!(params.first(), Some(Value::Codepoints(_))) {
+                return split_units_text(args, op == Rsplit, lang);
+            }
             let sep=match params.first() {None|Some(Value::Null)=>None,Some(v)=>Some(text(v,lang)?)};
             let backward=op==Rsplit; let mut parts=Vec::new();
             if let Some(sep)=sep {

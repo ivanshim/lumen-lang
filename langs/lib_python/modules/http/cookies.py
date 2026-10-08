@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/http/cookies.py; PSF License.
 ####
 # Copyright 2000 by Timothy O'Malley <timo@alum.mit.edu>
 #

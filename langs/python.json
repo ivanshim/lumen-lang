@@ -47,9 +47,7 @@
   "ext.builtin.posix": [
     "__posix"
   ],
-  "ext.builtin.loader.source": [
-    "__loader_source"
-  ],
+  "ext.builtin.loader.source": ["__loader_source"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -725,6 +723,8 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
+  "ext.builtin.unicodedata.decomposition": ["__unicode_decomposition"],
+  "ext.builtin.unicodedata.decomposition.metadata": ["decomposition", "unicodedata"],
   "ext.builtin.sre": [
     "__sre_native"
   ],
@@ -911,6 +911,8 @@
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
+  "ext.builtin.static_namespace": ["__static_namespace__"],
+  "ext.builtin.trace_native": ["__trace_native__"],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],

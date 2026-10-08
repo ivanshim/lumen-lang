@@ -556,6 +556,7 @@ _repr_factories = set()
 
 
 class defaultdict(dict):
+    __module__ = 'collections'
     # The factory is kept in a slot the class alone names, apart from any
     # attribute a subclass may define, the way the reference keeps it in
     # a member of its own.
@@ -838,6 +839,7 @@ def _native_ordered_dict(base):
         def __reversed__(self):
             return _OrderedDictIterator(self, 'k', True)
 
+    OrderedDict.__module__ = 'collections'
     OrderedDict.__qualname__ = 'OrderedDict'
     OrderedDict.__name__ = 'OrderedDict'
     return OrderedDict

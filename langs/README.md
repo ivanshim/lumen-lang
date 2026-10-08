@@ -4923,6 +4923,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sre` | - | - | `__sre_native` | - | - | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
+| `ext.builtin.static_namespace` | - | - | `__static_namespace__` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.storage.get` | - | - | `__storage_get` | - | - | - | - | - | - | - |
 | `ext.builtin.storage.set` | - | - | `__storage_set` | - | - | - | - | - | - | - |
@@ -5034,9 +5035,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.trace_native` | - | - | `__trace_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.type_descriptors.clear` | - | - | `__clear_type_descriptors` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | `__uncaught` | - | `__uncaught_handler` | - | - | - | - | - |
+| `ext.builtin.unicodedata.decomposition` | - | - | `__unicode_decomposition` | - | - | - | - | - | - | - |
+| `ext.builtin.unicodedata.decomposition.metadata` | - | - | `decomposition` `unicodedata` | - | - | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
 | `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
@@ -6123,3 +6127,10 @@ by the `gc` adapter. Both Python kernels return the real retained heap values
 from their cyclic-collector graph, deduplicated by object identity; no object
 is synthesized to populate the snapshot. Generation filtering is unsupported
 by this collector and raises `NotImplementedError`.
+
+`ext.builtin.trace_native` registers a Python tracing callback, reads the active
+callback, and exposes native compiled instructions with their source positions.
+The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
+
+`ext.builtin.static_namespace` reads stored namespaces and class linearizations
+without invoking attribute hooks, metaclass properties, or other descriptors.
