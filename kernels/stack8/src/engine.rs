@@ -16639,6 +16639,11 @@ impl<'a> Engine<'a> {
                 Err(fault) => { self.carried = Some(fault); Err(String::new()) }
             };
         }
+        if operation == "__typing_subst__" && self.lang.type_parameters {
+            if !named.is_empty() { return Err("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments".into()); }
+            if args.len() != 1 { return Err(format!("TypeError: TypeVarTuple.__typing_subst__() takes exactly one argument ({} given)", args.len())); }
+            return Err("TypeError: Substitution of bare TypeVarTuple is not supported".into());
+        }
         if operation == "callable_reduce_ex" {
             if !named.is_empty() || args.len() != 1 { return Err(String::from("TypeError: __reduce_ex__() takes exactly one argument")); }
             let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());

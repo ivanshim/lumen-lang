@@ -200,6 +200,8 @@ struct BindingPlan {
 }
 
 struct Piece {
+    // Type parameters are lexical bindings that a nonlocal declaration cannot target.
+    type_bindings: Vec<String>,
     python_fallthrough: bool,
     asynchronous: bool,
     asynchronous_walk: bool,
@@ -569,6 +571,26 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
             head += 1;
         }
         if head == source.len() || source[head].shape != Shape::Sign { continue; }
+        if source.get(at + 2).is_some_and(|token| token.lexeme == "[") {
+            let mut parameters = Vec::new();
+            let mut level = 0usize;
+            let mut parameter_next = false;
+            for token in &source[at + 2..head] {
+                match token.lexeme.as_str() {
+                    "[" | "(" | "{" => { level += 1; if level == 1 { parameter_next = true; } },
+                    "]" | ")" | "}" => { level = level.saturating_sub(1); if level == 0 { break; } },
+                    "," if level == 1 => parameter_next = true,
+                    "*" | "**" if parameter_next => {},
+                    _ if parameter_next && token.shape == Shape::Instr => { parameters.push(token.lexeme.as_str()); parameter_next = false; },
+                    _ => {}
+                }
+            }
+            for index in at + 2..head {
+                if source[index].shape == Shape::Instr && parameters.contains(&source[index].lexeme.as_str()) {
+                    result[index].lexeme = private_name(&owner.lexeme, &source[index].lexeme);
+                }
+            }
+        }
         let mut begin = head + 1;
         while source.get(begin).map_or(false, |t| t.shape == Shape::LineEnd) { begin += 1; }
         let indented = source.get(begin).map_or(false, |t| t.shape == Shape::Open);
@@ -630,7 +652,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
+    let mut top = Piece { type_bindings: Vec::new(), python_fallthrough: false, asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -1239,27 +1261,46 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        let type_wrapper = self.pieces.last().is_some_and(|unit| unit.ident == "#type parameters"
+            && !Self::unblocked(unit, name).is_some_and(|slot| !unit.enclosed.iter().any(|(at, _)| *at == slot)));
+        if self.reading_annotation {
+            if let Some((depth, globals)) = self.class_globals.last() {
+                let parameter = self.pieces.iter().skip(*depth).any(|scope| scope.type_bindings.iter().any(|bound| bound == name));
+                if !parameter && globals.iter().any(|global| global == name) {
+                    let far = self.registry.slot(name);
+                    self.put(Instr::Read(Cell { ident: Rc::from(name), near: Vec::new(), far, free: false, moving: false }));
+                    return;
+                }
+            }
+        }
         if let Some((owner, members)) = &self.annotation_namespace {
-            if self.reading_annotation && members.contains(name) {
+            let local_type = self.pieces.iter().rev().take_while(|scope| !Self::unblocked(scope, owner).is_some_and(|slot| !scope.enclosed.iter().any(|(at, _)| *at == slot))).any(|scope| scope.type_bindings.iter().any(|bound| bound == name));
+            if self.reading_annotation && !local_type && !name.starts_with('#') {
+                let global_fallback = members.contains(name);
                 let owner = owner.clone();
-                let address = self.cell_to_read(&owner, false);
-                self.put(Instr::Read(address));
+                let book = self.gathered.iter().rev().find(|body| body.class_cell == owner).and_then(|body| body.book.clone());
+                self.glance(&owner);
                 self.constant(Value::text(name));
                 let fallback = self.routine("#annotation fallback", Vec::new(), 0, true, |c| {
-                    let far = c.registry.slot(name);
-                    c.put(Instr::Read(Cell { ident: Rc::from(name), near: Vec::new(), far, free: false, moving: false }));
+                    if global_fallback {
+                        let far = c.registry.slot(name);
+                        c.put(Instr::Read(Cell { ident: Rc::from(name), near: Vec::new(), far, free: false, moving: false }));
+                    } else { c.read_fallback(name); }
                     c.write(RESULT_CELL);
                     c.piece().result_touched = true;
                     Ok(())
                 }).expect("a name lookup has no syntax to reject");
                 self.constant(Value::Routine(fallback));
+                if let Some(book) = book { self.read(&book); } else { self.constant(Value::Null); }
                 self.constant(Value::Adapter(Rc::new((74, Vec::new()))));
-                self.act(Action::Invoke(Rc::from("annotation lookup")), 4);
+                self.act(Action::Invoke(Rc::from("annotation lookup")), 5);
                 return;
             }
         }
 
-        if !self.lang.class_builder.is_empty() && !self.reading_annotation && !self.writing_place && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
+        let generic_class_lookup = type_wrapper
+            && self.class_names.last().is_some_and(|(depth, _)| *depth + 1 == self.pieces.len());
+        if !self.lang.class_builder.is_empty() && !self.reading_annotation && !self.writing_place && (self.in_class_body() || generic_class_lookup) && !name.starts_with('#') && !self.declared_outside_class(name) {
             if let Some(book) = self.gathering().book.clone() {
                 self.read(&book); self.constant(Value::text(name));
                 self.act(Action::Builtin(Builtin::ClassTool(18), Rc::from("")), 2);
@@ -1271,7 +1312,8 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        let at = self.default_depth.unwrap_or(self.pieces.len());
+        let outer_class = type_wrapper;
+        let at = self.default_depth.unwrap_or(self.pieces.len() - usize::from(outer_class));
         let alias = self.class_names.last().filter(|(depth, _)| *depth == at).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);
@@ -1851,7 +1893,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
-        self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
+        self.pieces.push(Piece { type_bindings: Vec::new(), python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -1867,7 +1909,7 @@ impl<'a> Compiler<'a> {
             line: 0,
             instrs: Vec::new(),
         });
-        if self.lang.closes_over && !self.discovering {
+        if self.lang.closes_over && !self.discovering && name != "#annotation fallback" {
             if let Some(plan) = self.plans.get(&source).cloned() {
                 if self.lang.syntax_members.is_empty() && plan.nonlocals.iter().any(|name| formals.contains(name) && !plan.class_nonlocals.contains(name)) {
                     return Err(self.lang.parameters_amiss.first().cloned().unwrap_or_default());
@@ -1893,7 +1935,12 @@ impl<'a> Compiler<'a> {
             self.write(RESULT_CELL);
         }
         let finally_around = std::mem::replace(&mut self.syntax_finally_nesting, 0);
+        let annotation_around = self.reading_annotation;
+        let defaults_around = self.default_depth;
+        if expression || matches!(name, "<comprehension>" | "<genexpr>") { self.reading_annotation = false; self.default_depth = None; }
         let body_result = body(self);
+        self.default_depth = defaults_around;
+        self.reading_annotation = annotation_around;
         self.syntax_finally_nesting = finally_around;
         body_result?;
         self.comprehension_names = surrounding_names;
@@ -1921,7 +1968,7 @@ impl<'a> Compiler<'a> {
                 return Err("SyntaxError: 'return' with value in async generator".into());
             }
         }
-        if self.discovering {
+        if self.discovering && name != "#annotation fallback" {
             let names = unit.idents.iter().filter(|n| !unit.nonlocals.contains(n) && !unit.globals.iter().any(|(g, _)| g == *n)).cloned().collect();
             self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone(), class_nonlocals: unit.class_nonlocals.clone() });
         }
@@ -2189,10 +2236,12 @@ impl<'a> Compiler<'a> {
         loop {
             let kind = if self.on_any(&lang.carries_pairs) { self.take(); "ParamSpec" }
                 else if self.on_any(&lang.carries_words) { self.take(); "TypeVarTuple" } else { "TypeVar" };
+            let display_name = self.spelled[self.pos].lexeme.clone();
             let name = self.want_name("as a type parameter")?;
             names.push(name.clone());
+            self.piece().type_bindings.push(name.clone());
             self.cell_to_write(&name);
-            self.constant(Value::text(&name));
+            self.constant(Value::text(&display_name));
             self.constant(Value::text(kind));
             let mut constrained = false;
             if self.on_any(&lang.annotation_marks) {
@@ -2304,18 +2353,34 @@ impl<'a> Compiler<'a> {
         if generic {
             at += 1;
             if spelling(at) == "]" { return Some("SyntaxError: Type parameter list cannot be empty".into()); }
+            let mut parameters = Vec::new();
+            let mut default_seen = false;
             while at < self.tokens.len() {
                 let parameter_kind = match spelling(at) { "*" => { at += 1; "TypeVarTuple" }, "**" => { at += 1; "ParamSpec" }, _ => "TypeVar" };
                 if self.tokens.get(at)?.shape != Shape::Instr { break; }
+                let parameter = spelling(at);
+                let parameter_title = &self.spelled[at].lexeme;
+                if parameters.contains(&parameter) { return Some(format!("SyntaxError: duplicate type parameter '{}'", self.spelled[at].lexeme)); }
+                parameters.push(parameter);
                 at += 1;
-                let marker = spelling(at);
-                if marker == ":" || marker == "=" {
+                let mut has_default = false;
+                while [":", "="].contains(&spelling(at)) {
+                    let marker = spelling(at);
+                    if marker == "=" {
+                        has_default = true;
+                        if parameter_kind != "TypeVarTuple" && spelling(at + 1) == "*" { return Some("SyntaxError: expected '('".into()); }
+                    }
                     at += 1;
                     let begin = at;
                     let mut depth = 0usize;
+                    let mut lambda_headers = 0usize;
                     while at < self.tokens.len() {
                         let word = spelling(at);
-                        if depth == 0 && [",", "]"].contains(&word) { break; }
+                        if depth == 0 {
+                            if word == "]" || lambda_headers == 0 && [",", "="].contains(&word) { break; }
+                            if word == "lambda" { lambda_headers += 1; }
+                            if word == ":" { lambda_headers = lambda_headers.saturating_sub(1); }
+                        }
                         if ["(", "[", "{"].contains(&word) { depth += 1; }
                         else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
                         if depth == 0 && matches!(self.tokens[at].shape, Shape::LineEnd | Shape::Finish) { break; }
@@ -2333,14 +2398,34 @@ impl<'a> Compiler<'a> {
                             }
                         }
                     }
+                    if marker == ":" && parameter_kind != "TypeVar" {
+                        let forbidden = if tuple_bound { "constraints" } else { "bound" };
+                        return Some(format!("SyntaxError: cannot use {forbidden} with {parameter_kind}"));
+                    }
                     let scope = if marker == "=" { format!("{parameter_kind} default") }
                         else if tuple_bound { "TypeVar constraint".to_string() }
                         else { "TypeVar bound".to_string() };
+                    let mut nesting = 0usize;
+                    let mut lambdas: Vec<(usize, bool)> = Vec::new();
                     for item in begin..at {
-                        let kind = match spelling(item) { ":=" => "named", "yield" => "yield", "await" => "await", _ => continue };
-                        return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}"));
+                        let word = spelling(item);
+                        if matches!(word, ")" | "]" | "}") {
+                            nesting = nesting.saturating_sub(1);
+                            lambdas.retain(|(level, _)| *level <= nesting);
+                        } else if word == "," { lambdas.retain(|(level, body)| *level != nesting || !body); }
+                        if word == "lambda" { lambdas.push((nesting, false)); }
+                        if word == ":" {
+                            if let Some((_, body)) = lambdas.iter_mut().rev().find(|(level, body)| *level == nesting && !body) { *body = true; }
+                        }
+                        if !lambdas.iter().any(|(_, body)| *body) {
+                            let kind = match word { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None };
+                            if let Some(kind) = kind { return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}")); }
+                        }
+                        if matches!(word, "(" | "[" | "{") { nesting += 1; }
                     }
                 }
+                if default_seen && !has_default { return Some(format!("SyntaxError: non-default type parameter '{parameter_title}' follows default type parameter")); }
+                default_seen |= has_default;
                 if spelling(at) == "]" { at += 1; break; }
                 if spelling(at) != "," { break; }
                 at += 1;
@@ -3014,6 +3099,16 @@ impl<'a> Compiler<'a> {
                 self.take();
                 loop {
                     let name = self.want_name("after the nonlocal keyword")?;
+                    if !self.discovering {
+                        let end = self.pieces.len() - usize::from(!self.in_class_body());
+                        for unit in self.pieces[..end].iter().rev() {
+                            if unit.type_bindings.contains(&name) {
+                                return Err(format!("SyntaxError: nonlocal binding not allowed for type parameter '{}'", self.spelled[self.pos - 1].lexeme));
+                            }
+                            if Self::unblocked(unit, &name).is_some_and(|slot| !unit.enclosed.iter().any(|(at, _)| *at == slot))
+                                && !unit.nonlocals.contains(&name) && !unit.globals.iter().any(|(global, _)| global == &name) { break; }
+                        }
+                    }
                     // A class body pushes no unit of its own, so the
                     // unit around it is the very one a name declared
                     // `nonlocal` there means to reach: the declaration
@@ -6085,6 +6180,7 @@ impl<'a> Compiler<'a> {
     /// One member of a class body. True where the member has already
     /// gone past what follows it, so that the walk leaves it alone.
     fn class_member(&mut self, heads_the_body: bool) -> Res<bool> {
+        if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let lang = self.lang;
         if !lang.class_details.get("root").map_or(false, |v| !v.is_empty()) && self.on_any(&lang.decorator_words) {
             let (named, slot) = self.adorned_member()?;
@@ -6492,9 +6588,8 @@ impl<'a> Compiler<'a> {
             self.arguments(&pair)?
         } else { 0 };
         if generic {
-            let names = std::mem::take(&mut self.generic_class_parameters);
-            for name in &names { self.read(name); }
-            self.act(Action::MakeTuple, names.len());
+            for parameter in &parameters { self.read(parameter); }
+            self.act(Action::MakeTuple, parameters.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
             self.act(Action::Invoke(Rc::from("generic base")), 2);
             count += 1;
@@ -6619,6 +6714,14 @@ impl<'a> Compiler<'a> {
         let inside_wrapper = std::mem::take(&mut self.reading_generic_class);
         let lang = self.lang;
         if !inside_wrapper && Lang::spells(&lang.type_params_open, &self.look_ahead(2).lexeme) {
+            let previous_namespace = self.annotation_namespace.clone();
+            if self.in_class_body() {
+                self.gathering().needs_class_cell = true;
+                let owner = self.gathering().class_cell.clone();
+                let members = self.gathering().bindings.clone();
+                self.cell_to_write(&owner);
+                self.annotation_namespace = Some((owner, members));
+            }
             let declaration = self.pos;
             let name = self.look_ahead(1).lexeme.clone();
             self.pos += 2;
@@ -6634,6 +6737,7 @@ impl<'a> Compiler<'a> {
                 compiler.piece().result_touched = true;
                 Ok(())
             })?;
+            self.annotation_namespace = previous_namespace;
             self.constant(Value::Routine(factory));
             self.act(Action::Invoke(Rc::from("generic class")), 1);
             self.write(&name);
@@ -7497,12 +7601,25 @@ impl<'a> Compiler<'a> {
             &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
         let mut closing: Vec<String> = Vec::new();
         let began = self.pos;
+        let generic = !self.piece().type_bindings.is_empty();
+        let mut functions: Vec<(usize, bool)> = Vec::new();
         while !self.exhausted() {
             let outside_function = self.piece().outermost || self.in_class_body();
             let token = self.look();
             if closing.is_empty() && (self.on_sep() || self.on_any(ends)
                 || matches!(token.shape, Shape::Open | Shape::Close)) {
                 break;
+            }
+            if generic {
+                let word = token.spelling();
+                if word == "," { functions.retain(|(depth, body)| *depth != closing.len() || !body); }
+                if word == "lambda" { functions.push((closing.len(), false)); }
+                if word == ":" { if let Some((_, body)) = functions.iter_mut().rev().find(|(depth, body)| *depth == closing.len() && !body) { *body = true; } }
+                if !functions.iter().any(|(_, body)| *body) {
+                    if let Some(kind) = match word { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
+                        return Err(format!("SyntaxError: {kind} expression cannot be used within an annotation"));
+                    }
+                }
             }
             if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
             if !lang.syntax_members.is_empty() && outside_function && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.spelling()) {
@@ -7517,6 +7634,7 @@ impl<'a> Compiler<'a> {
                         return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an expression".into()));
                     }
                     closing.pop();
+                    functions.retain(|(depth, _)| *depth <= closing.len());
                 }
             }
             self.take();
@@ -7600,6 +7718,7 @@ impl<'a> Compiler<'a> {
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
         if !self.lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any(&self.lang.type_params_open) {
+            let coroutine = std::mem::take(&mut self.coroutine_next);
             let enclosing_namespace = self.annotation_namespace.clone();
             if self.in_class_body() {
                 self.gathering().needs_class_cell = true;
@@ -7610,6 +7729,7 @@ impl<'a> Compiler<'a> {
             }
             let maker = self.routine("#type parameters", Vec::new(), 0, true, |compiler| {
                 let parameters = compiler.create_type_parameters()?;
+                compiler.coroutine_next = coroutine;
                 compiler.function_body(name.clone())?;
                 compiler.attach_type_parameters(&name, &parameters);
                 compiler.read(&name);
@@ -7655,7 +7775,7 @@ impl<'a> Compiler<'a> {
         let original = name_at.filter(|&i| self.tokens[i].lexeme == name)
             .and_then(|i| self.spelled.get(i)).filter(|t| t.shape == Shape::Instr)
             .map(|t| t.lexeme.clone()).unwrap_or_else(|| name.to_string());
-        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].spelling());
+        let asynchronous = name_at.and_then(|at| at.checked_sub(2)).is_some_and(|at| Lang::spells(&self.lang.async_words, &self.tokens[at].spelling()));
         self.declaration_types()?;
         // The type parameters read here are kept aside while the
         // parameters and their defaults are read, so that a routine
@@ -7729,7 +7849,17 @@ impl<'a> Compiler<'a> {
             let after = self.pos;
             for (_, from) in &defaults {
                 self.pos = *from;
-                self.expr(0)?;
+                if self.piece().ident == "#type parameters" {
+                    let saved = self.piece().declared.clone();
+                    self.piece().declared.fill(true);
+                    let depth = self.default_depth.replace(self.pieces.len() - 1);
+                    let evaluated = self.expr(0);
+                    self.default_depth = depth;
+                    let unit = self.piece();
+                    for slot in saved.len()..unit.declared.len() { unit.declared[slot] = true; }
+                    for (slot, declared) in saved.into_iter().enumerate() { unit.declared[slot] = declared; }
+                    evaluated?;
+                } else { self.expr(0)?; }
             }
             self.pos = after;
         }
@@ -7746,6 +7876,7 @@ impl<'a> Compiler<'a> {
     fn lambda_value(&mut self) -> Res<()> {
         let lang = self.lang;
         let lambda_at = self.pos.saturating_sub(1);
+        let bound_lambda = self.piece().ident == "#type bound" && lambda_at > 0 && self.tokens[lambda_at - 1].lexeme == ":";
         let mark = lang.block_intros.first().cloned().ok_or("Lambda needs a body mark")?;
         let separator = lang.calling.as_ref().and_then(|b| b.between.clone()).ok_or("Lambda needs a parameter separator")?;
         let mut formals = Vec::new();
@@ -7881,7 +8012,7 @@ impl<'a> Compiler<'a> {
                     a.pos = lambda_at;
                     return Err("SyntaxError: cannot use assignment expressions with lambda".into());
                 }
-                if a.on_assign() {
+                if a.on_assign() && !bound_lambda {
                     let last = &a.tokens[a.pos - 1];
                     a.registry.stopped_end = last.column + last.lexeme.chars().count();
                     a.registry.stopped_end_row = last.row;

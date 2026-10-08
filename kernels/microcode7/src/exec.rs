@@ -9748,6 +9748,13 @@ impl<'a> Machine<'a> {
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if name == "classmethod_get" { return self.get_native_classmethod(receiver, arguments, keywords); }
+        if self.table.flag("ext.stmt.type_parameters") && name == "__typing_subst__" {
+            if !keywords.is_empty() { return Err(String::from("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments").into()); }
+            match arguments.len() {
+                1 => return Err(String::from("TypeError: Substitution of bare TypeVarTuple is not supported").into()),
+                supplied => return Err(format!("TypeError: TypeVarTuple.__typing_subst__() takes exactly one argument ({supplied} given)").into()),
+            }
+        }
         if name == "callable_reduce_ex" {
             if arguments.len() != 1 || !keywords.is_empty() { return Err("TypeError: __reduce_ex__() takes exactly one argument".to_owned().into()); }
             self.check_reduction_protocol(&arguments[0])?;

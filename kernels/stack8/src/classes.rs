@@ -683,7 +683,8 @@ impl<'a> Engine<'a> {
         }
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
-        if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
+        let native_layout = Self::own_kind(class).is_some_and(|word| !self.lang.type_parameters || word != "Generic");
+        if native_layout || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
         class.base.as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -713,7 +714,13 @@ impl<'a> Engine<'a> {
         while lines.iter().any(|s| !s.is_empty()) {
             let head = lines.iter().filter_map(|s| s.first()).find(|head|
                 !lines.iter().any(|s| s.iter().skip(1).any(|tail| Rc::ptr_eq(head, tail)))).cloned()
-                .ok_or_else(|| self.class_word("mro.amiss").to_string())?;
+                .ok_or_else(|| {
+                    if self.lang.type_parameters {
+                        let mut blocked = Vec::new();
+                        for line in &lines { if let Some(head) = line.first() { if !blocked.contains(&head.name) { blocked.push(head.name.clone()); } } }
+                        format!("TypeError: Cannot create a consistent method resolution\norder (MRO) for bases {}", blocked.join(", "))
+                    } else { self.class_word("mro.amiss").to_string() }
+                })?;
             if lineage.iter().any(|c| Rc::ptr_eq(c, &head)) { return Err(self.class_word("mro.amiss").to_string().into()); }
             for line in &mut lines { if line.first().map_or(false, |c| Rc::ptr_eq(c, &head)) { line.remove(0); } }
             lineage.push(head);
@@ -748,7 +755,7 @@ impl<'a> Engine<'a> {
         }
         let lineage = self.merge_class_orders(&bases)?;
         // Two builtin kinds cannot both be kept in one thing.
-        let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
+        let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).filter(|word| !self.lang.type_parameters || word != "Generic").collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
         let primary = self.layout_parent(&bases)?;
@@ -1669,7 +1676,7 @@ impl<'a> Engine<'a> {
                     return self.set_reduction(&args[0]);
                 },
                 132 => {
-                    if !args.is_empty() { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", args.len()).into()); }
+                    if !args.is_empty() { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", w.1.get(1).map_or_else(|| "builtin_function_or_method".into(), Value::plain), args.len()).into()); }
                     Ok(w.1[0].clone())
                 },
                 1 => {
@@ -1729,9 +1736,12 @@ impl<'a> Engine<'a> {
                     }
                     Ok(alias)
                 }
-                74 if args.len() == 3 => {
+                74 if args.len() == 4 => {
                     if let Value::Class(owner) = args[0].contents() {
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                    } else if !matches!(args[3].contents(), Value::Null) {
+                        let Value::Tuple(found) = self.class_namespace_read(vec![args[3].clone(), args[1].clone()])? else { unreachable!() };
+                        if found[0].is_true() { return Ok(found[1].clone()); }
                     }
                     self.class_apply(args[2].clone(), Vec::new())
                 }
@@ -1756,16 +1766,6 @@ impl<'a> Engine<'a> {
                     self.class_apply(function, args)
                 }
                 152 | 153 => {
-                    if w.0 == 152 {
-                        if let Some(Value::Class(owner)) = args.first() {
-                            if let Some(parameters) = Self::own_class_value(owner, "__type_params__") {
-                                if parameters.is_true() {
-                                    owner.shared.borrow_mut().push(("__parameters__".into(), parameters));
-                                    return Ok(Value::Null);
-                                }
-                            }
-                        }
-                    }
                     let module = self.import_module("typing")?;
                     let word = if w.0 == 152 { "_generic_init_subclass" } else { "_generic_class_getitem" };
                     let function = self.class_get(module, word, false)?;
@@ -1773,9 +1773,19 @@ impl<'a> Engine<'a> {
                 }
                 49 if args.len() == 1 => {
                     let module = self.import_module("typing")?;
-                    let alias = self.class_get(module, "_GenericAlias", false)?;
+                    let alias = self.class_get(module.clone(), "_GenericAlias", false)?;
                     let generic = Value::Class(self.kind_class("Generic"));
-                    self.class_apply(alias.contents(), vec![generic, args.remove(0)])
+                    let Value::Tuple(parameters) = args[0].contents() else { return Err(self.class_refusal()); };
+                    let mut bases = Vec::new();
+                    for parameter in parameters.iter() {
+                        let parameter = if matches!(parameter.contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVarTuple")) {
+                            let unpack = self.class_get(module.clone(), "Unpack", false)?;
+                            let subscript = self.class_get(unpack, "__getitem__", false)?;
+                            self.class_apply(subscript, vec![parameter.clone()])?
+                        } else { parameter.clone() };
+                        bases.push(parameter);
+                    }
+                    self.class_apply(alias.contents(), vec![generic, Value::tuple(bases)])
                 }
                 49 if args.is_empty() => {
                     self.typing_module();
@@ -2262,7 +2272,9 @@ impl<'a> Engine<'a> {
         let Some(Value::Text(name)) = positional.first().map(Value::contents) else {
             return Err("TypeError: name must be a str".into());
         };
-        let module = self.module_named().unwrap_or_else(|| "__main__".into());
+        let caller = self.trace_frame.as_ref().and_then(|frame| frame.fields.borrow().iter().find_map(|(key, value)|
+            if key == "\0routine" { if let Value::Routine(code) = value { Some(code.clone()) } else { None } } else { None }));
+        let module = caller.as_ref().map(|code| self.routine_module(code).plain()).or_else(|| self.module_named()).unwrap_or_else(|| "__main__".into());
         let mut fields: Vec<(String, Value)> = vec![("__name__".into(), Value::Text(name.clone())), ("__module__".into(), Value::text(&module)),
             ("\0typing_repr".into(), Value::Text(name))];
         if class.name == "TypeAliasType" {
@@ -3561,6 +3573,7 @@ impl<'a> Engine<'a> {
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
             Value::Native(op, word) if Self::kind_builtin(op) => {
+                if self.lang.type_parameters && name == "__type_params__" { return Ok(Value::tuple(Vec::new())); }
                 if *op == Builtin::AsReal && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
                 }
@@ -3618,6 +3631,7 @@ impl<'a> Engine<'a> {
                 if let Some(inherited) = self.root_member(name, None) { return Ok(inherited); }
             }
             Value::Class(c) => {
+                if self.lang.type_parameters && name == "__type_params__" { return Ok(Self::own_class_value(c, name).unwrap_or_else(|| Value::tuple(Vec::new()))); }
                 if name == "__weakref__" && self.weak_layout(c) {
                     return Ok(Self::adapter(16, vec![Value::text(name), Value::Class(c.clone())]));
                 }
@@ -3819,6 +3833,13 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if Self::own_kind(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")) {
+                if matches!(o.class_now().name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple") {
+                    if name == "__reduce__" {
+                        let title = o.fields.borrow().iter().find(|(key, _)| key == "__name__").expect("parameter name").1.clone();
+                        return Ok(Self::adapter(132, vec![title, Value::text(&o.class_now().name)]));
+                    }
+                    if name == "__reduce_ex__" { return Ok(Value::ValueMethod(Rc::new((subject.clone(), "callable_reduce_ex".into())))); }
+                }
                 if matches!(name, "args" | "kwargs") && o.class_now().name == "ParamSpec" {
                     let class = self.kind_class(if name == "args" { "ParamSpecArgs" } else { "ParamSpecKwargs" });
                     let title = o.fields.borrow().iter().find(|(key, _)| key == "__name__").map(|(_, value)| value.plain()).unwrap_or_default();
@@ -3829,6 +3850,7 @@ impl<'a> Engine<'a> {
                 if name == "__parameters__" && o.class_now().name == "TypeAliasType" {
                     return Ok(o.fields.borrow().iter().find(|(key, _)| key == "__type_params__").map(|(_, value)| value.clone()).unwrap_or_else(|| Value::tuple(Vec::new())));
                 }
+                if name == "__typing_subst__" && o.class_now().name == "TypeVarTuple" { return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.into())))); }
                 let substitution = match (o.class_now().name.as_str(), name) {
                     ("TypeVar", "__typing_subst__") => Some("_typevar_subst"),
                     ("ParamSpec", "__typing_subst__") => Some("_paramspec_subst"),
@@ -5130,7 +5152,10 @@ impl<'a> Engine<'a> {
     pub(super) fn weak_layout(&self, c: &Class) -> bool {
         if let Some(layout) = c.weak_storage.get() { return layout; }
         if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
-        if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "set" | "frozenset"); }
+        if let Some(kind) = Self::own_kind(c) {
+            return matches!(kind.as_str(), "set" | "frozenset") || self.lang.type_parameters
+                && matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "ParamSpecArgs" | "ParamSpecKwargs");
+        }
         if c.direct.is_empty() { return false; }
         match Self::own_class_value(c, self.class_word("slots")) {
             None => true,
@@ -5178,12 +5203,13 @@ impl<'a> Engine<'a> {
     /// unless its things keep a worth of an atomic builtin kind, which
     /// can take no part in a cycle.
     pub(super) fn flags_of(&self, c: &Class) -> i64 {
+        let generic_heap = self.lang.type_parameters && Self::own_kind(c).as_deref() == Some("Generic");
         let dictionary = self.slots_allow(c, self.class_word("namespace"));
         let inline = dictionary && Self::kind_beneath(c).is_none();
-        let tracked = Self::own_kind(c).is_none()
+        let tracked = (Self::own_kind(c).is_none() || generic_heap)
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
-        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if Self::own_kind(c).is_some() || c.base.is_none() && c.name == self.class_word("root") { 0 } else { 512 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) && !generic_heap { 256 } else { 0 } + if Self::own_kind(c).is_some() && !generic_heap || c.base.is_none() && c.name == self.class_word("root") { 0 } else { 512 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }
