@@ -4136,6 +4136,28 @@ impl<'a> Engine<'a> {
                                 names.dedup();
                                 words(&names)
                             }
+                            12 => {
+                                let mut names: Vec<String> = Vec::new();
+                                for constant in &f.code_constants {
+                                    let child = match constant {
+                                        Value::Routine(r) => Some(r.clone()),
+                                        Value::Adapter(w) if matches!(w.0, 4 | 5 | 7) => match &w.1[0] { Value::Routine(r) => Some(r.clone()), _ => None },
+                                        _ => None,
+                                    };
+                                    if let Some(child) = child {
+                                        for (_, cell) in &child.enclosing {
+                                            for slot in &cell.near {
+                                                if let Some(name) = f.idents.get(*slot) {
+                                                    if !name.starts_with('#') { names.push(Self::closure_title(name).to_owned()); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                names.sort();
+                                names.dedup();
+                                words(&names)
+                            }
                             _ => return Err(self.missing_member(&subject, name)),
                         };
                         return Ok(value);

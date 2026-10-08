@@ -2885,7 +2885,8 @@
     "co_filename",
     "co_firstlineno",
     "__annotate__",
-    "co_freevars"
+    "co_freevars",
+    "co_cellvars"
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
@@ -3499,7 +3500,7 @@
   ],
   "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
-    "NotImplementedError: relative imports require a package context"
+    "ImportError: attempted relative import with no known parent package"
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
