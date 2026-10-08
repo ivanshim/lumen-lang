@@ -9115,3 +9115,25 @@
 {"t":"2026-10-08T19:34:12Z","event":"exited","job":"review-auto-dsflash-contextlib-async-1928","code":0}
 {"t":"2026-10-08T19:34:14Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":89,"expected":90.2,"gap":-1.2,"status":"ok"}
 {"t":"2026-10-08T19:34:15Z","event":"resumed","job":"dsflash-codeccallbacks","model":"deepseek-flash","session":"session-c4fc2b7c-01d2-47ef-b850-a766dc51928f"}
+{"t":"2026-10-08T19:35:58Z","event":"queued","job":"stdlib-doctest","model":"gpt-6.1-sol","line":"sol-new stdlib-doctest","note":"new Sol subject test_doctest/ (library, not-yet), worktree at 8de5f2825"}
+{"t":"2026-10-08T19:36:09Z","event":"checkin","status":"done","actions":"released held or-resume dsflash-codeccallbacks to queue (DS Flash 11/12 -> 12/12); new Sol subject stdlib-doctest (test_doctest/ package) brief + worktree at 8de5f2825, sol-new queued; prune-merged 0MB","notes":"Codex week 89% (alert at 90, resets 2026-10-14 03:28Z); integrate-21f still running (lverify), no open PR; box load 2.0, 13.3 GB avail, disk 79%; Mac disk 86%; Claude 5h 3%/week 13%; luna no new alerts, gap -1.2 ok; review-auto-stdlib-ast queued; held: dspro-type-annotations (DS Pro busy), unpack-baseexc, colorize"}
+{"t":"2026-10-08T19:39:16Z","event":"review-started","job":"stdlib-ast","review":"review-auto-stdlib-ast-1933"}
+{"t":"2026-10-08T19:44:17Z","event":"started","job":"stdlib-doctest","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T19:46:59Z","event":"exited","job":"dspro-tstring","code":0}
+{"t":"2026-10-08T19:48:00Z","event":"exited","job":"kimi-module","code":0}
+{"t":"2026-10-08T19:48:00Z","event":"started","job":"kimi-type-comments","model":"kimi-k3","mode":"resume"}
+{"t":"2026-10-08T19:49:00Z","event":"finished","job":"dspro-tstring","exit_time":"2026-10-08T19:46:58Z"}
+{"t":"2026-10-08T19:49:00Z","event":"review-queued","job":"dspro-tstring","review":"review-auto-dspro-tstring-1948"}
+{"t":"2026-10-08T19:49:02Z","event":"finished","job":"kimi-module","exit_time":"2026-10-08T19:48:00Z"}
+{"t":"2026-10-08T19:49:02Z","event":"review-queued","job":"kimi-module","review":"review-auto-kimi-module-1949"}
+{"t":"2026-10-08T19:49:07Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T19:49:17Z","event":"exited","job":"review-auto-stdlib-ast-1933","code":0}
+{"t":"2026-10-08T19:51:18Z","event":"review-started","job":"dspro-tstring","review":"review-auto-dspro-tstring-1948"}
+{"t":"2026-10-08T19:54:24Z","event":"returned","job":"dsflash-contextlib-async","review":"review-auto-dsflash-contextlib-async-1928","commit":"781712fcf","round":2,"note":"(2nd; contextlib_async 54/58 0 fail both kept, generators 58/59; introduced: get_source prefers embedded source over sys.path origin, file-read primitives return compiled-in source instead of disk bytes; clean check 1195/0; carries 21f coroutines, not merged with 21e main) -> returns/dsflash-contextlib-async.md, held (DS Flash 12/12)"}
+{"t":"2026-10-08T19:54:24Z","event":"returned","job":"stdlib-ast","review":"review-auto-stdlib-ast-1933","commit":"1e4571207","round":1,"note":"(1st; test_ast import fail -> 138/217 both kernels kept, integrity ok, clean check 1195/0 (calendar length 79->64 coverage only); introduced: compile(AST) compiles unparse() text and loses positions, single mode accepts multiple statements; overlaps 21f/21g) -> returns/stdlib-ast.md, queue sol-resume"}
+{"t":"2026-10-08T19:54:24Z","event":"queued","job":"dspro-type-annotations","model":"deepseek-v4-pro","line":"or-resume dspro-type-annotations","note":"held resume released: DS Pro slot free"}
+{"t":"2026-10-08T19:54:45Z","event":"quota","codex_week_used":89,"codex_credits":0,"claude_week_used":13,"claude_5h_used":5,"kimi_5h_used":0,"kimi_month_used":0.9926,"kimi_code_used":0,"deepseek_usd":286.0}
+{"t":"2026-10-08T19:54:52Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":89,"expected":91.0,"gap":-2.0,"status":"ok"}
+{"t":"2026-10-08T19:55:01Z","event":"exited","job":"stdlib-shutil","code":0}
+{"t":"2026-10-08T19:55:06Z","event":"checkin","status":"done","actions":"returned dsflash-contextlib-async (2nd) -> held; returned stdlib-ast (1st) -> sol-resume queued; released held dspro-type-annotations (DS Pro slot free); prune-merged freed 0MB; luna checks ok","notes":"Codex weekly 89% (alert at 90%, resets 10-14 03:28Z); box disk 80%, Mac 86%; Sol 12/12, DS Flash 12/12 (3 held resumes)"}
+{"t":"2026-10-08T19:55:47Z","event":"exited","job":"review-auto-dspro-tstring-1948","code":0}
