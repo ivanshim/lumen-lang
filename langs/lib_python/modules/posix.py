@@ -578,7 +578,7 @@ def pipe():
 def _owner_id(value, kind):
     try:
         number = _operator.index(value)
-    except TypeError:
+    except BaseException:
         raise TypeError(kind + ' should be integer, not ' + type(value).__name__) from None
     if number < -1 or 4294967295 < number <= 9223372036854775807:
         raise OverflowError(kind + ' is less than minimum')
