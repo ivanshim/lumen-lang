@@ -8936,3 +8936,27 @@
 {"t":"2026-10-08T16:19:20Z","event":"resumed","job":"dsflash-unpack-baseexc","model":"deepseek-flash","via":"dsh","note":"moved from OpenCode to dsh (2026-10-09), fresh session"}
 {"t":"2026-10-08T16:19:40Z","event":"resumed","job":"dspro-tstring","model":"deepseek-v4-pro","via":"dsh","note":"moved from OpenCode to dsh (2026-10-09), fresh session"}
 {"t":"2026-10-08T16:33:59Z","event":"quota","codex_week_used":82,"codex_credits":0,"claude_week_used":11,"claude_5h_used":20,"kimi_5h_used":0,"kimi_month_used":0.9864,"kimi_code_used":0,"deepseek_usd":292.21}
+{"t":"2026-10-08T16:34:03Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":82,"expected":84.0,"gap":-2.0,"status":"ok"}
+{"t":"2026-10-08T16:34:09Z","event":"checkin","status":"done","actions":"no verdicts pending; prune-merged freed 0MB; luna FINDINGS appended","notes":"all slots full (Sol 11+review, DS Flash 12/12, DS Pro 1/1, Kimi, Sonnet); PR #540 (21e) build-and-test pass, reference/scratch pending, pr-merge-watch on; box load 10.7, 10.9 GB avail, disk 86% (no idle accepted target/); Mac disk 85%; Codex week 82%; Claude 5h 20%/week 11%; luna gap -2.0 ok; held: 4 DS Flash resumes + dspro-type-annotations (slots full)"}
+{"t":"2026-10-08T16:38:07Z","event":"exited","job":"dsflash-time","code":0}
+{"t":"2026-10-08T16:39:04Z","event":"finished","job":"dsflash-time","exit_time":"2026-10-08T16:38:07Z"}
+{"t":"2026-10-08T16:39:04Z","event":"review-queued","job":"dsflash-time","review":"review-auto-dsflash-time-1639"}
+{"t":"2026-10-08T16:39:08Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T16:39:38Z","event":"review-started","job":"dsflash-time","review":"review-auto-dsflash-time-1639"}
+{"t":"2026-10-08T16:40:55Z","event":"exited","job":"stdlib-unicodedata","code":0}
+{"t":"2026-10-08T16:42:02Z","event":"exited","job":"claude-deque","code":0}
+{"t":"2026-10-08T16:43:42Z","event":"exited","job":"review-auto-dsflash-time-1639","code":0}
+{"t":"2026-10-08T16:44:12Z","event":"finished","job":"claude-deque","exit_time":"2026-10-08T16:42:02Z"}
+{"t":"2026-10-08T16:44:12Z","event":"review-queued","job":"claude-deque","review":"review-auto-claude-deque-1644"}
+{"t":"2026-10-08T16:44:19Z","event":"finished","job":"stdlib-unicodedata","exit_time":"2026-10-08T16:40:55Z"}
+{"t":"2026-10-08T16:44:19Z","event":"review-queued","job":"stdlib-unicodedata","review":"review-auto-stdlib-unicodedata-1644"}
+{"t":"2026-10-08T16:44:21Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T16:44:40Z","event":"review-started","job":"claude-deque","review":"review-auto-claude-deque-1644"}
+{"t":"2026-10-08T16:49:27Z","event":"exited","job":"review-auto-claude-deque-1644","code":0}
+{"t":"2026-10-08T16:49:41Z","event":"review-started","job":"stdlib-unicodedata","review":"review-auto-stdlib-unicodedata-1644"}
+{"t":"2026-10-08T16:53:36Z","event":"exited","job":"dsflash-marshal","code":0}
+{"t":"2026-10-08T16:54:05Z","event":"exited","job":"review-auto-stdlib-unicodedata-1644","code":0}
+{"t":"2026-10-08T16:54:07Z","event":"accepted","job":"claude-deque","review":"review-auto-claude-deque-1644","batch":"21f","commit":"c043daea3","branch":"fix/claude-deque","note":"(Sonnet, after 2 returns) iterator __reduce__ uses current length, both earlier blockers kept; test_deque 77 pass/3 upstream skips/80 both kernels (grouped; whole file times out); clean check 1202/0 all gates; integrity ok, sha256 faithful; overlaps 21e kernels/README + 21f typing/perf-mc7/traceback/coroutines/type-aliases (_types.py); follow-ups: re-certify commit-pinned deque chunks + independence, residual edges (wrong-receiver slot exc, __new__/__class_getitem__ binding, dotted __import__, __imul__ wording, __sizeof__)"}
+{"t":"2026-10-08T16:54:07Z","event":"returned","job":"dsflash-time","review":"review-auto-dsflash-time-1639","commit":"90a6a001a","round":1,"note":"(1st; introduced: get_clock_info process_time/thread_time claims clock_gettime CPUTIME 1ns while both kernels use getrusage us; test_time absent->40/64 0F/0E both kept, clean check 1195/0) -> returns/dsflash-time.md + held-resumes (DS Flash slots)"}
+{"t":"2026-10-08T16:54:07Z","event":"queued","job":"dsflash-code-module","model":"deepseek-flash","line":"or-resume dsflash-code-module deepseek-flash ses_ee80e6f2bffeMvKDbR73ZYCd3S","note":"from held-resumes (DS Flash 10/12 running); old OpenCode id -> fresh dsh session"}
+{"t":"2026-10-08T16:54:07Z","event":"queued","job":"dsflash-descrtut","model":"deepseek-flash","line":"or-resume dsflash-descrtut deepseek-flash ses_ee8545f43ffe2M1vzaqn0NAd7j","note":"from held-resumes (DS Flash 10/12 running); old OpenCode id -> fresh dsh session"}
