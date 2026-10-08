@@ -23955,6 +23955,12 @@ impl Engine<'_> {
                 // one a program put there itself reads as it wrote it.
                 if self.lang.module_builtins.iter().any(|word| word == name)
                     && self.our_native_dict(&book_entry(&book, name).unwrap_or(Value::Null)) {
+                    // Only the main module keeps the builtins as a module;
+                    // an imported one, a suite file among them, keeps the
+                    // dictionary, as the reference does.
+                    if self.module_named().as_deref() != Some(self.class_word("main")) {
+                        return Some(Ok(self.native_dict()));
+                    }
                     return Some(match self.builtins_view() {
                         Ok(held) => Ok(held),
                         Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
@@ -24431,8 +24437,17 @@ impl Engine<'_> {
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), declares_slots: false, weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false) }),
             fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
         });
-        self.modules.insert(main.clone(), Value::Object(object)); self.module_addresses_ready.set(false);
+        self.modules.insert(main.clone(), Value::Object(object.clone())); self.module_addresses_ready.set(false);
         self.refresh_module_cache(&main);
+        // A suite test file is a module of the test package: its own name
+        // reaches this cache beside `__main__`, as the reference runner
+        // would have imported it.
+        if let Ok(name) = std::env::var("LUMEN_TEST_MODULE") {
+            if name != main {
+                self.modules.insert(name.clone(), Value::Object(object));
+                self.refresh_module_cache(&name);
+            }
+        }
     }
 
     /// The dictionary standing for the names where the run is: the
