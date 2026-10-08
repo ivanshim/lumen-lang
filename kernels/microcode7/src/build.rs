@@ -314,6 +314,7 @@ pub struct Builder<'a> {
     generic_class_body: bool,
     generic_class_parameters: Vec<String>,
     annotations_as_strings: bool,
+    barry_as_flufl: bool,
     annotation_sites: Vec<(String, usize)>,
     module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
@@ -650,7 +651,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: false, barry_as_flufl: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -3503,6 +3504,7 @@ impl<'a> Builder<'a> {
                     return Err(format!("SyntaxError: {complaint}"));
                 }
                 if future && original == "annotations" { self.annotations_as_strings = true; }
+                if future && original == "barry_as_FLUFL" { self.barry_as_flufl = true; }
                 gathered.push((original, local, alias));
                 if !self.on_any("syntax.call.separator") {
                     break;
@@ -9376,7 +9378,7 @@ impl<'a> Builder<'a> {
                 continue;
             }
             if table.flag("ext.op.compare.chained") {
-                if let Some((operation, level, words)) = self.comparison_head() {
+                if let Some((operation, level, words)) = self.comparison_head()? {
                     if floor > level { break; }
                     let saved = self.gensym("middle");
                     let keep = Form::Write(saved.clone(), Box::new(left));
@@ -9457,7 +9459,7 @@ impl<'a> Builder<'a> {
                 left = prim_call(Prim::Akin, vec![left, against]);
                 continue;
             }
-            let head = self.comparison_head();
+            let head = self.comparison_head()?;
             let Some(mut op) = table.dyadic.get(&text).copied().or_else(|| {
                 head.map(|(prim, level, _)| crate::table::Infix { prim, level, right_assoc: false })
             }) else {
@@ -9518,19 +9520,45 @@ impl<'a> Builder<'a> {
         Ok(left)
     }
 
-    fn comparison_head(&self) -> Option<(Prim, u32, usize)> {
+    /// The comparison link standing at the reading's place, and how
+    /// many signs spell it. The old diamond `<>` is not a word of the
+    /// definition: with Barry's future import it is the not-equal
+    /// operator, two signs wide, and in a chain it is read link by
+    /// link like any other; without that import the pair is the
+    /// mistake the reference reports, wherever in the chain it stands.
+    fn comparison_head(&mut self) -> Res<Option<(Prim, u32, usize)>> {
         let t = self.table;
-        let first = self.look().spelling();
-        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", self.glance(1).spelling()) {
-            let membership = t.dyadic.get(self.glance(1).spelling())?;
-            return Some((Prim::Absent, membership.level, 2));
+        let first = self.look().spelling().to_string();
+        if t.has_any("ext.builtin.exceptions.syntax") && first == "<" && {
+            let next = self.glance(1);
+            let here = self.look();
+            next.lexeme == ">" && next.row == here.row && next.column == here.column + 1
+        } {
+            if !self.barry_as_flufl {
+                let here = self.look().clone();
+                self.range_end = Some((here.column + 2, here.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            let not_equal = t.dyadic.get("!=").ok_or("Python's not-equal operator is missing")?;
+            return Ok(Some((Prim::Ne, not_equal.level, 2)));
         }
-        let binary = t.dyadic.get(first)?;
-        match binary.prim {
+        if t.spells("ext.op.in.negated", &first) && t.spells("ext.op.in", self.glance(1).spelling()) {
+            let Some(membership) = t.dyadic.get(self.glance(1).spelling()) else { return Ok(None); };
+            return Ok(Some((Prim::Absent, membership.level, 2)));
+        }
+        let Some(binary) = t.dyadic.get(&first) else { return Ok(None); };
+        // Barry turns the two-character spelling into the mistake and
+        // keeps the old diamond for the operator.
+        if self.barry_as_flufl && matches!(binary.prim, Prim::Ne) {
+            let here = self.look().clone();
+            self.range_end = Some((here.column + here.lexeme.chars().count(), here.row));
+            return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
+        }
+        Ok(match binary.prim {
             Prim::Selfsame if t.spells("ext.op.identical.negated", self.glance(1).spelling()) => Some((Prim::Unlike, binary.level, 2)),
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Selfsame | Prim::Unlike | Prim::Contains | Prim::Absent => Some((binary.prim, binary.level, 1)),
             _ => None,
-        }
+        })
     }
 
     /// The next link runs beneath the true arm of this one. Its near
@@ -9541,7 +9569,7 @@ impl<'a> Builder<'a> {
         let far = self.gensym("next");
         let put = Form::Write(far.clone(), Box::new(side));
         let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
-        let answer = match self.comparison_head() {
+        let answer = match self.comparison_head()? {
             Some((following, tier, width)) if tier == level => {
                 let rest = self.comparison_tail(far.clone(), following, tier, width)?;
                 self.choose(test, rest, constant(Value::Flag(false)))
