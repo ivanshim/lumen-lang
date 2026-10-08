@@ -8874,3 +8874,15 @@
 {"t":"2026-10-08T15:06:57Z","event":"review-queued","job":"stdlib-shutil","review":"review-auto-stdlib-shutil-1506"}
 {"t":"2026-10-08T15:07:00Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-08T15:08:23Z","event":"review-started","job":"stdlib-zipfile","review":"review-auto-stdlib-zipfile-1456"}
+{"t":"2026-10-08T15:13:23Z","event":"review-started","job":"stdlib-shutil","review":"review-auto-stdlib-shutil-1506"}
+{"t":"2026-10-08T15:13:46Z","event":"quota","codex_week_used":80,"codex_credits":0,"claude_week_used":10,"claude_5h_used":12,"kimi_5h_used":0,"kimi_month_used":0.9851,"kimi_code_used":0,"deepseek_usd":294.25}
+{"t":"2026-10-08T15:13:53Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":80,"expected":81.5,"gap":-1.5,"status":"ok"}
+{"t":"2026-10-08T15:14:06Z","event":"checkin","status":"done","actions":"prune-merged (freed 0MB); luna checks (alert 59 expected source)","notes":"all slots full; PR #540 CI running (watcher up); box disk 84%, no idle accepted target/ to clear; Mac disk 86%; Codex week 80%"}
+{"t":"2026-10-08T15:14:21Z","event":"exited","job":"stdlib-tempfile","code":0}
+{"t":"2026-10-08T15:17:14Z","event":"finished","job":"stdlib-tempfile","exit_time":"2026-10-08T15:14:21Z"}
+{"t":"2026-10-08T15:17:14Z","event":"review-queued","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-1517"}
+{"t":"2026-10-08T15:17:17Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T15:18:22Z","event":"exited","job":"review-auto-stdlib-zipfile-1456","code":0}
+{"t":"2026-10-08T15:18:23Z","event":"exited","job":"review-auto-stdlib-shutil-1506","code":0}
+{"t":"2026-10-08T15:18:23Z","event":"review-started","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-1517"}
+{"t":"2026-10-08T15:25:18Z","event":"exited","job":"review-auto-stdlib-tempfile-1517","code":0}
