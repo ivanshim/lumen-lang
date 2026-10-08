@@ -18971,8 +18971,16 @@ impl<'a> Engine<'a> {
             return Ok(self.byte_make(row, false));
         }
         let Some(Value::Bytes(cell, mutable, _)) = args.first() else { return Err(unready()); };
-        let _export = if *mutable && matches!(task, 8 | 13 | 18..=23) { Some(ByteExport::acquire(cell)) } else { None };
         let mut supplied = args.to_vec();
+        let numbers: &[usize] = match task {
+            10 | 13 | 18..=22 => &[2, 3], 8 | 23 => &[2], 29..=33 => &[1], _ => &[],
+        };
+        for &at in numbers {
+            if let Some(value @ Value::Object(_)) = supplied.get(at) {
+                supplied[at] = Value::of_big(self.slice_whole(value)?);
+            }
+        }
+        let _export = if *mutable && matches!(task, 8 | 10 | 13 | 18..=23) { Some(ByteExport::acquire(cell)) } else { None };
         let buffers: &[usize] = match task {
             8 | 12 | 23..=27 | 37 | 38 => &[1], 11 | 39 => &[1, 2], _ => &[],
         };
@@ -18982,20 +18990,17 @@ impl<'a> Engine<'a> {
                 supplied[at] = self.byte_make(data, false);
             }
         }
+        if task == 11 {
+            if let Some(value @ Value::Object(_)) = supplied.get(3) {
+                supplied[3] = Value::of_big(self.slice_whole(value)?);
+            }
+        }
         if matches!(task, 13 | 18..=21) {
             if let Some(value @ Value::Object(_)) = supplied.get(1) {
                 supplied[1] = match self.special_index(value)? {
                     Some(number) => number,
                     None => { let data = self.byte_buffer(value)?; self.byte_make(data, false) },
                 };
-            }
-        }
-        let numbers: &[usize] = match task {
-            10 | 13 | 18..=22 => &[2, 3], 8 | 23 => &[2], 11 => &[3], 29..=33 => &[1], _ => &[],
-        };
-        for &at in numbers {
-            if let Some(value @ Value::Object(_)) = supplied.get(at) {
-                supplied[at] = Value::of_big(self.slice_whole(value)?);
             }
         }
         if matches!(task, 10 | 22) && matches!(supplied.get(1), Some(Value::Object(_))) {

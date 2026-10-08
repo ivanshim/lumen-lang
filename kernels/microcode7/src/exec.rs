@@ -14031,8 +14031,16 @@ impl<'a> Machine<'a> {
             _ => {}
         }
         let Some(Value::Octets { cell, changeable, .. }) = values.first() else { return Err(refusal()); };
-        let _lease = (*changeable && matches!(operation, 8 | 13 | 18..=23)).then(|| OctetLease::new(cell));
         let mut converted = values.to_vec();
+        let integer_indices = match operation {
+            8 | 23 => vec![2], 29..=33 => vec![1], 10 | 13 | 18..=22 => vec![2, 3], _ => vec![],
+        };
+        for index in integer_indices {
+            if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                converted[index] = Value::from_big(self.span_whole(&converted[index])?);
+            }
+        }
+        let _lease = (*changeable && matches!(operation, 8 | 10 | 13 | 18..=23)).then(|| OctetLease::new(cell));
         let buffer_indices = match operation {
             11 | 39 => vec![1, 2], 8 | 12 | 23..=27 | 37 | 38 => vec![1], _ => vec![],
         };
@@ -14042,18 +14050,14 @@ impl<'a> Machine<'a> {
                 converted[index] = self.octets(data, false);
             }
         }
+        if operation == 11 && converted.get(3).is_some_and(|v| matches!(v, Value::Thing(_))) {
+            let count = self.span_whole(&converted[3])?;
+            converted[3] = Value::from_big(count);
+        }
         if matches!(operation, 13 | 18..=21) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
             let argument = &converted[1];
             converted[1] = if let Some(integer) = self.stood_for_whole(argument)? { integer }
                 else { let row = self.octet_exported(argument)?; self.octets(row, false) };
-        }
-        let integer_indices = match operation {
-            8 | 23 => vec![2], 11 => vec![3], 29..=33 => vec![1], 10 | 13 | 18..=22 => vec![2, 3], _ => vec![],
-        };
-        for index in integer_indices {
-            if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
-                converted[index] = Value::from_big(self.span_whole(&converted[index])?);
-            }
         }
         if matches!(operation, 10 | 22) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
             let row = self.octet_exported(&converted[1])?;
