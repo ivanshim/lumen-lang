@@ -314,6 +314,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
     escape_notices_ahead_of_run(source, table, ahead, request);
+    table.source.replace(Some(std::rc::Rc::from(source)));
     let read = scan::scan_position(source, table).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let shaped = indent::indent_position(read?, table, ahead).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let tokens = shaped?;

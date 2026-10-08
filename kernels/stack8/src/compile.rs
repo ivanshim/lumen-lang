@@ -2291,13 +2291,22 @@ impl<'a> Compiler<'a> {
                 c.constant(Value::text(&key));
                 c.pos = *start;
                 let expression = c.mark();
-                let previous = std::mem::replace(&mut c.reading_annotation, true);
-                c.expr_at(0, false)?;
-                c.reading_annotation = previous;
                 if c.future_annotations {
+                    // The words are kept as written, so only their end
+                    // is needed; a lambda or a starred name within is
+                    // read whole.
+                    let mut ends = c.lang.assign_words.clone();
+                    ends.extend(c.lang.annotation_marks.iter().cloned());
+                    ends.extend(c.lang.block_intros.iter().cloned());
+                    if let Some(call) = &c.lang.calling { ends.extend(call.between.iter().cloned()); ends.push(call.close.clone()); }
+                    c.annotation_expression(&ends)?;
                     let text = c.annotation_text(*start, c.pos);
                     c.piece().instrs.truncate(expression);
                     c.constant(Value::text(&text));
+                } else {
+                    let previous = std::mem::replace(&mut c.reading_annotation, true);
+                    c.expr_at(0, false)?;
+                    c.reading_annotation = previous;
                 }
                 if module_entries {
                     c.read(&dictionary);
@@ -10307,12 +10316,6 @@ impl<'a> Compiler<'a> {
 
     fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
-        // A starred name stands as an annotation of its own, the
-        // way the reference reads one.
-        if self.reading_annotation && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest) {
-            self.take();
-            return self.prefix_piece();
-        }
         let from = self.mark();
         let tok = self.look().clone();
         if self.yield_operand && lang.dyadic.get(tok.spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {

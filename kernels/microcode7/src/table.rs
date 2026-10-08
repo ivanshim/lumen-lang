@@ -110,6 +110,9 @@ pub struct Table {
     pub quoted_letters: Vec<char>,
     pub quoted_prefixes: Vec<(char, u8)>,
     pub quoted_terminators: Vec<Vec<char>>,
+    /// The text under way, where the caller handed it over: the
+    /// words an annotation was written with are read back out of it.
+    pub source: std::cell::RefCell<Option<std::rc::Rc<str>>>,
 }
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.
@@ -516,6 +519,7 @@ impl Table {
             signs: Vec::new(),
             has_class_order: false,
             quoted_letters: Vec::new(), quoted_prefixes: Vec::new(), quoted_terminators: Vec::new(),
+            source: std::cell::RefCell::new(None),
         };
         table.has_class_order = table.single("ext.stmt.class.detail.root").map_or(false, |s| !s.is_empty());
         table.quoted_letters = table.letters("lexical.string_quotes");

@@ -3522,6 +3522,7 @@ impl<'a> Machine<'a> {
     /// and what it writes to one of them the routine sees afterwards.
     /// Names it makes itself go on the end of that routine's frame.
     fn run_text_within(&mut self, source: &str, frame: &Rc<Env>) -> Result<Value, Escape> {
+        self.table.source.replace(Some(Rc::from(source)));
         let tokens = self.text_scanned(source).map_err(Escape::Error)?;
         let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
         let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
@@ -3592,6 +3593,7 @@ impl<'a> Machine<'a> {
         // Text handed over outright counts as standing where the call
         // to read it stands; a file stands as itself and is read from
         // its own first line.
+        self.table.source.replace(Some(Rc::from(source)));
         let reading_text = came_out_of.is_none();
         let tokens = match reading_text {
             true => self.text_scanned(source)?,
@@ -25015,6 +25017,7 @@ impl Machine<'_> {
         // the module's own names, so that what they read as their world
         // names reads that dictionary and no other.
         let namespace = Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into()))));
+        self.table.source.replace(Some(Rc::from(&*text)));
         let built = match crate::build::build_module_position(&ready, self.table, &hidden, Rc::from(filename), Some(Value::Shared(namespace.clone())), Some(Rc::from(path))) {
             Ok(built) => built,
             Err((words, line, (column, end_column, end_line))) => return Err(self.text_unreadable_at(0, words, filename, line, column, Some((end_line, end_column)), &text)),
@@ -27179,6 +27182,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        self.table.source.replace(Some(Rc::from(source)));
         let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
@@ -27267,6 +27271,7 @@ impl<'a> Machine<'a> {
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
     fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
+        self.table.source.replace(Some(Rc::from(source)));
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
         crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))

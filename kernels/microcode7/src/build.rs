@@ -2051,7 +2051,35 @@ impl<'a> Builder<'a> {
         Ok(constant(Value::Routine(Rc::new(Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
+    /// The words an annotation was written with, read back out of the text
+    /// under way and dressed as the reference dresses one: a number the
+    /// host cannot hold is written as its overflow, a debug format field is
+    /// written out in full, and parentheses holding nothing but one
+    /// expression are dropped. Where the text is not at hand the words are
+    /// joined from the tokens instead.
     fn annotation_spelling(&self, first: usize, last: usize) -> String {
+        let held = self.table.source.borrow();
+        if let Some(source) = held.as_deref() {
+            let from = if first > 0 {
+                match self.tokens.get(first - 1) {
+                    Some(previous) => {
+                        let after = Self::place_in(source, previous.row, previous.column) + previous.lexeme.chars().count();
+                        after + source.chars().skip(after).take_while(|c| c.is_whitespace()).count()
+                    }
+                    None => 0,
+                }
+            } else { 0 };
+            let to = match self.tokens.get(last) {
+                Some(next) => Self::place_in(source, next.row, next.column),
+                None => self.tokens.get(last.wrapping_sub(1)).map_or(from, |t| Self::place_in(source, t.row, t.column) + t.lexeme.chars().count()),
+            };
+            if to >= from {
+                let raw: String = source.chars().skip(from).take(to - from).collect::<String>().trim_end().to_string();
+                let mut edits = self.overflow_edits(source, from, first, last);
+                edits.extend(self.format_edits(source, from, raw.chars().count(), first, last));
+                return Self::trim_parens(&Self::splice(&raw, edits));
+            }
+        }
         let mut pieces: Vec<String> = Vec::new();
         for word in &self.tokens[first..last] {
             if matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close) { continue; }
@@ -2066,6 +2094,257 @@ impl<'a> Builder<'a> {
             pieces.push(spelling);
         }
         pieces.concat()
+    }
+
+    /// Where a row and column stand in the text, counted in characters.
+    fn place_in(source: &str, row: u32, column: usize) -> usize {
+        let mut at = 0usize;
+        for (line, piece) in source.split_inclusive('\n').enumerate() {
+            if line as u32 + 1 == row { return at + column.saturating_sub(1); }
+            at += piece.chars().count();
+        }
+        at
+    }
+
+    /// The spans of numbers written larger than the host can hold, with the
+    /// words the reference writes in their place. A binary operator written
+    /// tightly against one keeps its place but takes the spaces.
+    fn overflow_edits(&self, source: &str, from: usize, first: usize, last: usize) -> Vec<(usize, usize, String)> {
+        let mut edits = Vec::new();
+        for at in first..last {
+            let token = &self.tokens[at];
+            if token.shape != Shape::Numeral { continue; }
+            let Some(word) = Self::overflow_word(&token.lexeme) else { continue };
+            let begin = Self::place_in(source, token.row, token.column).saturating_sub(from);
+            let finish = begin + token.lexeme.chars().count();
+            if finish <= begin { continue; }
+            if at >= first + 2 {
+                let sign = &self.tokens[at - 1];
+                let binary = Self::ends_value(&self.tokens[at - 2]);
+                let head = Self::place_in(source, sign.row, sign.column).saturating_sub(from);
+                if sign.shape == Shape::Sign && binary && Self::writing_sign(&sign.lexeme) && head + sign.lexeme.chars().count() == begin {
+                    if head < begin {
+                        let lead = source.chars().nth(from + head.saturating_sub(1)).map_or(true, char::is_whitespace);
+                        edits.push((head, finish, format!("{}{} {}", if lead { "" } else { " " }, sign.lexeme, word)));
+                        continue;
+                    }
+                }
+            }
+            edits.push((begin, finish, word));
+        }
+        edits
+    }
+
+    /// The words the reference writes for a number too large for the host.
+    fn overflow_word(text: &str) -> Option<String> {
+        let imaginary = text.ends_with('j') || text.ends_with('J');
+        let body = if imaginary { &text[..text.len() - 1] } else { text };
+        let clean: String = body.chars().filter(|c| *c != '_').collect();
+        let value: f64 = clean.parse().ok()?;
+        if !value.is_infinite() { return None; }
+        Some(if imaginary { "1e309j".to_string() } else { "1e309".to_string() })
+    }
+
+    /// Whether a token leaves a value standing, so the sign after it writes.
+    fn ends_value(token: &Token) -> bool {
+        if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote | Shape::WovenEnd | Shape::CharacterRow) { return true; }
+        if matches!(token.lexeme.as_str(), ")" | "]" | "}") { return true; }
+        token.shape == Shape::Bare && !matches!(token.lexeme.as_str(), "and" | "or" | "not" | "in" | "is" | "if" | "else" | "for" | "lambda" | "await" | "yield" | "from" | "as" | "import")
+    }
+
+    fn writing_sign(text: &str) -> bool {
+        matches!(text, "+" | "-" | "*" | "/" | "//" | "%" | "**" | "@" | "&" | "|" | "^" | "<<" | ">>")
+    }
+
+    /// The spans of format strings whose debug fields the reference writes
+    /// out in full, so that `f'{x=!r}'` is stored as `f'x={x!r}'`.
+    fn format_edits(&self, source: &str, from: usize, raw_len: usize, first: usize, last: usize) -> Vec<(usize, usize, String)> {
+        let mut edits = Vec::new();
+        let mut depth = 0usize;
+        let mut opening: Option<usize> = None;
+        for at in first..last {
+            let token = &self.tokens[at];
+            if token.shape == Shape::Woven {
+                if depth == 0 { opening = Some(at); }
+                depth += 1;
+            } else if token.shape == Shape::WovenEnd {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(open) = opening {
+                        let begin = if open == first { 0 } else { Self::place_in(source, self.tokens[open].row, self.tokens[open].column).saturating_sub(from) };
+                        let finish = if open == first { raw_len } else { begin };
+                        if finish > begin && self.tokens[open].lexeme.is_empty() {
+                            let raw: String = source.chars().skip(from + begin).take(finish - begin).collect();
+                            let dressed = Self::dress_woven(&raw);
+                            if dressed != raw { edits.push((begin, finish, dressed)); }
+                        }
+                    }
+                }
+            }
+        }
+        edits
+    }
+
+    /// A format string with each debug field written out in full.
+    fn dress_woven(text: &str) -> String {
+        let glyphs: Vec<char> = text.chars().collect();
+        let head = glyphs.iter().position(|c| !c.is_ascii_alphabetic()).unwrap_or(glyphs.len());
+        if head >= glyphs.len() || !matches!(glyphs[head], '\'' | '"') { return text.to_string(); }
+        let fence = glyphs[head];
+        let fence_width = if head + 2 < glyphs.len() && glyphs[head + 1] == fence && glyphs[head + 2] == fence { 3 } else { 1 };
+        let body_from = head + fence_width;
+        let body_to = glyphs.len().saturating_sub(fence_width);
+        let mut rebuilt = String::new();
+        let mut cursor = body_from;
+        while cursor < body_to {
+            if glyphs[cursor] != '{' { rebuilt.push(glyphs[cursor]); cursor += 1; continue; }
+            if cursor + 1 < body_to && glyphs[cursor + 1] == '{' { rebuilt.push_str("{{"); cursor += 2; continue; }
+            let mut rank = 1usize;
+            let mut probe = cursor + 1;
+            let mut inside: Option<char> = None;
+            while probe < body_to {
+                let glyph = glyphs[probe];
+                if let Some(fence_char) = inside {
+                    if glyph == '\\' { probe += 2; continue; }
+                    if glyph == fence_char { inside = None; }
+                } else if glyph == '\'' || glyph == '"' { inside = Some(glyph); }
+                else if glyph == '{' { rank += 1; }
+                else if glyph == '}' { rank -= 1; if rank == 0 { break; } }
+                probe += 1;
+            }
+            let field: String = glyphs[cursor + 1..probe].iter().collect();
+            match Self::debug_field(&field) {
+                Some((value, tail)) => {
+                    rebuilt.push_str(&value);
+                    rebuilt.push_str("={");
+                    rebuilt.push_str(&value);
+                    rebuilt.push_str(&tail);
+                    rebuilt.push('}');
+                }
+                None => { rebuilt.push('{'); rebuilt.push_str(&field); rebuilt.push('}'); }
+            }
+            cursor = probe + 1;
+        }
+        let lead: String = glyphs[..body_from].iter().collect();
+        let trail: String = glyphs[body_to..].iter().collect();
+        format!("{lead}{rebuilt}{trail}")
+    }
+
+    /// A debug field split into its expression and what follows the `=`,
+    /// where the `=` stands alone at the field's own level.
+    fn debug_field(field: &str) -> Option<(String, String)> {
+        let glyphs: Vec<char> = field.chars().collect();
+        let mut rank = 0i32;
+        let mut inside: Option<char> = None;
+        let mut cursor = 0usize;
+        while cursor < glyphs.len() {
+            let glyph = glyphs[cursor];
+            if let Some(fence) = inside {
+                if glyph == '\\' { cursor += 2; continue; }
+                if glyph == fence { inside = None; }
+                cursor += 1;
+                continue;
+            }
+            if glyph == '\'' || glyph == '"' { inside = Some(glyph); cursor += 1; continue; }
+            if glyph == '(' || glyph == '[' || glyph == '{' { rank += 1; cursor += 1; continue; }
+            if glyph == ')' || glyph == ']' || glyph == '}' { rank -= 1; cursor += 1; continue; }
+            if glyph == '=' && rank == 0 {
+                let ahead = glyphs.get(cursor + 1).copied();
+                let behind = cursor.checked_sub(1).and_then(|i| glyphs.get(i)).copied();
+                let bound = matches!(behind, Some(':') | Some('!') | Some('<') | Some('>') | Some('='));
+                if ahead != Some('=') && !bound {
+                    return Some((glyphs[..cursor].iter().collect(), glyphs[cursor + 1..].iter().collect()));
+                }
+            }
+            cursor += 1;
+        }
+        None
+    }
+
+    fn splice(raw: &str, mut edits: Vec<(usize, usize, String)>) -> String {
+        if edits.is_empty() { return raw.to_string(); }
+        edits.sort_by_key(|(at, ..)| *at);
+        let chars: Vec<char> = raw.chars().collect();
+        let mut output = String::new();
+        let mut cursor = 0usize;
+        for (begin, finish, word) in edits {
+            if begin < cursor || finish > chars.len() { continue; }
+            output.extend(chars[cursor..begin].iter());
+            output.push_str(&word);
+            cursor = finish;
+        }
+        output.extend(chars[cursor..].iter());
+        output
+    }
+
+    /// Parentheses holding nothing but one expression are dropped, and a
+    /// bare tuple is put back in a pair.
+    fn trim_parens(text: &str) -> String {
+        let mut held = text.to_string();
+        let mut peeled = false;
+        while let Some(inner) = Self::inside_wrapping_pair(&held) {
+            held = inner;
+            peeled = true;
+        }
+        if peeled && (Self::has_top_comma(&held) || Self::has_top_for(&held)) { format!("({held})") } else { held }
+    }
+
+    /// The words inside a pair of parentheses that hold the whole of them.
+    fn inside_wrapping_pair(text: &str) -> Option<String> {
+        let glyphs: Vec<char> = text.chars().collect();
+        if glyphs.len() < 2 || glyphs.first() != Some(&'(') || glyphs.last() != Some(&')') { return None; }
+        let mut rank = 0i32;
+        for (at, glyph) in glyphs.iter().enumerate() {
+            if *glyph == '(' { rank += 1; }
+            else if *glyph == ')' {
+                rank -= 1;
+                if rank == 0 {
+                    let inner = &glyphs[1..glyphs.len() - 1];
+                    return (at + 1 == glyphs.len() && !inner.iter().all(|c| c.is_whitespace())).then(|| inner.iter().collect());
+                }
+            }
+        }
+        None
+    }
+
+    fn has_top_comma(text: &str) -> bool {
+        let glyphs: Vec<char> = text.chars().collect();
+        let mut rank = 0i32;
+        let mut inside: Option<char> = None;
+        let mut cursor = 0usize;
+        while cursor < glyphs.len() {
+            let glyph = glyphs[cursor];
+            if let Some(fence) = inside { if glyph == fence { inside = None; } cursor += 1; continue; }
+            if glyph == '\'' || glyph == '"' { inside = Some(glyph); }
+            else if glyph == '(' || glyph == '[' || glyph == '{' { rank += 1; }
+            else if glyph == ')' || glyph == ']' || glyph == '}' { rank -= 1; }
+            else if glyph == ',' && rank == 0 { return true; }
+            cursor += 1;
+        }
+        false
+    }
+
+    /// Whether a top-level `for` stands in the words, which a generator
+    /// expression keeps its parentheses for.
+    fn has_top_for(text: &str) -> bool {
+        let glyphs: Vec<char> = text.chars().collect();
+        let mut rank = 0i32;
+        let mut inside: Option<char> = None;
+        let mut cursor = 0usize;
+        while cursor < glyphs.len() {
+            let glyph = glyphs[cursor];
+            if let Some(fence) = inside { if glyph == fence { inside = None; } cursor += 1; continue; }
+            if glyph == '\'' || glyph == '"' { inside = Some(glyph); cursor += 1; continue; }
+            if glyph == '(' || glyph == '[' || glyph == '{' { rank += 1; cursor += 1; continue; }
+            if glyph == ')' || glyph == ']' || glyph == '}' { rank -= 1; cursor += 1; continue; }
+            if rank == 0 && glyph == 'f' && glyphs.get(cursor..cursor + 3) == Some(&['f', 'o', 'r'][..]) {
+                let before = cursor.checked_sub(1).and_then(|i| glyphs.get(i));
+                let after = glyphs.get(cursor + 3);
+                if !before.map_or(false, |c| c.is_alphanumeric() || *c == '_') && !after.map_or(false, |c| c.is_alphanumeric() || *c == '_') { return true; }
+            }
+            cursor += 1;
+        }
+        false
     }
     fn build_annotator(&mut self) -> Res<Option<Rc<Routine>>> {
         let sites = std::mem::take(&mut self.annotation_sites);
@@ -2096,11 +2375,18 @@ impl<'a> Builder<'a> {
                     }
                 }
                 b.pos = at;
-                let outer = b.annotation_lookup;
-                b.annotation_lookup = true;
-                let expression = b.expr_at(0, false)?;
-                b.annotation_lookup = outer;
-                let expression = if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(at, b.pos))) } else { expression };
+                let expression = if b.annotations_as_strings {
+                    // The words are kept as written, so only their end
+                    // is needed; a lambda inside is read whole.
+                    b.put_by_annotation(&["block.intro", "stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
+                    constant(Value::text(&b.annotation_spelling(at, b.pos)))
+                } else {
+                    let outer = b.annotation_lookup;
+                    b.annotation_lookup = true;
+                    let outcome = b.expr_at(0, false);
+                    b.annotation_lookup = outer;
+                    outcome?
+                };
                 if module {
                     let target = b.read_to_write(&map.ident);
                     let put = prim_call(Prim::Replace, vec![target, constant(Value::text(&word)), expression]);
@@ -7400,11 +7686,15 @@ impl<'a> Builder<'a> {
         }
         let result = self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
             let first = b.pos;
+            if b.annotations_as_strings {
+                b.put_by_annotation(&["block.intro", "stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
+                return Ok(constant(Value::text(&b.annotation_spelling(first, b.pos))));
+            }
             let outer = b.annotation_lookup;
             b.annotation_lookup = true;
-            let expression = b.expr_at(0, false)?;
+            let outcome = b.expr_at(0, false);
             b.annotation_lookup = outer;
-            Ok(if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(first, b.pos))) } else { expression })
+            Ok(outcome?)
         });
         if let Some(original) = original { *self.class_bindings.last_mut().unwrap() = original; }
         self.annotation_owner = outer_owner;
@@ -7441,11 +7731,35 @@ impl<'a> Builder<'a> {
                     break;
                 }
             }
-            if self.forbids_await && self.key("ext.op.await") { return Err("SyntaxError: 'await' outside function".into()); }
-            if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Bare && self.key("ext.stmt.yield")
-                && (self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every)) {
-                let wording = if table.spells("ext.stmt.yield.from", &self.glance(1).spelling()) { "yield from" } else { "yield" };
-                return Err(format!("SyntaxError: '{wording}' outside function"));
+            if nesting.is_empty() && shape == Shape::Bare && table.spells("ext.op.lambda", &self.look().spelling()) {
+                // A lambda is read whole to the mark that opens its body,
+                // so the annotation does not end at the lambda's own colon.
+                self.advance();
+                let mut inner = 0usize;
+                while self.look().shape != Shape::Finish {
+                    if inner == 0 && table.single("block.intro").map_or(false, |c| self.sign(c)) { self.advance(); break; }
+                    if self.look().shape == Shape::Sign {
+                        let spelling = self.look().lexeme.clone();
+                        for (left, right) in [("syntax.group.open", "syntax.group.close"),
+                            ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close"),
+                            ("syntax.call.open", "syntax.call.close"), ("op.index.open", "op.index.close")] {
+                            if table.spells(left, &spelling) { inner += 1; }
+                            else if table.spells(right, &spelling) { inner = inner.saturating_sub(1); }
+                        }
+                    }
+                    self.advance();
+                }
+                count += 1;
+                continue;
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Bare && self.key("ext.stmt.yield") {
+                return Err("SyntaxError: yield expression cannot be used within an annotation".into());
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Bare && self.key("ext.op.await") {
+                return Err("SyntaxError: await expression cannot be used within an annotation".into());
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Sign && table.spells("ext.op.assign.expression", &self.look().spelling()) {
+                return Err("SyntaxError: named expression cannot be used within an annotation".into());
             }
             if shape == Shape::Sign {
                 let spelling = self.look().lexeme.as_str();
