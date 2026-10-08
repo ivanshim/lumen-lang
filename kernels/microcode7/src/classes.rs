@@ -3543,11 +3543,11 @@ impl<'a> Machine<'a> {
         if !is_type && self.table.spells("ext.builtin.bytes.from_int",key) {
             return Some(Value::Member(Rc::new(value.clone()),"integer_bytes".into()));
         }
-        if let Some(spelling) = self.table.strings("ext.builtin.bytes.to_int").iter().find(|word| word.rsplit('.').next() == Some(key)) {
-            // `from_bytes` answers as the class's own builtin, the very
-            // value a read of the name written whole in the program
-            // gives, so the two roads agree about what it is.
-            return Some(Value::Intrinsic(Prim::Octets(15), Rc::from(spelling.as_str())));
+        if self.table.strings("ext.builtin.bytes.to_int").iter().any(|word| word.rsplit('.').next() == Some(key)) {
+            let owner = if let Value::Thing(instance) = value { Value::Blueprint(instance.blueprint().clone()) }
+                else if is_type { value.clone() }
+                else { Value::Intrinsic(Prim::AsInt, Rc::from(self.table.strings("builtin.to_int").first().map(String::as_str)?)) };
+            return Some(Value::Member(Rc::new(owner), "integer_from_bytes".into()));
         }
         let at = words.iter().take(3).position(|word| word == key)?;
         if at == 2 { return Some(Value::Member(Rc::new(value.clone()), "integer_size".into())); }
@@ -4026,6 +4026,12 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
             }
             if Self::names_a_kind(op) {
+                // `from_bytes`, read off the kind itself, is the loose
+                // builtin the name written whole in a program gives, so
+                // a read by attribute and a read by name agree.
+                if self.table.strings("ext.builtin.bytes.to_int").iter().any(|spelling| spelling == &format!("{word}.{key}")) {
+                    return Ok(Value::Intrinsic(Prim::Octets(15), Rc::from(format!("{word}.{key}"))));
+                }
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if !key.is_empty() && key == self.detail("bases") {
                     let ancestor = if word.as_ref() == "bool" { self.kind_by_word("int") }
