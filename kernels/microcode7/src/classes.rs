@@ -80,6 +80,7 @@ impl<'a> Machine<'a> {
             // The reference builds a union by subscription; the folded
             // members are the very shape the class questions read.
             protocols.push(("__class_getitem__".to_owned(), Self::wrap(140, Vec::new())));
+            protocols.push((self.detail("allocate").to_owned(), Self::wrap(237, vec![Value::text("_union_new")])));
             // Subscripting, pickling and hashing a built union are done
             // by the support module, which reads the members.
             protocols.extend(["_union_getitem", "_union_reduce", "_union_hash", "_union_eq"].iter().zip(["__getitem__", "__reduce__", "__hash__", "__eq__"])
@@ -90,7 +91,7 @@ impl<'a> Machine<'a> {
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
             protocols.extend(names.iter().enumerate().map(|(i, n)| (n.to_string(), Self::wrap(125, vec![Value::Small(i as i64)]))));
             // Reading the origin and arguments, the support module pickles and hashes an alias.
-            protocols.extend([("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash")]
+            protocols.extend([("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash"), ("__getitem__", "_alias_getitem")]
                 .iter().map(|(name, helper)| (name.to_string(), Self::wrap(237, vec![Value::text(helper)]))));
         }
         if word == "super" {
@@ -2490,6 +2491,7 @@ impl<'a> Machine<'a> {
         if Self::native_word(&class).is_some() && matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.make_type_parameter(class, given);
         }
+        if Self::native_word(&class).as_deref() == Some("Union") { return Err(String::from("TypeError: cannot create 'typing.Union' instances").into()); }
 
         if Self::native_word(&class).as_deref() == Some("function") && !self.rules.trace_words.is_empty() {
             let (positional, keywords) = self.open_arguments(given)?;
@@ -4753,7 +4755,8 @@ impl<'a> Machine<'a> {
                 // handed; one the program wrote answers the outermost
                 // dictionary of the run it was written in.
                 if let Some(globe)=&code.globe { return Ok(globe.clone()); }
-                if code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
+                // A routine of the entry file answers the entry file's own dictionary, whichever module reads it.
+                if code.written_in.is_none(){return Ok(Value::Shared(self.world_kept()));}
             }
             // The builtins a routine reaches its unbound names through.
             if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key) {
@@ -5932,6 +5935,10 @@ impl<'a> Machine<'a> {
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
         if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), class_only); }
+        // A method read off a builtin kind's word is asked about as the kind type() names it.
+        if let Value::Intrinsic(_, word) = subject {
+            if !class_only && word.contains('.') { let kind = self.kind_named_after(subject); return self.is_beneath(&kind, choice, true); }
+        }
         if let Value::Intrinsic(_, word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), choice, class_only); }
         // The property and the two method wrappers name a class of
         // their own where they are asked after as one: a wrapper of
@@ -6446,7 +6453,12 @@ impl<'a> Machine<'a> {
             6 => {
                 if !positional.is_empty() { return Err(String::from("TypeError: __replace__() takes no positional arguments").into()); }
                 let new = self.construct_ordered(object.blueprint().clone(), Vec::new())?;
-                if !matches!(&new, Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref() == Some("SimpleNamespace")) { return Err(self.class_unready()); }
+                if !matches!(&new, Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref() == Some("SimpleNamespace")) {
+                    let own = Value::Blueprint(object.blueprint().clone());
+                    let module = self.read_class_member(own.clone(), "__module__", false)?.bare();
+                    let qualified = self.read_class_member(own, "__qualname__", false)?.bare();
+                    return Err(format!("TypeError: expect types.SimpleNamespace type, but {module}.{qualified}() returned '{}' object", new.kind_word()).into());
+                }
                 let key = self.detail("namespace").to_owned();
                 let dictionary = self.read_class_member(receiver.clone(), &key, true)?;
                 for key in self.gathered_members(&dictionary)? {
@@ -6850,7 +6862,8 @@ impl<'a> Machine<'a> {
         for base in &lookup_order {
             if passed {
                 if key == self.detail("allocate") {
-                    if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                    // A kind that carries an allocator of its own (a namespace, an alias) answers with it.
+                    if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root") && Self::own_entry(base, key).is_none()) {
                         return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
                     }
                 }

@@ -1435,6 +1435,16 @@ impl Value {
                     }
                     return false;
                 }
+                // Two subscripted kinds built apart (list[int], list[int]) are one.
+                let is_alias = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "GenericAlias"));
+                if is_alias(a) && is_alias(b) {
+                    let held = |thing: &Thing, key: &str| thing.holds.borrow().iter().find(|(name, _)| name == key).map(|(_, item)| item.clone());
+                    return match (held(a, "__origin__"), held(b, "__origin__"), held(a, "__args__"), held(b, "__args__")) {
+                        (Some(left), Some(right), Some(Value::Tuple(xs)), Some(Value::Tuple(ys))) =>
+                            left.equals(&right) && xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(p, q)| p.equals(q)),
+                        _ => false,
+                    };
+                }
                 // Two code values read from the same text in the same
                 // manner weigh the same, the way the reference compares
                 // its code objects' bytecode; the file each names is no
@@ -1874,7 +1884,7 @@ impl Value {
             ("getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor", "__get__") => return Some(("slot wrapper", "wrapper_descriptor")),
             _ => (),
         }
-        if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
+        if matches!((kind, name), ("dict", "fromkeys") | ("int", "from_bytes")) { return Some(("method", "classmethod_descriptor")); }
         match (name, kind) {
             ("__getitem__", "dict" | "list") | ("__contains__", "frozenset" | "set" | "dict") => return Some(("method", "method_descriptor")),
             _ => (),

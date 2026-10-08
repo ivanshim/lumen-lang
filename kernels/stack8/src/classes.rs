@@ -81,6 +81,7 @@ impl<'a> Engine<'a> {
             // special form's own item method does; the folded members
             // are the very shape the class questions read a union by.
             hooks.push(("__class_getitem__".into(), Self::adapter(140, Vec::new())));
+            hooks.push((self.class_word("allocate").to_string(), Self::adapter(237, vec![Value::text("_union_new")])));
             // Subscripting, pickling and hashing a built union are worked
             // out by the support module, which reads the members.
             for (name, helper) in [("__getitem__", "_union_getitem"), ("__reduce__", "_union_reduce"), ("__hash__", "_union_hash"), ("__eq__", "_union_eq")] {
@@ -94,7 +95,7 @@ impl<'a> Engine<'a> {
                 hooks.push((name, Self::adapter(124, vec![Value::Small(mode)])));
             }
             // Pickling and hashing read the origin and the arguments, in the support module.
-            for (name, helper) in [("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash")] {
+            for (name, helper) in [("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash"), ("__getitem__", "_alias_getitem")] {
                 hooks.push((name.into(), Self::adapter(237, vec![Value::text(helper)])));
             }
         }
@@ -2362,6 +2363,7 @@ impl<'a> Engine<'a> {
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.typing_instance(c, args);
         }
+        if Self::own_kind(&c).as_deref() == Some("Union") { return Err("TypeError: cannot create 'typing.Union' instances".into()); }
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
@@ -5526,10 +5528,21 @@ impl<'a> Engine<'a> {
     /// reference follows a `__bases__` line: the same class, the same
     /// object, the same builtin kind under whatever spelling, or the
     /// same placed value.
+    /// Two subscripted kinds (list[int], list[int]) built apart stand for one kind.
+    fn alias_same(&self, x: &Rc<Instance>, y: &Rc<Instance>) -> bool {
+        let alias = |o: &Rc<Instance>| Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias");
+        if !alias(x) || !alias(y) { return false; }
+        let field = |o: &Rc<Instance>, key: &str| o.fields.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        match (field(x, "__origin__"), field(y, "__origin__"), field(x, "__args__"), field(y, "__args__")) {
+            (Some(ox), Some(oy), Some(Value::Tuple(ax)), Some(Value::Tuple(ay))) =>
+                self.one_place(&ox, &oy) && ax.len() == ay.len() && ax.iter().zip(ay.iter()).all(|(p, q)| self.one_place(p, q)),
+            _ => false,
+        }
+    }
     fn one_place(&self, a:&Value, b:&Value) -> bool {
         match (a, b) {
             (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
-            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y) || self.alias_same(x, y),
             (Value::Native(x, xw), Value::Native(y, yw)) => x == y && xw == yw,
             (Value::Null, Value::Null) => true,
             _ => match (self.kind_word_of(a), self.kind_word_of(b)) {
@@ -5642,6 +5655,10 @@ impl<'a> Engine<'a> {
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
+        // A method read off a builtin kind's word is asked about as the kind type() names it.
+        if let Value::Native(_, word) = value {
+            if !subclass && word.contains('.') { let kind = self.named_kind(value); return self.beneath(&kind, wanted, true); }
+        }
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         // The property and the two method wrappers name a class of
         // their own where they are asked after as one: a wrapper of
@@ -6248,8 +6265,12 @@ impl<'a> Engine<'a> {
         if mode == 6 {
             if opened.iter().any(|(key, _)| key.is_none()) { return Err("TypeError: __replace__() takes no positional arguments".into()); }
             let made = self.class_make(object.class_now().clone(), Vec::new())?;
-            let Value::Object(result) = &made else { return Err(self.class_refusal()); };
-            if Self::kind_beneath(&result.class_now()).as_deref() != Some("SimpleNamespace") { return Err(self.class_refusal()); }
+            if !matches!(&made, Value::Object(result) if Self::kind_beneath(&result.class_now()).as_deref() == Some("SimpleNamespace")) {
+                let own = Value::Class(object.class_now());
+                let module = self.class_get(own.clone(), "__module__", false)?.plain();
+                let qualified = self.class_get(own, "__qualname__", false)?.plain();
+                return Err(format!("TypeError: expect types.SimpleNamespace type, but {module}.{qualified}() returned '{}' object", Self::shown_kind(&made)).into());
+            }
             for key in self.comprehension_items(&dictionary)? {
                 if let Value::Text(key) = key { let held = self.class_get(receiver.clone(), &key, true)?; self.class_write(made.clone(), &key, Some(held), true)?; }
             }
@@ -6383,7 +6404,8 @@ impl<'a> Engine<'a> {
         for class in &order[start + 1..] {
             if name == self.class_word("allocate") {
                 if let Some(word) = Self::own_kind(class) {
-                    if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
+                    // A kind that carries an allocator of its own (a namespace, an alias) answers with it.
+                    if word != self.class_word("root") && Self::own_class_value(class, name).is_none() { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
                 }
             }
             if let Some(value) = Self::own_class_value(class, name) {

@@ -125,19 +125,18 @@ UnionType = type(int | str)
 
 # What a built union (int | str) answers when it is subscripted, pickled
 # or hashed; the runtime hands the union itself to each.
-def _union_getitem(union, item):
-    import typing
-    params = union.__parameters__
+def _substituted(thing, item):
+    params = thing.__parameters__
     if not params:
-        raise TypeError(repr(union) + ' is not a generic class')
+        raise TypeError(repr(thing) + ' is not a generic class')
     if not isinstance(item, tuple):
         item = (item,)
     if len(item) != len(params):
         few = 'few' if len(item) < len(params) else 'many'
-        raise TypeError('Too %s arguments for %r; actual %d, expected %d' % (few, union, len(item), len(params)))
-    chosen = [(p, p.__typing_subst__(v)) for p, v in zip(params, item)]
+        raise TypeError('Too %s arguments for %r; actual %d, expected %d' % (few, thing, len(item), len(params)))
+    chosen = [(p, p.__typing_subst__(v) if hasattr(p, '__typing_subst__') else v) for p, v in zip(params, item)]
     new = []
-    for arg in union.__args__:
+    for arg in thing.__args__:
         found = [v for p, v in chosen if p is arg]
         if found:
             new.append(found[0])
@@ -147,7 +146,16 @@ def _union_getitem(union, item):
             new.append(arg[tuple([v for p in inner for q, v in chosen if q is p])])
         else:
             new.append(arg)
-    return typing.Union[tuple(new)]
+    return tuple(new)
+
+
+def _union_getitem(union, item):
+    import typing
+    return typing.Union[_substituted(union, item)]
+
+
+def _alias_getitem(alias, item):
+    return type(alias)(alias.__origin__, _substituted(alias, item))
 
 
 def _union_reduce(union):
@@ -161,6 +169,10 @@ def _union_eq(union, other):
     mine, theirs = union.__args__, other.__args__
     return (all([any([x == y for y in theirs]) for x in mine])
             and all([any([y == x for x in mine]) for y in theirs]))
+
+
+def _union_new(cls, *args, **kwargs):
+    raise TypeError("cannot create 'typing.Union' instances")
 
 
 def _union_hash(union):
@@ -215,4 +227,16 @@ try:
 except TypeError as _exc:
     TracebackType = type(_exc.__traceback__)
     FrameType = type(_exc.__traceback__.tb_frame)
-__all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']
+# The type of a C-API capsule. This runtime has no C API, so there is no
+# way to make a capsule; the type exists, as in the reference, and refuses
+# to be instantiated.
+class CapsuleType:
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("cannot create 'PyCapsule' instances")
+
+
+CapsuleType.__name__ = 'PyCapsule'
+CapsuleType.__qualname__ = 'PyCapsule'
+CapsuleType.__module__ = 'builtins'
+
+__all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias', 'CapsuleType']

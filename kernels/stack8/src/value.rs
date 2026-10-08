@@ -1923,7 +1923,7 @@ impl Value {
         if name == "__get__" && matches!(kind, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
-        if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        if matches!((kind, name), ("dict", "fromkeys") | ("int", "from_bytes")) { return Some(("method", "classmethod_descriptor")); }
         let coexist = (matches!(kind, "list" | "dict") && name == "__getitem__")
             || (matches!(kind, "dict" | "set" | "frozenset") && name == "__contains__");
         if coexist { return Some(("method", "method_descriptor")); }
