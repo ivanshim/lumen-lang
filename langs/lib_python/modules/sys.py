@@ -10,12 +10,12 @@ _warning_options = _startup_environment.get(b'LUMEN_PYTHON_WARNOPTIONS', b'').de
 warnoptions = _warning_options.split('\x1f') if _warning_options else []
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# Startup places the script directory (or -m working directory) first,
-# then any enabled Python search path and the embedded library location.
-path = [_startup_environment.get(b'LUMEN_PYTHON_START_PATH', b'').decode(), __file__.rsplit('/', 1)[0]]
+# The embedded library retains its default precedence. Startup also exposes
+# the script directory (or -m working directory) and enabled Python search path.
+path = [__file__.rsplit('/', 1)[0], _startup_environment.get(b'LUMEN_PYTHON_START_PATH', b'').decode()]
 _search_path = _startup_environment.get(b'LUMEN_PYTHON_SEARCH_PATH', b'').decode()
 if _search_path:
-    path[1:1] = _search_path.split(':')
+    path.extend(_search_path.split(':'))
 maxsize = 9223372036854775807
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'

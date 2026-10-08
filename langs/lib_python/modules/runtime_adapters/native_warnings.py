@@ -16,6 +16,8 @@ class _State:
 _state = _State()
 
 class WarningMessage:
+    _WARNING_DETAILS = ('message', 'category', 'filename', 'lineno', 'file', 'line', 'source')
+
     def __init__(self, message, category, filename, lineno, file=None, line=None, source=None):
         self.message = message
         self.category = category

@@ -1,27 +1,18 @@
-# These warning helpers stand in for the reference suite's own: no
-# warnings are emitted here, so a check that counts them has nothing
-# to count. The two the grammar suite takes from inside its class
-# bodies are written as the reference suite writes them, so that the
-# suite reads and its methods run, each failing on its own where the
-# warning it looks for never comes.
+# Copied from CPython v3.14.8 Lib/test/support/warnings_helper.py.
+# Copyright Python Software Foundation; PSF license.
 import contextlib
+import functools
+import importlib
+import re
+import sys
 import warnings
-from warnings import catch_warnings
 
-def check_warnings(*filters, quiet=True):
-    return catch_warnings(record=True)
 
-def ignore_warnings(*args, **kwargs):
-    return _identity
-
-def _identity(function):
-    return function
-
-# The reference suite writes this one with a call of its own before the
-# thing it decorates, so it hands back the decorator rather than being
-# one itself.
-def ignore_fork_in_thread_deprecation_warnings():
-    return _identity
+def import_deprecated(name):
+    """Import *name* while suppressing DeprecationWarning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', category=DeprecationWarning)
+        return importlib.import_module(name)
 
 
 def check_syntax_warning(testcase, statement, errtext='',
@@ -32,9 +23,9 @@ def check_syntax_warning(testcase, statement, errtext='',
         warnings.simplefilter('always', SyntaxWarning)
         compile(statement, '<testcase>', 'exec')
     testcase.assertEqual(len(warns), 1, warns)
+
     warn, = warns
-    testcase.assertTrue(issubclass(warn.category, SyntaxWarning),
-                        warn.category)
+    testcase.assertIsSubclass(warn.category, SyntaxWarning)
     if errtext:
         testcase.assertRegex(str(warn.message), errtext)
     testcase.assertEqual(warn.filename, '<testcase>')
@@ -51,6 +42,70 @@ def check_syntax_warning(testcase, statement, errtext='',
                            lineno=lineno, offset=offset)
     # No warnings are leaked when a SyntaxError is raised.
     testcase.assertEqual(warns, [])
+
+
+def ignore_warnings(*, category):
+    """Decorator to suppress warnings.
+
+    Use of context managers to hide warnings make diffs
+    more noisy and tools like 'git blame' less useful.
+    """
+    def decorator(test):
+        @functools.wraps(test)
+        def wrapper(self, *args, **kwargs):
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', category=category)
+                return test(self, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+class WarningsRecorder(object):
+    """Convenience wrapper for the warnings list returned on
+       entry to the warnings.catch_warnings() context manager.
+    """
+    def __init__(self, warnings_list):
+        self._warnings = warnings_list
+        self._last = 0
+
+    def __getattr__(self, attr):
+        if len(self._warnings) > self._last:
+            return getattr(self._warnings[-1], attr)
+        elif attr in warnings.WarningMessage._WARNING_DETAILS:
+            return None
+        raise AttributeError("%r has no attribute %r" % (self, attr))
+
+    @property
+    def warnings(self):
+        return self._warnings[self._last:]
+
+    def reset(self):
+        self._last = len(self._warnings)
+
+
+@contextlib.contextmanager
+def check_warnings(*filters, **kwargs):
+    """Context manager to silence warnings.
+
+    Accept 2-tuples as positional arguments:
+        ("message regexp", WarningCategory)
+
+    Optional argument:
+     - if 'quiet' is True, it does not fail if a filter catches nothing
+        (default True without argument,
+         default False if some filters are defined)
+
+    Without argument, it defaults to:
+        check_warnings(("", Warning), quiet=True)
+    """
+    quiet = kwargs.get('quiet')
+    if not filters:
+        filters = (("", Warning),)
+        # Preserve backward compatibility
+        if quiet is None:
+            quiet = True
+    return _filterwarnings(filters, quiet)
+
 
 @contextlib.contextmanager
 def check_no_warnings(testcase, message='', category=Warning, force_gc=False):
@@ -76,6 +131,65 @@ def check_no_warnings(testcase, message='', category=Warning, force_gc=False):
             gc_collect()
     testcase.assertEqual(warns, [])
 
+
+@contextlib.contextmanager
+def check_no_resource_warning(testcase):
+    """Context manager to check that no ResourceWarning is emitted.
+
+    Usage:
+
+        with check_no_resource_warning(self):
+            f = open(...)
+            ...
+            del f
+
+    You must remove the object which may emit ResourceWarning before
+    the end of the context manager.
+    """
+    with check_no_warnings(testcase, category=ResourceWarning, force_gc=True):
+        yield
+
+
+def _filterwarnings(filters, quiet=False):
+    """Catch the warnings, then check if all the expected
+    warnings have been raised and re-raise unexpected warnings.
+    If 'quiet' is True, only re-raise the unexpected warnings.
+    """
+    # Clear the warning registry of the calling module
+    # in order to re-raise the warnings.
+    frame = sys._getframe(2)
+    registry = frame.f_globals.get('__warningregistry__')
+    if registry:
+        registry.clear()
+    # Because test_warnings swap the module, we need to look up in the
+    # sys.modules dictionary.
+    wmod = sys.modules['warnings']
+    with wmod.catch_warnings(record=True) as w:
+        # Set filter "always" to record all warnings.
+        wmod.simplefilter("always")
+        yield WarningsRecorder(w)
+    # Filter the recorded warnings
+    reraise = list(w)
+    missing = []
+    for msg, cat in filters:
+        seen = False
+        for w in reraise[:]:
+            warning = w.message
+            # Filter out the matching messages
+            if (re.match(msg, str(warning), re.I) and
+                issubclass(warning.__class__, cat)):
+                seen = True
+                reraise.remove(w)
+        if not seen and not quiet:
+            # This filter caught nothing
+            missing.append((msg, cat.__name__))
+    if reraise:
+        raise AssertionError("unhandled warning %s" % reraise[0])
+    if missing:
+        raise AssertionError("filter (%r, %s) did not catch any warning" %
+                             missing[0])
+
+
 @contextlib.contextmanager
 def save_restore_warnings_filters():
     old_filters = warnings.filters[:]
@@ -83,3 +197,13 @@ def save_restore_warnings_filters():
         yield
     finally:
         warnings.filters[:] = old_filters
+
+
+def _warn_about_deprecation():
+    warnings.warn(
+        "This is used in test_support test to ensure"
+        " support.ignore_deprecations_from() works as expected."
+        " You should not be seeing this.",
+        DeprecationWarning,
+        stacklevel=0,
+    )
