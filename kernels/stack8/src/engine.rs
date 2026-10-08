@@ -9143,6 +9143,15 @@ impl<'a> Engine<'a> {
             let joining_kinds = matches!(op, Action::BitEither)
                 && self.union_member(a) && self.union_member(b)
                 && (self.union_anchor(a) || self.union_anchor(b));
+            // An arithmetic working every side's own methods answered
+            // was not theirs to give, with no side standing on a native
+            // kind that could, has no working at all: the reference
+            // names the sign and both kinds rather than reading the
+            // worth beneath.
+            if direct >= 18 && !joining_kinds && declined && !native_side {
+                let sign = self.sign_of(op);
+                return Err(self.operands_complaint(&sign, a, b));
+            }
             if direct >= 18 && !joining_kinds && (Self::plain_thing(a) || Self::plain_thing(b)) {
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
@@ -9169,7 +9178,28 @@ impl<'a> Engine<'a> {
             // is: by its own hash and its own equality, the members
             // standing in the set as the gathering put them there.
             if let Value::Set(cell) = b {
-                if !Self::set_needs_protocol(a) { return self.dyadic(op, a, b); }
+                if !Self::set_needs_protocol(a) {
+                    // A plain value sought among the members may still
+                    // meet an equal thing kept beside its hash: met by
+                    // the hash they share before the worth road answers.
+                    let alike: Vec<Value> = {
+                        let set = cell.borrow();
+                        match set.protocol {
+                            0 => Vec::new(),
+                            _ => match a.core_hash() {
+                                Some(hash) => {
+                                    let opening = format!("object:{hash}:");
+                                    set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
+                                }
+                                None => Vec::new(),
+                            },
+                        }
+                    };
+                    for held in alike {
+                        if self.special_keys_equal(&held, a)? { return Ok(Value::Flag(matches!(op, Action::Contains))); }
+                    }
+                    return self.dyadic(op, a, b);
+                }
                 if let Value::Set(needle) = self.set_lookup_value(a) {
                     let found = cell.borrow().held.contains_key(&needle.borrow().address());
                     return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
@@ -15886,12 +15916,30 @@ impl<'a> Engine<'a> {
     }
 
     fn set_place(&mut self, members: &[(String, Value)], value: &Value) -> Res<String> {
-        if !Self::set_needs_protocol(value) { return self.set_key(value); }
+        if !Self::set_needs_protocol(value) {
+            let key = self.set_key(value)?;
+            // A plain value may still meet an equal thing among the
+            // members: where things are kept beside their hashes at
+            // all, the one sharing this value's hash is asked, and an
+            // equal one is where the value stands.
+            if !members.iter().any(|(kept, _)| kept == &key) && members.iter().any(|(_, held)| matches!(held, Value::Hashed(_))) {
+                if let Some(hash) = value.core_hash() {
+                    let opening = format!("object:{hash}:");
+                    for (kept, held) in members {
+                        if kept.starts_with(&opening) && self.special_keys_equal(held, value)? { return Ok(kept.clone()); }
+                    }
+                }
+            }
+            return Ok(key);
+        }
         let wanted = self.special_key(value)?;
         let hash = match &wanted { Value::Hashed(pair) => pair.1.plain(), _ => String::new() };
         let opening = format!("object:{hash}:");
         for (key, held) in members {
-            if !key.starts_with(&opening) { continue; }
+            // A thing hashing alike is asked, and so is every member
+            // addressed by its worth alone, whose own hash the asking
+            // itself reckons; a thing hashing otherwise is passed over.
+            if !key.starts_with(&opening) && matches!(held, Value::Hashed(_)) { continue; }
             if self.special_keys_equal(held, &wanted)? { return Ok(key.clone()); }
         }
         let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Object(o) => Rc::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Adapter(parts) if parts.0 == 7 => Rc::as_ptr(parts) as usize, _ => 0 }, _ => 0 };
@@ -15911,7 +15959,19 @@ impl<'a> Engine<'a> {
             }
             return Ok(false);
         }
-        Ok(other.held.contains_key(&self.set_key(value)?))
+        if other.held.contains_key(&self.set_key(value)?) { return Ok(true); }
+        // Among members kept beside their hashes, one may still equal
+        // this plain value: it is met by the hash they share.
+        if other.protocol > 0 {
+            if let Some(hash) = value.core_hash() {
+                let opening = format!("object:{hash}:");
+                for key in &other.row {
+                    if !key.starts_with(&opening) { continue; }
+                    if self.special_keys_equal(&other.held[key], value)? { return Ok(true); }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether every member of the one set is found among the other's,
@@ -15982,6 +16042,25 @@ impl<'a> Engine<'a> {
         // for it alone and a set is gathered in one pass and not in as
         // many passes as it has members.
         if !Self::set_needs_protocol(&value) {
+            // A set holding things beside their hashes may already
+            // hold one equal to this plain value: met by the hash they
+            // share, the member already there is the one kept.
+            let alike: Vec<Value> = {
+                let set = cell.borrow();
+                match set.protocol {
+                    0 => Vec::new(),
+                    _ => match value.core_hash() {
+                        Some(hash) => {
+                            let opening = format!("object:{hash}:");
+                            set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
+                        }
+                        None => Vec::new(),
+                    },
+                }
+            };
+            for held in alike {
+                if self.special_keys_equal(&held, &value)? { return Ok(()); }
+            }
             let key = self.set_key(&value)?;
             cell.borrow_mut().insert(key, value);
             return Ok(());
@@ -16094,6 +16173,7 @@ impl<'a> Engine<'a> {
             let mut set = cell.borrow_mut();
             set.row.clear();
             set.held.clear();
+            set.protocol = 0;
             return Ok(Value::Null);
         }
         if op == SetUpdate {
