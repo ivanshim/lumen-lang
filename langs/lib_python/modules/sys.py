@@ -489,6 +489,14 @@ def _getframemodulename(depth=0):
         raise TypeError('an integer is required')
     return __frame_module(max(depth, 0) + 1)
 
+
+def settrace(func):
+    return __settrace(func)
+
+
+def gettrace():
+    return __gettrace()
+
 # Names supplied by the native importer and its source-backed adapters.
 builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
 

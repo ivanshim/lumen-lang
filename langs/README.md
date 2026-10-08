@@ -4677,6 +4677,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
 | `ext.builtin.gc.collect` | - | - | `__gc_collect` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.gettrace` | - | - | `__gettrace` | - | - | - | - | - | - | - |
 | `ext.builtin.globals` | - | - | `globals` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
@@ -4906,6 +4907,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.unsupported` | - | - | `NotImplementedError: hashing this value is not provided` | - | - | - | - | - | - | - |
 | `ext.builtin.set.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
+| `ext.builtin.settrace` | - | - | `__settrace` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.signal` | - | - | `__signal` | - | - | - | - | - | - | - |
 | `ext.builtin.slice` | - | - | `slice` | - | - | - | - | - | - | - |

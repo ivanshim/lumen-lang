@@ -1744,6 +1744,12 @@
   "ext.builtin.setattr": [
     "setattr"
   ],
+  "ext.builtin.settrace": [
+    "__settrace"
+  ],
+  "ext.builtin.gettrace": [
+    "__gettrace"
+  ],
   "ext.builtin.sorted": [
     "sorted"
   ],

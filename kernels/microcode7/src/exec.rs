@@ -552,6 +552,12 @@ pub struct Machine<'a> {
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
+    /// The file the run began from, set once the program's own world
+    /// dictionary has been written through. A name that dictionary
+    /// holds stands over a builtin of the same spelling, but only for
+    /// code written in that same file, whose globals the dictionary
+    /// is.
+    world_globals_source: Option<Rc<str>>,
     loaded_spaces: HashMap<Rc<str>, String>,
     namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
@@ -1992,6 +1998,7 @@ impl<'a> Machine<'a> {
             namespace_places: RefCell::new(None),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
+            world_globals_source: None,
             loaded_spaces: HashMap::new(),
             namespace_books: Vec::new(),
             within_spare: false,
@@ -12557,7 +12564,9 @@ impl<'a> Machine<'a> {
         let parent_extent = self.extent;
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
-        if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        if mine {
+            self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) };
+        }
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
@@ -12694,7 +12703,7 @@ impl<'a> Machine<'a> {
                 body_namespace = Some(Value::tuple(vec![book, cell, Value::Flag(*protocol)]));
             }
         }
-        let outcome = self.traced_result(outcome);
+        let mut outcome = self.traced_result(outcome);
         if outcome.is_ok() && self.body_namespace.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, &program)) {
             let captured = body_namespace.unwrap_or_else(|| {
                 let entries = program.idents.iter().zip(frame.cells.borrow().iter())
@@ -12705,7 +12714,10 @@ impl<'a> Machine<'a> {
             if let Some((_, namespace)) = &mut self.body_namespace { *namespace = Some(captured); }
         }
         self.update_watched_locals();
-        if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
+        if mine {
+            self.active_trace = caller_trace;
+            self.extent = parent_extent;
+        }
         self.gathering_locals = earlier_gathering;
         self.update_watched_locals();
         if self.rules.has_any_ext_builtin_exceptions_traceback { self.row = was_on_row; }
@@ -19575,6 +19587,16 @@ impl<'a> Machine<'a> {
                     _ => return Err(String::from("ValueError: call stack is not deep enough")),
                 }
             }
+            Prim::SetTrace => {
+                n(1)?;
+                let wanted = v[0].settled();
+                self.tracing_function = wanted;
+                Value::Nil
+            }
+            Prim::GetTrace => {
+                n(0)?;
+                self.tracing_function.clone()
+            }
             Prim::ClassSeal => {
                 n(1)?;
                 match v[0].settled() {
@@ -25160,7 +25182,26 @@ impl Machine<'_> {
         if fits(&value.settled()) {Ok(value)} else {Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", candidate.kind_word(), value.kind_word()))}
     }
 
+    /// Whether the code now running is the main program's own, whose
+    /// globals the world dictionary is, after that dictionary was
+    /// written through.
+    fn world_shadow_applies(&self) -> bool {
+        self.world_globals_source.as_deref() == Some(self.written_in.as_ref())
+    }
+
     fn spread_value(&self, word: &str) -> Option<Value> {
+        // A name written into the world dictionary after globals() handed
+        // it out stands over a builtin of that spelling for the code of
+        // the source that wrote it, as a name the text had bound would.
+        if self.world_shadow_applies() {
+            if let Some(book) = &self.world_book {
+                let found = match book.try_borrow().ok().as_deref() {
+                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
+                    _ => None,
+                };
+                if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
+            }
+        }
         if self.revised_namespaces.contains(&self.written_in) {
             let namespace = self.loaded_spaces.get(&self.written_in).and_then(|id| self.imported.get(id));
             if let Some(Value::Thing(module)) = namespace {
@@ -26333,8 +26374,19 @@ impl<'a> Machine<'a> {
     }
     // Shared namespace cells are writable through their dictionary too.
     fn space_callable_changed(&mut self, cell: &Rc<RefCell<Value>>) {
-        let Some(owner) = self.book_space_of(cell) else { return };
         if !self.rules.names_shadow_builtins { return; }
+        // The program's own world dictionary is not filed as any loaded
+        // space's, but a write into it can still stand a name over a
+        // builtin; reading a name consults it while this stands.
+        if self.world_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
+            // The world dictionary is the main program's own, however
+            // far from it the write is made; its reader is the code
+            // written in the file the run began from.
+            self.world_globals_source = Some(self.entry_file.clone());
+            self.wildcard_source.borrow_mut().take();
+            return;
+        }
+        let Some(owner) = self.book_space_of(cell) else { return };
         if self.rules.words_ext_system_names_module.first().is_some_and(|word| word == &owner) {
             self.displaced_primitives.extend(self.table.prims.keys().cloned());
         }
