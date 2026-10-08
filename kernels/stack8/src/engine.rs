@@ -9872,18 +9872,14 @@ impl<'a> Engine<'a> {
     fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let fields = o.fields.borrow();
-        // A name read out of a thing's dictionary stands for the value
-        // the name's cell keeps, the very value a read of the attribute
-        // itself would find.
+        // A name read out of a thing's dictionary stands in the very
+        // place a read of the attribute itself finds: what a cell of
+        // the dictionary shares is shared with the dictionary's reader,
+        // so that changing through the one is seen through the other.
         let mut entries: Vec<(Value, Value)> = fields.iter()
             .filter(|(key, held)| !key.starts_with(['\0', '#']) && !matches!(held.contents(), Value::Blank))
-            .map(|(key, held)| {
-                let value = match held {
-                    Value::Bond(cell) if module => cell.borrow().clone(),
-                    _ => held.clone(),
-                };
-                (Value::text(key), value)
-            }).collect();
+            .map(|(key, held)| (Value::text(key), held.clone()))
+            .collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             if module {
                 let mut ordered = Vec::new();

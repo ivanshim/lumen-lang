@@ -14223,18 +14223,14 @@ impl<'a> Machine<'a> {
     fn attribute_entries(&self, t: &Rc<Thing>) -> Vec<(Value, Value)> {
         let namespace = self.namespace_holding(&Value::Thing(t.clone())).is_some();
         let holds = t.holds.borrow();
-        // A name read out of a thing's dictionary stands for the value
-        // its cell keeps, the very value reading the attribute itself
-        // would find.
+        // A name read out of a thing's dictionary stands in the very
+        // place reading the attribute itself finds: what a cell of the
+        // dictionary shares is shared with the dictionary's reader, so
+        // that changing through the one is seen through the other.
         let mut entries: Vec<(Value, Value)> = holds.iter()
             .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
-            .map(|(name, held)| {
-                let mut value = held.clone();
-                if namespace {
-                    if let Value::Shared(slot) = held { value = slot.borrow().clone(); }
-                }
-                (Value::text(name), value)
-            }).collect();
+            .map(|(name, held)| (Value::text(name), held.clone()))
+            .collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             if namespace {
                 let mut ordered = extra.iter().filter_map(|(key, value)| match key {
@@ -15760,18 +15756,15 @@ impl<'a> Machine<'a> {
                 // An additional non-string key can compare equal to a name,
                 // so that case retains the full mapping protocol below.
                 if let Value::Text(word) = key {
-                    let module = self.namespace_holding(&Value::Thing(t.clone())).is_some();
                     let members = t.holds.borrow();
                     if members.iter().all(|entry| entry.0 != "\0keys") {
                         let answer = members.iter().find(|(name, item)| name == word.as_ref()
                             && !name.starts_with('#') && !name.starts_with('\0') && !matches!(item.settled(), Value::Unset));
-                        // A module's cell binds the name; the value it
-                        // holds can itself be the list's shared storage.
-                        // Strip only the binding, as attribute_entries does.
-                        return answer.map(|entry| Some(match &entry.1 {
-                            Value::Shared(binding) if module => binding.borrow().clone(),
-                            value => value.clone(),
-                        })).ok_or_else(|| self.bad_answer());
+                        // The entry stands in the very place reading the
+                        // attribute finds, as attribute_entries keeps it:
+                        // what the binding shares is shared with the
+                        // dictionary's reader.
+                        return answer.map(|entry| Some(entry.1.clone())).ok_or_else(|| self.bad_answer());
                     }
                 }
                 // The key may be a name of any kind the dictionary can
