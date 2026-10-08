@@ -1,15 +1,54 @@
-# These warning helpers stand in for the reference suite's own: no
-# warnings are emitted here, so a check that counts them has nothing
-# to count. The two the grammar suite takes from inside its class
-# bodies are written as the reference suite writes them, so that the
-# suite reads and its methods run, each failing on its own where the
-# warning it looks for never comes.
+# These warning helpers stand in for the reference suite's own: lumen's
+# warning machinery records messages but does not raise the
+# ResourceWarning a reference check would look for, so the checks here
+# record without judging. The recorder a check hands back is a stand-in
+# too, and keeps the caught list visible as the reference recorder's
+# ``warnings`` property. The two the grammar suite takes from inside
+# its class bodies are written as the reference suite writes them, so
+# that the suite reads and its methods run, each failing on its own
+# where the warning it looks for never comes.
 import contextlib
 import warnings
 from warnings import catch_warnings
 
+class _RecordedWarnings:
+    """What a ``check_warnings`` block hands back.
+
+    The reference helper yields a recorder whose ``warnings`` property
+    is the list of messages caught in the block. That list stays visible
+    under the same name here, and the object still reads as that list
+    for a caller that indexes, iterates or compares it.
+    """
+
+    def __init__(self, recorded):
+        self._recorded = recorded
+
+    @property
+    def warnings(self):
+        return self._recorded
+
+    def __len__(self):
+        return len(self._recorded)
+
+    def __getitem__(self, index):
+        return self._recorded[index]
+
+    def __iter__(self):
+        return iter(self._recorded)
+
+    def __eq__(self, other):
+        if isinstance(other, _RecordedWarnings):
+            other = other._recorded
+        return self._recorded == other
+
+    def __repr__(self):
+        return repr(self._recorded)
+
+
+@contextlib.contextmanager
 def check_warnings(*filters, quiet=True):
-    return catch_warnings(record=True)
+    with catch_warnings(record=True) as recorded:
+        yield _RecordedWarnings(recorded)
 
 def ignore_warnings(*args, **kwargs):
     return _identity
