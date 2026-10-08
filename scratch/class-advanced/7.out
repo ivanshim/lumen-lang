@@ -27,6 +27,7 @@ __reduce_ex__
 __repr__
 __setattr__
 __sizeof__
+__static_attributes__
 __str__
 __subclasshook__
 __weakref__
