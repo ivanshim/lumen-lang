@@ -66,6 +66,15 @@ impl<'a> Machine<'a> {
                 protocols.push((method.to_owned(), Self::wrap(136, vec![Value::text(word)])));
             }
         }
+        // Such a thing is pickled and copied as the name it is found by.
+        if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
+            let helper = if word == "NoDefaultType" { "_nodefault_reduce" } else { "_name_reduce" };
+            protocols.push(("__reduce__".to_owned(), Self::wrap(237, vec![Value::text(helper)])));
+        }
+        if matches!(word, "TypeVar" | "ParamSpec" | "TypeAliasType") {
+            protocols.push(("__or__".to_owned(), Self::wrap(238, vec![Value::Small(0)])));
+            protocols.push(("__ror__".to_owned(), Self::wrap(238, vec![Value::Small(1)])));
+        }
         if word == "Union" {
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
             // The reference builds a union by subscription; the folded
@@ -73,13 +82,16 @@ impl<'a> Machine<'a> {
             protocols.push(("__class_getitem__".to_owned(), Self::wrap(140, Vec::new())));
             // Subscripting, pickling and hashing a built union are done
             // by the support module, which reads the members.
-            protocols.extend(["_union_getitem", "_union_reduce", "_union_hash"].iter().zip(["__getitem__", "__reduce__", "__hash__"])
+            protocols.extend(["_union_getitem", "_union_reduce", "_union_hash", "_union_eq"].iter().zip(["__getitem__", "__reduce__", "__hash__", "__eq__"])
                 .map(|(helper, name)| (name.to_owned(), Self::wrap(237, vec![Value::text(helper)]))));
         }
         if word == "GenericAlias" {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
             protocols.extend(names.iter().enumerate().map(|(i, n)| (n.to_string(), Self::wrap(125, vec![Value::Small(i as i64)]))));
+            // Reading the origin and arguments, the support module pickles and hashes an alias.
+            protocols.extend([("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash")]
+                .iter().map(|(name, helper)| (name.to_string(), Self::wrap(237, vec![Value::text(helper)]))));
         }
         if word == "super" {
             let init = self.table.single("ext.stmt.class.constructor").unwrap_or_default();
@@ -802,7 +814,8 @@ impl<'a> Machine<'a> {
         true
     }
     fn storage_ancestor(&self,blueprint:&Rc<Blueprint>)->Rc<Blueprint> {
-        if Self::native_word(blueprint).is_some()||self.builds_classes(blueprint){return blueprint.clone();}
+        // Generic has no layout of its own and sits beside any native kind.
+        if Self::native_word(blueprint).is_some_and(|word| word != "Generic")||self.builds_classes(blueprint){return blueprint.clone();}
         if blueprint.has_slot_storage {
             return blueprint.clone();
         }
@@ -882,7 +895,7 @@ impl<'a> Machine<'a> {
         }
         let ranks = self.combine_orders(&parents)?;
         // One thing cannot keep worths of two native kinds.
-        let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
+        let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).filter(|word| word != "Generic").collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.strings("ext.stmt.class.layout").first().map(String::as_str).unwrap_or(self.detail("unready")).to_owned().into());}
         let primary=self.primary_parent(&parents)?;
@@ -1643,15 +1656,10 @@ impl<'a> Machine<'a> {
                     140 => {
                         let subscript = values.last().cloned().unwrap_or(Value::Nil).settled();
                         let members: Vec<Value> = match subscript {
-                            Value::Tuple(row) if row.is_empty() => return Err(String::from("TypeError: Cannot take a Union of no types.").into()),
                             Value::Tuple(row) => row.to_vec(),
                             other => vec![other],
                         };
-                        let mut folded: Option<Value> = None;
-                        for member in members {
-                            folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member]) });
-                        }
-                        Ok(folded.unwrap_or(Value::Nil))
+                        self.union_of(members)
                     }
                     125 => self.alias_action(&kept, values),
                     124 => self.parent_initialised(values),
@@ -1697,6 +1705,12 @@ impl<'a> Machine<'a> {
                         [owner @ Value::Blueprint(_), _] if !self.table.strings("ext.stmt.type_params.open").is_empty() => Ok(owner.clone()),
                         _ => Err(self.class_unready()),
                     },
+                    238 => {
+                        // A type variable joined by `|` with something else: the typing module's union.
+                        let (Some(me), Some(other)) = (values.first().cloned(), values.get(1).cloned()) else { return Err(self.class_unready()); };
+                        let reflected = matches!(kept.first(), Some(Value::Small(1)));
+                        self.union_of(if reflected { vec![other, me] } else { vec![me, other] })
+                    }
                     237 => {
                         let module = self.load_namespace("_types")?;
                         let function = self.read_class_member(module, &kept[0].bare(), false)?;
@@ -2479,13 +2493,13 @@ impl<'a> Machine<'a> {
 
         if Self::native_word(&class).as_deref() == Some("function") && !self.rules.trace_words.is_empty() {
             let (positional, keywords) = self.open_arguments(given)?;
-            let mut options = vec![None; 5];
+            let mut options = vec![None; 6];
             for (slot, value) in positional.into_iter().enumerate() {
-                if slot >= options.len() { return Err(String::from("TypeError: function() takes at most 5 arguments").into()); }
+                if slot >= options.len() { return Err(String::from("TypeError: function() takes at most 6 arguments").into()); }
                 options[slot] = Some(value);
             }
             for (word, value) in keywords {
-                let Some(slot) = ["code", "globals", "name", "argdefs", "closure"].iter().position(|name| *name == word) else {
+                let Some(slot) = ["code", "globals", "name", "argdefs", "closure", "kwdefaults"].iter().position(|name| *name == word) else {
                     return Err(format!("TypeError: function() got an unexpected keyword argument '{word}'").into());
                 };
                 if options[slot].replace(value).is_some() { return Err(String::from("TypeError: invalid function arguments").into()); }
@@ -2579,8 +2593,18 @@ impl<'a> Machine<'a> {
             });
             let source = Rc::new(fresh);
             let base = shared_room.or_else(|| layers.first().cloned()).unwrap_or_else(|| self.outermost.clone());
-            let (source, room) = if let Some(Value::Tuple(defaults)) = options[3].as_ref().map(Value::settled) {
-                let (adjusted, kept) = self.respared(&source, &base, base.clone(), Some(defaults.as_ref().clone()), None);
+            let in_order = match options[3].as_ref().map(Value::settled) {
+                None | Some(Value::Nil) => None,
+                Some(Value::Tuple(row)) => Some(row.as_ref().clone()),
+                _ => return Err(String::from("TypeError: arg 4 (defaults) must be None or tuple").into()),
+            };
+            let by_name = match options[5].as_ref().map(Value::settled) {
+                None | Some(Value::Nil) => None,
+                Some(Value::Dict(pairs)) => Some(pairs.iter().filter_map(|(key, held)| match key { Value::Text(word) => Some((word.to_string(), held.clone())), _ => None }).collect::<Vec<_>>()),
+                _ => return Err(String::from("TypeError: arg 6 (kwdefaults) must be None or dict").into()),
+            };
+            let (source, room) = if in_order.is_some() || by_name.is_some() {
+                let (adjusted, kept) = self.respared(&source, &base, base.clone(), in_order, by_name);
                 (Rc::new(adjusted), kept)
             } else { (source, base) };
             let callable = Value::Bound(source, room);
@@ -2937,7 +2961,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 237, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 237 | 238, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -4259,7 +4283,7 @@ impl<'a> Machine<'a> {
             let builtin_origin = Self::native_word(b).is_some()
                 || (b.under.is_none() && b.name == self.detail("root"));
             if builtin_origin && !key.is_empty() && key == self.detail("module") {
-                let home = match Self::native_word(b).as_deref() { Some("SimpleNamespace") => "types", Some("Union") => "typing", _ => self.builtin_module() };
+                let home = match Self::native_word(b).as_deref() { Some("SimpleNamespace" | "GenericAlias") => "types", Some("Union") => "typing", _ => self.builtin_module() };
                 return Ok(Self::own_entry(b,key).unwrap_or_else(||Value::text(home)));
             }
             if key == self.detail("flags") {
@@ -6441,7 +6465,9 @@ impl<'a> Machine<'a> {
 
 impl<'a> Machine<'a> {
     fn alias_action(&mut self, mode: &[Value], arguments: Vec<Value>) -> Res {
-        let mut values = arguments.into_iter();
+        // Arguments written with a star are opened out first.
+        let (opened, _) = self.open_arguments(arguments)?;
+        let mut values = opened.into_iter();
         let subject = values.next().ok_or_else(|| self.class_unready())?.settled();
         let mut rest: Vec<_> = values.collect();
         let action = match mode[0] { Value::Small(n) => n, _ => return Err(self.class_unready()) };
@@ -6512,6 +6538,20 @@ impl<'a> Machine<'a> {
 }
 
 impl<'a> Machine<'a> {
+    /// The union of the members, each first read as a type the way the
+    /// typing module reads one (a string turns into a forward reference).
+    pub(super) fn union_of(&mut self, members: Vec<Value>) -> Res {
+        if members.is_empty() { return Err(String::from("TypeError: Cannot take a Union of no types.").into()); }
+        let typing = self.load_namespace("typing")?;
+        let check = self.read_class_member(typing, "_type_check", false)?.settled();
+        let mut folded: Option<Value> = None;
+        for member in members {
+            let member = self.apply_class_member(check.clone(), vec![member, Value::text("Union[arg, ...]: each arg must be a type.")])?;
+            folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member]) });
+        }
+        Ok(folded.unwrap_or(Value::Nil))
+    }
+
     pub(super) fn combined_types(&mut self, pair: &[Value]) -> Value {
         let mut row: Vec<Value> = Vec::new();
         for operand in pair {

@@ -25988,7 +25988,16 @@ impl<'a> Machine<'a> {
         let namespace = if let Some(factory) = &factory {
             let word = self.detail("prepare").to_owned();
             match self.read_class_member(factory.clone(), &word, false) {
-                Ok(prepare) => { let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned()); self.apply_class_member(prepare, given)? }
+                Ok(prepare) => {
+                    let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned());
+                    let made = self.apply_class_member(prepare, given)?;
+                    // The namespace has to take item access, the way a mapping does.
+                    if !matches!(made.settled(), Value::Dict(_)) && matches!(self.read_class_member(made.clone(), "__getitem__", false), Err(ref fault) if self.missing_member_escape(fault)) {
+                        let owner = match factory { Value::Blueprint(b) => b.name.clone(), _ => String::from("<metaclass>") };
+                        return Err(format!("TypeError: {owner}.__prepare__() must return a mapping, not {}", made.kind_word()).into());
+                    }
+                    made
+                }
                 Err(fault) if self.missing_member_escape(&fault) => Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true),
                 Err(fault) => return Err(fault),
             }

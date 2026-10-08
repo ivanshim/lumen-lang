@@ -25487,7 +25487,16 @@ impl Engine<'_> {
         let namespace = if let Some(factory) = &factory {
             let word = self.class_word("prepare").to_owned();
             match self.class_get(factory.clone(), &word, false) {
-                Ok(prepare) => { let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned()); self.class_apply(prepare, given)? }
+                Ok(prepare) => {
+                    let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned());
+                    let made = self.class_apply(prepare, given)?;
+                    // A namespace must answer to item access, as a mapping does.
+                    if !matches!(made.contents(), Value::Map(_)) && matches!(self.class_get(made.clone(), "__getitem__", false), Err(ref fault) if self.attribute_fault(fault)) {
+                        let owner = match factory { Value::Class(c) => c.name.clone(), _ => String::from("<metaclass>") };
+                        return Err(format!("TypeError: {owner}.__prepare__() must return a mapping, not {}", Self::shown_kind(&made)).into());
+                    }
+                    made
+                }
                 Err(fault) if self.attribute_fault(&fault) => Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true),
                 Err(fault) => return Err(fault),
             }

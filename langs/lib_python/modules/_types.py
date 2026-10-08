@@ -155,8 +155,34 @@ def _union_reduce(union):
     return (operator.getitem, (typing.Union, union.__args__))
 
 
+def _union_eq(union, other):
+    if type(other) is not type(union):
+        return NotImplemented
+    mine, theirs = union.__args__, other.__args__
+    return (all([any([x == y for y in theirs]) for x in mine])
+            and all([any([y == x for x in mine]) for y in theirs]))
+
+
 def _union_hash(union):
     return hash(frozenset(union.__args__))
+
+
+# What a subscripted kind (list[int]) answers when it is pickled or hashed.
+def _alias_reduce(alias):
+    return (type(alias), (alias.__origin__, alias.__args__))
+
+
+def _alias_hash(alias):
+    return hash(alias.__origin__) ^ hash(alias.__args__)
+
+
+# A type variable (or parameter spec, alias) is pickled and copied as its name.
+def _name_reduce(thing):
+    return thing.__name__
+
+
+def _nodefault_reduce(thing):
+    return 'NoDefault'
 
 
 NoneType = type(None)

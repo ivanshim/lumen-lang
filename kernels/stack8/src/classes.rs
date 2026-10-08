@@ -66,6 +66,15 @@ impl<'a> Engine<'a> {
         if matches!(self.lang.builtins.get(word), Some(Builtin::Set | Builtin::Frozen | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::Reversed)) {
             if let Some(name) = self.lang.class_special.get(79) { hooks.push((name.clone(), Self::adapter(133, vec![Value::text(word)]))); }
         }
+        // Such a thing is pickled and copied as the name it is found by.
+        if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
+            let helper = if word == "NoDefaultType" { "_nodefault_reduce" } else { "_name_reduce" };
+            hooks.push(("__reduce__".into(), Self::adapter(237, vec![Value::text(helper)])));
+        }
+        if matches!(word, "TypeVar" | "ParamSpec" | "TypeAliasType") {
+            hooks.push(("__or__".into(), Self::adapter(238, vec![Value::Small(0)])));
+            hooks.push(("__ror__".into(), Self::adapter(238, vec![Value::Small(1)])));
+        }
         if word == "Union" {
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
             // The reference builds a union by subscription, which the
@@ -74,7 +83,7 @@ impl<'a> Engine<'a> {
             hooks.push(("__class_getitem__".into(), Self::adapter(140, Vec::new())));
             // Subscripting, pickling and hashing a built union are worked
             // out by the support module, which reads the members.
-            for (name, helper) in [("__getitem__", "_union_getitem"), ("__reduce__", "_union_reduce"), ("__hash__", "_union_hash")] {
+            for (name, helper) in [("__getitem__", "_union_getitem"), ("__reduce__", "_union_reduce"), ("__hash__", "_union_hash"), ("__eq__", "_union_eq")] {
                 hooks.push((name.into(), Self::adapter(237, vec![Value::text(helper)])));
             }
         }
@@ -83,6 +92,10 @@ impl<'a> Engine<'a> {
             for (name, mode) in [(self.class_word("allocate").to_string(), 0), ("__repr__".to_string(), 1),
                 ("__call__".to_string(), 2), ("__mro_entries__".to_string(), 3), ("__eq__".to_string(), 4)] {
                 hooks.push((name, Self::adapter(124, vec![Value::Small(mode)])));
+            }
+            // Pickling and hashing read the origin and the arguments, in the support module.
+            for (name, helper) in [("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash")] {
+                hooks.push((name.into(), Self::adapter(237, vec![Value::text(helper)])));
             }
         }
         if word == "SimpleNamespace" {
@@ -692,7 +705,8 @@ impl<'a> Engine<'a> {
         }
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
-        if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
+        // Generic carries no layout of its own: it sits beside any builtin kind.
+        if Self::own_kind(class).is_some_and(|word| word != "Generic") || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
         class.base.as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -757,7 +771,7 @@ impl<'a> Engine<'a> {
         }
         let lineage = self.merge_class_orders(&bases)?;
         // Two builtin kinds cannot both be kept in one thing.
-        let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
+        let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).filter(|word| word != "Generic").collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
         let primary = self.layout_parent(&bases)?;
@@ -1563,12 +1577,7 @@ impl<'a> Engine<'a> {
                 140 => {
                     let subscript = args.last().cloned().unwrap_or(Value::Null).contents();
                     let members: Vec<Value> = match subscript { Value::Tuple(row) => row.iter().cloned().collect(), other => vec![other] };
-                    if members.is_empty() { return Err("TypeError: Cannot take a Union of no types.".into()); }
-                    let mut folded: Option<Value> = None;
-                    for member in members {
-                        folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member) });
-                    }
-                    Ok(folded.unwrap_or(Value::Null))
+                    self.union_of(members)
                 }
                 124 => self.alias_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
                 122 => self.namespace_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
@@ -1757,6 +1766,12 @@ impl<'a> Engine<'a> {
                 }
                 77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
                     Ok(args.remove(0))
+                }
+                238 => {
+                    // A type variable joined by `|` with something else: the typing module's union.
+                    let (Some(me), Some(other)) = (args.first().cloned(), args.get(1).cloned()) else { return Err(self.class_refusal()); };
+                    let reflected = matches!(w.1.first(), Some(Value::Small(1)));
+                    self.union_of(if reflected { vec![other, me] } else { vec![me, other] })
                 }
                 237 => {
                     let module = self.import_module("_types")?;
@@ -2351,11 +2366,11 @@ impl<'a> Engine<'a> {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
         if Self::own_kind(&c).as_deref() == Some("function") && self.lang.trace_fields.len() > 18 {
-            let mut parts = vec![None; 5];
+            let mut parts = vec![None; 6];
             let mut next = 0;
             for (named, value) in self.call_items(args)? {
                 let at = match named {
-                    Some(word) => ["code", "globals", "name", "argdefs", "closure"].iter().position(|part| *part == word)
+                    Some(word) => ["code", "globals", "name", "argdefs", "closure", "kwdefaults"].iter().position(|part| *part == word)
                         .ok_or_else(|| format!("TypeError: function() got an unexpected keyword argument '{word}'"))?,
                     None => { let at = next; next += 1; at }
                 };
@@ -2398,9 +2413,17 @@ impl<'a> Engine<'a> {
             made.globe = Some(globals.clone());
             made.born = Some(self.ambient_builtins());
             if let Some(Value::Text(name)) = parts[2].as_ref().map(Value::contents) { made.ident = name.to_string(); made.qualified = name.to_string(); }
-            if let Some(Value::Tuple(defaults)) = parts[3].as_ref().map(Value::contents) {
-                made = Self::with_spare_arguments(&made, Some(defaults.as_ref().clone()), None);
-            }
+            let defaults = match parts[3].as_ref().map(Value::contents) {
+                None | Some(Value::Null) => None,
+                Some(Value::Tuple(row)) => Some(row.as_ref().clone()),
+                _ => return Err("TypeError: arg 4 (defaults) must be None or tuple".into()),
+            };
+            let by_name = match parts[5].as_ref().map(Value::contents) {
+                None | Some(Value::Null) => None,
+                Some(Value::Map(pairs)) => Some(pairs.iter().filter_map(|(key, held)| match key { Value::Text(word) => Some((word.to_string(), held.clone())), _ => None }).collect::<Vec<_>>()),
+                _ => return Err("TypeError: arg 6 (kwdefaults) must be None or dict".into()),
+            };
+            if defaults.is_some() || by_name.is_some() { made = Self::with_spare_arguments(&made, defaults, by_name); }
             let closure = match parts[4].as_ref().map(Value::contents) {
                 Some(Value::Tuple(cells)) => cells.to_vec(),
                 None | Some(Value::Null) => Vec::new(),
@@ -2978,7 +3001,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 133 | 180 | 236 | 237 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 133 | 180 | 236 | 237 | 238 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -3687,7 +3710,7 @@ impl<'a> Engine<'a> {
                     let is_root = self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, c));
                     if is_root || self.is_metaclass_root(c) || Self::own_kind(c).is_some() {
                         // A few kinds are made in the module that names them, not the home one.
-                        let home = match Self::own_kind(c).as_deref() { Some("SimpleNamespace") => "types", Some("Union") => "typing", _ => self.home_module_word() };
+                        let home = match Self::own_kind(c).as_deref() { Some("SimpleNamespace" | "GenericAlias") => "types", Some("Union") => "typing", _ => self.home_module_word() };
                         return Ok(Value::text(home));
                     }
                 }
@@ -6238,7 +6261,9 @@ impl<'a> Engine<'a> {
 }
 
 impl<'a> Engine<'a> {
-    fn alias_work(&mut self, operation: i64, mut given: Vec<Value>) -> Flow<Value> {
+    fn alias_work(&mut self, operation: i64, given: Vec<Value>) -> Flow<Value> {
+        // Arguments written with a star are opened out first.
+        let mut given: Vec<Value> = self.call_items(given)?.into_iter().map(|(_, value)| value).collect();
         if given.is_empty() { return Err(self.class_refusal()); }
         let receiver = given.remove(0);
         if operation == 0 {
@@ -6300,6 +6325,20 @@ impl<'a> Engine<'a> {
 }
 
 impl<'a> Engine<'a> {
+    /// The union of the members, each one first read as a type the way the
+    /// typing module reads it (a string becomes a forward reference).
+    pub(super) fn union_of(&mut self, members: Vec<Value>) -> Flow<Value> {
+        if members.is_empty() { return Err("TypeError: Cannot take a Union of no types.".into()); }
+        let typing = self.import_module("typing")?;
+        let check = self.class_get(typing, "_type_check", false)?.contents();
+        let mut folded: Option<Value> = None;
+        for member in members {
+            let member = self.class_apply(check.clone(), vec![member, Value::text("Union[arg, ...]: each arg must be a type.")])?;
+            folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member) });
+        }
+        Ok(folded.unwrap_or(Value::Null))
+    }
+
     pub(super) fn join_types(&mut self, left: &Value, right: &Value) -> Value {
         let mut members = Vec::new();
         for given in [left, right] {
