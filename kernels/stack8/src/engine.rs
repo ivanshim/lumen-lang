@@ -27242,17 +27242,22 @@ impl Engine<'_> {
             Value::Object(tree) => {
                 // A tree from the library's ast reader keeps the text it
                 // was read from; compiling the tree compiles that text.
-                let fields = tree.fields.borrow();
-                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source");
+                let held = {
+                    let fields = tree.fields.borrow();
+                    fields.iter().find(|(word, _)| word == "_lumen_tree_source").map(|(_, value)| value.contents())
+                };
                 match held {
-                    Some((_, value)) => match value.contents() {
-                        Value::Text(source) => source,
-                        _ => return Err(self.source_unready()),
+                    Some(Value::Text(source)) => source,
+                    // Anything else handed over may still be a row of
+                    // bytes behind the buffer it exports, which the
+                    // reference reads the same way it reads bytes.
+                    _ => match self.number_buffer(&Value::Object(tree))? {
+                        Some(row) => self.source_bytes(&row, &file)?,
+                        None => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
                     },
-                    None => return Err(self.source_unready()),
                 }
             }
-            _ => return Err(self.source_unready()),
+            _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
         };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
         let flags = match args.get(3).map(Value::contents) {
@@ -27263,6 +27268,32 @@ impl Engine<'_> {
         if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        let optimization = match args.get(5).map(Value::contents) { Some(Value::Small(n)) => n, _ => -1 };
+        // PyCF_ONLY_AST: the value handed back is the syntax tree the
+        // library's reader builds rather than a code value, and
+        // PyCF_OPTIMIZED_AST has the names the optimiser settles first
+        // folded in.
+        if flags & 1024 != 0 {
+            let module = match self.import_module("ast") {
+                Ok(module) => module,
+                Err(Fault::Note(told)) => return Err(told),
+                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+            };
+            let reader = match self.class_get(module, "_tree_for_compile", false) {
+                Ok(reader) => reader.contents(),
+                Err(Fault::Note(told)) => return Err(told),
+                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+            };
+            let comments = if flags & 4096 != 0 { 1 } else { 0 };
+            let settling = if flags & 32768 != 0 {
+                match args.get(5).map(Value::contents) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
+            } else { -1 };
+            return match self.class_apply(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
+                Ok(tree) => Ok(tree),
+                Err(Fault::Note(told)) => Err(told),
+                Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+            };
         }
         let allow_top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
@@ -27302,6 +27333,7 @@ impl Engine<'_> {
         trial.interactive = mode == 2;
         trial.allow_top_level_await = allow_top_await;
         trial.future_bits = future_bits;
+        trial.optimize = optimization;
         let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => {
@@ -27360,7 +27392,7 @@ impl Engine<'_> {
         }).collect());
         let fields = vec![("co_consts".to_string(), constants)];
         let mut fields = fields;
-        let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1))];
+        let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1)), ("co_optimize".to_string(), Value::Small(optimization))];
         fields.splice(0..0, source_fields);
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
@@ -27520,14 +27552,15 @@ impl Engine<'_> {
             _ => caller_future,
         };
         self.text_future_bits.set(held_future);
-        let (source, file, mode, top_await) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
-            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+        let (source, file, mode, top_await, optimization) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, 0),
+            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, 0),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
                 let asynchronous = fields.iter().any(|(name, value)| name == "co_flags" && matches!(value, Value::Small(bits) if bits & 128 != 0));
-                (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous)
+                let level = fields.iter().find(|(name, _)| name == "co_optimize").and_then(|(_, value)| match value { Value::Small(n) => Some(*n), _ => None }).unwrap_or(0);
+                (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous, level)
             }
             _ => return Err(self.core_fault("core.arity", name)),
         };
@@ -27560,8 +27593,8 @@ impl Engine<'_> {
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements),
-                None => self.run_text_here_about(&source, file, mode, top_await, replacements),
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements, optimization),
+                None => self.run_text_here_about(&source, file, mode, top_await, replacements, optimization),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -27599,17 +27632,17 @@ impl Engine<'_> {
                 }
             }
         }
-        self.run_text_booked(&source, file, mode, outer, near, top_await, replacements)
+        self.run_text_booked(&source, file, mode, outer, near, top_await, replacements, optimization)
     }
 
     /// Text run where the call stands: inside a text book, in that
     /// book; else against the outermost names.
-    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, replacements: Option<Vec<Value>>) -> Res<Value> {
+    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
         if let Some(at) = self.reading_in {
             let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
             return match outer {
-                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await, replacements),
-                None => self.run_text_booked(source, file, mode, near, None, top_await, replacements),
+                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await, replacements, optimization),
+                None => self.run_text_booked(source, file, mode, near, None, top_await, replacements, optimization),
             };
         }
         if let Some(Value::Object(module)) = self.module_slots.get(&self.source).and_then(|(_, name)| self.modules.get(name)).cloned() {
@@ -27620,13 +27653,14 @@ impl Engine<'_> {
                     self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 }
             }
-            return self.run_text_booked(source, file, mode, globals, None, top_await, None);
+            return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization);
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
+        self.registry.optimize = optimization;
         let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -27639,7 +27673,7 @@ impl Engine<'_> {
     /// writes to a frame of its own making, a copy of the routine's, so
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>) -> Res<Value> {
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
@@ -27659,6 +27693,7 @@ impl Engine<'_> {
         self.registry.value_only = mode == 1;
         self.registry.allow_top_level_await = top_await;
         self.registry.future_bits = self.text_future_bits.get();
+        self.registry.optimize = optimization;
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
@@ -27687,7 +27722,7 @@ impl Engine<'_> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
-    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>) -> Res<Value> {
+    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -27695,6 +27730,7 @@ impl Engine<'_> {
         };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::with_outside_slots(offset);
+        local.optimize = optimization;
         // A dynamic namespace can bind any builtin spelling, including
         // after this code is compiled. Use the name lookup path for each.
         local.program_bound.extend(self.lang.builtins.keys().cloned());

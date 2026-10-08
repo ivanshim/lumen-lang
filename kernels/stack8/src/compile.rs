@@ -59,6 +59,11 @@ pub struct Registry {
     /// of the reading, and any the text itself imports, read back once
     /// the reading is done.
     pub future_bits: i64,
+    /// The optimization level the caller asked of `compile`: below one
+    /// keeps docstrings, assertions and `__debug__` as written; one
+    /// drops assertions and settles `__debug__` false; two drops
+    /// docstrings as well.
+    pub optimize: i64,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
@@ -516,6 +521,7 @@ pub fn compile_within(
         survey.idents.reserve(symbol_capacity);
         survey.allow_top_level_await = table.allow_top_level_await;
         survey.future_bits = future_bits;
+        survey.optimize = table.optimize;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -818,9 +824,16 @@ fn compile_pass(
                     _ => None,
                 };
                 if let Some(words) = words {
-                    for name in &lang.module_doc {
-                        a.constant(Value::text(&words));
-                        a.write(name);
+                    if a.registry.optimize >= 2 {
+                        // The second level of optimisation drops a
+                        // program's opening text outright, the value as
+                        // well as the name it would have been kept under.
+                        a.piece().instrs.truncate(from);
+                    } else {
+                        for name in &lang.module_doc {
+                            a.constant(Value::text(&words));
+                            a.write(name);
+                        }
                     }
                 }
             }
@@ -1330,6 +1343,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        if name == "__debug__" && self.registry.optimize >= 1 && !self.writing_place {
+            self.constant(Value::Flag(false));
+            return;
+        }
         if let Some((owner, members)) = &self.annotation_namespace {
             if self.reading_annotation && members.contains(name) {
                 let owner = owner.clone();
@@ -1905,7 +1922,7 @@ impl<'a> Compiler<'a> {
             quoted = true;
             literal.push_str(&leading.next().unwrap().lexeme);
         }
-        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
+        let doc = if self.registry.optimize >= 2 { None } else { (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal) };
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -3193,6 +3210,7 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
+                let assert_from = self.mark();
                 if !lang.syntax_members.is_empty() {
                     let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
                     if !named.is_empty() {
@@ -3211,6 +3229,14 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 self.expr(0)?;
+                if self.registry.optimize >= 1 {
+                    if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
+                        self.take();
+                        self.expr(0)?;
+                    }
+                    self.piece().instrs.truncate(assert_from);
+                    return Ok(());
+                }
                 self.act(Action::Not, 1);
                 let passed = self.skip();
                 if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
@@ -6267,13 +6293,17 @@ impl<'a> Compiler<'a> {
             self.take();
         } else if self.look().shape == Shape::Quote {
             // Text alone at the head of the body is what the class
-            // says about itself; text anywhere else is discarded.
+            // says about itself; text anywhere else is discarded. The
+            // second level of optimisation drops a class's opening text
+            // as well as a program's.
             let words = self.take().lexeme;
-            if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
-                self.constant(Value::text(&words));
-                self.write(&slot);
-                if !lang.class_builder.is_empty() {
-                    if let Some(word) = lang.class_details.get("doc").and_then(|v| v.first()).cloned() { self.mirror_member(&word, &slot)?; }
+            if self.registry.optimize < 2 {
+                if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
+                    self.constant(Value::text(&words));
+                    self.write(&slot);
+                    if !lang.class_builder.is_empty() {
+                        if let Some(word) = lang.class_details.get("doc").and_then(|v| v.first()).cloned() { self.mirror_member(&word, &slot)?; }
+                    }
                 }
             }
         } else if self.on_keyword(&lang.class_words) {

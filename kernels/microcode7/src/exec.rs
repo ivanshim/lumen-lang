@@ -3563,7 +3563,7 @@ impl<'a> Machine<'a> {
             (named, under)
         });
         let caller_future = self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits);
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[], caller_future) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, 0, &[], caller_future) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -27579,7 +27579,7 @@ impl<'a> Machine<'a> {
                 piece.row = last_row; piece.column = last_col; piece.end_row = last_row; piece.end_column = last_col;
             }
         }
-        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0);
+        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0, self.text_future_bits.get());
         let (said, row, cols) = match built {
             Ok(_) => return Some(Self::spent_place(source)),
             Err(fault) => fault,
@@ -27632,10 +27632,16 @@ impl<'a> Machine<'a> {
                 }
                 match carried {
                     Some(Value::Text(s)) => s,
-                    _ => return Err(self.source_refused()),
+                    // Failing that it may be some other bearer of a
+                    // buffer whose bytes the reference would read as
+                    // the source just the same.
+                    _ => match self.numeric_octets(&v[0])? {
+                        Some(row) => self.decode_program(&row, &file)?,
+                        None => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
+                    },
                 }
             }
-            _ => return Err(self.source_refused()),
+            _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
         let flags = match v.get(3).map(Value::settled) {
@@ -27646,6 +27652,24 @@ impl<'a> Machine<'a> {
         if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        let settling = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
+        // PyCF_ONLY_AST: the value handed back is the syntax tree the
+        // library's reader builds, not a code value; PyCF_OPTIMIZED_AST
+        // asks that tree with the names the optimiser settles already
+        // folded in.
+        if flags & 1024 != 0 {
+            let namespace = self.load_namespace("ast")?;
+            let reader = self.namespace_item(&namespace, "ast", "_tree_for_compile")?;
+            let comments = if flags & 4096 != 0 { 1 } else { 0 };
+            let settling = if flags & 32768 != 0 {
+                match v.get(5).map(Value::settled) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
+            } else { -1 };
+            return match self.apply_class_member(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
+                Ok(tree) => Ok(tree),
+                Err(Escape::Error(told)) => Err(told),
+                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+            };
         }
         let top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
@@ -27681,7 +27705,7 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
             }
         };
-        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits) {
+        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, settling, future_bits) {
             Ok(built) => built,
             Err((said, row, cols)) => {
                 if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
@@ -27732,7 +27756,7 @@ impl<'a> Machine<'a> {
         let constants = Value::tuple(built.program.literals.iter().map(|v| match v {
             Value::Routine(body) => self.code_handle(body), other => other.clone(),
         }).collect());
-        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1)), ("co_optimize".to_owned(), Value::Small(settling))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
         self.made += 1;
@@ -27909,14 +27933,15 @@ impl<'a> Machine<'a> {
             _ => caller_future,
         };
         self.text_future_bits.set(held_future);
-        let (source, file, mode, top_await) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
-            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+        let (source, file, mode, top_await, settling) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, 0),
+            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, 0),
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
                 let async_code = holds.iter().any(|(name, worth)| name == "co_flags" && matches!(worth, Value::Small(flags) if flags & 128 != 0));
-                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code)
+                let level = holds.iter().find(|(name, _)| name == "co_optimize").and_then(|(_, worth)| match worth { Value::Small(n) => Some(*n), _ => None }).unwrap_or(0);
+                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code, level)
             }
             _ => return Err(self.core_complaint("core.arity", name)),
         };
@@ -27949,8 +27974,8 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals),
-                None => self.perform_here(&source, file, mode, top_await, literals),
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, settling),
+                None => self.perform_here(&source, file, mode, top_await, literals, settling),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -27990,17 +28015,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near, top_await, literals)
+        self.perform_booked(&source, file, mode, outer, near, top_await, literals, settling)
     }
 
     /// Text run where the call stands: within the reading under way, in
     /// its dictionaries; else among the outermost names.
-    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>, settling: i64) -> Result<Value, String> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals),
-                None => self.perform_booked(source, file, mode, near, None, top_await, literals),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals, settling),
+                None => self.perform_booked(source, file, mode, near, None, top_await, literals, settling),
             };
         }
         let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| self.imported.get(module)).cloned();
@@ -28013,7 +28038,7 @@ impl<'a> Machine<'a> {
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }
-            return self.perform_booked(source, file, mode, book, None, top_await, None);
+            return self.perform_booked(source, file, mode, book, None, top_await, literals, settling);
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -28021,7 +28046,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None)?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None, settling)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
@@ -28039,7 +28064,7 @@ impl<'a> Machine<'a> {
     /// writes to a frame of its own, standing apart from the routine's,
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>, settling: i64) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -28078,7 +28103,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get()) {
+        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), settling, &aliasing, self.text_future_bits.get()) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -28112,7 +28137,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, settling: i64) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -28136,7 +28161,7 @@ impl<'a> Machine<'a> {
             Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
             None => Value::Mutable(self.natives_kept(), true),
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone(), settling)?;
         // What the build noted about how the text is written is said
         // under the name the handed globals give the text, each warning
         // through the warnings module.
@@ -28165,9 +28190,9 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, settle: i64) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get())
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, settle, self.text_future_bits.get())
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
