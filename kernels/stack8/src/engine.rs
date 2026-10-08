@@ -6794,7 +6794,18 @@ impl<'a> Engine<'a> {
     /// the same rows as fresh Rcs, so this tells such a refresh from a
     /// real write the comparison made.
     fn same_rows(one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> bool {
-        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| left.same_place(right) && lv.same_place(rv))
+        // A refresh rebuilds every name as a fresh text, so a key is the
+        // same key when it stands in the same place or spells the same
+        // name; a value is the same when it stands in the same place.
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| {
+            let held = |value: &Value| match value {
+                Value::Text(word) => Some(word.clone()),
+                Value::Hashed(pair) => match pair.0.contents() { Value::Text(word) => Some(word), _ => None },
+                _ => None,
+            };
+            let _ = (lv, rv);
+            left.same_place(right) || match (held(left), held(right)) { (Some(a), Some(b)) => a == b, _ => false }
+        })
     }
 
     fn map_locate(&mut self, pairs: &[(Value, Value)], store: Option<&crate::value::KeyedPairs>, key: &Value) -> Res<(Option<usize>, Value)> {

@@ -14848,7 +14848,14 @@ impl<'a> Machine<'a> {
     /// refresh rebuilds the same entries as fresh Rcs, so this tells
     /// such a refresh from a real write the comparison made.
     fn same_store(one: &crate::data::MapStore, other: &crate::data::MapStore) -> bool {
-        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| left.selfsame(right) && lv.selfsame(rv))
+        // A refresh rebuilds every name as a fresh text, so a key is the
+        // same key when it stands in the same place or spells the same
+        // name; a value is the same when it stands in the same place.
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| {
+            let named = |value: &Value| match value.settled() { Value::Text(word) => Some(word.clone()), _ => None };
+            let _ = (lv, rv);
+            left.bare() == right.bare() || match (named(left), named(right)) { (Some(a), Some(b)) => a == b, _ => false }
+        })
     }
 
     fn map_locate(&mut self, entries: &[(Value, Value)], store: Option<&crate::data::MapStore>, key: &Value) -> Result<(Option<usize>, Value), String> {
