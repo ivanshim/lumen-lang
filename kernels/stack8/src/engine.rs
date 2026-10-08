@@ -24775,6 +24775,10 @@ impl Engine<'_> {
     /// answered from the cache without running it again.
     fn python_import_fallback(&mut self, path: &str) -> Flow<Value> {
         let missing = Self::named_fault(&self.lang.import_missing, path);
+        // The reference finders stand only once importlib has been read;
+        // asking for them sooner would read importlib in the middle of
+        // its own bootstrap, so the reader's own complaint stands.
+        if !self.modules.contains_key("importlib") { return Err(missing.into()); }
         let bootstrap = match self.import_module("importlib._bootstrap") {
             Ok(module) => module,
             Err(_) => return Err(missing.into()),

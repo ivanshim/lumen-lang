@@ -2,7 +2,8 @@
 # startup gives it; this runtime carries it as
 # importlib._bootstrap_external. The wiring the reference performs when
 # the frozen name is absent is performed here, so the two bootstrap
-# modules stand bound to one another either way.
+# modules stand bound to one another. Reading the name after importlib
+# itself has been read resolves it to the finished module.
 import sys
 import importlib._bootstrap as _bootstrap
 import importlib._bootstrap_external as _bootstrap_external

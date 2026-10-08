@@ -25210,6 +25210,10 @@ impl Machine<'_> {
     fn python_import_fallback(&mut self, path: &str) -> Result<Value, String> {
         let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
         let missing = format!("{before}{path}{after}");
+        // The reference finders stand only once importlib has been read;
+        // asking for them sooner would read importlib in the middle of
+        // its own bootstrap, so the reader's own complaint stands.
+        if !self.imported.contains_key("importlib") { return Err(missing); }
         let bootstrap = match self.load_namespace("importlib._bootstrap") {
             Ok(namespace) => namespace,
             Err(_) => return Err(missing),
