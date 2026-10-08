@@ -2721,9 +2721,20 @@ impl<'a> Engine<'a> {
                 match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {
                     Some(told @ Value::Declined(_)) => told,
                     Some(told) => Value::Flag(!self.special_truth(&told).map_err(Fault::Note)?),
-                    None => match self.special_dyad(&Action::Same, &subject, &v).map_err(Fault::Note)? {
-                        Value::Flag(true) => Value::Flag(false),
-                        _ => declined(),
+                    None => {
+                        let equality = self.lang.class_special.get(2).cloned().unwrap_or_default();
+                        if self.native_special(&subject, &equality) {
+                            let answer = self.value_method(&subject, &equality, vec![v], Vec::new()).map_err(Fault::Note)?;
+                            match answer {
+                                Value::Declined(_) => answer,
+                                _ => Value::Flag(!self.special_truth(&answer).map_err(Fault::Note)?),
+                            }
+                        } else {
+                            match self.special_dyad(&Action::Same, &subject, &v).map_err(Fault::Note)? {
+                                Value::Flag(true) => Value::Flag(false),
+                                _ => declined(),
+                            }
+                        }
                     },
                 }
             }

@@ -3331,8 +3331,15 @@ impl<'a> Machine<'a> {
                     Some(said@Value::Refusal(_))=>said,
                     Some(said)=>Value::Flag(!self.object_truth(&said)?),
                     None=>{
-                        let identity = self.prim(Prim::Selfsame, "", &[first.clone(), other])?;
-                        if matches!(identity, Value::Flag(true)) { Value::Flag(false) } else { not_mine }
+                        let slot = self.rules.specials.get(2).map(String::as_str).unwrap_or("").to_owned();
+                        if !self.native_member(&first, &slot) {
+                            let identity = self.prim(Prim::Selfsame, "", &[first.clone(), other])?;
+                            if matches!(identity, Value::Flag(true)) { Value::Flag(false) } else { not_mine }
+                        } else {
+                            let result = self.value_member(&first, &slot, vec![other], Vec::new())?;
+                            if matches!(result, Value::Refusal(_)) { result }
+                            else { Value::Flag(!self.object_truth(&result)?) }
+                        }
                     },
                 }
             }
