@@ -6199,7 +6199,6 @@ impl<'a> Machine<'a> {
             self.armed_names = saved;
             return outcome;
         }
-        if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op == 13 { return self.class_from_function(values); }
         if op == 14 { return self.check_class_builtin(); }
