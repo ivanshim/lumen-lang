@@ -188,6 +188,7 @@ pub struct Builder<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    adorned_from: Option<u32>,
     /// The slots the routine being built fills from what it carried
     /// away with it, gathered while its names are read.
     carrying: Vec<usize>,
@@ -663,7 +664,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, adorned_from: None, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -775,7 +776,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
                         if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
-                        stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                        stmts.push(Form::Write(slot, Box::new(Form::Const(Value::text(&docstring_text(said))))));
                     }
                 }
             }
@@ -1965,6 +1966,7 @@ impl<'a> Builder<'a> {
             finish += 1;
         }
         if expression_body || self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
+        if self.table.has_any("ext.system.module.doc") { doc = doc.map(|text| docstring_text(&text)); }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
@@ -3610,6 +3612,7 @@ impl<'a> Builder<'a> {
     /// The writes before the definition gather its decorators. Those
     /// after it rebind the name, taking the gathered values backwards.
     fn decorate(&mut self) -> Res<Form> {
+        let origin = (self.look().row as u32).saturating_sub(self.before);
         let mut forms = Vec::new();
         let mut decorators = Vec::new();
         loop {
@@ -3637,6 +3640,7 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
+        if self.table.has_any("ext.system.module.doc") { self.adorned_from = Some(origin); }
         if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
         let named;
         let class_binding = self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit");
@@ -4658,6 +4662,7 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             return Ok(false);
         }
+        let origin = (self.look().row as u32).saturating_sub(self.before);
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
             self.advance();
@@ -4667,6 +4672,7 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
         }
         if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).spelling()) { self.advance(); self.coroutine_next = true; }
+        if !wrappers.is_empty() && table.has_any("ext.system.module.doc") { self.adorned_from = Some(origin); }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -5200,6 +5206,7 @@ impl<'a> Builder<'a> {
     }
 
     fn python_class(&mut self, generic: bool) -> Res<(Form, bool)> {
+        let source_row = self.adorned_from.take().unwrap_or_else(|| (self.look().row as u32).saturating_sub(self.before));
         let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let builder = self.gensym("class_builder");
         let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
@@ -5226,7 +5233,7 @@ impl<'a> Builder<'a> {
         let mut namespace = None;
         let mut cannot = false;
         let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
-            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone(), &parameters)?;
+            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone(), &parameters, source_row)?;
             namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
@@ -5240,7 +5247,7 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String]) -> Res<(Form, String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String], source_row: u32) -> Res<(Form, String, Option<String>, bool, bool)> {
         let table = self.table;
         let parent: Option<Address> = None;
         let cannot = false;
@@ -5270,6 +5277,9 @@ impl<'a> Builder<'a> {
             let made = self.class_book();
             setup.push(made);
         }
+        self.member_ranked("__firstlineno__");
+        self.parts().attributes.push("__firstlineno__".to_owned());
+        self.parts().held.push(constant(Value::Small(i64::from(source_row))));
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         if !parameters.is_empty() {
             let values = parameters.iter().map(|word| self.read(word)).collect();
@@ -5279,7 +5289,7 @@ impl<'a> Builder<'a> {
         }
         // Seed documentation only when the body starts with a docstring.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&if table.has_any("ext.system.module.doc") { docstring_text(&t.lexeme) } else { t.lexeme.clone() }));
             if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
         }
         let book = self.parts().book.clone().expect("class namespace");
@@ -5528,7 +5538,7 @@ impl<'a> Builder<'a> {
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&if table.has_any("ext.system.module.doc") { docstring_text(&t.lexeme) } else { t.lexeme.clone() }));
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
@@ -5849,7 +5859,7 @@ impl<'a> Builder<'a> {
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = match self.adorned_from.take() { Some(row) => row, None => (self.look().row as u32).saturating_sub(self.before) };
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let explicit = table.flag("ext.stmt.class.this.explicit");
@@ -7618,7 +7628,7 @@ impl<'a> Builder<'a> {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
         }
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = match self.adorned_from.take() { Some(row) => row, None => (self.look().row as u32).saturating_sub(self.before) };
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
@@ -12672,4 +12682,44 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         _ => {}
     }
     for child in children { inspect_form(child, locals, constants, names, suspension); }
+}
+
+// Remove docstring margins while retaining the original number of lines.
+fn docstring_text(raw: &str) -> String {
+    let mut position = 0;
+    let expanded = raw.chars().fold(String::new(), |mut result, character| {
+        match character {
+            '\t' => {
+                let padding = 8 - position % 8;
+                result.push_str(&" ".repeat(padding));
+                position += padding;
+            }
+            '\r' | '\n' => { result.push(character); position = 0; }
+            other => { result.push(other); position += 1; }
+        }
+        result
+    });
+    let mut rows: Vec<&str> = expanded.split('\n').collect();
+    let indent = rows[1..].iter().filter_map(|row| {
+        let rest = row.trim_start_matches(' ');
+        (!rest.is_empty()).then_some(row.len() - rest.len())
+    }).min().unwrap_or_default();
+    rows[0] = rows[0].trim_start_matches(' ');
+    for row in &mut rows[1..] {
+        let spaces = row.as_bytes().iter().take_while(|byte| **byte == b' ').count();
+        *row = &row[spaces.min(indent)..];
+    }
+    rows.join("\n")
+}
+
+#[cfg(test)]
+mod docstring_checks {
+    // Keep documentation line offsets while expanding tabs and removing margins.
+    #[test]
+    fn trim_documentation_without_losing_blank_rows() {
+        let cases = [("first\n    \n    b\n    ", "first\n\nb\n"),
+                     ("\n\n  a\n\n", "\n\na\n\n"),
+                     ("  first\n\t雪\n\t  more\n\n\t", "first\n雪\n  more\n\n")];
+        for (raw, expected) in cases { assert_eq!(super::docstring_text(raw), expected); }
+    }
 }

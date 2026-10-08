@@ -383,6 +383,7 @@ pub struct Compiler<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    decoration_line: Option<u32>,
     /// The slots the routine being put together fills from what it
     /// carried away, while its parameters are being read.
     carrying: Vec<usize>,
@@ -736,7 +737,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decoration_line: None, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -819,7 +820,7 @@ fn compile_pass(
                 };
                 if let Some(words) = words {
                     for name in &lang.module_doc {
-                        a.constant(Value::text(&words));
+                        a.constant(Value::text(&clean_documentation(&words)));
                         a.write(name);
                     }
                 }
@@ -1903,7 +1904,7 @@ impl<'a> Compiler<'a> {
             quoted = true;
             literal.push_str(&leading.next().unwrap().lexeme);
         }
-        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
+        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then(|| if self.lang.module_doc.is_empty() { literal } else { clean_documentation(&literal) });
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -3688,6 +3689,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
         let before_decorators = self.mark();
+        let first_line = (self.look().row as u32).saturating_sub(self.before);
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -3703,6 +3705,7 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if !lang.module_doc.is_empty() { self.decoration_line = Some(first_line); }
         let a_class = self.on_keyword(&lang.class_words) && lang.explicit_this;
         if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
@@ -6193,6 +6196,7 @@ impl<'a> Compiler<'a> {
             self.skip_seps();
             return Ok(false);
         }
+        let first_line = (self.look().row as u32).saturating_sub(self.before);
         let mut decorators = Vec::new();
         while lang.class_details.get("root").map_or(false,|v|!v.is_empty()) && self.on_any(&lang.decorator_words) {
             self.take();
@@ -6202,6 +6206,7 @@ impl<'a> Compiler<'a> {
             self.skip_seps();
         }
         if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).spelling()) { self.take(); self.coroutine_next = true; }
+        if !decorators.is_empty() && !lang.module_doc.is_empty() { self.decoration_line = Some(first_line); }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();
@@ -6267,7 +6272,7 @@ impl<'a> Compiler<'a> {
             // says about itself; text anywhere else is discarded.
             let words = self.take().lexeme;
             if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
-                self.constant(Value::text(&words));
+                self.constant(Value::text(&if lang.module_doc.is_empty() { words } else { clean_documentation(&words) }));
                 self.write(&slot);
                 if !lang.class_builder.is_empty() {
                     if let Some(word) = lang.class_details.get("doc").and_then(|v| v.first()).cloned() { self.mirror_member(&word, &slot)?; }
@@ -6558,6 +6563,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn python_class(&mut self, generic: bool) -> Res<bool> {
+        let first_line = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
         let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let lang = self.lang;
         self.act(Action::Builtin(Builtin::ClassTool(14), Rc::from("")), 0);
@@ -6587,7 +6593,7 @@ impl<'a> Compiler<'a> {
         let mut namespace = None;
         let mut unready = false;
         let body = self.routine(&original_name, Vec::new(), 0, true, |c| {
-            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters)?;
+            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters, first_line)?;
             namespace = Some((book, cell, protocol)); unready = declined; Ok(())
         })?;
         let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
@@ -6601,7 +6607,7 @@ impl<'a> Compiler<'a> {
         Ok(unready)
     }
 
-    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String]) -> Res<(String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String], first_line: u32) -> Res<(String, Option<String>, bool, bool)> {
         self.piece().python_fallthrough = true;
         let lang = self.lang;
         let base = None;
@@ -6620,6 +6626,9 @@ impl<'a> Compiler<'a> {
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
         let mut shared: Vec<(String, String)> = Vec::new();
+        self.constant(Value::Small(i64::from(first_line)));
+        let source_slot = self.gensym("class_line"); self.write(&source_slot);
+        shared.push(("__firstlineno__".into(), source_slot));
         if !parameters.is_empty() {
             for parameter in parameters { self.read(parameter); }
             self.act(Action::MakeTuple, parameters.len());
@@ -7241,7 +7250,7 @@ impl<'a> Compiler<'a> {
         // parameters and their defaults are read, so a routine written
         // within one of those is not handed them instead.
         let typed = std::mem::take(&mut self.pending_types);
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
@@ -7743,7 +7752,7 @@ impl<'a> Compiler<'a> {
         // written within one of those is not handed them instead.
         let typed = std::mem::take(&mut self.pending_types);
         let lang = self.lang;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
         let (formals, spares, _) = self.parameters(&name, &call)?;
@@ -13405,4 +13414,38 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
         }
     }
     (constants, names)
+}
+
+// Clean Python docstrings without removing blank lines, preserving source offsets.
+fn clean_documentation(text: &str) -> String {
+    let mut expanded = String::new();
+    let mut column = 0;
+    for ch in text.chars() {
+        if ch == '\t' {
+            let width = 8 - column % 8;
+            expanded.extend(std::iter::repeat_n(' ', width));
+            column += width;
+        } else {
+            expanded.push(ch);
+            column = if ch == '\n' || ch == '\r' { 0 } else { column + 1 };
+        }
+    }
+    let lines: Vec<&str> = expanded.split('\n').collect();
+    let margin = lines.iter().skip(1).filter(|line| !line.trim_start_matches(' ').is_empty())
+        .map(|line| line.len() - line.trim_start_matches(' ').len()).min().unwrap_or(0);
+    lines.iter().enumerate().map(|(index, line)| {
+        if index == 0 { line.trim_start_matches(' ') }
+        else { &line[margin.min(line.len() - line.trim_start_matches(' ').len())..] }
+    }).collect::<Vec<_>>().join("\n")
+}
+
+#[cfg(test)]
+mod documentation_tests {
+    // Cover tab expansion, unequal margins and preserved blank source lines.
+    #[test]
+    fn docstrings_preserve_lines() {
+        assert_eq!(super::clean_documentation("  first\n\t雪\n\t  more\n\n\t"), "first\n雪\n  more\n\n");
+        assert_eq!(super::clean_documentation("\n\n  a\n\n"), "\n\na\n\n");
+        assert_eq!(super::clean_documentation("first\n    \n    b\n    "), "first\n\nb\n");
+    }
 }

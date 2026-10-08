@@ -123,6 +123,12 @@ impl<'a> Machine<'a> {
                 "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor" => {
                     let reader = self.detail("descriptor.get").to_string();
                     kind.shared.borrow_mut().push((reader.clone(), self.kind_entry(word, &reader)));
+                    // A slot's native type carries all its descriptor operations.
+                    if word == "member_descriptor" || word == "getset_descriptor" {
+                        let setters = [self.detail("descriptor.set"), self.detail("descriptor.delete")];
+                        let entries: Vec<_> = setters.into_iter().map(|key| (key.to_owned(), self.kind_entry(word, key))).collect();
+                        kind.shared.borrow_mut().extend(entries);
+                    }
                 }
                 _ => (),
             }
@@ -2216,6 +2222,13 @@ impl<'a> Machine<'a> {
                                 _ => (),
                             }
                         }
+                        if of_own_kind && (word == "member_descriptor" || word == "getset_descriptor") {
+                            let writing = entry == self.detail("descriptor.set") || entry == self.detail("descriptor.delete");
+                            if writing {
+                                let method = self.read_class_member(subject, &entry, true)?;
+                                return self.apply_class_member(method, values);
+                            }
+                        }
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
                             Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
                         } else if of_own_kind{self.attribute(&receiver,&entry)}else{None};
@@ -3555,9 +3568,10 @@ impl<'a> Machine<'a> {
     /// direct read, the root's own, has none.
     /// The reference's own docstring for a native kind's word, where
     /// this runtime keeps one. Nothing for a word left undocumented,
-    /// which reads as the kind having no attribute of that name.
+    /// which is exposed as an absent docstring (None).
     pub(super) fn builtin_kind_doc(word:&str)->Option<&'static str> {
         match word {
+            "int" => Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"),
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
             _ => None,
@@ -4151,7 +4165,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Small(bits));
                 }
                 if key==self.detail("doc") {
-                    if let Some(doc)=Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
+                    return Ok(match Self::builtin_kind_doc(word) { Some(doc) => Value::text(doc), None => Value::Nil });
                 }
                 if key==self.detail("namespace") {
                     let mut entries=self.kind_member_names(word);

@@ -122,6 +122,13 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && matches!(word, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
             let get = self.class_word("descriptor.get").to_owned();
             c.shared.borrow_mut().push((get.clone(), self.held_kind_descriptor(word, &get)));
+            // Data descriptors expose their write/delete protocol on their type too.
+            if matches!(word, "getset_descriptor" | "member_descriptor") {
+                for part in ["descriptor.set", "descriptor.delete"] {
+                    let method = self.class_word(part).to_owned();
+                    c.shared.borrow_mut().push((method.clone(), self.held_kind_descriptor(word, &method)));
+                }
+            }
         }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
@@ -223,9 +230,10 @@ impl<'a> Engine<'a> {
     }
     /// The reference's own docstring for a builtin kind's word, where
     /// this runtime keeps one. Nothing for a word left undocumented,
-    /// which reads as the kind having no attribute of that name.
+    /// which is exposed as an absent docstring (None).
     pub(super) fn builtin_kind_doc(word: &str) -> Option<&'static str> {
         match word {
+            "int" => Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"),
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
             _ => None,
@@ -2093,6 +2101,11 @@ impl<'a> Engine<'a> {
                         && matches!(word.as_str(), "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
                         return self.class_apply(Self::adapter(15, vec![subject]), args);
                     }
+                    if of_own_kind && matches!(word.as_str(), "getset_descriptor" | "member_descriptor")
+                        && ["descriptor.set", "descriptor.delete"].iter().any(|part| member == self.class_word(part)) {
+                        let operation = self.class_get(subject, &member, true)?;
+                        return self.class_apply(operation, args);
+                    }
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
                         Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
@@ -3623,7 +3636,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
-                    if let Some(doc) = Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
+                    return Ok(Self::builtin_kind_doc(word).map_or(Value::Null, Value::text));
                 }
                 if name==self.class_word("namespace") {
 
