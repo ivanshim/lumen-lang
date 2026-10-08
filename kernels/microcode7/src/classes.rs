@@ -4848,6 +4848,32 @@ impl<'a> Machine<'a> {
             }
             return Err(format!("AttributeError: 'traceback' object attribute '{key}' is read-only").into());
         }
+        if let Value::Thing(frame) = &subject {
+            if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) {
+                match key {
+                    "f_trace" => {
+                        Self::change_entry(&mut frame.holds.borrow_mut(), key, Some(replacement.unwrap_or(Value::Nil)));
+                        return Ok(Value::Nil);
+                    }
+                    "f_trace_lines" | "f_trace_opcodes" => {
+                        let Some(held) = replacement else {
+                            if key == "f_trace_lines" { return Err(String::from("TypeError: can't delete numeric/char attribute").into()); }
+                            return Err(format!("AttributeError: attribute '{key}' of 'frame' objects cannot be deleted").into());
+                        };
+                        if !matches!(held.settled(), Value::Flag(_)) { return Err(String::from("TypeError: attribute value type must be bool").into()); }
+                        Self::change_entry(&mut frame.holds.borrow_mut(), key, Some(held));
+                        return Ok(Value::Nil);
+                    }
+                    "f_lineno" => {
+                        if replacement.is_none() { return Err(String::from("AttributeError: attribute 'f_lineno' of 'frame' objects cannot be deleted").into()); }
+                    }
+                    "f_code" | "f_locals" | "f_globals" | "f_builtins" | "f_back" | "f_lasti" => {
+                        return Err(format!("AttributeError: attribute '{key}' of 'frame' objects is not writable").into());
+                    }
+                    _ => {}
+                }
+            }
+        }
         // Native lowering must still honor namespace changes made after import.
         if self.rules.names_shadow_builtins && self.table.prims.contains_key(key) {
             if let Some(module) = self.namespace_holding(&subject) {

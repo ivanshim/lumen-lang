@@ -5438,6 +5438,44 @@ impl<'a> Engine<'a> {
         Ok(Value::tuple(entries))
     }
 
+    /// Whether a frame is one of the calls now standing: it is reached
+    /// from the frame at work by following each call's own back link,
+    /// the same walk `sys._getframe` makes.
+    fn frame_on_walk(&self, object: &Rc<Instance>) -> bool {
+        let target = Rc::as_ptr(object) as usize;
+        let mut current = self.trace_frame.clone();
+        while let Some(frame) = current {
+            if Rc::as_ptr(&frame) as usize == target { return true; }
+            current = match frame.fields.borrow().get(2).map(|(_, value)| value.contents()) {
+                Some(Value::Object(back)) => Some(back),
+                _ => None,
+            };
+        }
+        false
+    }
+
+    /// A frame's own words: where it stands, the file it was written in
+    /// and the name of the routine running there. A frame is not a thing
+    /// the program's classes can describe, so the reading is made here
+    /// rather than by a class member.
+    fn frame_repr(&self, object: &Rc<Instance>) -> Option<String> {
+        if !self.frame_class.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &object.class_now())) { return None; }
+        let fields = object.fields.borrow();
+        let line = match fields.first().map(|(_, value)| value.contents()) {
+            Some(Value::Small(row)) => row.to_string(),
+            _ => String::from("0"),
+        };
+        let routine = fields.iter().find(|(key, _)| key == "\0routine").map(|(_, value)| value.contents());
+        let (name, file) = match routine {
+            Some(Value::Routine(body)) => {
+                let place = Value::text(body.written_in.as_deref().unwrap_or(self.root_source.as_ref())).core_repr(true);
+                (body.ident.clone(), place)
+            }
+            _ => (String::from("<module>"), String::from("''")),
+        };
+        Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", Rc::as_ptr(object) as usize, file, line, name))
+    }
+
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let keys = &self.lang.trace_fields;
@@ -5476,9 +5514,22 @@ impl<'a> Engine<'a> {
         if name == "clear" {
             return Some(Value::ValueMethod(Rc::new((Value::Object(object.clone()), name.to_string()))));
         }
-        if matches!(name, "f_trace" | "f_trace_lines") {
+        if matches!(name, "f_trace" | "f_trace_lines" | "f_trace_opcodes") {
             return Some(object.fields.borrow().iter().find(|(key, _)| key == name)
-                .map(|(_, value)| value.clone()).unwrap_or_else(|| if name == "f_trace" { Value::Null } else { Value::Flag(true) }));
+                .map(|(_, value)| value.clone()).unwrap_or_else(|| match name {
+                    "f_trace_lines" => Value::Flag(true),
+                    "f_trace_opcodes" => Value::Flag(false),
+                    _ => Value::Null,
+                }));
+        }
+        if name == "f_builtins" { return Some(Value::Bond(self.natives_book())); }
+        if name == "f_lasti" {
+            let at = match object.fields.borrow().get(8).map(|(_, value)| value.contents()) { Some(Value::Small(row)) => row, _ => -1 };
+            return Some(Value::Small(at));
+        }
+        if name == "f_generator" {
+            let walking = self.generator_frames.get(&(Rc::as_ptr(object) as usize)).and_then(Weak::upgrade);
+            return Some(walking.map_or(Value::Null, Value::Generator));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
         if index == 5 {
@@ -7998,6 +8049,7 @@ impl<'a> Engine<'a> {
             return Ok(self.render(std::slice::from_ref(value)));
         }
         if let Value::Object(object) = value {
+            if let Some(shown) = self.frame_repr(object) { return Ok(shown); }
             if let Some((_, spelling)) = object.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr") { return Ok(spelling.plain()); }
             if self.exception_class(&object.class_now()) && self.special_value(value, if representation { 1 } else { 0 }).is_none() {
                 if !representation && (43..=45).any(|at| self.stands_on(&object.class_now(), at)) {
@@ -16750,20 +16802,26 @@ impl<'a> Engine<'a> {
             if let Value::Object(frame) = receiver.contents() {
                 if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
                     if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    if self.frame_on_walk(&frame) { return Err("RuntimeError: cannot clear an executing frame".into()); }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&frame) as usize)).and_then(Weak::upgrade) {
-                        let outcome = self.close_generator(&walk);
-                        if let Err(fault) = outcome {
-                            self.carried = Some(fault);
-                            return Err(self.special_fault());
+                        // A walk that has begun and not finished is asleep
+                        // in the middle of its body, so its frame may not be
+                        // emptied. One never stepped into holds nothing but
+                        // what it was made with, and may be cleared.
+                        if let Ok(state) = walk.try_borrow() {
+                            if state.started && !state.closed { return Err("RuntimeError: cannot clear a suspended frame".into()); }
                         }
-                        return Ok(Value::Null);
+                    }
+                    {
+                        let fields = frame.fields.borrow();
+                        if let (Value::Routine(body), Value::Tuple(slots)) = (&fields[6].1, &fields[5].1) {
+                            for (at, slot) in slots.iter().enumerate() {
+                                if body.enclosed.iter().any(|(freed, _)| *freed == at) { continue; }
+                                if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
+                            }
+                        }
                     }
                     let mut fields = frame.fields.borrow_mut();
-                    if let Value::Tuple(slots) = &fields[5].1 {
-                        for slot in slots.iter() {
-                            if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
-                        }
-                    }
                     fields[5].1 = Value::tuple(Vec::new());
                     fields[3].1 = Value::Null;
                     fields[7].1 = Value::Null;
@@ -19086,10 +19144,19 @@ impl<'a> Engine<'a> {
             if let Some(cell) = Self::map_cell(&args[2]) {
                 if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
                 let key = self.special_key(&args[0])?;
+                // A comparison the lookup makes may hand the program's own
+                // code the frame being written, and refreshing that frame
+                // builds an equal map in the same cell. Retrying on every
+                // such refresh would never settle, so a few rounds are
+                // enough: after them the snapshot in hand is written into,
+                // the way a map whose keys keep changing under a lookup is
+                // settled rather than chased forever.
+                let mut rounds = 0u32;
                 loop {
                     let Value::Map(before) = cell.borrow().clone() else { return Err(self.special_fault()); };
                     let (found, keyed) = self.map_locate(&before, Some(&before), &key)?;
-                    if Self::map_size(&cell).1 != before.revision { continue; }
+                    rounds += 1;
+                    if Self::map_size(&cell).1 != before.revision && rounds < 16 { continue; }
                     let mut next = before.clone();
                     match found {
                         Some(at) => {

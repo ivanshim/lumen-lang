@@ -5519,6 +5519,44 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Whether an activation is one of the calls now standing: it is
+    /// reached from the activation at work by following each call's back
+    /// link, which is the same walk the frame reader makes.
+    fn activation_on_walk(&self, item: &Rc<Thing>) -> bool {
+        let target = Rc::as_ptr(item) as usize;
+        let mut current = self.active_trace.clone();
+        while let Some(stand) = current {
+            if Rc::as_ptr(&stand) as usize == target { return true; }
+            current = match stand.holds.borrow().get(2).map(|(_, held)| held.clone()) {
+                Some(Value::Thing(back)) => Some(back),
+                _ => None,
+            };
+        }
+        false
+    }
+
+    /// A frame answers with its own words: the position it stands at,
+    /// the file it came from and the name of the routine it is running.
+    /// No class describes a frame, so the reading is made here.
+    fn activation_repr(&self, thing: &Rc<Thing>) -> Option<String> {
+        let kind = self.activation_kind.as_ref()?;
+        if !Rc::ptr_eq(kind, &thing.blueprint()) { return None; }
+        let holds = thing.holds.borrow();
+        let line = match holds.first().map(|(_, value)| value.settled()) {
+            Some(Value::Small(row)) => row.to_string(),
+            _ => String::from("0"),
+        };
+        let run = holds.iter().find(|(key, _)| key == "\0environment").map(|(_, value)| value.clone());
+        let (name, file) = match run {
+            Some(Value::Bound(body, _)) => {
+                let place = Value::text(body.written_in.as_deref().unwrap_or(self.entry_file.as_ref())).representation(self.wording());
+                (body.ident.clone(), place)
+            }
+            _ => (String::from("<module>"), String::new()),
+        };
+        Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", Rc::as_ptr(thing) as usize, file, line, name))
+    }
+
     fn activation(&mut self, routine: &Rc<Routine>, environment: &Rc<Env>, parent: Option<Rc<Thing>>) -> Option<Rc<Thing>> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
@@ -5548,11 +5586,15 @@ impl<'a> Machine<'a> {
 
     pub(super) fn activation_member(&mut self, value: &Value, key: &str) -> Option<Value> {
         let words = self.rules.trace_words;
-        if matches!(key, "f_trace" | "f_trace_lines") {
+        if matches!(key, "f_trace" | "f_trace_lines" | "f_trace_opcodes") {
             if let Value::Thing(frame) = value {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) {
                     let stored = frame.holds.borrow().iter().find(|(name, _)| name == key).map(|(_, held)| held.clone());
-                    return Some(stored.unwrap_or_else(|| if key == "f_trace_lines" { Value::Flag(true) } else { Value::Nil }));
+                    return Some(stored.unwrap_or_else(|| match key {
+                        "f_trace_lines" => Value::Flag(true),
+                        "f_trace_opcodes" => Value::Flag(false),
+                        _ => Value::Nil,
+                    }));
                 }
             }
         }
@@ -5560,6 +5602,29 @@ impl<'a> Machine<'a> {
             if let Value::Thing(item) = value {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     return Some(Value::Member(Rc::new(value.clone()), key.to_string()));
+                }
+            }
+        }
+        if key == "f_builtins" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    return Some(self.builtins_here());
+                }
+            }
+        }
+        if key == "f_lasti" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    let at = match item.holds.borrow().get(7).map(|(_, held)| held.settled()) { Some(Value::Small(row)) => row, _ => -1 };
+                    return Some(Value::Small(at));
+                }
+            }
+        }
+        if key == "f_generator" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    let walking = self.generator_frames.get(&(Rc::as_ptr(item) as usize)).and_then(Weak::upgrade);
+                    return Some(walking.map_or(Value::Nil, Value::Generator));
                 }
             }
         }
@@ -7436,10 +7501,20 @@ impl<'a> Machine<'a> {
                                 }
                             }
                             if let Some(cell) = cell_here.and_then(|cell| Self::dict_cell(&Value::Shared(cell))) {
+                                // The lookup may run a key's own `__eq__`,
+                                // and that run may reach back and rebuild the
+                                // frame whose dictionary sits in this cell:
+                                // an equal store each time. A handful of
+                                // rounds is enough to notice a real change;
+                                // past them the snapshot in hand is written
+                                // into, so the write settles instead of
+                                // spinning on its own refresh.
+                                let mut rounds = 0u32;
                                 loop {
                                     let Value::Dict(snapshot) = cell.borrow().clone() else { return Err(self.bad_answer().into()); };
                                     let (position, stored_key) = self.map_locate(&snapshot, Some(&snapshot), &key)?;
-                                    if Self::dict_extent(&cell).1 != snapshot.serial { continue; }
+                                    rounds += 1;
+                                    if Self::dict_extent(&cell).1 != snapshot.serial && rounds < 16 { continue; }
                                     let mut updated = snapshot.clone();
                                     if let Some(at) = position {
                                         let rows = Rc::make_mut(&mut updated);
@@ -9861,19 +9936,24 @@ impl<'a> Machine<'a> {
             if let Value::Thing(item) = receiver.settled() {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                    if self.activation_on_walk(&item) { return Err(String::from("RuntimeError: cannot clear an executing frame").into()); }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&item) as usize)).and_then(Weak::upgrade) {
-                        self.shut_generator(&walk)?;
-                        return Ok(Value::Nil);
+                        // Only a body that has begun and not finished is
+                        // asleep mid-step, so only its frame is refused.
+                        // A walk still standing where it was made may be
+                        // emptied of what it holds.
+                        if let Ok(state) = walk.try_borrow() {
+                            if state.begun && !state.ended { return Err(String::from("RuntimeError: cannot clear a suspended frame").into()); }
+                        }
                     }
-                    let mut holds = item.holds.borrow_mut();
-                    if let Value::Bound(_, environment) = &holds[5].1 {
+                    if let Value::Bound(_, environment) = &item.holds.borrow()[5].1 {
                         for place in environment.cells.borrow_mut().iter_mut() {
                             if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
                             *place = Value::Unset;
                         }
                     }
-                    holds[3].1 = Value::Nil;
-                    holds[6].1 = Value::Nil;
+                    item.holds.borrow_mut()[3].1 = Value::Nil;
+                    item.holds.borrow_mut()[6].1 = Value::Nil;
                     return Ok(Value::Nil);
                 }
             }
@@ -14812,6 +14892,7 @@ impl<'a> Machine<'a> {
                 self.object_words(&Value::Dict(Rc::new(pairs.into())), true)
             }
             Value::Thing(t) => {
+                if let Some(shown) = self.activation_repr(t) { return Ok(shown); }
                 if let Some(spelling) = t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display").map(|entry| entry.1.bare()) { return Ok(spelling); }
                 if self.is_fault_kind(&t.blueprint()) && self.appointment(subject, usize::from(quoted)).is_none() {
                     let codec = (43..=45).find(|&n| self.stands_under(&t.blueprint(), n));

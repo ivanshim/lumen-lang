@@ -4598,6 +4598,41 @@ impl<'a> Engine<'a> {
             }
             return Err("AttributeError: readonly attribute".into());
         }
+        if let Value::Object(frame) = &subject {
+            if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
+                match name {
+                    "f_trace" => {
+                        let held = value.unwrap_or(Value::Null);
+                        let mut fields = frame.fields.borrow_mut();
+                        match fields.iter_mut().find(|(key, _)| key == "f_trace") {
+                            Some(entry) => entry.1 = held,
+                            None => fields.push(("f_trace".into(), held)),
+                        }
+                        return Ok(Value::Null);
+                    }
+                    "f_trace_lines" | "f_trace_opcodes" => {
+                        let Some(held) = value else {
+                            if name == "f_trace_lines" { return Err("TypeError: can't delete numeric/char attribute".into()); }
+                            return Err(format!("AttributeError: attribute '{name}' of 'frame' objects cannot be deleted").into());
+                        };
+                        if !matches!(held.contents(), Value::Flag(_)) { return Err("TypeError: attribute value type must be bool".into()); }
+                        let mut fields = frame.fields.borrow_mut();
+                        match fields.iter_mut().find(|(key, _)| key == name) {
+                            Some(entry) => entry.1 = held,
+                            None => fields.push((name.to_string(), held)),
+                        }
+                        return Ok(Value::Null);
+                    }
+                    "f_lineno" => {
+                        if value.is_none() { return Err("AttributeError: attribute 'f_lineno' of 'frame' objects cannot be deleted".into()); }
+                    }
+                    "f_code" | "f_locals" | "f_globals" | "f_builtins" | "f_back" | "f_lasti" => {
+                        return Err(format!("AttributeError: attribute '{name}' of 'frame' objects is not writable").into());
+                    }
+                    _ => {}
+                }
+            }
+        }
         // A late module binding also replaces a compiled builtin in its code.
         if self.lang.shadow_builtins && self.lang.builtins.contains_key(name) {
             if let Some(owner) = self.module_holding(&subject) {
