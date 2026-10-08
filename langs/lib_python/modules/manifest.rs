@@ -13,6 +13,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_compat_pickle", include_str!("_compat_pickle.py"), "_compat_pickle.py"),
     ("_contextvars", include_str!("_contextvars.py"), "_contextvars.py"),
     ("_csv", include_str!("_csv.py"), "_csv.py"),
+    ("_datetime", include_str!("_datetime.py"), "_datetime.py"),
     ("_decimal", include_str!("_decimal.py"), "_decimal.py"),
     ("_digest", include_str!("_digest.py"), "_digest.py"),
     ("_encoding_aliases", include_str!("_encoding_aliases.py"), "_encoding_aliases.py"),

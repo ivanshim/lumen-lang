@@ -72,6 +72,11 @@ impl<'a> Engine<'a> {
             // special form's own item method does; the folded members
             // are the very shape the class questions read a union by.
             hooks.push(("__class_getitem__".into(), Self::adapter(140, Vec::new())));
+            // Subscripting, pickling and hashing a built union are worked
+            // out by the support module, which reads the members.
+            for (name, helper) in [("__getitem__", "_union_getitem"), ("__reduce__", "_union_reduce"), ("__hash__", "_union_hash")] {
+                hooks.push((name.into(), Self::adapter(237, vec![Value::text(helper)])));
+            }
         }
         if word == "GenericAlias" {
             hooks.push(("__iter__".into(), Self::adapter(124, vec![Value::Small(5)])));
@@ -845,7 +850,7 @@ impl<'a> Engine<'a> {
 
         self.furnish_slots(&c)?;
         if !self.lang.class_builder.is_empty() && self.slots_allow(&c, self.class_word("namespace"))
-            && !c.direct.iter().any(|base| self.slots_allow(base, self.class_word("namespace")))
+            && !c.direct.iter().any(|base| Self::own_kind(base).as_deref() != Some("SimpleNamespace") && self.slots_allow(base, self.class_word("namespace")))
             && Self::own_class_value(&c, self.class_word("namespace")).is_none() {
             c.shared.borrow_mut().push((self.class_word("namespace").to_owned(), Self::adapter(16,
                 vec![Value::text(self.class_word("namespace")), Value::Class(c.clone()), Value::text("\0instance-namespace")])));
@@ -1752,6 +1757,11 @@ impl<'a> Engine<'a> {
                 }
                 77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
                     Ok(args.remove(0))
+                }
+                237 => {
+                    let module = self.import_module("_types")?;
+                    let function = self.class_get(module, &w.1[0].plain(), false)?;
+                    self.class_apply(function, args)
                 }
                 154 => {
                     let module = self.import_module("typing")?;
@@ -2968,7 +2978,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 133 | 180 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 133 | 180 | 236 | 237 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -3676,7 +3686,9 @@ impl<'a> Engine<'a> {
                     if let Some(stored) = Self::own_class_value(c, name) { return Ok(stored); }
                     let is_root = self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, c));
                     if is_root || self.is_metaclass_root(c) || Self::own_kind(c).is_some() {
-                        return Ok(Value::text(self.home_module_word()));
+                        // A few kinds are made in the module that names them, not the home one.
+                        let home = match Self::own_kind(c).as_deref() { Some("SimpleNamespace") => "types", Some("Union") => "typing", _ => self.home_module_word() };
+                        return Ok(Value::text(home));
                     }
                 }
                 if let Some(word) = Self::own_kind(c) {
@@ -5380,13 +5392,16 @@ impl<'a> Engine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool {
         matches!(value,Value::Null)
             ||self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"))
+            ||self.union_anchor(value)
     }
     /// At least one operand must provide the union operator. None alone
-    /// supplies no such operator.
+    /// supplies no such operator. A kind does, and so do a union, a
+    /// subscripted kind and a type variable: each one is a member of
+    /// the unions it is joined into.
     pub(super) fn union_anchor(&self,value:&Value)->bool {
         self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"))
+            ||matches!(value, Value::Object(o) if matches!(Self::kind_beneath(&o.class_now()).as_deref(),
+                Some("Union" | "GenericAlias" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")))
     }
     /// The kind builtin read as a value: what the kind of a kind is.
     pub(super) fn kind_maker_word(&self)->Value {
@@ -6011,6 +6026,7 @@ impl<'a> Engine<'a> {
             if !self.lang.weak_refused.is_empty() && self.weak_layout(class) { names.push("__weakref__".into()); }
             names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
             names.extend(self.lang.class_special.get(72).cloned());
+            let doc = self.class_word("doc"); if !doc.is_empty() { names.push(doc.to_string()); }
         }
         names.sort();names.dedup();Value::array(names.iter().map(|n|Value::text(n)).collect())
     }

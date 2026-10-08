@@ -71,6 +71,10 @@ impl<'a> Machine<'a> {
             // The reference builds a union by subscription; the folded
             // members are the very shape the class questions read.
             protocols.push(("__class_getitem__".to_owned(), Self::wrap(140, Vec::new())));
+            // Subscripting, pickling and hashing a built union are done
+            // by the support module, which reads the members.
+            protocols.extend(["_union_getitem", "_union_reduce", "_union_hash"].iter().zip(["__getitem__", "__reduce__", "__hash__"])
+                .map(|(helper, name)| (name.to_owned(), Self::wrap(237, vec![Value::text(helper)]))));
         }
         if word == "GenericAlias" {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
@@ -248,6 +252,7 @@ impl<'a> Machine<'a> {
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) { names.push("__weakref__".to_owned()); }
             names.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
             names.extend(self.rules.specials.get(72).cloned());
+            let doc = self.detail("doc"); if !doc.is_empty() { names.push(doc.to_owned()); }
         }
         names.sort_unstable();names.dedup();Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()))
     }
@@ -971,7 +976,7 @@ impl<'a> Machine<'a> {
         self.name_slots(&class)?;
         let dictionary_word = self.detail("namespace");
         let introduces_dictionary = self.allowed_slot(&class, dictionary_word)
-            && class.parents.iter().all(|base| !self.allowed_slot(base, dictionary_word));
+            && class.parents.iter().all(|base| Self::native_word(base).as_deref() == Some("SimpleNamespace") || !self.allowed_slot(base, dictionary_word));
         if self.table.has_any("ext.stmt.class.builder") && introduces_dictionary && Self::own_entry(&class, dictionary_word).is_none() {
             let getter = Self::wrap(32, vec![Value::text(dictionary_word), Value::Blueprint(class.clone()), Value::Small(-2)]);
             class.shared.borrow_mut().push((dictionary_word.to_string(), getter));
@@ -1692,6 +1697,11 @@ impl<'a> Machine<'a> {
                         [owner @ Value::Blueprint(_), _] if !self.table.strings("ext.stmt.type_params.open").is_empty() => Ok(owner.clone()),
                         _ => Err(self.class_unready()),
                     },
+                    237 => {
+                        let module = self.load_namespace("_types")?;
+                        let function = self.read_class_member(module, &kept[0].bare(), false)?;
+                        self.apply_class_member(function, values)
+                    }
                     154 => {
                         let module = self.load_namespace("typing")?;
                         let function = self.read_class_member(module, &kept[0].bare(), false)?;
@@ -2927,7 +2937,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 237, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -4249,7 +4259,8 @@ impl<'a> Machine<'a> {
             let builtin_origin = Self::native_word(b).is_some()
                 || (b.under.is_none() && b.name == self.detail("root"));
             if builtin_origin && !key.is_empty() && key == self.detail("module") {
-                return Ok(Self::own_entry(b,key).unwrap_or_else(||Value::text(self.builtin_module())));
+                let home = match Self::native_word(b).as_deref() { Some("SimpleNamespace") => "types", Some("Union") => "typing", _ => self.builtin_module() };
+                return Ok(Self::own_entry(b,key).unwrap_or_else(||Value::text(home)));
             }
             if key == self.detail("flags") {
                 // The seal takes the base-standing bit off and puts the
@@ -5642,12 +5653,14 @@ impl<'a> Machine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool{
         matches!(value,Value::Nil)
             ||self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||self.union_anchor(value)
     }
-    /// A kind or union supplies the operator; Nil by itself does not.
+    /// A kind, a union, a subscripted kind or a type variable supplies
+    /// the operator; Nil by itself does not.
     pub(super) fn union_anchor(&self,value:&Value)->bool{
         self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_beneath(&t.blueprint()).as_deref(),
+                Some("Union" | "GenericAlias" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")))
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
