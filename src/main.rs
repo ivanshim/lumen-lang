@@ -31,6 +31,7 @@ use std::process;
 
 mod web;
 mod python_versions;
+mod python_sources;
 
 mod embedded_modules {
     include!("../langs/lib_python/modules/manifest.rs");
@@ -1148,62 +1149,9 @@ fn expand_includes(source: &str) -> Result<String, String> {
 
 
 // Installed binaries expose the same source that their embedded loader runs.
-// A read-only distribution gets a writable source cache for compilation tools.
 fn python_library_sources(request: &[(String, String, String, bool)]) -> std::io::Result<std::path::PathBuf> {
-    use std::hash::{Hash, Hasher};
     let original = env::var_os("LUMEN_ROOT").map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
         .join("langs/lib_python/modules");
-    let filenames: std::collections::HashMap<&str, &str> = request.iter()
-        .filter(|row| row.0 == "MODULE_FILE").map(|row| (row.1.as_str(), row.2.as_str())).collect();
-    let sources: Vec<_> = request.iter().filter(|row| row.0 == "MODULE").collect();
-    if let Some(first) = sources.first().and_then(|row| filenames.get(row.1.as_str())) {
-        if fs::OpenOptions::new().write(true).open(original.join(first)).is_ok() { return Ok(original); }
-    }
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    for row in &sources { row.1.hash(&mut hash); row.2.hash(&mut hash); filenames.get(row.1.as_str()).hash(&mut hash); }
-    let cache = env::temp_dir().join(format!("lumen-library-layout-{:016x}", hash.finish()));
-    let library = cache.join("langs/lib_python/modules");
-    if cache.join(".complete").is_file() { return Ok(library); }
-    let staging = cache.with_extension(format!("building-{}", process::id()));
-    let source_tree = staging.join("langs/lib_python/modules");
-    fs::create_dir_all(&source_tree)?;
-    for row in sources {
-        let filename = filenames.get(row.1.as_str()).ok_or_else(|| std::io::Error::other("embedded module has no filename"))?;
-        let path = source_tree.join(filename);
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-        fs::write(path, &row.2)?;
-    }
-    fn resources(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-        if !from.is_dir() { return Ok(()); }
-        for entry in fs::read_dir(from)? {
-            let entry = entry?;
-            let path = entry.path();
-            let destination = to.join(entry.file_name());
-            if path.is_dir() {
-                if entry.file_name() == "__pycache__" { continue; }
-                fs::create_dir_all(&destination)?;
-                resources(&path, &destination)?;
-            } else if path.extension().is_none_or(|extension| extension != "pyc") && !destination.exists() {
-                fs::copy(path, destination)?;
-            }
-        }
-        Ok(())
-    }
-    resources(&original, &source_tree)?;
-    if let Some(project) = original.ancestors().nth(3).filter(|project| project.is_dir()) {
-        for entry in fs::read_dir(project)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            if name == "langs" || name == "target" || name == "probe" || name.to_string_lossy().starts_with('.') { continue; }
-            std::os::unix::fs::symlink(fs::canonicalize(entry.path())?, staging.join(name))?;
-        }
-    }
-    fs::write(staging.join(".complete"), b"embedded library sources\n")?;
-    match fs::rename(&staging, &cache) {
-        Ok(()) => {},
-        Err(_) if cache.join(".complete").is_file() => { fs::remove_dir_all(staging)?; },
-        Err(error) => { let _ = fs::remove_dir_all(staging); return Err(error); },
-    }
-    Ok(library)
+    python_sources::library(request, &original)
 }
