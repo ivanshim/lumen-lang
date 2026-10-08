@@ -189,6 +189,7 @@ struct Invocation {
     module_source: Option<String>,
     module_name: Option<String>,
     python_development: bool,
+    python_ignore_environment: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -688,6 +689,8 @@ fn run_all() {
     if inv.language.name() == "python" {
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+        if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
+        else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
     }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
@@ -1026,6 +1029,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut module_source = None;
     let mut module_name = None;
     let mut python_development = false;
+    let mut python_ignore_environment = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -1148,7 +1152,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 break;
             }
             Some("-E") if file.is_none() => {
-                env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1");
+                python_ignore_environment = true;
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
             }
@@ -1291,7 +1295,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, python_ignore_environment, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

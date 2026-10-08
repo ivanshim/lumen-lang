@@ -67,7 +67,7 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 0
+    ignore_environment = int(_host_environment('environ')[1].get(b'LUMEN_PYTHON_IGNORE_ENV') == b'1')
     verbose = 0
     bytes_warning = 0
     quiet = 0
