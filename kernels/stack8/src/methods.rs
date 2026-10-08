@@ -28,10 +28,10 @@ fn keyed_alike(a: &Value, b: &Value) -> bool {
 }
 
 /// Write a key over the value it holds, or at the end of the pairs.
-fn put_pair(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value, words: &Wording) {
+fn put_pair(pairs: &mut crate::value::KeyedPairs, key: Value, value: Value, words: &Wording) {
     match pairs.iter_mut().find(|(k, _)| alike(k, &key, words)) {
         Some(slot) => slot.1 = value,
-        None => pairs.push((key, value)),
+        None => pairs.push_row(key, value),
     }
 }
 
@@ -538,21 +538,21 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(1,2)?;
                     if matches!(a[0].contents(), Value::Array(_) | Value::Map(_)) {return Err(fault("arguments"));}
                     let at=pairs.iter().position(|(k,_)| alike(k,&a[0],words));
-                    if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
+                    if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove_row(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
                     let value=a.get(1).cloned().unwrap_or(Value::Null);
                     if op=="pop" && a.len()==1 {return Err(fault("key")+&a[0].representation(words));}
-                    if op=="setdefault" {pairs.push((a[0].clone(),value.clone()));store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
+                    if op=="setdefault" {pairs.push_row(a[0].clone(),value.clone());store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
                 }
                 "keys" | "values" | "items" => {arity(0,0)?;return Ok(Value::View(Rc::new((receiver.clone(),op.to_string()))));}
                 // The last pair written is taken out and handed back.
                 "popitem" => {
                     arity(0,0)?;
-                    let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
+                    let Some((key,value))=pairs.pop_last() else {return Err(fault("popitem"));};
                     store(Value::Map(Rc::new(pairs)))?;
                     let plain = match key { Value::Hashed(pair) => pair.0.clone(), other => other };
                     return Ok(Value::tuple(vec![plain,value]));
                 }
-                "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
+                "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs.copied())).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}
                 // Pairs are written as they are read, so those before an
                 // ill-shaped one stand written when it stops the call.
