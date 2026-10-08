@@ -330,10 +330,11 @@ moves preserve the registered interpreter source bytes, including the single
 async-aware `test.support.subTests` binding and coroutine recognition.
 ## Codec release source integrity
 
-The codec adapter now lives in `_codec_runtime.py`; `codecs.py` is the complete
-release source. The following hashes cover unchanged bodies beneath the single
-provenance header. CJK wrappers retain their native dependencies and fail
-honestly when those extensions are unavailable.
+The codec adapter now lives in `_codec_runtime.py`; `codecs.py` is the complete,
+unmodified release source. A small `runtime_adapters/codecs.py` overlay appends
+the buffer helper the native struct readers call. The following hashes cover
+unchanged bodies beneath the single provenance header. CJK wrappers retain their
+native dependencies and fail honestly when those extensions are unavailable.
 
 | File | Release body SHA-256 |
 |---|---|
