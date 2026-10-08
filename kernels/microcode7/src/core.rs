@@ -111,6 +111,10 @@ impl Value {
             // reckoning the repr gives it.
             Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(60, held) if held.len() > 2 => "classmethod_descriptor",
+            Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
+                Some("__dict__" | "__weakref__") => "getset_descriptor",
+                _ => "member_descriptor",
+            },
             Self::Wrapped(60, parts) => return match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
                 _ => "object".to_owned(),

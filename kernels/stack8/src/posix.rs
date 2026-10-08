@@ -58,7 +58,7 @@ fn stat_fields(info: libc::stat) -> Value {
     row.push(Value::of_big(info.st_rdev.into()));
     Value::tuple(row)
 }
-pub fn call(args: &[Value]) -> Result<Value, String> {
+pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let Some(Value::Text(op)) = args.first().map(Value::contents) else {
         return Err("TypeError: POSIX operation must be str".into());
     };
@@ -122,6 +122,67 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         "open" => { let p = pathname(0)?; status(libc::openat(number(3)? as i32, p.as_ptr(), number(1)? as i32 | libc::O_CLOEXEC, number(2)? as libc::mode_t) as i64) },
         "close" => status(libc::close(number(0)? as i32) as i64),
         "dup" => status(libc::fcntl(number(0)? as i32, libc::F_DUPFD_CLOEXEC, 0) as i64),
+        // Wait for readability, writability or an exceptional condition on
+        // each set of descriptors, as CPython's select module does; the
+        // module checks ranges and converts objects before calling.
+        "select" => {
+            let fds = |i: usize| -> Result<Vec<i32>, String> {
+                match a[i].contents() {
+                    Value::Array(items) | Value::Tuple(items) => items.iter().map(|item| integer(item)
+                        .and_then(|n| i32::try_from(n).map_err(|_| "ValueError: filedescriptor out of range in select()".to_string()))).collect(),
+                    _ => Err("TypeError: a sequence of integers is required".to_string()),
+                }
+            };
+            let reads = fds(0)?; let writes = fds(1)?; let extras = fds(2)?;
+            if reads.iter().chain(&writes).chain(&extras).any(|fd| *fd < 0 || *fd >= libc::FD_SETSIZE as i32) {
+                return Err("ValueError: filedescriptor out of range in select()".to_string());
+            }
+            let mut rfds: libc::fd_set = std::mem::zeroed();
+            let mut wfds: libc::fd_set = std::mem::zeroed();
+            let mut efds: libc::fd_set = std::mem::zeroed();
+            let mut top = -1i32;
+            for (set, row) in [(&mut rfds, &reads), (&mut wfds, &writes), (&mut efds, &extras)] {
+                for &fd in row { libc::FD_SET(fd, set); if fd > top { top = fd; } }
+            }
+            let usec = number(3)?;
+            let awake = |set: &libc::fd_set, row: &[i32]| Value::Array(crate::tuples::Items::plain(
+                row.iter().filter(|fd| libc::FD_ISSET(**fd, set)).map(|fd| Value::Small(*fd as i64)).collect()));
+            // An interrupted wait begins again against the same deadline
+            // with the time still left, the sets built anew each time, as
+            // the reference's does after a returning signal handler.
+            // A handler fault leaves through the runtime exception road.
+            let deadline = if usec < 0 { None } else {
+                std::time::Instant::now().checked_add(std::time::Duration::from_micros(usec as u64))
+            };
+            let mut remaining = if usec < 0 { None } else { Some(usec) };
+            let empty = || Value::tuple(vec![Value::Array(crate::tuples::Items::plain(Vec::new())),
+                Value::Array(crate::tuples::Items::plain(Vec::new())), Value::Array(crate::tuples::Items::plain(Vec::new()))]);
+            loop {
+                let mut span: libc::timeval = std::mem::zeroed();
+                let waiting = match remaining {
+                    None => std::ptr::null_mut(),
+                    Some(whole) => { span.tv_sec = whole / 1_000_000; span.tv_usec = whole % 1_000_000; &mut span as *mut libc::timeval },
+                };
+                let ready = libc::select(top + 1, &mut rfds, &mut wfds, &mut efds, waiting);
+                if ready >= 0 {
+                    break Ok(Value::tuple(vec![awake(&rfds, &reads), awake(&wfds, &writes), awake(&efds, &extras)]));
+                }
+                let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if fault != libc::EINTR { break Err(fault); }
+                check_signals()?;
+                if let Some(limit) = deadline {
+                    let left = limit.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() { break Ok(empty()); }
+                    let mut whole = left.as_micros() as i64;
+                    if left.subsec_nanos() % 1000 != 0 { whole += 1; }
+                    remaining = Some(whole);
+                }
+                rfds = std::mem::zeroed(); wfds = std::mem::zeroed(); efds = std::mem::zeroed();
+                for (set, row) in [(&mut rfds, &reads), (&mut wfds, &writes), (&mut efds, &extras)] {
+                    for &fd in row { libc::FD_SET(fd, set); }
+                }
+            }
+        },
         "read" => {
             let count = number(1)?;
             if count < 0 { Err(libc::EINVAL) } else {

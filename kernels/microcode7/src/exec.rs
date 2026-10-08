@@ -82,7 +82,7 @@ pub const KIND_LABELS: [(&str, Kind); 7] = [
 /// when such a signal comes in, and by a program asking to have one
 /// raised. The machine gathers the bits where one statement gives way
 /// to the next, never part-way through one.
-static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Whether the host has been asked to set the interrupt's own bit when
 /// it comes in: it is asked once, by the first run that watches its
@@ -965,7 +965,7 @@ impl<'a> Machine<'a> {
                 }
                 None => (Vec::new(), Vec::new()),
             };
-            let kind = Blueprint { parents, ancestry: RefCell::new(ancestry), presentation: None,
+            let kind = Blueprint { parents, ancestry: RefCell::new(ancestry), presentation: Some(format!("<class '{word}'>")),
                 name: word.clone(), under,
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
                 shared: RefCell::new(shared), constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None),
@@ -8751,7 +8751,7 @@ impl<'a> Machine<'a> {
         if word == "dict" && self.table.spells("ext.builtin.method.fromkeys", name) {
             return Some(self.kind_entry(&word, name));
         }
-        if word == "type" && (name == self.detail("namespace") || name == self.detail("mro")) {
+        if word == "type" && ["namespace", "mro", "name"].iter().any(|part| name == self.detail(part)) {
             return Some(self.kind_entry(&word, name));
         }
         if word == "type" {
@@ -8944,7 +8944,11 @@ impl<'a> Machine<'a> {
         if matches!(value, Value::Intrinsic(Prim::AsReal, _)) && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
             return Some(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
         }
-        if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
+        if let Some(carried) = self.carried_by_kind(value, name) {
+            let bound_class_method = self.names_in_calls && self.table.spells("ext.builtin.method.fromkeys", name)
+                && matches!(&carried, Value::Wrapped(60, parts) if parts[0].bare() == "dict");
+            return Some(if bound_class_method { Value::Member(Rc::new(value.clone()), name.to_string()) } else { carried });
+        }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
@@ -9621,7 +9625,7 @@ impl<'a> Machine<'a> {
     /// What a member standing for a value's method comes to: the method
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
-    fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+    pub(super) fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
         if operation == "__index__" {
             if self.native_place(&receiver, operation).is_none() {
                 return Err(self.member_missing(&receiver, operation).into());
@@ -16823,7 +16827,14 @@ impl<'a> Machine<'a> {
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
             (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
-                let length = self.ask_special(one, 10, &[])?.unwrap();
+                let reported = self.ask_special(one, 10, &[])?.unwrap();
+                // Strip Python integer wrappers before inspecting their value.
+                let length = if self.rules.has_any_ext_builtin_bool_result {
+                    match Self::underlying(&reported).map(|v| v.settled()).unwrap_or(reported) {
+                        Value::Flag(bit) => Value::Small(if bit { 1 } else { 0 }),
+                        integer => integer,
+                    }
+                } else { reported };
                 if !matches!(length, Value::Small(_) | Value::Huge(_)) { return Err(self.bad_answer()); }
                 if length.as_big()? < BigInt::from(0) {
                     return Err(if self.rules.has_any_ext_builtin_bool_result {
@@ -20216,7 +20227,16 @@ impl<'a> Machine<'a> {
                     let Some(Value::Tuple(items)) = extra else {return Err(String::from("TypeError: a struct sequence is required"));};
                     let index = as_index(&v[2])?;
                     match items.get(index) {Some(item) => item.clone(), None => return Err(String::from("IndexError: tuple index out of range"))}
-                } else { crate::posix::perform(v)? }
+                } else {
+                    crate::posix::perform(v, || match self.signals_due_now() {
+                        Ok(()) => Ok(()),
+                        Err(Escape::Error(message)) => Err(message),
+                        Err(escape) => {
+                            self.got_away = Some(escape);
+                            Err(self.argument_fault("ext.builtin.stream.failed", None))
+                        }
+                    })?
+                }
             },
             Prim::HostRow => {
                 if v.len() == 1 && matches!(&v[0], Value::Text(query) if query.as_ref() == "build") {
