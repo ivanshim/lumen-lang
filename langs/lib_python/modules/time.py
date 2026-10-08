@@ -44,6 +44,7 @@ def perf_counter_ns():
     return __clock(True, False)
 
 struct_time = _host_clock('struct_time')
+_STRUCT_TM_ITEMS = struct_time.n_fields
 
 def localtime(seconds=None):
     return _host_clock('localtime', seconds)
@@ -305,3 +306,9 @@ def strftime(format, fields=None):
         else:
             out += '%' + ch
     return out
+
+
+# Parse a date through the upstream format parser.
+def strptime(string, format="%a %b %d %H:%M:%S %Y"):
+    import _strptime
+    return _strptime._strptime_time(string, format)

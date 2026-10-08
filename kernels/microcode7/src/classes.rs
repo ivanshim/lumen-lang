@@ -61,6 +61,9 @@ impl<'a> Machine<'a> {
             let names = self.rules.specials;
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
+        if let Some(documentation) = Self::builtin_kind_doc(word) {
+            protocols.push((self.detail("doc").to_string(), Value::text(documentation)));
+        }
         if matches!(self.table.prims.get(word), Some(Prim::Uniques | Prim::Unchanging | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Backwards)) {
             if let Some(method) = self.rules.specials.get(79) {
                 protocols.push((method.to_owned(), Self::wrap(136, vec![Value::text(word)])));
@@ -3557,6 +3560,18 @@ impl<'a> Machine<'a> {
     /// this runtime keeps one. Nothing for a word left undocumented,
     /// which reads as the kind having no attribute of that name.
     pub(super) fn builtin_kind_doc(word:&str)->Option<&'static str> {
+        if word == "str" { return Some("str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'."); }
+        if word == "bool" { return Some("Returns True when the argument is true, False otherwise.\nThe builtins True and False are the only two instances of the class bool.\nThe class bool is a subclass of the class int, and cannot be subclassed."); }
+        if word == "int" { return Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"); }
+        if word == "float" { return Some("Convert a string or number to a floating-point number, if possible."); }
+        if word == "frozenset" { return Some("Build an immutable unordered collection of unique elements."); }
+        if word == "set" { return Some("Build an unordered collection of unique elements."); }
+        if word == "list" { return Some("Built-in mutable sequence.\n\nIf no argument is given, the constructor creates a new empty list.\nThe argument must be an iterable if specified."); }
+        if word == "tuple" { return Some("Built-in immutable sequence.\n\nIf no argument is given, the constructor returns an empty tuple.\nIf iterable is specified the tuple is initialized from iterable's items.\n\nIf the argument is a tuple, the return value is the same object."); }
+        if word == "dict" { return Some("dict() -> new empty dictionary\ndict(mapping) -> new dictionary initialized from a mapping object's\n    (key, value) pairs\ndict(iterable) -> new dictionary initialized as if via:\n    d = {}\n    for k, v in iterable:\n        d[k] = v\ndict(**kwargs) -> new dictionary initialized with the name=value pairs\n    in the keyword argument list.  For example:  dict(one=1, two=2)"); }
+        if word == "bytes" { return Some("bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"); }
+        if word == "bytearray" { return Some("bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"); }
+        if word == "complex" { return Some("Create a complex number from a string or numbers.\n\nIf a string is given, parse it as a complex number.\nIf a single number is given, convert it to a complex number.\nIf the 'real' or 'imag' arguments are given, create a complex number\nwith the specified real and imaginary components."); }
         match word {
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),

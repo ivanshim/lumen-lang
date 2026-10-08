@@ -1,6 +1,6 @@
 # Minimal native socket adapter; CPython v3.14.8 Modules/socketmodule.c.
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
-from posix import _call, _path, close as _close, dup
+from posix import _call, _path, close as _close, dup, uname
 AF_UNIX = 1
 AF_INET = 2
 AF_INET6 = 10
@@ -51,3 +51,8 @@ class herror(OSError):
     pass
 
 timeout = TimeoutError
+
+
+# Return the host name reported by the operating system.
+def gethostname():
+    return uname().nodename

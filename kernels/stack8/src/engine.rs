@@ -7161,6 +7161,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if name == self.class_word("doc") && matches!(value.contents(), Value::Text(_) | Value::Codepoints(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) | Value::Bytes(..) | Value::Complex(_)) {
+            if let Some(doc) = Self::builtin_kind_doc(&value.contents().core_kind()) { return Ok(Some(Value::text(doc))); }
+        }
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
@@ -17294,7 +17297,7 @@ impl<'a> Engine<'a> {
             supplied.extend(named.into_iter().map(|(key, argument)| (Some(key), argument)));
             return self.builtin_call(Builtin::Text(crate::strings::TextOp::Getnewargs), operation, supplied);
         }
-        if matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Text(_)) || matches!(&contents, Value::Codepoints(_)) && matches!(operation, "count" | "splitlines") {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
                 let working = crate::strings::operation(operation);
@@ -19440,7 +19443,10 @@ impl<'a> Engine<'a> {
                         if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }
                     }
                 }
-                if matches!(op, crate::strings::TextOp::Expandtabs | crate::strings::TextOp::Splitlines) && normalized.len() == 2 {
+                if op == crate::strings::TextOp::Splitlines && normalized.len() == 2 {
+                    normalized[1] = Value::Flag(self.special_truth(&normalized[1])?);
+                }
+                if op == crate::strings::TextOp::Expandtabs && normalized.len() == 2 {
                     if let Some(index) = self.special_index(&normalized[1])? { normalized[1] = index; }
                 }
                 if op == crate::strings::TextOp::Translate && normalized.len() == 2 && matches!(normalized[1], Value::Object(_)) {

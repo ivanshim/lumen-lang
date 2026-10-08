@@ -31,6 +31,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/mailbox.py` | `Lib/mailbox.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/support/refleak_helper.py`, `langs/lib_python/modules/test/support/refleak_helper.py` | `Lib/test/support/refleak_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/email/` | `Lib/email/`: all 29 Python package sources, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/native_test_support.py` | `Lib/test/support/__init__.py`: unchanged `patch`, `reap_children`, stream-warning and environment-tracking helpers | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in

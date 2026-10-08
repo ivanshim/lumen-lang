@@ -7581,6 +7581,22 @@ impl<'a> Machine<'a> {
                             }
                             return Ok(Value::Nil);
                         }
+                        if let (Some(Value::Span(bounds)), Some(storage)) = (&key, &worth_cell) {
+                            let bounds = self.span_settled(bounds)?;
+                            drop(target);
+                            self.span_written(&mut storage.borrow_mut(), &bounds, &value)?;
+                            return Ok(Value::Nil);
+                        }
+                        if self.works_sequences() {
+                            if let (Value::Vector(items), Some(index)) = (&target, &key) {
+                                let offset = match index { Value::Small(n) => Some(*n), Value::Flag(flag) => Some(i64::from(*flag)), Value::Huge(n) => n.to_i64(), _ => None };
+                                if let Some(offset) = offset {
+                                    let offset = if offset < 0 { offset + items.len() as i64 } else { offset };
+                                    if offset < 0 || offset >= items.len() as i64 { return Err(self.place_written_beyond(&target).into()); }
+                                    key = Some(Value::Small(offset));
+                                }
+                            }
+                        }
                         if let (Some(index), Some(cell)) = (&key, &worth_cell) {
                             // The worth beneath a thing is written into
                             // by the rules of its own kind: a row takes
@@ -8136,7 +8152,7 @@ impl<'a> Machine<'a> {
             let (mut positional, named) = self.open_arguments(received)?;
             if *work != crate::text::Work::MAKETRANS { positional.insert(0, Value::Text(subject.clone())); }
             crate::text::fit_names(self.table, *work, &mut positional, named)?;
-            if matches!(*work, crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES) && positional.len() == 2 {
+            if *work == crate::text::Work::EXPANDTABS && positional.len() == 2 {
                 if let Some(number) = self.stood_for_whole(&positional[1])? { positional[1] = number; }
             }
             if *work == crate::text::Work::FORMATMAP {
@@ -8939,6 +8955,15 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if name == self.detail("doc") {
+            let held = value.settled();
+            match &held {
+                Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) | Value::Set(_) | Value::Octets { .. } | Value::Complex(_) => {
+                    if let Some(text) = Self::builtin_kind_doc(&held.kind_word()) { return Some(Value::text(text)); }
+                }
+                _ => {}
+            }
+        }
         if name==self.detail("allocate") && matches!(value.settled(),Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
         if matches!(value, Value::Unpaired(_)) && crate::table::BUILTIN_LABELS.iter().any(|(label,operation)| *label==format!("ext.builtin.text.{name}") && matches!(operation,Prim::Textual(_))) {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
@@ -10402,7 +10427,7 @@ impl<'a> Machine<'a> {
             crate::text::fit_names(self.table, crate::text::Work::NEWARGS, &mut supplied, keywords)?;
             return self.prim(Prim::Textual(crate::text::Work::NEWARGS), name, &supplied).map_err(Escape::from);
         }
-        if matches!(&actual, Value::Text(_)) {
+        if matches!(&actual, Value::Text(_)) || matches!(name, "count" | "splitlines") && matches!(&actual, Value::Unpaired(_)) {
             let key = format!("ext.builtin.text.{}", name);
             if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
@@ -18876,7 +18901,10 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                if matches!(work, crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES) && values.len() == 2 {
+                if work == crate::text::Work::SPLITLINES && values.len() == 2 {
+                    values[1] = Value::Flag(self.object_truth(&values[1])?);
+                }
+                if work == crate::text::Work::EXPANDTABS && values.len() == 2 {
                     if let Some(index) = self.stood_for_whole(&values[1])? { values[1] = index; }
                 }
                 if work == crate::text::Work::TRANSLATE && values.len() == 2 {

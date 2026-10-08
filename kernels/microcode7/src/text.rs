@@ -272,6 +272,22 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
         let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
         let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
+        if work == SPLITLINES {
+            if input.len() > 2 { return Err(complaint(table, "arguments")); }
+            let retaining = input.get(1).is_some_and(Value::is_true);
+            let mut pieces = Vec::new();
+            let mut begin = 0;
+            for position in 0..numbers.len() {
+                if position < begin { continue; }
+                if !matches!(numbers[position], 10 | 11 | 12 | 13 | 28 | 29 | 30 | 0x85 | 0x2028 | 0x2029) { continue; }
+                let finish = position + if numbers[position] == 13 && numbers.get(position + 1) == Some(&10) { 2 } else { 1 };
+                let stop = if !retaining { position } else { finish };
+                pieces.push(Value::characters(numbers[begin..stop].to_vec()));
+                begin = finish;
+            }
+            if begin != numbers.len() { pieces.push(Value::characters(numbers[begin..].to_vec())); }
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(pieces)));
+        }
         if matches!(work, STRIP | LSTRIP | RSTRIP) {
             let method = if work == STRIP { "strip" } else if work == LSTRIP { "lstrip" } else { "rstrip" };
             if input.len() >= 3 { return Err(format!("TypeError: {method} expected at most 1 argument, got {}", input.len() - 1)); }
@@ -398,7 +414,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         }
         return Err(g.bad("arguments"));
     }
-    if matches!(work, SPLITLINES|EXPANDTABS) {
+    if work == EXPANDTABS {
         let count = g.whole(0,0)?;
         if count < i32::MIN as i64 || count > i32::MAX as i64 { return Err(String::from("OverflowError: Python int too large to convert to C int")); }
     }
@@ -429,7 +445,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             Value::Flag(right && has_case)
         }
         SPLITLINES=>{
-            let ends=g.whole(0,0)? != 0;
+            let ends=g.tail.first().is_some_and(Value::is_true);
             let chars: Vec<_>=source.char_indices().collect();
             let mut cursor=0;let mut begin=0;let mut lines=Vec::new();
             while cursor<chars.len() {

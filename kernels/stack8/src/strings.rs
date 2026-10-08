@@ -318,6 +318,24 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     if args.iter().any(|value| matches!(value, Value::Codepoints(_)) || matches!(value, Value::Tuple(row) if row.iter().any(|item| matches!(item, Value::Codepoints(_))))) {
         let codes=match args.first(){Some(Value::Codepoints(row))=>row.clone(),Some(Value::Text(word))=>Rc::new(word.chars().map(u32::from).collect()),_=>return Err(fault(lang,"receiver"))};
         let code_row=|value:&Value| -> Result<Vec<u32>,String> {match value {Value::Text(text)=>Ok(text.chars().map(u32::from).collect()),Value::Codepoints(row)=>Ok(row.to_vec()),_=>Err(format!("TypeError: must be str, not {}",value.core_kind()))}};
+        if op == Splitlines {
+            if args.len() > 2 { return Err(fault(lang, "arguments")); }
+            let keep = args.get(1).is_some_and(Value::is_true);
+            let mut lines = Vec::new();
+            let mut start = 0;
+            let mut cursor = 0;
+            while cursor < codes.len() {
+                if matches!(codes[cursor], 10..=13 | 28..=30 | 133 | 8232 | 8233) {
+                    let end = cursor;
+                    cursor += 1;
+                    if codes[end] == 13 && codes.get(cursor) == Some(&10) { cursor += 1; }
+                    lines.push(Value::from_codes(codes[start..if keep { cursor } else { end }].to_vec()));
+                    start = cursor;
+                } else { cursor += 1; }
+            }
+            if start < codes.len() { lines.push(Value::from_codes(codes[start..].to_vec())); }
+            return Ok(Value::array(lines));
+        }
         if matches!(op, Strip | Lstrip | Rstrip) {
             let word = match op { Strip => "strip", Lstrip => "lstrip", _ => "rstrip" };
             if args.len() > 2 { return Err(format!("TypeError: {word} expected at most 1 argument, got {}", args.len() - 1)); }
@@ -435,7 +453,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         return Err(fault(lang,"arguments"));
     }
-    if matches!(op, Splitlines | Expandtabs) && !params.is_empty() {
+    if op == Expandtabs && !params.is_empty() {
         if i32::try_from(integer(&params[0], lang)?).is_err() { return Err("OverflowError: Python int too large to convert to C int".into()); }
     }
     let s: &str = source;
@@ -466,7 +484,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             Value::Flag(good && seen)
         }
         Splitlines => {
-            let keep = number(0, 0)? != 0;
+            let keep = params.first().is_some_and(Value::is_true);
             let mut parts = Vec::new(); let mut start=0; let mut chars=s.char_indices().peekable();
             while let Some((at,c))=chars.next() {
                 if matches!(c,'\n'|'\r'|'\u{b}'|'\u{c}'|'\u{1c}'|'\u{1d}'|'\u{1e}'|'\u{85}'|'\u{2028}'|'\u{2029}') {

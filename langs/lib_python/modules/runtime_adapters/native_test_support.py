@@ -1646,3 +1646,108 @@ def open_urlresource(url, *args, **kwargs):
 # Return the complete C0 control-character set used by protocol parsers.
 def control_characters_c0():
     return [chr(value) for value in range(32)] + ["\x7f"]
+
+
+def patch(test_instance, object_to_patch, attr_name, new_value):
+    """Override 'object_to_patch'.'attr_name' with 'new_value'.
+
+    Also, add a cleanup procedure to 'test_instance' to restore
+    'object_to_patch' value for 'attr_name'.
+    The 'attr_name' should be a valid attribute for 'object_to_patch'.
+
+    """
+    # check that 'attr_name' is a real attribute for 'object_to_patch'
+    # will raise AttributeError if it does not exist
+    getattr(object_to_patch, attr_name)
+
+    # keep a copy of the old value
+    attr_is_local = False
+    try:
+        old_value = object_to_patch.__dict__[attr_name]
+    except (AttributeError, KeyError):
+        old_value = getattr(object_to_patch, attr_name, None)
+    else:
+        attr_is_local = True
+
+    # restore the value when the test is done
+    def cleanup():
+        if attr_is_local:
+            setattr(object_to_patch, attr_name, old_value)
+        else:
+            delattr(object_to_patch, attr_name)
+
+    test_instance.addCleanup(cleanup)
+
+    # actually override the attribute
+    setattr(object_to_patch, attr_name, new_value)
+
+
+
+def reap_children():
+    """Use this function at the end of test_main() whenever sub-processes
+    are started.  This will help ensure that no extra children (zombies)
+    stick around to hog resources and create problems when looking
+    for refleaks.
+    """
+    # Need os.waitpid(-1, os.WNOHANG): Windows is not supported
+    if not (hasattr(os, 'waitpid') and hasattr(os, 'WNOHANG')):
+        return
+    elif not has_subprocess_support:
+        return
+
+    # Reap all our dead child processes so we don't leave zombies around.
+    # These hog resources and might be causing some of the buildbots to die.
+    while True:
+        try:
+            # Read the exit status of any child process which already completed
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            break
+
+        if pid == 0:
+            break
+
+        print_warning(f"reap_children() reaped child process {pid}")
+        set_environment_altered("reaped child process")
+
+
+
+def flush_std_streams():
+    if sys.stdout is not None:
+        sys.stdout.flush()
+    if sys.stderr is not None:
+        sys.stderr.flush()
+
+
+def print_warning(msg):
+    # bpo-45410: Explicitly flush stdout to keep logs in order
+    flush_std_streams()
+    stream = print_warning.orig_stderr
+    for line in msg.splitlines():
+        print(f"Warning -- {line}", file=stream)
+    stream.flush()
+
+# bpo-39983: Store the original sys.stderr at Python startup to be able to
+# log warnings even if sys.stderr is captured temporarily by a test.
+print_warning.orig_stderr = sys.stderr
+
+
+# Flag used by saved_test_environment of test.libregrtest.save_env,
+# to check if a test modified the environment. The flag should be set to False
+# before running a new test.
+#
+# For example, threading_helper.threading_cleanup() sets the flag is the function fails
+# to cleanup threads.
+environment_altered = False
+
+# Short descriptions of what was altered, e.g. "unraisable exception".
+# They are reported by regrtest together with the name of the test.
+environment_altered_reasons = []
+
+
+def set_environment_altered(reason):
+    """Set the environment_altered flag and record why it was set."""
+    global environment_altered
+    environment_altered = True
+    if reason not in environment_altered_reasons:
+        environment_altered_reasons.append(reason)
