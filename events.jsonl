@@ -8230,3 +8230,17 @@
 {"t":"2026-10-08T03:17:23Z","event":"exited","job":"review-auto-dsflash-shelve-dbm-sol-0311","code":0}
 {"t":"2026-10-08T03:17:48Z","event":"resumed","job":"stdlib-coroutines","model":"gpt-6.1-sol"}
 {"t":"2026-10-08T03:22:50Z","event":"resumed","job":"dsflash-robotparser","model":"deepseek-flash","session":"ses_ee95eb8e5ffectlU612cQedS4J"}
+{"t":"2026-10-08T03:27:51Z","event":"resumed","job":"dspro-tstring","model":"deepseek-v4-pro","session":"ses_eeb524721ffeHALNMI916TfnHo"}
+{"t":"2026-10-08T03:29:17Z","event":"exited","job":"dsflash-source-encoding","code":0}
+{"t":"2026-10-08T03:32:01Z","event":"finished","job":"dsflash-source-encoding","exit_time":"2026-10-08T03:29:17Z"}
+{"t":"2026-10-08T03:32:01Z","event":"review-queued","job":"dsflash-source-encoding","review":"review-auto-dsflash-source-encoding-0331"}
+{"t":"2026-10-08T03:32:06Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T03:32:49Z","event":"accepted","job":"dsflash-shelve-dbm-sol","review":"review-auto-dsflash-shelve-dbm-sol-0311","batch":"21f","commit":"c308b87ef","branch":"fix/dsflash-shelve-dbm","note":"(after Sol return 1) test_dbm_dumb absent->26/26, test_shelve absent->182/182, enum +1, functools +2 both kernels; clean final check 1194/0; protocol-2/3 pickle hook repaired via general mc7 namespace fix; byte-exact tests+dbm/shelve vs 3.14.8; based on 21c: keep 21d canonical pickle.py/dbm bodies, carry runtime repairs+shelve/tests/registrations, os_helper cleanup into runtime adapter; overlaps 21e copyreg/minicompat/dynamic/pkg/yieldfrom, 21f pathlib/locale; FOLLOW-UPS: tuple-subclass kw reconstruction protocols 2/3 (pre-existing, unexercised); coordinator to re-certify bytes/json/userstring/decimal/calendar/tokenize/io coverage"}
+{"t":"2026-10-08T03:32:52Z","event":"started","job":"dsflash-pkgutil","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-08T03:33:25Z","event":"queued","job":"dsflash-charmapcodec","model":"deepseek-flash","line":"or-resume dsflash-charmapcodec deepseek-flash ses_ee73f6e22ffeP8mCdrMlaOKyu6","note":"released from held-resumes (DS Flash 11/12)"}
+{"t":"2026-10-08T03:33:52Z","event":"quota","codex_week_used":57,"codex_credits":0,"claude_week_used":5,"claude_5h_used":1,"kimi_5h_used":0,"kimi_month_used":0.9493,"kimi_code_used":0,"deepseek_usd":310.8}
+{"t":"2026-10-08T03:33:57Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":57,"expected":57.9,"gap":-0.9,"status":"ok"}
+{"t":"2026-10-08T03:34:01Z","event":"checkin","status":"done","actions":"accepted dsflash-shelve-dbm-sol (c308b87ef, 21f; dbm_dumb 26/26, shelve 182/182, enum +1, functools +2 both; clean check 1194/0; reconcile with 21d pickle/dbm); released dsflash-charmapcodec resume from held to queue (DS Flash 12/12); prune-merged 0 MB","notes":"no open PRs; box load 4.1, 12.8 GB available, disk 77%; Mac disk 79%; Sol 10 running + 3 queued (full); luna no new alerts, meter gap -0.9 ok; Codex week 57%, Claude week 5%"}
+{"t":"2026-10-08T03:37:52Z","event":"review-started","job":"perf-mc7-overhead","review":"review-auto-perf-mc7-overhead-0311"}
+{"t":"2026-10-08T03:42:54Z","event":"started","job":"dsflash-type-aliases-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T03:44:30Z","event":"exited","job":"review-auto-perf-mc7-overhead-0311","code":0}
