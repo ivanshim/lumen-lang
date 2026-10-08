@@ -83,9 +83,12 @@ def lookup(spelling):
     for start, end, prefix, shown in _ranges:
         head = prefix + '-'
         if spelling.startswith(head):
+            tail = spelling[len(head):]
             try:
-                number = int(spelling[len(head):], 16)
+                number = int(tail, 16)
             except ValueError:
+                continue
+            if '%04X' % number != tail:
                 continue
             if start <= number <= end:
                 return chr(number)
