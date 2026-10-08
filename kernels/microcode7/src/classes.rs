@@ -107,6 +107,11 @@ impl<'a> Machine<'a> {
             protocols.push(("__hash__".into(), Value::Nil));
         }
         let title = match word { "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => format!("typing.{word}"), "SimpleNamespace" | "GenericAlias" => format!("types.{word}"), "Union" => String::from("typing.Union"), _ => word.to_owned() };
+        if self.table.has_any("ext.stmt.class.detail.native.getsets") && word == "getset_descriptor" {
+            let names = ["descriptor.get", "descriptor.set", "descriptor.delete"];
+            protocols.extend(names.into_iter().enumerate().map(|(index, name)|
+                (self.detail(name).to_owned(), Self::wrap(207, vec![Value::Small(index as i64)]))));
+        }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
@@ -276,6 +281,14 @@ impl<'a> Machine<'a> {
             for part in ["kind", "get", "set", "remove", "allocate", "subclass"] {
                 let name = self.detail(part); if !name.is_empty() { names.push(name.to_owned()); }
             }
+            // A metaclass answers besides for the order and the names of
+            // a class it makes, as the reference lists them among its own.
+            if self.builder_kind.as_ref().is_some_and(|k| Rc::ptr_eq(k, class)) {
+                for part in ["order", "name", "qualified"] {
+                    let word = self.detail(part);
+                    if !word.is_empty() { names.push(word.to_owned()); }
+                }
+            }
             if let Some(name) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) { names.push(name.to_owned()); }
             if self.allowed_slot(class, self.detail("namespace")) { names.push(self.detail("namespace").to_owned()); }
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) { names.push("__weakref__".to_owned()); }
@@ -290,9 +303,9 @@ impl<'a> Machine<'a> {
     /// it is one of a native kind. Nothing for a blueprint of a class's
     /// own or a thing of one, which list their own members instead.
     fn directory_stand_in(&self,value:&Value)->Option<Value> {
-        if let Value::Intrinsic(_,word)=value { return self.kind_stand_in(word); }
-        if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word); }
-        if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)); }
+        if let Value::Intrinsic(_,word)=value { return self.kind_stand_in(word).filter(|sample| !self.native_directory(sample).is_empty()); }
+        if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word).filter(|sample| !self.native_directory(sample).is_empty()); }
+        if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)).filter(|sample| !self.native_directory(sample).is_empty()); }
         if matches!(value,Value::Thing(_)) { return None; }
         if self.native_directory(value).is_empty() { return None; }
         Some(value.clone())
@@ -1001,6 +1014,21 @@ impl<'a> Machine<'a> {
         }
 
         if !self.rules.words_ext_builtin_weak_get.is_empty() { crate::ghost::note(crate::ghost::Ghost::Blueprint(Rc::downgrade(&class))); }
+        // Replace declared native accessors after their owning blueprint exists.
+        for row in self.table.strings("ext.stmt.class.detail.native.getsets").chunks_exact(3) {
+            if row[0] == module && row[1] == class.name && self.loaded_spaces.get(&self.written_in).is_some_and(|path| path == &row[0]) {
+                let mut members = class.shared.borrow_mut();
+                for member in members.iter_mut().filter(|(key, _)| row[2].split_whitespace().any(|word| word == key)) {
+                    let getter = match member.1.settled() {
+                        Value::Thing(property) => Self::kept_accessor(&property, "\0fget"),
+                        _ => None,
+                    };
+                    if let Some(getter) = getter {
+                        member.1 = Self::wrap(205, vec![Value::Blueprint(class.clone()), Value::text(&member.0), getter]);
+                    }
+                }
+            }
+        }
         self.name_slots(&class)?;
         let dictionary_word = self.detail("namespace");
         let introduces_dictionary = self.allowed_slot(&class, dictionary_word)
@@ -1481,7 +1509,7 @@ impl<'a> Machine<'a> {
     /// A member that takes writes speaks before a thing's own entries;
     /// one that only reads gives way to them.
     fn writes_too(&self,member:&Value)->bool {
-        if let Value::Wrapped(tag,_)=member {return matches!(tag,6|32|58);}
+        if let Value::Wrapped(tag,_)=member {return matches!(tag,6|32|58|205);}
         if self.names_in_calls {
             match member {
                 Value::Nil | Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Text(_) | Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) | Value::Set(_) | Value::Octets { .. } | Value::Routine(_) | Value::Bound(..) | Value::Method(..) => return false,
@@ -1499,6 +1527,17 @@ impl<'a> Machine<'a> {
             Escape::Thrown(Value::Thing(t))=>t.blueprint().name==kind||t.blueprint().ancestry.borrow().iter().any(|b|b.name==kind),
             _=>false,
         }
+    }
+    /// Check the blueprint named by a native getter before touching its receiver.
+    fn check_getset_receiver(&self, layout: &[Value], receiver: &Value) -> Result<(), Escape> {
+        if let Value::Blueprint(declaring) = &layout[0] {
+            if let Value::Thing(instance) = receiver.settled() {
+                let actual = instance.blueprint();
+                if Rc::ptr_eq(&actual, declaring) || actual.ancestry.iter().any(|parent| Rc::ptr_eq(parent, declaring)) { return Ok(()); }
+            }
+            return Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object", layout[1].bare(), declaring.name, Self::type_argument_kind(receiver)).into());
+        }
+        Err(self.class_unready())
     }
     pub(super) fn own_entry(b:&Blueprint,key:&str)->Option<Value> {
         if let Some((_, held)) = b.shared.borrow().iter().find(|(word, _)| word == key) {
@@ -2049,6 +2088,20 @@ impl<'a> Machine<'a> {
                         let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
                         let Some(callable)=t.holds.borrow().iter().find(|(k,_)|k=="\0callable").map(|(_,v)|v.clone()) else{return Err(self.class_unready())};
                         Ok(callable)
+                    }
+                    207 if !values.is_empty() => {
+                        let target = values.remove(0);
+                        let index = match kept[0] { Value::Small(number) => number as usize, _ => return Err(self.class_unready()) };
+                        let names = ["descriptor.get", "descriptor.set", "descriptor.delete"];
+                        let name = names.get(index).ok_or_else(|| self.class_unready())?;
+                        let key = self.detail(name).to_owned();
+                        let callable = self.read_class_member(target, &key, true)?;
+                        self.apply_class_member(callable, values)
+                    }
+                    206 if matches!(values.len(), 1 | 2) => {
+                        self.check_getset_receiver(&kept, &values[0])?;
+                        let Value::Blueprint(owner) = &kept[0] else { return Err(self.class_unready()); };
+                        Err(format!("AttributeError: attribute '{}' of '{}' objects is not writable", kept[1].bare(), owner.name).into())
                     }
                     204 => {
                         let Value::Blueprint(c)=&kept[0] else{return Err(self.class_unready())};
@@ -2957,13 +3010,18 @@ impl<'a> Machine<'a> {
             Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
+            Value::Wrapped(205, layout) if receiver.is_some() => {
+                let target = receiver.unwrap();
+                self.check_getset_receiver(layout, &target)?;
+                return self.apply_class_member(layout[2].clone(), vec![target]);
+            }
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
             Value::Wrapped(32,items) if receiver.is_some()=>return self.slot_value(&receiver.unwrap(),items),
             // A working of the property blueprint, reached through a
             // property, is tied to it; a kept accessor reads at once.
 
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 233..=235,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 207 | 233..=235,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
@@ -3802,6 +3860,20 @@ impl<'a> Machine<'a> {
         let bound=self.member_binding(fallback,Some(value.clone()),t.blueprint().clone())?;
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
+    /// The text signature a builtin accessor announces, where the
+    /// runtime knows one: the reference reads the same word to learn
+    /// which parameters a builtin takes. Nothing where it knows none,
+    /// which reads as a builtin whose signature cannot be recovered.
+    fn builtin_text_signature(&self, subject: &Value) -> Option<&'static str> {
+        match subject.settled() {
+            // The walk of a class's own line, and the initialiser told
+            // to subclasses, both take nothing the caller supplies.
+            Value::Wrapped(0, parts) if matches!(parts.first(), Some(Value::Tuple(_))) => Some("()"),
+            Value::Wrapped(2, parts) if parts.first().is_some_and(|entry| entry.bare() == self.detail("subclass")) => Some("()"),
+            _ => None,
+        }
+    }
+
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         if self.names_in_calls && !key.starts_with("__") {
             if let Value::Thing(instance) = &value {
@@ -4068,8 +4140,17 @@ impl<'a> Machine<'a> {
             }
         }
         if self.protocol_spelled() {
-            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|10|11|12|32|60|124,_))||matches!(&value,Value::Intrinsic(Prim::Textual(_), name) if name.contains('.'));
+            let binds=matches!(&value,Value::Routine(_)|Value::Bound(..))||matches!(&value,Value::Wrapped(4|5|10|11|12|32|60|124|205,_))||matches!(&value,Value::Intrinsic(Prim::Textual(_), name) if name.contains('.'));
             if binds && key==self.detail("descriptor.get"){return Ok(Self::wrap(31,vec![value]));}
+            if let Value::Wrapped(205, layout) = &value {
+                if key == self.detail("doc") { return self.read_class_member(layout[2].clone(), key, direct); }
+                if ["descriptor.set", "descriptor.delete"].iter().any(|part| key == self.detail(part)) { return Ok(Self::wrap(206, layout.as_ref().clone())); }
+                if key == self.detail("name") { return Ok(layout[1].clone()); }
+                if key == "__objclass__" { return Ok(layout[0].clone()); }
+                if key == self.detail("qualified") {
+                    if let Value::Blueprint(owner) = &layout[0] { return Ok(Value::text(&format!("{}.{}", owner.name, layout[1].bare()))); }
+                }
+            }
             if let Value::Wrapped(32,parts)=&value {
                 if key==self.detail("descriptor.set"){return Ok(Self::wrap(33,parts.as_ref().clone()));}
                 if key==self.detail("descriptor.delete"){return Ok(Self::wrap(34,parts.as_ref().clone()));}
@@ -4252,7 +4333,7 @@ impl<'a> Machine<'a> {
             }
             if !self.detail("name").is_empty() {
                 if let Some(builder) = Self::builder_over(b) {
-                    if let Some(entry) = self.inherited_entry(&builder, key).filter(|entry| self.writes_too(entry) && (matches!(entry, Value::Wrapped(6 | 32 | 58, _)) || self.protocol_entry(entry, "descriptor.get").is_some())) {
+                    if let Some(entry) = self.inherited_entry(&builder, key).filter(|entry| self.writes_too(entry) && (matches!(entry, Value::Wrapped(6 | 32 | 58 | 205, _)) || self.protocol_entry(entry, "descriptor.get").is_some())) {
                         return self.member_binding(entry, Some(value.clone()), builder);
                     }
                 }
@@ -4368,7 +4449,7 @@ impl<'a> Machine<'a> {
             }
             if key==self.detail("mro")||key==self.detail("order"){
                 let all=Self::resolution_order(b).into_iter().map(|p|self.visible_blueprint(p)).collect();
-                let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
+                let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(3,vec![Self::wrap(0,vec![result]),Value::Blueprint(b.clone())])}else{result});
             }
             if self.table.single("ext.stmt.annotation.adapter") == Some(key) {
                 if self.rules.words_ext_stmt_class_detail_code_fields.get(10)
@@ -4899,10 +4980,35 @@ impl<'a> Machine<'a> {
             let owner = self.kind_named_after(&value);
             return self.read_class_member(owner, key, direct);
         }
+        // A lone singleton carries the members of the kind it is the one
+        // value of, read upon it as a thing of that kind reads them.
+        if matches!(value, Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
+            let owner = self.kind_named_after(&value);
+            if let Value::Blueprint(class) = owner.settled() {
+                let class = class.clone();
+                // Only the members a value of the kind answers to are read
+                // here; the class's own names stay the class's own.
+                let directory = self.ordinary_directory(&Value::Blueprint(class.clone()));
+                let answers = matches!(&directory, Value::Vector(items) if items.iter().any(|entry| entry.bare() == key));
+                if answers {
+                    if let Ok(member) = self.read_class_member(Value::Blueprint(class.clone()), key, true) {
+                        // The initialiser told to subclasses binds the class
+                        // and not the value, as a class method does.
+                        let receiver = if key == self.detail("subclass") { Value::Blueprint(class.clone()) } else { value.clone() };
+                        return self.member_binding(member, Some(receiver), class);
+                    }
+                }
+            }
+        }
         // Whatever is no thing is of the kind the kind primitive names
         // for it, where it names one.
         if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
             if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
+        }
+        // A builtin accessor answers for the text signature it announces,
+        // the word the reference reads to recover its parameters.
+        if self.table.spells("ext.stmt.class.detail.text_signature", key) {
+            if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
         self.sought_in_vain = Some((key.to_owned(), value.clone()));
         Err(self.absent_attribute(&value,key))
@@ -5213,6 +5319,11 @@ impl<'a> Machine<'a> {
                 // and any other asks its blueprint's writer or remover.
                 if let Some(entry)=self.inherited_entry(&t.blueprint(),key) {
                     match &entry {
+                        Value::Wrapped(205, layout) => {
+                            self.check_getset_receiver(layout, &subject)?;
+                            if let Value::Blueprint(owner) = &layout[0] { return Err(format!("AttributeError: attribute '{}' of '{}' objects is not writable", layout[1].bare(), owner.name).into()); }
+                            return Err(self.class_unready());
+                        }
                         Value::Wrapped(32,parts)=>return self.slot_change(&subject,parts,replacement),
                         // A property's own document string is kept among
                         // its fields and takes a write; its accessors do
@@ -6203,7 +6314,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..)|Value::TextCall {..})||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|81..=85|122|200..=204|132|133|134|135|136))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..)|Value::TextCall {..})||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|81..=85|122|200..=204|206|207|132|133|134|135|136))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{
@@ -6297,6 +6408,18 @@ impl<'a> Machine<'a> {
                     let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
                     return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                 }
+            }
+            // The kind primitive stands for the class of the kind it
+            // names, and answers that class's own directory.
+            if let Value::Intrinsic(Prim::SortOf, _) = &values[0] {
+                let kind = self.builder_blueprint();
+                return self.ordinary_directory(&Value::Blueprint(kind));
+            }
+            // A lone singleton answers with the directory of the kind
+            // it is the one value of, the list the reference gives both.
+            if matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
+                let kind = self.kind_named_after(&values[0]);
+                return self.ordinary_directory(&kind);
             }
             return self.ordinary_directory(&values[0]);
         }

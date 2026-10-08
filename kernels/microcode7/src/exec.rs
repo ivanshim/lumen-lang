@@ -614,6 +614,8 @@ pub struct Machine<'a> {
     fault_kinds: HashMap<String, Value>,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
+    /// Names bound by the source after its library prefix.
+    pub main_bindings: std::collections::HashSet<String>,
     memo: HashMap<String, Value>,
     identities: std::collections::BTreeMap<(String, u64), i64>,
     /// A loose member descriptor, keyed by the kind's word and the member
@@ -650,6 +652,8 @@ pub struct Machine<'a> {
     raised_on: u32,
     written_in: Rc<str>,
     entry_file: Rc<str>,
+    /// Keep prefix initialization outside the program dictionary.
+    user_source_started: bool,
     /// Where the language keeps its own pages, as the run was
     /// started. Nothing where the run was started naming nowhere,
     /// and then a complaint about a word points at no page of it.
@@ -2009,6 +2013,7 @@ impl<'a> Machine<'a> {
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
+            main_bindings: std::collections::HashSet::new(),
             memo: HashMap::new(),
             identities: std::collections::BTreeMap::new(),
             loose_members: RefCell::new(HashMap::new()),
@@ -2042,6 +2047,7 @@ impl<'a> Machine<'a> {
             ceiling: 0,
             written_in: Rc::from(""),
             entry_file: Rc::from(""),
+            user_source_started: false,
             pages_at: None,
             calls: Vec::new(),
             under: None,
@@ -6063,6 +6069,7 @@ impl<'a> Machine<'a> {
                 result
             }
             Form::OnLine(row, at, inner) => {
+                self.user_source_started |= self.written_in == self.entry_file;
                 self.stand_at_instruction(*at as i64);
                 self.extent = None;
                 self.row = *row;
@@ -19401,6 +19408,9 @@ impl<'a> Machine<'a> {
                         };
                         let slot = if let Some(index) = self.idents.iter().rposition(|word| word == &key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
+                        let entry_binding = owner.is_none() && self.reading_now.is_none()
+                            && self.user_source_started && self.written_in == self.entry_file;
+                        if self.names_in_calls && entry_binding { self.main_bindings.insert(name.clone()); }
                         self.booked_write(slot, &name, Some(worth.clone()));
                         // A text running in a dictionary of its own is
                         // handed the names there as well, so a later
@@ -25761,7 +25771,16 @@ impl<'a> Machine<'a> {
         let bare = ident.rsplit('/').next().unwrap_or(ident);
         if !Self::visible_name(bare) { return None; }
         if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
-        if self.world_book.is_some() && Self::visible_name(ident) { return Some(Held::World); }
+        if self.world_book.is_some() && Self::visible_name(ident) {
+            if self.names_in_calls && !self.user_source_started && !self.table.strings("ext.system.module.doc").contains(ident) { return None; }
+            let source_member = self.main_bindings.contains(ident)
+                || self.rules.words_ext_system_module_name.contains(ident)
+                || self.table.strings("ext.system.source.file").contains(ident)
+                || self.table.strings("ext.system.module.doc").contains(ident)
+                || self.world_book.as_ref().is_some_and(|book| looked_up(book, ident).is_some());
+            if self.names_in_calls && !source_member { return None; }
+            return Some(Held::World);
+        }
         None
     }
 
@@ -26170,6 +26189,10 @@ impl<'a> Machine<'a> {
                 if !Self::visible_name(word) || self.readings.iter().any(|book| (book.from..book.upto).contains(&at)) { continue; }
                 let Some(held) = cells.get(at) else { continue };
                 if self.passed_over(word, held) { continue; }
+                if self.names_in_calls && !self.main_bindings.contains(word)
+                    && !self.rules.words_ext_system_module_name.contains(word)
+                    && !self.table.strings("ext.system.module.doc").contains(word)
+                    && !self.table.strings("ext.system.source.file").contains(word) { continue; }
                 entries.push((Value::text(word), held.clone()));
             }
         }
