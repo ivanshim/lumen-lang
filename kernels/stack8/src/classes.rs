@@ -2961,6 +2961,22 @@ impl<'a> Engine<'a> {
             if word.contains('.') { return Ok(Self::adapter(3, vec![value.clone(), receiver.clone()])); }
         }
         if let Value::Adapter(w) = &value {
+            if self.lang.bind_names && w.0 == 29 {
+                let native = w.1[0].plain();
+                let class_method = native == "dict" && w.1[1].plain() == "fromkeys";
+                if class_method && Self::kind_beneath(&class).as_deref() != Some("dict") {
+                    return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{}'", class.name).into());
+                }
+                if let Some(target) = &subject {
+                    let stored = Self::worth_of(target).unwrap_or_else(|| target.clone()).contents();
+                    let accepts = if class_method || native == self.class_word("root") { true } else if native == "type" { self.stands_for_kind(target) }
+                        else { self.lang.builtins.get(&native).filter(|op| Self::kind_builtin(op))
+                            .map_or_else(|| stored.core_kind() == native, |op| self.kind_holds(op, &native, &stored)) };
+                    if !accepts {
+                        return Err(format!("TypeError: descriptor '{}' for '{native}' objects doesn't apply to a '{}' object", w.1[1].plain(), Self::shown_kind(target)).into());
+                    }
+                }
+            }
             if w.0 == 29 && w.1.len() == 3 {
                 let class = match &subject { Some(Value::Object(object)) => object.class_now(), Some(Value::Class(owner)) => owner.clone(), _ => class };
                 let name = w.1[1].plain();
@@ -4383,6 +4399,7 @@ impl<'a> Engine<'a> {
                 if name=="__objclass__" {
                     if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
                 }
+                if name==self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject.clone()])); }
             }
             Value::Adapter(w) if matches!(w.0, 3 | 131) => {
                 if w.0 == 3 && name == self.class_word("kind") { return self.class_type(vec![subject.clone()]); }
@@ -5203,8 +5220,18 @@ impl<'a> Engine<'a> {
                         let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
                         self.warn_like(26,&told)?;
                     }
+                    let assigned = if name == self.class_word("code") { value.clone() } else { None };
                     let now=self.routine_rewritten(f,name,value)?;
+                    let body_address = Rc::as_ptr(&now.instrs) as usize;
                     *f.revised.borrow_mut()=Some(Rc::new(now));
+                    // Keep the assigned immutable code apart from the function's name and defaults.
+                    if let Some(code) = assigned {
+                        if let Value::Adapter(handle) = code.contents() {
+                            self.frame_codes.insert(body_address, Rc::downgrade(&handle));
+                        }
+                        let at = self.function_storage(&subject);
+                        Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), Some(code), false).map_err(|_| self.class_refusal())?;
+                    }
                     return Ok(Value::Null);
                 }
                 let annotate = self.lang.class_details.get("code.fields").and_then(|fields| fields.get(10)).cloned().unwrap_or_default();

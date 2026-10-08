@@ -2931,6 +2931,28 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Wrapped(60, parts) = &entry {
+            if self.names_in_calls {
+                let declaring = parts[0].bare();
+                let is_class_method = declaring == "dict" && parts[1].bare() == "fromkeys";
+                if is_class_method && Self::native_beneath(&owner).as_deref() != Some("dict") {
+                    let name = &owner.name;
+                    return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{name}'").into());
+                }
+                if let Some(instance) = receiver.as_ref() {
+                    let contents = Self::underlying(instance).unwrap_or_else(|| instance.clone()).settled();
+                    let appropriate = if is_class_method || declaring == self.detail("root") { true } else { match declaring.as_str() {
+                        "type" => self.stands_for_a_kind(instance),
+                        _ => match self.table.prims.get(&declaring).filter(|primitive| Self::names_a_kind(primitive)) {
+                            Some(primitive) => self.kind_covers(primitive, &declaring, &contents),
+                            None => contents.kind_word() == declaring,
+                        },
+                    } };
+                    if !appropriate {
+                        let field = parts[1].bare();
+                        return Err(format!("TypeError: descriptor '{field}' for '{declaring}' objects doesn't apply to a '{}' object", instance.kind_word()).into());
+                    }
+                }
+            }
             if parts.len() == 3 {
                 let owner = if let Some(Value::Thing(instance)) = &receiver { instance.blueprint() }
                     else if let Some(Value::Blueprint(class)) = &receiver { class.clone() } else { owner };
@@ -3213,7 +3235,42 @@ impl<'a> Machine<'a> {
             taken.doc=code.doc.clone();
             let in_order=self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect();
             let by_name=self.spare_worths(&code,&room,'n').into_iter().map(|(at,v)|(code.formals[at].clone(),v)).collect();
-            self.respared(&taken,&source_room,under,Some(in_order),Some(by_name))
+            let mut closure_frame = under;
+            if !source_code.reaching.is_empty() {
+                // Preserve the recipient's closure cells in the new code's sorted free-variable order.
+                let mut old_order: Vec<usize> = (0..code.reaching.len()).collect();
+                old_order.sort_by_key(|index| Self::capture_title(&code.reaching[*index].ident));
+                let mut new_order: Vec<_> = source_code.reaching.iter().collect();
+                new_order.sort_by_key(|address| Self::capture_title(&address.ident));
+                let mut retained = Vec::new();
+                for index in old_order {
+                    let parts = [Value::Bound(code.clone(), room.clone()), Value::Small(index as i64)];
+                    let Some((place, slot)) = self.cell_place(&parts) else { return Err(self.class_unready()); };
+                    let current = place.cells.borrow().get(slot).cloned().ok_or_else(|| self.class_unready())?;
+                    let shared = match current {
+                        Value::Shared(_) => current,
+                        value => Value::Shared(Rc::new(RefCell::new(value))),
+                    };
+                    place.cells.borrow_mut()[slot] = shared.clone();
+                    place.capture_slots.borrow_mut().insert(slot);
+                    retained.push(shared);
+                }
+                let depth = source_code.reaching.iter().map(|address| address.up).max().unwrap_or(0);
+                if depth == 0 { return Err(self.class_unready()); }
+                let mut levels = vec![self.outermost.clone(); depth + 1];
+                closure_frame = self.outermost.clone();
+                for distance in (1..=depth).rev() {
+                    let size = source_code.reaching.iter().filter(|address| address.up == distance)
+                        .map(|address| address.at + 1).max().unwrap_or(0);
+                    closure_frame = Env::make(size, Some(closure_frame));
+                    levels[distance] = closure_frame.clone();
+                }
+                for (address, cell) in new_order.into_iter().zip(retained) {
+                    levels[address.up].cells.borrow_mut()[address.at] = cell;
+                    levels[address.up].capture_slots.borrow_mut().insert(address.at);
+                }
+            }
+            self.respared(&taken,&source_room,closure_frame,Some(in_order),Some(by_name))
         } else if key==self.detail("keywords") {
             let pairs=match replacement.as_ref().map(Value::settled) {
                 None|Some(Value::Nil)=>Vec::new(),
@@ -4098,6 +4155,7 @@ impl<'a> Machine<'a> {
                 if key=="__objclass__" {
                     if let Some(owner)=self.kind_by_word(kind) { return Ok(owner); }
                 }
+                if key==self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value.clone()])); }
             }
         }
         if let Some(member) = self.activation_member(&value, key) { return Ok(member); }
@@ -4309,7 +4367,12 @@ impl<'a> Machine<'a> {
             // Everything a value of the kind answers to the kind itself
             // carries, standing loose: the value worked upon is the
             // first the entry is handed when it is called.
-            if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
+            if let Some(carried)=self.carried_by_kind(&value,key) {
+                if self.names_in_calls && word.as_ref() == "dict" && self.table.spells("ext.builtin.method.fromkeys", key) {
+                    return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                }
+                return Ok(carried);
+            }
             if Self::names_a_kind(op) && self.table.single("ext.stmt.class.constructor") == Some(key) { return Ok(self.common_initialiser()); }
             if Self::names_a_kind(op) {
                 let native_class = self.native_kind(&word);

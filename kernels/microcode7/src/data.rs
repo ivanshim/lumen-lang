@@ -24,7 +24,7 @@ pub struct Env {
 }
 
 impl Drop for Env {
-    fn drop(&mut self) { crate::ghost::anything_departing(); }
+    fn drop(&mut self) { crate::ghost::departing_at(self as *const Env as usize); }
 }
 
 impl Env {
@@ -220,7 +220,7 @@ pub struct TraceLink {
 #[derive(Debug)]
 pub struct MethodMark;
 impl Drop for MethodMark {
-    fn drop(&mut self) { crate::ghost::anything_departing(); }
+    fn drop(&mut self) { crate::ghost::departing_at(self as *const MethodMark as usize); }
 }
 
 #[derive(Clone)]
@@ -586,7 +586,7 @@ impl MapStore {
             self.span = self.slots.pop().expect("last map position");
             self.serial = dictionary_turn();
             *self.place.borrow_mut() = None;
-            self.spellings.get_mut().take();
+        self.spellings.get_mut().take();
         }
         result
     }
@@ -674,8 +674,8 @@ impl MapStore {
         let at = self.pairs.len();
         self.serial = dictionary_turn();
         self.pairs.push((key, value));
-        Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.pairs.last().expect("new pair").0);
         self.spellings.get_mut().take();
+        Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.pairs.last().expect("new pair").0);
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
 }
@@ -1326,6 +1326,76 @@ impl Value {
         })
     }
 
+    /// Keep only the semantic attributes of a source code object.
+    /// Its origin file and constant-replacement markers are operational data.
+    pub(crate) fn source_code_attribute(name: &str) -> bool {
+        ["source", "mode", "co_flags", "co_firstlineno", "co_consts"].contains(&name)
+    }
+
+    /// Build a routine's comparison key from its compiled body address,
+    /// calling layout, names and recursively replaceable literals. The token
+    /// origin plus body boundary describes the original instruction tree.
+    fn program_worth(program: &crate::form::Routine) -> Value {
+        let names = |words: &[String]| Value::tuple(words.iter().map(|word| Value::text(word)).collect());
+        let kinds = program.taking.as_deref().unwrap_or(&[]).iter().map(|kind| Value::Small(*kind as i64)).collect();
+        let mut attributes = vec![Value::text(&program.lexical_origin), Value::Small(program.body_boundary as i64)];
+        attributes.extend([
+            Value::text(&program.ident), Value::Small(program.declared_on.into()),
+            Value::Small(program.flags), Value::Small(program.future_bits),
+            Value::Flag(program.lineless), Value::Flag(program.generator),
+            names(&program.formals), Value::tuple(kinds),
+            program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
+            names(&program.referenced), names(&program.locals), names(&program.idents),
+            Value::tuple(program.literals.clone()),
+        ]);
+        Value::tuple(attributes)
+    }
+
+    /// Weigh nested code by its own body and current constants at every level.
+    fn code_worth_eq(one: &Value, two: &Value) -> bool {
+        if one.one_place(two) { return true; }
+        match (one, two) {
+            (Value::Wrapped(7, p), Value::Wrapped(7, q)) => match (p.first(), q.first()) {
+                (Some(Value::Routine(a) | Value::Bound(a, _)), Some(Value::Routine(b) | Value::Bound(b, _))) =>
+                    Self::code_worth_eq(&Self::program_worth(a), &Self::program_worth(b)),
+                _ => Rc::ptr_eq(p, q),
+            },
+            (Value::Routine(a), Value::Routine(b)) => Self::code_worth_eq(&Self::program_worth(a), &Self::program_worth(b)),
+            (Value::Tuple(p), Value::Tuple(q)) => p.len() == q.len() && p.iter().zip(q.iter()).all(|(x, y)| Self::code_worth_eq(x, y)),
+            (Value::Small(_) | Value::Huge(_), Value::Small(_) | Value::Huge(_)) => one.equals(two),
+            (Value::Frac(p), Value::Frac(q)) => p.places.is_some() == q.places.is_some()
+                && one.equals(two) && (p.above != BigInt::from(0) || p.under == q.under),
+            // Numerically equal constants of different types remain distinct.
+            _ => one.kind_word() == two.kind_word() && one.equals(two),
+        }
+    }
+
+    /// Fold exactly the attributes that recursive code equality weighs.
+    pub(crate) fn code_worth_hash(value: &Value) -> Option<i64> {
+        match value {
+            Value::Wrapped(7, parts) => match parts.first() {
+                Some(Value::Routine(body) | Value::Bound(body, _)) => Self::code_worth_hash(&Self::program_worth(body)),
+                _ => Some((Rc::as_ptr(parts) as usize / 16) as i64),
+            },
+            Value::Routine(program) => Self::code_worth_hash(&Self::program_worth(program)),
+            Value::Thing(item) if item.blueprint().constants.iter().any(|(name, value)| name == "\0native" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
+                let attributes = item.holds.borrow().iter().filter(|(name, _)| Self::source_code_attribute(name)).map(|(_, worth)| worth.settled()).collect();
+                Self::code_worth_hash(&Value::tuple(attributes))
+            }
+            Value::Tuple(parts) => {
+                let mut accum: u64 = 2_870_177_450_012_600_261;
+                for part in parts.iter() {
+                    let lane = Self::code_worth_hash(part)? as u64;
+                    accum = accum.wrapping_add(lane.wrapping_mul(14_029_467_366_897_019_727)).rotate_left(31);
+                    accum = accum.wrapping_mul(11_400_714_785_074_694_791);
+                }
+                accum = accum.wrapping_add(parts.len() as u64 ^ (2_870_177_450_012_600_261 ^ 3_527_539));
+                Some(if accum == u64::MAX { 1_546_275_796 } else { accum as i64 })
+            }
+            _ => value.hash_number(),
+        }
+    }
+
     pub fn equals(&self, other: &Value) -> bool {
         for (candidate, text) in [(self, other), (other, self)] {
             if let (Value::Thing(object), Value::Text(word)) = (candidate, text) {
@@ -1429,16 +1499,22 @@ impl Value {
                     }
                     return false;
                 }
+                // Two code values read from the same text in the same
+                // manner weigh the same, the way the reference compares
+                // its code objects' bytecode; the file each names is no
+                // part of it.
+                let is_code = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "code"));
+                if is_code(a) && is_code(b) {
+                    let held = |thing: &Thing| thing.holds.borrow().iter().filter(|(name, _)| Self::source_code_attribute(name)).map(|(_, item)| item.settled()).collect::<Vec<_>>();
+                    let (left, right) = (held(a), held(b));
+                    return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| Self::code_worth_eq(x, y));
+                }
                 Rc::ptr_eq(a, b)
             },
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
-            // Code read off two routines is the one code where both
-            // read the very same body.
-            (Value::Wrapped(7,x), Value::Wrapped(7,y)) => match (x.first(), y.first()) {
-                (Some(Value::Routine(p) | Value::Bound(p, _)), Some(Value::Routine(q) | Value::Bound(q, _))) => Rc::ptr_eq(p, q),
-                _ => Rc::ptr_eq(x, y),
-            },
+            // Independently built code handles weigh their semantic content.
+            (Value::Wrapped(7, _), Value::Wrapped(7, _)) => Self::code_worth_eq(self, other),
             // A routine bound to a value is the one bound method where it
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => {
@@ -2657,13 +2733,13 @@ impl Drop for Thing {
 
 impl Drop for Blueprint {
     fn drop(&mut self) {
-        crate::ghost::anything_departing();
+        crate::ghost::departing_at(self as *const Blueprint as usize);
     }
 }
 
 impl Drop for SetStore {
     fn drop(&mut self) {
-        crate::ghost::anything_departing();
+        crate::ghost::departing_generic();
     }
 }
 

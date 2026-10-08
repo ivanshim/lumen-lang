@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8, Lib/cmd.py; PSF License.
 """A generic class to build line-oriented command interpreters.
 
 Interpreters constructed with this class obey the following conventions:

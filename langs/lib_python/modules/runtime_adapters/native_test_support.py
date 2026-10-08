@@ -1657,3 +1657,7 @@ def setswitchinterval(interval):
         if _old_android_emulator:
             interval = minimum_interval
     return sys.setswitchinterval(interval)
+
+# Return the complete C0 control-character set used by protocol parsers.
+def control_characters_c0():
+    return [chr(value) for value in range(32)] + ["\x7f"]

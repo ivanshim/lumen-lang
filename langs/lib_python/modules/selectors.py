@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8, Lib/selectors.py; PSF License.
 """Selectors module.
 
 This module allows high-level and efficient I/O multiplexing, built upon the
