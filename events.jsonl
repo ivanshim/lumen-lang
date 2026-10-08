@@ -8266,3 +8266,16 @@
 {"t":"2026-10-08T04:16:38Z","event":"exited","job":"review-auto-claude-deque-0412","code":0}
 {"t":"2026-10-08T04:22:11Z","event":"resumed","job":"dsflash-charmapcodec","model":"deepseek-flash","session":"ses_ee73f6e22ffeP8mCdrMlaOKyu6"}
 {"t":"2026-10-08T04:25:22Z","event":"exited","job":"dsflash-bufio","code":0}
+{"t":"2026-10-08T04:28:24Z","event":"finished","job":"dsflash-bufio","exit_time":"2026-10-08T04:25:22Z"}
+{"t":"2026-10-08T04:28:24Z","event":"review-queued","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0428"}
+{"t":"2026-10-08T04:28:30Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T04:29:12Z","event":"review-started","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0428"}
+{"t":"2026-10-08T04:31:36Z","event":"exited","job":"review-auto-dsflash-bufio-0428","code":0}
+{"t":"2026-10-08T04:33:55Z","event":"queued","job":"dsflash-source-encoding","model":"deepseek-flash","line":"or-resume dsflash-source-encoding deepseek-flash ses_ee748a8a5ffeZ1O82pyP6MDnWB","note":"released from held-resumes (DS Flash 11/12)"}
+{"t":"2026-10-08T04:33:55Z","event":"returned","job":"claude-deque","review":"review-auto-claude-deque-0412","commit":"132509b4a","round":1,"note":"(1st; empty bulk extend/extendleft/+= advances mutation state and breaks live iterators; index() reads size before start/stop __index__; deque 77 pass/3 skip both kept; overlaps main _collections/_operator, 21f stdlib-typing + perf-mc7-overhead kernels) -> returns/claude-deque.md, held for the Sonnet slot (claude-pstats running)"}
+{"t":"2026-10-08T04:33:55Z","event":"returned","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0428","commit":"0bb881235","round":1,"note":"(1st; FileIO refill fast path bypasses overridden readinto on subclasses/instances; test_bufio 4/4 both kept, time 217->141 s8 / 254->164 mc7; _io.py overlaps 21e email/codecs + 21f pathlib) -> returns/dsflash-bufio.md, held-resumes (DS Flash full)"}
+{"t":"2026-10-08T04:34:13Z","event":"resumed","job":"dsflash-source-encoding","model":"deepseek-flash","session":"ses_ee748a8a5ffeZ1O82pyP6MDnWB"}
+{"t":"2026-10-08T04:34:31Z","event":"quota","codex_week_used":59,"codex_credits":0,"claude_week_used":6,"claude_5h_used":4,"kimi_5h_used":0,"kimi_month_used":0.955,"kimi_code_used":0,"deepseek_usd":307.4}
+{"t":"2026-10-08T04:34:37Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":59,"expected":60.1,"gap":-1.1,"status":"ok"}
+{"t":"2026-10-08T04:34:50Z","event":"checkin","status":"done","actions":"returned claude-deque (1st; empty bulk extend breaks live iterators, index() stale size) -> held for Sonnet slot; returned dsflash-bufio (1st; FileIO refill bypasses overridden readinto) -> held-resumes (DS Flash full); released dsflash-source-encoding resume to queue (started); prune-merged freed 0MB; luna FINDINGS appended","notes":"box load 7.0, 9.8 GB avail, disk 79%; Mac disk 81%; no open PRs; Codex week 59%; luna gap -1.1 ok"}
+{"t":"2026-10-08T04:45:29Z","event":"exited","job":"dspro-argparse-sol","code":0}
