@@ -133,8 +133,7 @@ class Struct:
         if isinstance(buffer, (bytes, bytearray)):
             raw = buffer
         else:
-            from codecs import _escape_buffer
-            raw = _escape_buffer(buffer)
+            raw = _read_view(buffer).tobytes()
         result = _call(2, format, raw)
         if 'F' not in format and 'D' not in format:
             return result
