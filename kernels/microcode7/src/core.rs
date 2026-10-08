@@ -74,6 +74,8 @@ impl Value {
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            // A module namespace uses the native dictionary descriptor kind.
+            Self::Wrapped(32, layout) if matches!(layout.get(2), Some(Self::Small(-1))) => "member_descriptor",
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
@@ -243,7 +245,8 @@ impl Value {
                 for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
                 total
             }
-            Self::Wrapped(4..=7, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
+            Self::Wrapped(7, _) => return Self::code_worth_hash(self),
+            Self::Wrapped(4..=6, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by

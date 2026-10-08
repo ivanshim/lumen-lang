@@ -474,7 +474,7 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 /// Native cache markers written by the two full Python kernels.
-const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x03", *b"L7C\x03"];
+const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x04", *b"L7C\x04"];
 
 /// Whether bytes open with the bytecode marker, and so are a compiled
 /// module rather than source.

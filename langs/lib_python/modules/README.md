@@ -2,7 +2,7 @@
 
 The integrated suite pin is CPython `v3.14.8`. The following library files are
 copied unchanged, apart from one provenance and PSF licence header: enum,
-pydoc, __future__, pkgutil, reprlib, token, keyword, inspect, linecache,
+pydoc, __future__, pkgutil, reprlib, token, keyword, inspect, linecache, mimetypes,
 tokenize, functools, bisect, heapq, copyreg, genericpath, posixpath, stat, fnmatch, shlex, unittest.util, and the _pyrepl package initializer and pager.
 Their upstream bodies are checked byte for byte during source auditing.
 

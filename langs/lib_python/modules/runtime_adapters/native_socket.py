@@ -52,6 +52,9 @@ class herror(OSError):
 
 timeout = TimeoutError
 
+# An omitted timeout is distinct from None, which requests blocking I/O.
+_GLOBAL_DEFAULT_TIMEOUT = object()
+
 # Read the operating system hostname through the existing Python host bridge.
 def gethostname():
     return _call('socket_hostname').decode('utf-8', 'surrogateescape')

@@ -16,6 +16,9 @@ class _State:
 _state = _State()
 
 class WarningMessage:
+    _WARNING_DETAILS = ("message", "category", "filename", "lineno", "file",
+                        "line", "source")
+
     def __init__(self, message, category, filename, lineno, file=None, line=None, source=None):
         self.message = message
         self.category = category
@@ -24,6 +27,12 @@ class WarningMessage:
         self.file = file
         self.line = line
         self.source = source
+        self._category_name = category.__name__ if category else None
+
+    def __str__(self):
+        return ("{message : %r, category : %r, filename : %r, lineno : %s, "
+                "line : %r}" % (self.message, self._category_name,
+                                self.filename, self.lineno, self.line))
 
 
 def _matches(pattern, text, folded=False):
@@ -42,7 +51,11 @@ def _matches(pattern, text, folded=False):
 def _check(action, category, lineno):
     if action not in ['error', 'ignore', 'always', 'default', 'once', 'module']:
         raise AssertionError('invalid action: ' + repr(action))
-    if not isinstance(category(), Warning):
+    # A filter's category may name several warning classes as a tuple.
+    if isinstance(category, tuple):
+        if not category or not all(isinstance(item(), Warning) for item in category):
+            raise AssertionError('category must be a Warning subclass')
+    elif not isinstance(category(), Warning):
         raise AssertionError('category must be a Warning subclass')
     if (type(lineno) != type(0) and type(lineno) != type(True)) or lineno < 0:
         raise AssertionError('lineno must be an int >= 0')

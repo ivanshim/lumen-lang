@@ -11,8 +11,9 @@ from io import StringIO
 
 MISSING_C_DOCSTRINGS = True
 verbose = False
-is_wasi = False
-is_emscripten = False
+is_wasi = sys.platform == "wasi"
+is_emscripten = sys.platform == "emscripten"
+is_wasm32 = is_emscripten or is_wasi
 Py_DEBUG = False
 Py_GIL_DISABLED = False
 MS_WINDOWS = False
@@ -1671,6 +1672,7 @@ def requires_zstd(reason='requires zstd'):
 
 
 # From CPython v3.14.8; PSF License.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
 def patch(test_instance, object_to_patch, attr_name, new_value):
     """Override 'object_to_patch'.'attr_name' with 'new_value'.
 
@@ -1725,3 +1727,20 @@ def skip_if_buggy_ucrt_strfptime(test):
         else:
             _buggy_ucrt = False
     return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
+
+# CPython v3.14.8 Lib/test/support/__init__.py; PSF License.
+import stat
+def _force_run(path, func, *args):
+    try:
+        return func(*args)
+    except FileNotFoundError as err:
+        # chmod() won't fix a missing file.
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+        raise
+    except OSError as err:
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+            print('re-run %s%r' % (func.__name__, args))
+        os.chmod(path, stat.S_IRWXU)
+        return func(*args)
