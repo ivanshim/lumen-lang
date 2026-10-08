@@ -67,12 +67,15 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
-            Value::ValueMethod(method) if matches!(method.1.as_str(), "__next__" | "__buffer__" | "__release_buffer__") => "method-wrapper",
+            Value::ValueMethod(method) if method.1 == "classmethod_bind" => "method-wrapper",
+            Value::ValueMethod(method) if Self::loose_member_descriptor(&method.0.core_kind(), &method.1).is_some_and(|(_, form)| form == "wrapper_descriptor") => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => "getset_descriptor",
+            Value::Adapter(w) if w.0 == 29 && w.1.len() == 3 => "classmethod_descriptor",
             Value::Adapter(w) if w.0 == 29 => return match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
                 _ => "object".to_string(),
@@ -83,6 +86,12 @@ impl Value {
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 29) => {
+                let Some(Value::Adapter(descriptor)) = w.1.first() else { unreachable!() };
+                let wrapper = descriptor.1.len() == 2 && matches!(descriptor.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, form)| form == "wrapper_descriptor"));
+                if wrapper { "method-wrapper" } else { "builtin_function_or_method" }
+            },
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Adapter(function) if function.0 == 180 => "function",
             Value::Method(..) => "method",
@@ -90,9 +99,10 @@ impl Value {
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
-            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119) => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 235 | 236) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(method)) if method.0 == 29 && method.1.get(2).is_some_and(Value::is_true)) => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
@@ -190,6 +200,30 @@ impl Value {
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
+            Value::ValueMethod(bound) => {
+                let owner = match &bound.0 {
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Map(pairs) => (std::rc::Rc::as_ptr(pairs) as usize >> 4) as i64,
+                    Value::Set(set) => (std::rc::Rc::as_ptr(set) as usize >> 4) as i64,
+                    Value::Bytes(buffer, _, _) => (std::rc::Rc::as_ptr(buffer) as usize >> 4) as i64,
+                    value => value.core_hash()?,
+                };
+                Some(finish(owner ^ Value::text(&bound.1).core_hash()?))
+            }
+            Value::Adapter(bound) if bound.0 == 3 && matches!(bound.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || bound.0 == 3 && matches!(bound.1.first(), Some(Value::Native(..))) => {
+                let owner = match bound.1.get(1)? {
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Map(pairs) => (std::rc::Rc::as_ptr(pairs) as usize >> 4) as i64,
+                    Value::Set(set) => (std::rc::Rc::as_ptr(set) as usize >> 4) as i64,
+                    Value::Bytes(buffer, _, _) => (std::rc::Rc::as_ptr(buffer) as usize >> 4) as i64,
+                    value => value.core_hash()?,
+                };
+                Some(finish(owner ^ bound.1[0].core_hash()?))
+            }
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
             // The three bounds, folded as a tuple's items are, without a

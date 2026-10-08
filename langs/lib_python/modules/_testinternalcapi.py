@@ -34,6 +34,12 @@ class SelfInterruptingContextManager:
         return self._within
 
 
+# The reference's own module reports this many runs before a
+# specialization is made; the same number stands here so the runs the
+# tests make of it run as they run there.
+SPECIALIZATION_THRESHOLD = 2
+
+
 def get_recursion_depth():
     import sys
     frame = sys._getframe(1)
@@ -45,4 +51,4 @@ def get_recursion_depth():
 
 
 def __getattr__(name):
-    raise 'NotImplementedError: _testinternalcapi.' + name + ' is not supported'
+    raise AttributeError("module '_testinternalcapi' has no attribute '" + name + "'")

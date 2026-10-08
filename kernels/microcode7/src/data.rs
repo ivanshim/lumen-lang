@@ -426,9 +426,46 @@ pub struct MapStore {
     pairs: Vec<(Value, Value)>,
     pub serial: u64,
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
+    spellings: RefCell<Option<Result<std::collections::HashMap<Rc<str>, usize>, ()>>>,
 }
 
 impl MapStore {
+    /// Namespace spelling uses first text keys, without user hash/equality.
+    /// A mutable key cell requires a fresh scan even when the rows are unchanged.
+    pub fn namespace_position(&self, name: &str) -> Result<Option<usize>, ()> {
+        fn fixed_text(key: &Value) -> Result<Option<Rc<str>>, ()> {
+            match key {
+                Value::Text(word) => Ok(Some(word.clone())),
+                Value::Keyed(inner, _) => fixed_text(inner),
+                Value::Shared(_) => Err(()),
+                _ => Ok(None),
+            }
+        }
+        let mut cached = self.spellings.borrow_mut();
+        if cached.is_none() {
+            let mut words = std::collections::HashMap::new();
+            let mut immutable = true;
+            for (at, (key, _)) in self.pairs.iter().enumerate() {
+                match fixed_text(key) {
+                    Ok(Some(word)) => { words.entry(word).or_insert(at); }
+                    Ok(None) => (),
+                    Err(()) => { immutable = false; break; }
+                }
+            }
+            *cached = Some(if immutable { Ok(words) } else { Err(()) });
+        }
+        match cached.as_ref().expect("namespace spellings indexed") {
+            Ok(words) => Ok(words.get(name).copied()),
+            Err(()) => Err(()),
+        }
+    }
+
+    pub fn overwrite_namespace(&mut self, at: usize, value: Value) {
+        self.serial = dictionary_turn();
+        self.place.get_mut().take();
+        self.pairs[at].1 = value;
+    }
+
     /// The place, built from scratch across every pair the first time
     /// one is asked for, and the count of pairs it carries no address
     /// for beside it.
@@ -485,13 +522,14 @@ impl MapStore {
         let at = self.pairs.len();
         self.serial = dictionary_turn();
         self.pairs.push((key, value));
+        self.spellings.get_mut().take();
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
 }
 
 impl From<Vec<(Value, Value)>> for MapStore {
     fn from(pairs: Vec<(Value, Value)>) -> MapStore {
-        MapStore { pairs, serial: dictionary_turn(), place: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), place: RefCell::new(None), spellings: RefCell::new(None) }
     }
 }
 
@@ -507,7 +545,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), serial: self.serial, place: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, place: RefCell::new(None), spellings: RefCell::new(None) }
     }
 }
 
@@ -520,6 +558,7 @@ impl std::ops::DerefMut for MapStore {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
         self.serial = dictionary_turn();
         *self.place.borrow_mut() = None;
+        self.spellings.get_mut().take();
         &mut self.pairs
     }
 }
@@ -1131,6 +1170,8 @@ impl Value {
             (Value::Arguments(one) | Value::Tuple(one), Value::Arguments(two) | Value::Tuple(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
             (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
             (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
+            (Value::Intrinsic(crate::form::Prim::Octets(code), _), Value::OctetKind { changeable, .. })
+            | (Value::OctetKind { changeable, .. }, Value::Intrinsic(crate::form::Prim::Octets(code), _)) => (*code == 1) == *changeable && *code < 2,
             (Value::Channel(left), Value::Channel(right)) => left == right,
             // A method read off a value twice is one method, so long as
             // the word is the same word and the value the same value —
@@ -1183,8 +1224,20 @@ impl Value {
             },
             // A routine bound to a value is the one bound method where it
             // binds the one routine to the very same value.
-            (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
+            (Value::Wrapped(3,x), Value::Wrapped(3,y)) => {
+                if let (Some(a @ Value::Intrinsic(..)), Some(b @ Value::Intrinsic(..)), Some(one), Some(two)) = (x.first(), y.first(), x.get(1), y.get(1)) { return a.equals(b) && one.one_and_same(two); }
+                if let (Some(Value::Wrapped(60,p)), Some(Value::Wrapped(60,q)), Some(a), Some(b)) = (x.first(), y.first(), x.get(1), y.get(1)) {
+                    p.len() == q.len() && p.iter().zip(q.iter()).all(|(u,v)| u.equals(v)) && (a.one_and_same(b) || a.one_place(b))
+                } else { Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)) }
+            },
             (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
+            // A cell asked after twice is the one cell where both
+            // wrappers name the one room they look into.
+            (Value::Wrapped(35, x), Value::Wrapped(35, y)) => match (x.as_slice(), y.as_slice()) {
+                ([Value::Shared(a)], [Value::Shared(b)]) => Rc::ptr_eq(a, b),
+                ([Value::Bound(p, r), Value::Small(i), ..], [Value::Bound(q, s), Value::Small(j), ..]) => Rc::ptr_eq(p, q) && Rc::ptr_eq(r, s) && i == j,
+                _ => Rc::ptr_eq(x, y),
+            },
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,
@@ -1417,7 +1470,7 @@ impl Value {
         let value = self.settled();
         if let Value::Thing(thing) = &value {
             let class = thing.blueprint();
-            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry.borrow().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
@@ -1511,6 +1564,10 @@ impl Value {
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
             // descriptor that carries it.
+            Value::Wrapped(32, fields) if matches!(fields.get(2), Some(Value::Small(-2))) => match &fields[1] {
+                Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
+                _ => "<member wrapper>".into(),
+            },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1585,10 +1642,24 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
-        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
-            || kind == "bytearray" && name == "__release_buffer__" {
-            return Some(("slot wrapper", "wrapper_descriptor"));
+        match (name, kind) {
+            ("__getitem__", "dict" | "list") | ("__contains__", "frozenset" | "set" | "dict") => return Some(("method", "method_descriptor")),
+            _ => (),
         }
+        let native_slot = match name.len() {
+            6 => matches!(name, "__ge__" | "__eq__" | "__gt__" | "__ne__" | "__lt__" | "__le__" | "__or__"),
+            7 => matches!(name, "__and__" | "__add__" | "__abs__" | "__get__" | "__del__" | "__ior__" | "__int__" | "__mul__" | "__mod__" | "__len__" | "__pow__" | "__pos__" | "__neg__" | "__ror__" | "__xor__" | "__sub__" | "__str__" | "__set__"),
+            8 => matches!(name, "__call__" | "__bool__" | "__imod__" | "__iand__" | "__iadd__" | "__hash__" | "__iter__" | "__isub__" | "__ipow__" | "__init__" | "__imul__" | "__ixor__" | "__repr__" | "__rand__" | "__radd__" | "__next__" | "__rsub__" | "__rpow__" | "__rmul__" | "__rmod__" | "__rxor__"),
+            9 => matches!(name, "__await__" | "__anext__" | "__aiter__" | "__float__" | "__index__"),
+            10 => matches!(name, "__buffer__" | "__divmod__" | "__delete__" | "__invert__" | "__matmul__" | "__lshift__" | "__rshift__"),
+            11 => matches!(name, "__delitem__" | "__delattr__" | "__imatmul__" | "__ilshift__" | "__getitem__" | "__irshift__" | "__rdivmod__" | "__rrshift__" | "__rmatmul__" | "__rlshift__" | "__truediv__" | "__setitem__" | "__setattr__"),
+            12 => matches!(name, "__contains__" | "__floordiv__" | "__itruediv__" | "__rtruediv__"),
+            13 => matches!(name, "__ifloordiv__" | "__rfloordiv__"),
+            16 => matches!(name, "__getattribute__"),
+            18 => matches!(name, "__release_buffer__"),
+            _ => false,
+        };
+        if native_slot { return Some(("slot wrapper", "wrapper_descriptor")); }
         match kind {
             "type" if matches!(name, "__dict__" | "__mro__") => Some(if name == "__dict__" { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
@@ -1690,7 +1761,7 @@ pub struct TypeNames {
 pub struct Blueprint {
     /// The mutable names of a Python class, outside its dictionary.
     pub type_names: RefCell<Option<TypeNames>>,
-    pub ancestry: Vec<Rc<Blueprint>>,
+    pub ancestry: RefCell<Vec<Rc<Blueprint>>>,
     pub parents: Vec<Rc<Blueprint>>,
     pub presentation: Option<String>,
     pub name: String,
@@ -1712,6 +1783,13 @@ pub struct Blueprint {
     pub sealed: Cell<bool>,
     /// Instance slot storage established when the class was constructed.
     pub has_slot_storage: bool,
+    /// Whether a builder's own mro supplied the order the class keeps:
+    /// the order is then complete, and no allocation link may add a
+    /// forebear it left out.
+    pub order_supplied: Cell<bool>,
+    // A custom order is separate from layout parents. Other entries remain
+    // alive through ancestry, while this blueprint refers to itself weakly.
+    pub supplied_order: RefCell<Vec<std::rc::Weak<Blueprint>>>,
 }
 
 impl Blueprint {
@@ -2263,7 +2341,7 @@ fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
     pieces.push(lead.to_owned());
     pieces.push((mark as char).to_string());
     for number in content.iter().copied() {
-        pieces.push(if number == mark || number == 92 {
+        pieces.push(if (number == 39 && changing) || number == mark || number == 92 {
             format!("\\{}", number as char)
         } else if let Some(letter) = match number { 9 => Some('t'), 10 => Some('n'), 13 => Some('r'), _ => None } {
             format!("\\{}", letter)
@@ -2359,5 +2437,35 @@ impl Drop for Blueprint {
 impl Drop for SetStore {
     fn drop(&mut self) {
         crate::ghost::anything_departing();
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::*;
+
+    #[test]
+    fn namespace_names_follow_structural_writes_and_copy_on_write() {
+        let mut original = MapStore::from(vec![(Value::text("first"), Value::Small(1)), (Value::text("second"), Value::Small(2))]);
+        assert_eq!(original.namespace_position("second"), Ok(Some(1)));
+        let mut copy = original.clone();
+        original.remove(0);
+        assert_eq!(original.namespace_position("second"), Ok(Some(0)));
+        assert_eq!(copy.namespace_position("second"), Ok(Some(1)));
+        copy.overwrite_namespace(1, Value::Small(9));
+        assert!(matches!(copy[1].1, Value::Small(9)));
+        assert!(matches!(original[0].1, Value::Small(2)));
+        copy.insert_known_absent(Value::text("third"), "text:third".to_owned(), Value::Nil);
+        assert_eq!(copy.namespace_position("third"), Ok(Some(2)));
+    }
+
+    #[test]
+    fn mutable_namespace_keys_do_not_retain_a_spelling_index() {
+        let key = Rc::new(RefCell::new(Value::text("before")));
+        let pairs = MapStore::from(vec![(Value::Shared(key.clone()), Value::Small(4))]);
+        assert_eq!(pairs.namespace_position("before"), Err(()));
+        *key.borrow_mut() = Value::text("after");
+        assert_eq!(pairs.namespace_position("before"), Err(()));
+        assert_eq!(pairs.namespace_position("after"), Err(()));
     }
 }
