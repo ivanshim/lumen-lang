@@ -196,9 +196,12 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("subprocess", include_str!("subprocess.py"), "subprocess.py"),
     ("sys", include_str!("sys.py"), "sys.py"),
     ("sysconfig", include_str!("sysconfig.py"), "sysconfig.py"),
+    ("tarfile", include_str!("tarfile.py"), "tarfile.py"),
     ("tempfile", include_str!("tempfile.py"), "tempfile.py"),
     ("test", include_str!("test/__init__.py"), "test/__init__.py"),
     ("test.audiotests", include_str!("test/audiotests.py"), "test/audiotests.py"),
+
+    ("test.archiver_tests", include_str!("test/archiver_tests.py"), "test/archiver_tests.py"),
     ("test.datetimetester", include_str!("test/datetimetester.py"), "test/datetimetester.py"),
     ("test.list_tests", include_str!("test/list_tests.py"), "test/list_tests.py"),
     ("test.mapping_tests", include_str!("test/mapping_tests.py"), "test/mapping_tests.py"),

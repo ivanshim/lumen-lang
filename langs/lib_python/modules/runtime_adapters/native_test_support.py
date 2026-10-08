@@ -1655,3 +1655,57 @@ def get_attribute(obj, name):
 # Return the complete C0 control-character set used by protocol parsers.
 def control_characters_c0():
     return [chr(value) for value in range(32)] + ["\x7f"]
+
+# Select compression tests by importing the requested runtime module.
+def requires_gzip(reason='requires gzip'):
+    try:
+        import gzip
+    except ImportError:
+        gzip = None
+    return unittest.skipUnless(gzip, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_bz2(reason='requires bz2'):
+    try:
+        import bz2
+    except ImportError:
+        bz2 = None
+    return unittest.skipUnless(bz2, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_lzma(reason='requires lzma'):
+    try:
+        import lzma
+    except ImportError:
+        lzma = None
+    return unittest.skipUnless(lzma, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_zstd(reason='requires zstd'):
+    try:
+        from compression import zstd
+    except ImportError:
+        zstd = None
+    return unittest.skipUnless(zstd, reason)
+
+
+import stat
+
+# Retry filesystem operations after restoring owner permissions.
+def _force_run(path, func, *args):
+    try:
+        return func(*args)
+    except FileNotFoundError as err:
+        # chmod() won't fix a missing file.
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+        raise
+    except OSError as err:
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+            print('re-run %s%r' % (func.__name__, args))
+        os.chmod(path, stat.S_IRWXU)
+        return func(*args)
