@@ -331,9 +331,11 @@ and allocation tracing exercised through their normal runtime paths. Deferred
 annotations retain their defining namespace and ForwardRef owner metadata.
 Finder loaders returning None use default module creation before exec_module.
 The 13 original semantic probes and eleven additional native/runtime probes
-match CPython on both kernels. Six further probes cover default loaders,
+match CPython on both kernels. Seven further probes cover default loaders,
 forward-reference ownership, tracing controls, command-source tracebacks and
-source-loader ImportError subclasses and extended startup options.
+source-loader ImportError subclasses, extended startup options and code
+metadata boundaries. Compiler-only unbound markers stay out of co_consts, and
+source-position wrappers preserve assignment-target diagnostics.
 Signature annotation reads honor the requested format and reuse resolved annotation dictionaries; native
 base allocation respects declared allocators, and compatible slotted class
 assignment preserves stored values. No copied test or library body is edited.

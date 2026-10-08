@@ -8419,6 +8419,10 @@ impl<'a> Builder<'a> {
     }
 
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        if let Form::Located(bounds, instruction, inner) = expr {
+            let written = self.write_into(*inner, gives_back, compound, assign)?;
+            return Ok(Form::Located(bounds, instruction, Box::new(written)));
+        }
         let compound = compound.map(|op| {
             if self.table.has_any("ext.builtin.bytes") && matches!(op, Prim::Plus | Prim::Times) { Prim::OctetAssign(op == Prim::Times) }
             else { op }
@@ -12259,6 +12263,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
 
 fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
     fn literal(value: &Value, constants: &mut Vec<Value>) {
+        if matches!(value, Value::Unset) { return; }
         if let Value::Routine(p) = value {
             if p.frameless { return; }
             if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants); }
