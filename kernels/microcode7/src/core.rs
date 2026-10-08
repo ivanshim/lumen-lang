@@ -111,6 +111,10 @@ impl Value {
             // reckoning the repr gives it.
             Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(60, held) if held.len() > 2 => "classmethod_descriptor",
+            Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
+                Some("__dict__" | "__weakref__") => "getset_descriptor",
+                _ => "member_descriptor",
+            },
             Self::Wrapped(60, parts) => return match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
                 _ => "object".to_owned(),
@@ -243,7 +247,8 @@ impl Value {
                 for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
                 total
             }
-            Self::Wrapped(4..=7, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
+            Self::Wrapped(7, _) => return Self::code_worth_hash(self),
+            Self::Wrapped(4..=6, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by

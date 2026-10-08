@@ -839,6 +839,9 @@ pub struct Routine {
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
     pub flags: i64,
+    /// The future flags in force where the text was read, as the
+    /// reference's code objects carry them in co_flags.
+    pub future_bits: i64,
     pub lineless: bool,
     pub doc: Option<String>,
     pub qualification: String,
@@ -907,7 +910,7 @@ pub struct Routine {
 
 impl Drop for Routine {
     fn drop(&mut self) {
-        crate::ghost::anything_departing();
+        crate::ghost::departing_at(self as *const Routine as usize);
     }
 }
 
