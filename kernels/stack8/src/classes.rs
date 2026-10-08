@@ -891,7 +891,14 @@ impl<'a> Engine<'a> {
             }
             return Ok(());
         };
-        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(), single => vec![single] };
+        // The names may come from a row, a mapping's keys, a set's
+        // members or a single name, as the reference reads them.
+        let named: Vec<Value> = match slots.contents() {
+            Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
+            Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(),
+            Value::Set(v) => v.borrow().items(),
+            single => vec![single],
+        };
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
@@ -5816,7 +5823,7 @@ impl<'a> Engine<'a> {
             16 => self.dispatch_class_builder(args),
             18 => self.class_namespace_read(args),
             20 => self.class_namespace_remove(args),
-            22 => {
+            26 => {
                 let entries = self.call_items(args)?;
                 if entries.iter().any(|(name, _)| name.is_some()) { return Err("TypeError: sys._clear_type_descriptors() takes no keyword arguments".into()); }
                 let args: Vec<Value> = entries.into_iter().map(|(_, value)| value).collect();
@@ -5828,6 +5835,9 @@ impl<'a> Engine<'a> {
                 };
                 if class.python_names.borrow().is_none() || class.sealed.get() { return Err("TypeError: argument is immutable".into()); }
                 class.shared.borrow_mut().retain(|(key, _)| key != "__dict__" && key != "__weakref__");
+                // The kind no longer carries a weak reference where it
+                // stands, so a class built over it may name one itself.
+                class.weak_storage.set(Some(false));
                 Ok(Value::Null)
             }
             24 | 25 if args.len() == 1 => {

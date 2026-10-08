@@ -2089,7 +2089,7 @@ impl Lang {
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
      ("ext.builtin.namespace_type", Builtin::ClassTool(21)),
-     ("ext.builtin.type_descriptors.clear", Builtin::ClassTool(22)),
+     ("ext.builtin.type_descriptors.clear", Builtin::ClassTool(26)),
              ("ext.builtin.build_class", Builtin::ClassTool(13)), ("ext.builtin.inline_values", Builtin::ClassTool(12)), ("ext.builtin.issubclass", Builtin::ClassTool(1)),       ("ext.builtin.dir", Builtin::ClassTool(8)), ("ext.builtin.staticmethod", Builtin::ClassTool(9)), ("ext.builtin.classmethod", Builtin::ClassTool(10)), ("ext.builtin.property", Builtin::ClassTool(11)),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
