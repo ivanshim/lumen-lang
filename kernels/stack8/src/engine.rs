@@ -20765,20 +20765,26 @@ impl<'a> Engine<'a> {
                             let class=Value::Class(self.calendar_kind());
                             return self.calendar_sequence(class,vec![Value::tuple(fields)]).map_err(|fault|{self.carried=Some(fault);self.special_fault()});
                         }
-                        if matches!(task.as_ref(),"process_time"|"thread_time") && args.len()==1 {
+                        if matches!(task.as_ref(),"process_time"|"thread_time") && args.len()<=2 {
                             #[cfg(target_os = "linux")]
                             {
+                                // Linux names the process-wide CPU clock two and the
+                                // per-thread one three; each advances only while the
+                                // processor is busy for this run.
+                                let which=if task.as_ref()=="process_time" {2} else {3};
                                 #[repr(C)]
-                                struct Moment { seconds:i64,micros:i64 }
-                                #[repr(C)]
-                                struct Spending { user:Moment,system:Moment,tally:[i64;14] }
-                                extern "C" { fn getrusage(who:i32,into:*mut Spending)->i32; }
-                                let mut spent=Spending{user:Moment{seconds:0,micros:0},system:Moment{seconds:0,micros:0},tally:[0;14]};
-                                // Processor time is asked of the whole process, or of the thread alone.
-                                let who=if task.as_ref()=="process_time" {0} else {1};
-                                if unsafe{getrusage(who,&mut spent)}!=0 {return Err("OSError: processor time is unavailable".into())}
-                                let busy=spent.user.seconds as f64+spent.user.micros as f64/1e6+spent.system.seconds as f64+spent.system.micros as f64/1e6;
-                                let mut told=crate::value::real_of(busy,self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                                struct Span { seconds:i64,nanos:i64 }
+                                extern "C" { fn clock_gettime(clock:i32,at:*mut Span)->i32; fn clock_getres(clock:i32,at:*mut Span)->i32; }
+                                let only_resolution=match args.get(1) { None=>false, Some(Value::Flag(flag))=>*flag, _=>return Err(self.lang.module_helper_amiss.clone()) };
+                                let mut span=Span{seconds:0,nanos:0};
+                                let status=unsafe{ if only_resolution { clock_getres(which,&mut span) } else { clock_gettime(which,&mut span) } };
+                                if status!=0 { return Err("OSError: processor time is unavailable".into()) }
+                                if only_resolution {
+                                    return Ok(crate::value::real_of(span.seconds as f64+span.nanos as f64/1e9,self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)));
+                                }
+                                let counted=BigInt::from(span.seconds)*1_000_000_000u64+BigInt::from(span.nanos);
+                                if args.len()==2 { return Ok(Value::of_big(counted)); }
+                                let mut told=crate::value::real_of(span.seconds as f64+span.nanos as f64/1e9,self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
                                 if let Value::Real(real)=&mut told {Rc::make_mut(real).floating=true;}
                                 return Ok(told);
                             }

@@ -26,13 +26,15 @@ class _ClockInfo:
         self.name = name
         if name == 'process_time':
             self.implementation = 'clock_gettime(CLOCK_PROCESS_CPUTIME_ID)'
+            self.resolution = _host_clock('process_time', True)
         elif name == 'thread_time':
             self.implementation = 'clock_gettime(CLOCK_THREAD_CPUTIME_ID)'
+            self.resolution = _host_clock('thread_time', True)
         else:
             self.implementation = 'clock_gettime(CLOCK_MONOTONIC)' if steady else 'clock_gettime(CLOCK_REALTIME)'
+            self.resolution = _host_clock(steady, True)
         self.monotonic = steady
         self.adjustable = not steady
-        self.resolution = 1e-09 if name in ('process_time', 'thread_time') else _host_clock(steady, True)
 
 def get_clock_info(name):
     if name in ('monotonic', 'perf_counter'):
@@ -59,13 +61,13 @@ def process_time():
     return __clock('process_time')
 
 def process_time_ns():
-    return int(process_time() * 1000000000)
+    return __clock('process_time', False)
 
 def thread_time():
     return __clock('thread_time')
 
 def thread_time_ns():
-    return int(thread_time() * 1000000000)
+    return __clock('thread_time', False)
 
 # The count of fields a struct_time carries in this build, zone and
 # offset included.
