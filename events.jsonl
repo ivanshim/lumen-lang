@@ -8574,3 +8574,30 @@
 {"t":"2026-10-08T10:22:27Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-08T10:24:20Z","event":"review-started","job":"dsflash-univnewlines","review":"review-auto-dsflash-univnewlines-1022"}
 {"t":"2026-10-08T10:27:59Z","event":"exited","job":"review-auto-dsflash-univnewlines-1022","code":0}
+{"t":"2026-10-08T10:34:04Z","event":"integrity","job":"dsflash-univnewlines","review":"review-auto-dsflash-univnewlines-1022","commit":"b83bda01b","model":"deepseek-v4.1-flash","round":1,"note":"capability spoof: sys.stdin.newlines=None constant added only to pass test_univnewlines guard (stdin not translated); also unlimited read resets pos past EOF (seek(10);read();tell()->3, general regression); 34/34 both kernels kept, sha256 faithful; clean check 1195/0 -> returns + queued (DS Flash 11/12)"}
+{"t":"2026-10-08T10:34:04Z","event":"queued","job":"dsflash-univnewlines","model":"deepseek-flash","line":"or-resume dsflash-univnewlines deepseek-flash ses_ee5e5c975ffetmyOU47tPoVto1","note":"integrity return, 1st; DS Flash 11/12 -> 12/12"}
+{"t":"2026-10-08T10:34:39Z","event":"quota","codex_week_used":69,"codex_credits":0,"claude_week_used":8,"claude_5h_used":5,"kimi_5h_used":0,"kimi_month_used":0.9638,"kimi_code_used":0,"deepseek_usd":299.65}
+{"t":"2026-10-08T10:34:45Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":69,"expected":70.5,"gap":-1.5,"status":"ok"}
+{"t":"2026-10-08T10:34:51Z","event":"checkin","status":"done","actions":"REJECT (integrity) dsflash-univnewlines (1st; stdin.newlines=None capability spoof + read-past-EOF tell regression) -> returns/dsflash-univnewlines.md + or-resume queued (DS Flash 12/12); prune-merged 0 MB; luna FINDINGS appended","notes":"no PR merge: #540 (21e) CI failed, integrate-21e sol-resume queued at head; box load 1.2, 13.5 GB available, disk 79%; Mac disk 85%; all slots full (Sol 11+1 review, DS Flash 11+1 queued, DS Pro 1, Kimi 1, Sonnet 1); Sol queue 2 waiting; held unchanged (colorize/code-module wait stdlib-unittest, dspro-type-annotations wait DS Pro, claude-pstats wait Sonnet); luna no new alerts, gap -1.5 ok; Codex week 69%; Claude 5h 5%/week 8%"}
+{"t":"2026-10-08T10:35:17Z","event":"resumed","job":"integrate-21e","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T10:35:19Z","event":"note","text":"dispatch.sh: integrate-* lines may take the Sol review slot (integration is the bottleneck); dispatcher restarted"}
+{"t":"2026-10-08T10:35:23Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-08T10:35:44Z","event":"exited","job":"dsflash-robotparser-sol","code":0}
+{"t":"2026-10-08T10:37:44Z","event":"finished","job":"dsflash-robotparser-sol","exit_time":"2026-10-08T10:35:44Z"}
+{"t":"2026-10-08T10:37:44Z","event":"review-queued","job":"dsflash-robotparser-sol","review":"review-auto-dsflash-robotparser-sol-1037"}
+{"t":"2026-10-08T10:37:50Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T10:37:54Z","event":"exited","job":"claude-deque","code":0}
+{"t":"2026-10-08T10:38:18Z","event":"exited","job":"dsflash-contextlib-async","code":0}
+{"t":"2026-10-08T10:40:20Z","event":"resumed","job":"dsflash-univnewlines","model":"deepseek-flash","session":"ses_ee5e5c975ffetmyOU47tPoVto1"}
+{"t":"2026-10-08T10:40:21Z","event":"exited","job":"dsflash-charmapcodec","code":0}
+{"t":"2026-10-08T10:42:53Z","event":"finished","job":"claude-deque","exit_time":"2026-10-08T10:37:54Z"}
+{"t":"2026-10-08T10:42:53Z","event":"review-queued","job":"claude-deque","review":"review-auto-claude-deque-1042"}
+{"t":"2026-10-08T10:42:56Z","event":"finished","job":"dsflash-charmapcodec","exit_time":"2026-10-08T10:40:20Z"}
+{"t":"2026-10-08T10:42:56Z","event":"review-queued","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-1042"}
+{"t":"2026-10-08T10:42:58Z","event":"finished","job":"dsflash-contextlib-async","exit_time":"2026-10-08T10:38:18Z"}
+{"t":"2026-10-08T10:42:58Z","event":"review-queued","job":"dsflash-contextlib-async","review":"review-auto-dsflash-contextlib-async-1042"}
+{"t":"2026-10-08T10:43:04Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T10:45:22Z","event":"review-started","job":"dsflash-robotparser-sol","review":"review-auto-dsflash-robotparser-sol-1037"}
+{"t":"2026-10-08T10:48:08Z","event":"exited","job":"stdlib-unittest","code":0}
+{"t":"2026-10-08T10:49:18Z","event":"exited","job":"review-auto-dsflash-robotparser-sol-1037","code":0}
+{"t":"2026-10-08T10:50:23Z","event":"resumed","job":"dsflash-type-aliases-sol","model":"gpt-6.1-sol"}
