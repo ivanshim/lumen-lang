@@ -270,8 +270,9 @@ fn whole_import<'a>(source: &'a str, lang: &Lang, before: u32) -> std::borrow::C
 }
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    // File input has universal newlines before the tokenizer sees it.
-    let universal = (!lang.syntax_members.is_empty() && source.contains("\r\n")).then(|| source.replace("\r\n", "\n"));
+    // File input has universal newlines before the tokenizer sees it:
+    // a CRLF pair and a lone CR both end a line.
+    let universal = (!lang.syntax_members.is_empty() && source.contains('\r')).then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
     let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
