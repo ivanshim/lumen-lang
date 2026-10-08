@@ -319,6 +319,40 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             if let Some(position) = position { return Ok(Value::Small((bounds[0] + position) as i64)); }
             return if work == INDEX || work == RINDEX { Err(complaint(table, "missing")) } else { Ok(Value::Small(-1)) };
         }
+        if work == SPLITLINES {
+            if input.len() >= 3 { return Err(complaint(table, "arguments")); }
+            let keepends = input.get(1).map_or(Ok(0), count)? != 0;
+            let mut lines = Vec::new();
+            let mut offset = 0;
+            let mut start = 0;
+            while let Some(&number) = numbers.get(offset) {
+                offset += 1;
+                if ![10, 11, 12, 13, 28, 29, 30, 133, 0x2028, 0x2029].contains(&number) { continue; }
+                let cut = offset - 1;
+                if number == 13 && numbers.get(offset) == Some(&10) { offset += 1; }
+                let limit = if keepends { offset } else { cut };
+                lines.push(Value::characters(numbers[start..limit].to_vec()));
+                start = offset;
+            }
+            if start != numbers.len() { lines.push(Value::characters(numbers[start..].to_vec())); }
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(lines)));
+        }
+        if matches!(work, UPPER | LOWER | TITLE | CASEFOLD | CAPITALIZE | SWAPCASE) {
+            if input.len() > 1 { return Err(complaint(table, "arguments")); }
+            // Surrogates break casing context while remaining unchanged in the output.
+            let mut result = Vec::new();
+            let mut beginning = 0;
+            for position in 0..=numbers.len() {
+                if position == numbers.len() || char::from_u32(numbers[position]).is_none() {
+                    let text: String = numbers[beginning..position].iter().map(|&n| char::from_u32(n).unwrap()).collect();
+                    let shaping = if work == CAPITALIZE && beginning > 0 { LOWER } else { work };
+                    result.extend(case_changed(&text, shaping).chars().map(u32::from));
+                    if position < numbers.len() { result.push(numbers[position]); }
+                    beginning = position + 1;
+                }
+            }
+            return Ok(Value::characters(result));
+        }
         if work==LENGTH && input.len()==1 {return Ok(Value::Small(numbers.len() as i64))}
         if work==REPLACE {
             if input.len()<3||input.len()>4{return Err(complaint(table,"arguments"))}

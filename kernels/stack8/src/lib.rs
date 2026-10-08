@@ -1,5 +1,6 @@
 pub mod strings;
 mod unicode;
+mod ucd;
 // Stack kernel, third design: eight words, the five of stack5 and three
 // fused from them where the measurements said a word earns its place.
 //

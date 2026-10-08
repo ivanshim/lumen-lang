@@ -17165,7 +17165,7 @@ impl<'a> Engine<'a> {
             supplied.extend(named.into_iter().map(|(key, argument)| (Some(key), argument)));
             return self.builtin_call(Builtin::Text(crate::strings::TextOp::Getnewargs), operation, supplied);
         }
-        if matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
                 let working = crate::strings::operation(operation);
@@ -18922,6 +18922,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if let Builtin::UnicodeQuery(field, old) = builtin { return crate::ucd::call(field, old, args); }
         if builtin == Builtin::UnicodeDecomposition { return crate::sre::decompose(args); }
         // The labelled Unicode range permits an exact integer path without
         // building a big integer. Subclasses and unusual arguments fall through.
@@ -20394,6 +20395,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::Sre => return crate::sre::call(args),
             Builtin::UnicodeDecomposition => return crate::sre::decompose(args),
+            Builtin::UnicodeQuery(field, old) => return crate::ucd::call(field, old, args),
             Builtin::CopyValue => {
                 arity(2)?;
                 if matches!(args[0], Value::Generator(_)) {

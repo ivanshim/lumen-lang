@@ -355,6 +355,28 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             if found.is_none() && matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
             return Ok(Value::Small(found.map_or(-1, |at| (start + at) as i64)));
         }
+        if op == Splitlines {
+            if args.len() > 2 { return Err(fault(lang, "arguments")); }
+            let keep = args.get(1).map_or(Ok(0), |value| integer(value, lang))? != 0;
+            let mut rows = Vec::new();
+            let mut beginning = 0;
+            let mut at = 0;
+            while at < codes.len() {
+                let point = codes[at];
+                if matches!(point, 10 | 11 | 12 | 13 | 28 | 29 | 30 | 133 | 0x2028 | 0x2029) {
+                    let end = at + 1 + usize::from(point == 13 && codes.get(at + 1) == Some(&10));
+                    rows.push(Value::from_codes(codes[beginning..if keep { end } else { at }].to_vec()));
+                    beginning = end;
+                    at = end;
+                } else { at += 1; }
+            }
+            if beginning < codes.len() { rows.push(Value::from_codes(codes[beginning..].to_vec())); }
+            return Ok(Value::array(rows));
+        }
+        if matches!(op, Upper | Lower | Title | Casefold | Capitalize | Swapcase) {
+            if args.len() != 1 { return Err(fault(lang, "arguments")); }
+            return Ok(Value::from_codes(recase_units(&codes, op)));
+        }
         if op==Length && args.len()==1{return Ok(Value::Small(codes.len() as i64))}
         if op==Replace {
             if !(3..=4).contains(&args.len()){return Err(fault(lang,"arguments"))}

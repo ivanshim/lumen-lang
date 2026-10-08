@@ -1,5 +1,6 @@
 pub mod text;
 mod unicode;
+mod ucd;
 // Microcode kernel, fourth design: seven forms, the four of microcode4
 // and three the kernel lab measured worth a form of their own.
 //
