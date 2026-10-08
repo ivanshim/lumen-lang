@@ -387,8 +387,14 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if table.single("ext.system.args.list").is_some() || table.single("ext.system.args.count").is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
-        let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
+        // How the program was named for the call stands first: the
+        // `-c` command when code was given, else the source file.
+        let chosen = request.iter().find(|(from, k, ..)| from == "SELF" && k == "argv0").map(|(.., v, _)| v.clone());
+        let first = match chosen {
+            Some(name) => Some(name),
+            None => request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone()),
+        };
+        let mut all: Vec<Value> = vec![Value::text(&first.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(n) = table.single("ext.system.args.count") {
             machine.define(n, Value::Small(all.len() as i64));

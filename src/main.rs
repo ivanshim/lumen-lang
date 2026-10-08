@@ -186,6 +186,7 @@ struct Invocation {
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
     module_name: Option<String>,
+    program_name: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -635,6 +636,11 @@ fn run_all() {
     // complaint about reading the program names it the way its reader
     // named it, which is how the reference names it too.
     request.push(("SELF".to_string(), "given".to_string(), inv.file.clone(), false));
+    // The command that named the program, where it is not the source
+    // file itself; a program reads it as its own first argument.
+    if let Some(name) = &inv.program_name {
+        request.push(("SELF".to_string(), "argv0".to_string(), name.clone(), false));
+    }
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
     // A full Python kernel names the binary itself, so a program that
@@ -875,6 +881,10 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut module_name = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
+    // The name a Python program sees as its own first argument. It is
+    // the source name for an ordinary run; `-c` names the code as the
+    // source and stands in argv[0] itself.
+    let mut program_name = None;
 
     // An argument as text, for the switches that take one. Bytes
     // spelling no letter stand for the letter of doubt, since a name
@@ -983,6 +993,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 module_source = Some(said(&rest[1]));
                 file = Some("<string>".to_string());
+                program_name = Some("-c".to_string());
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[2..];
                 break;
@@ -1075,7 +1086,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
