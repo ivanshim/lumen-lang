@@ -609,11 +609,25 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
     match portion { 'k' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum ReferenceState { Permanent, Counted(usize) }
+
+impl ReferenceState {
+    pub(super) fn as_python(self) -> i64 {
+        if let Self::Counted(owners) = self { owners as i64 }
+        else { i64::from(0xc000_0000_u32) }
+    }
+}
+
 impl Value {
-    pub(super) fn ownership_count(&self) -> Option<usize> {
+    pub(super) fn ownership_count(&self) -> Option<ReferenceState> {
+        // These identities are encoded in the value itself and cannot be
+        // deallocated. Copying one never creates or releases a heap owner.
+        if matches!(self, Self::Nil | Self::Flag(_) | Self::Small(_) | Self::Ellipsis
+            | Self::Intrinsic(..) | Self::OctetKind { .. } | Self::Channel(_)
+            | Self::Refusal(_)) { return Some(ReferenceState::Permanent); }
         if let Value::Shared(binding) = self {
             return match &*binding.borrow() {
-                Value::Vector(_) | Value::Dict(_) => Some(Rc::strong_count(binding)),
+                Value::Vector(_) | Value::Dict(_) => Some(ReferenceState::Counted(Rc::strong_count(binding))),
                 captured => captured.ownership_count(),
             };
         }
@@ -645,7 +659,7 @@ impl Value {
             Value::Dim(t) => Rc::strong_count(t),
             _ => return None,
         };
-        Some(count)
+        Some(ReferenceState::Counted(count))
     }
 
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }

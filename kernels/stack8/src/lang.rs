@@ -2094,7 +2094,7 @@ impl Lang {
             ("ext.builtin.text.repr", Builtin::Text(crate::strings::TextOp::Repr)),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
-     ("ext.builtin.annotation_call", Builtin::ClassTool(26)),
+     ("ext.builtin.annotation_call", Builtin::ClassTool(28)),
      ("ext.builtin.partial_repr", Builtin::ClassTool(27)),
      ("ext.builtin.namespace_type", Builtin::ClassTool(21)),
      ("ext.builtin.type_descriptors.clear", Builtin::ClassTool(26)),

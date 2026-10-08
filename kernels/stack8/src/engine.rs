@@ -5324,9 +5324,12 @@ impl<'a> Engine<'a> {
         // A body on the stack may not be entered again: it is marked for
         // as long as the step lasts, so a reentrant call is refused, and
         // the reference's reading of the running member is answered too.
+        let busy = if self.coroutines.contains_key(&(Rc::as_ptr(held) as usize)) {
+            self.lang.coroutine_errors[2].clone()
+        } else { self.lang.yield_busy[0].clone() };
         {
-            let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-            if state.running { return Err(self.lang.yield_busy[0].clone().into()); }
+            let mut state = held.try_borrow_mut().map_err(|_| busy.clone())?;
+            if state.running { return Err(busy.into()); }
             state.running = true;
         }
         let outcome = self.step_generator_mode(held, sent, hurled, given, true);
@@ -5760,7 +5763,7 @@ impl<'a> Engine<'a> {
             None => {
                 let class = Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(vec![(self.class_word("module").to_owned(), Value::text("builtins"))]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -24474,7 +24477,7 @@ impl Engine<'_> {
                         Value::Null
                     }
                     Value::Small(9) => Value::Flag(self.finalizing),
-                    Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: inline values have no reference counter")? as i64),
+                    Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: this value has no ownership identity")?.python_count()),
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }

@@ -6167,7 +6167,7 @@ impl<'a> Machine<'a> {
             let extra = if pieces.is_empty() { String::new() } else { format!(", {}", pieces.join(", ")) };
             return Ok(Value::text(&format!("{title}({head}{extra})")));
         }
-        if op == 26 && self.table.has_any("ext.builtin.annotation_call") {
+        if op == 28 && self.table.has_any("ext.builtin.annotation_call") {
             let [function, names, symbolic] = values.as_slice() else {
                 return Err(String::from("TypeError: annotation adapter requires three arguments").into());
             };

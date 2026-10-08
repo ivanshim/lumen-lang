@@ -4741,9 +4741,13 @@ impl<'a> Machine<'a> {
         // A body on the stack may not be entered again: it is marked for
         // as long as the step lasts, so a reentrant call is refused, and
         // the reference's reading of the running member is answered too.
+        let complaint = match self.coroutine_bodies.get(&(Rc::as_ptr(generator) as usize)) {
+            Some(_) => self.table.strings("ext.stmt.async.coroutine.errors")[2].clone(),
+            None => self.generator_words("busy"),
+        };
         {
-            let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
-            if state.running { return Err(self.generator_words("busy").into()); }
+            let mut state = generator.try_borrow_mut().map_err(|_| complaint.clone())?;
+            if state.running { return Err(complaint.into()); }
             state.running = true;
         }
         let outcome = self.step_into_mode(generator, sent, hurled, given, true);
@@ -5880,7 +5884,7 @@ impl<'a> Machine<'a> {
         if self.activation_kind.is_none() {
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
                 parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
+                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(vec![(self.detail("module").to_string(), Value::text("builtins"))]), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;
@@ -11810,7 +11814,7 @@ impl<'a> Machine<'a> {
             }
         }
         if Self::is_core_primitive(op) {
-            return self.core_primitive(op, name, positional.clone(), keywords).map(Some).map_err(Escape::Error);
+            return self.core_primitive(op, name, std::mem::take(positional), keywords).map(Some).map_err(Escape::Error);
         }
         if let Prim::Textual(work) = op {
             crate::text::fit_names(table, work, positional, keywords)?;
@@ -29675,8 +29679,8 @@ impl Machine<'_> {
                     [Value::Small(7), callback] => { self.agen_callbacks.0 = callback.clone(); Ok(Value::Nil) }
                     [Value::Small(8), callback] => { self.agen_callbacks.1 = callback.clone(); Ok(Value::Nil) }
                     [Value::Small(9)] => Ok(Value::Flag(self.shutting_down)),
-                    [Value::Small(5), subject] => subject.ownership_count().map(|n| Value::Small(n as i64))
-                        .ok_or_else(|| "NotImplementedError: inline values have no reference counter".into()),
+                    [Value::Small(5), subject] => subject.ownership_count().map(|state| Value::Small(state.as_python()))
+                        .ok_or_else(|| "NotImplementedError: this value has no ownership identity".into()),
                     _ => Err("TypeError: invalid tracing operation".into()),
                 }
             }

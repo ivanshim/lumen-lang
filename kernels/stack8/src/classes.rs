@@ -5865,7 +5865,7 @@ impl<'a> Engine<'a> {
             let function = self.special_text(&saved[0], true)?;
             return Ok(Value::text(&format!("{prefix}({function}{tail})")));
         }
-        if which == 26 && !self.lang.annotation_call.is_empty() {
+        if which == 28 && !self.lang.annotation_call.is_empty() {
             if args.len() != 3 { return Err("TypeError: annotation adapter requires three arguments".into()); }
             let prior = self.armed_names.replace((args[1].clone(), args[2].is_true()));
             let answer = self.class_apply(args[0].contents(), vec![Value::Small(2)]);

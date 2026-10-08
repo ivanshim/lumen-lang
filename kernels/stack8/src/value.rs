@@ -756,48 +756,69 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
     match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
-impl Value {
-    pub(super) fn retained_count(&self) -> Option<usize> {
+/// Inline identities have no allocation to release. They remain canonical
+/// for the whole runtime lifetime; heap identities instead count their owners.
+pub(super) enum Retention {
+    Immortal,
+    Owners(usize),
+}
+
+impl Retention {
+    pub(super) fn python_count(self) -> i64 {
         match self {
+            Self::Owners(count) => count as i64,
+            // CPython's immortal header marker is a lifetime state, not a
+            // number of references to an allocation.
+            Self::Immortal => (3_u32 << 30) as i64,
+        }
+    }
+}
+
+impl Value {
+    pub(super) fn retained_count(&self) -> Option<Retention> {
+        match self {
+            Value::Small(_) | Value::Flag(_) | Value::Null | Value::Ellipsis
+                | Value::Native(..) | Value::ByteKind(..) | Value::Stream(_)
+                | Value::Declined(_) => Some(Retention::Immortal),
             Value::Binding(cell) => cell.borrow().retained_count(),
             Value::Bond(cell) => {
                 let held = cell.borrow();
-                if matches!(&*held, Value::Array(_) | Value::Map(_)) { Some(Rc::strong_count(cell)) }
+                if matches!(&*held, Value::Array(_) | Value::Map(_)) { Some(Retention::Owners(Rc::strong_count(cell))) }
                 else { held.retained_count() }
             }
-            Value::Collection(p, _) => Some(Rc::strong_count(p)),
-            Value::Codepoints(p) => Some(Rc::strong_count(p)),
-            Value::ValueMethod(p) => Some(Rc::strong_count(p)),
-            Value::View(p) => Some(Rc::strong_count(p)),
-            Value::Cursor(p) => Some(Rc::strong_count(p)),
-            Value::Trace(p) => Some(Rc::strong_count(p)),
-            Value::Hashed(p) => Some(Rc::strong_count(p)),
-            Value::Fields(p) => Some(Rc::strong_count(p)),
-            Value::Walking(p) => Some(Rc::strong_count(p)),
-            Value::Walk(p) => Some(Rc::strong_count(p)),
-            Value::Bytes(p, _, _) => Some(Rc::strong_count(p)),
-            Value::Export(p) => Some(Rc::strong_count(p)),
-            Value::Adapter(p) => Some(Rc::strong_count(p)),
-            Value::Counted(p) => Some(Rc::strong_count(p)),
-            Value::Huge(p) => Some(Rc::strong_count(p)),
-            Value::Frac(p) => Some(Rc::strong_count(p)),
-            Value::Real(p) => Some(Rc::strong_count(p)),
-            Value::Complex(p) => Some(Rc::strong_count(p)),
-            Value::Text(p) => Some(Rc::strong_count(p)),
-            Value::Words(p, _) => Some(Rc::strong_count(p)),
-            Value::Array(p) => Some(Rc::strong_count(p)),
-            Value::Tuple(p) => Some(Rc::strong_count(p)),
-            Value::Generator(p) => Some(Rc::strong_count(p)),
-            Value::Set(p) => Some(Rc::strong_count(p)),
-            Value::Slice(p) => Some(Rc::strong_count(p)),
-            Value::Map(p) => Some(Rc::strong_count(p)),
-            Value::Class(p) => Some(Rc::strong_count(p)),
-            Value::Object(p) => Some(Rc::strong_count(p)),
-            Value::Tie(p) => Some(Rc::strong_count(p)),
-            Value::Routine(p) => Some(Rc::strong_count(p)),
-            Value::Method(_, _, p) => Some(Rc::strong_count(p)),
-            Value::Descriptor(p) => Some(Rc::strong_count(p)),
-            Value::Faint(p) => Some(Rc::strong_count(p)),
+            Value::Collection(p, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Codepoints(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::ValueMethod(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::View(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Cursor(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Trace(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Hashed(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Fields(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Walking(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Walk(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Bytes(p, _, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Export(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Adapter(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Counted(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Huge(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Frac(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Real(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Complex(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Text(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Words(p, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Array(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Tuple(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Generator(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Set(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Slice(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Map(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Class(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Object(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Tie(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Routine(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Method(_, _, p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Descriptor(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Faint(p) => Some(Retention::Owners(Rc::strong_count(p))),
             _ => None,
         }
     }

@@ -6139,6 +6139,15 @@ without invoking attribute hooks, metaclass properties, or other descriptors.
 
 Python class annotation readers preserve each deferred expression for FORWARDREF format. The class annotation label also names the annotation module, ForwardRef constructor, owner slot and class flag; unresolved names retain their original expression and actual class owner. VALUE format still raises the original NameError.
 
-The Python tracing bridge retains coroutine-origin depth (operations 3/4), reports live heap ownership counters (5), stores async-generator callbacks (6/7/8), and reports interpreter shutdown state (9). Coroutine creation captures the active frame chain at the configured depth; warning finalization calls the unawaited-coroutine hook with the actual coroutine. Inline scalar values have no heap reference counter and report that limitation honestly.
+The Python tracing bridge retains coroutine-origin depth (operations 3/4), reports live heap owner counters or immortal inline identity state (5), stores async-generator callbacks (6/7/8), and reports interpreter shutdown state (9). Coroutine creation captures the active frame chain at the configured depth; warning finalization calls the unawaited-coroutine hook with the actual coroutine. Inline scalar identities report their immortal lifetime state.
 
 During FORWARDREF evaluation, unresolved annotation names become scoped references while resolved generic constructors keep their real structure. Symbolic name lookup is confined to the annotation thunk; callbacks use their normal name lookup. FORWARDREF format preserves the original expression when evaluation raises NameError.
+
+Reference reporting follows the stored identity's lifetime. Heap identities count
+actual retained owners. None, booleans, inline machine integers and other native
+identities encoded directly in a value cannot be deallocated; they report the
+Python immortal marker instead of an owner count. The inline integer range is
+wider than CPython's small-integer cache. Runtime adapter frames can retain more
+heap owners than a direct CPython builtin call; those owners are reported, without
+subtracting an adapter offset. Native dispatch transfers its argument vector to
+the primitive instead of retaining a second copy while the primitive runs.
