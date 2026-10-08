@@ -1123,6 +1123,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut program_args: Vec<String> = rest.iter().map(said).collect();
     if python.is_some() {
         if let Ok(selection) = env::var("LUMEN_UNITTEST_ONLY") {
+            env::remove_var("LUMEN_UNITTEST_ONLY");
             program_args.extend(selection.split(',').filter(|name| !name.is_empty()).map(str::to_owned));
         }
     }
