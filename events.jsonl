@@ -8985,3 +8985,33 @@
 {"t":"2026-10-08T17:13:50Z","event":"queued","job":"stdlib-unicodedata","model":"gpt-6.1-sol","line":"sol-resume stdlib-unicodedata","note":"waits for a Sol feature slot (11/11 busy)"}
 {"t":"2026-10-08T17:13:50Z","event":"returned","job":"dsflash-marshal","review":"review-auto-dsflash-marshal-1654","commit":"dab4307b2","round":2,"note":"(2nd; test_marshal 48->49/76 both kernels, const-table growth + UTF-8 + list _NULL + float fixed; clean check 1195/0, integrity ok; still blocking: code-object marshalling, v2 int instances (testInt)) -> returns/dsflash-marshal.md + held-resumes (DS Flash 9 running + 2 queued)"}
 {"t":"2026-10-08T17:13:50Z","event":"queued","job":"dsflash-memoryview","model":"deepseek-flash","line":"or-resume dsflash-memoryview deepseek-flash ses_ee59a6b05ffeGqKkn5K1T9bqqJ","note":"from held-resumes (DS Flash 9 running + 2 queued); no dsh session -> fresh"}
+{"t":"2026-10-08T17:14:51Z","event":"note","text":"base/count-batch21e staged from counts/batch21e-merge (02fdc2b9d; main 8de5f2825 = merge of batch21e, identical tree; 1195/0, gates ok, 294 files); new returns use BASE_COUNT=count-batch21e"}
+{"t":"2026-10-08T17:14:51Z","event":"merged","pr":540,"batch":"21e","main":"8de5f2825","note":"batch21e recorded with batch field; base/count-batch21e staged"}
+{"t":"2026-10-08T17:15:03Z","event":"exited","job":"review-auto-dsflash-codeccallbacks-1709","code":0}
+{"t":"2026-10-08T17:15:49Z","event":"resumed","job":"dsflash-code-module","model":"deepseek-flash","session":"ses_ee80e6f2bffeMvKDbR73ZYCd3S"}
+{"t":"2026-10-08T17:16:00Z","event":"queued","job":"integrate-21f","model":"gpt-6.1-sol","line":"sol-new integrate-21f","note":"head of queue; brief-integrate-21f.md: 12 oldest accepted 21e leftovers (numtower..strftime) on main 8de5f2825, BASE_COUNT=count-batch21e"}
+{"t":"2026-10-08T17:16:12Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-08T17:16:42Z","event":"quota","codex_week_used":84,"codex_credits":0,"claude_week_used":12,"claude_5h_used":23,"kimi_5h_used":0,"kimi_month_used":0.9876,"kimi_code_used":0,"deepseek_usd":291.11}
+{"t":"2026-10-08T17:16:48Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":84,"expected":85.2,"gap":-1.2,"status":"ok"}
+{"t":"2026-10-08T17:17:03Z","event":"checkin","status":"done","actions":"returned stdlib-unicodedata (Sol 1st; 53/61 kept; \\N{} sys.modules + unload/reload) -> sol-resume queued; returned dsflash-marshal (2nd; 49/76 kept; code objects + v2 int instances) -> held-resumes; dsflash-memoryview held -> queue; recorded PR #540 merge (21e, main 8de5f2825); staged base/count-batch21e; brief-integrate-21f.md (12 oldest 21e leftovers) + sol-new integrate-21f at queue head; queued/held returns -> BASE_COUNT=count-batch21e; prune-merged freed 2.9 GB (box 85->83%); checkin-brief NEXT INTEGRATION -> 21g, toolkit synced","notes":"box disk 83% (>80, no idle accepted target/ to clear); Mac 86%; Codex week 84%; luna gap -1.2 ok; DS Flash 10 running + 2 queued, Sol 12/12"}
+{"t":"2026-10-08T17:18:49Z","event":"exited","job":"dsflash-charmapcodec","code":0}
+{"t":"2026-10-08T17:20:10Z","event":"finished","job":"dsflash-charmapcodec","exit_time":"2026-10-08T17:18:49Z"}
+{"t":"2026-10-08T17:20:10Z","event":"review-queued","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-1720"}
+{"t":"2026-10-08T17:20:17Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T17:20:50Z","event":"started","job":"integrate-21f","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T17:21:59Z","event":"exited","job":"dsflash-unpack-baseexc","code":0}
+{"t":"2026-10-08T17:22:36Z","event":"exited","job":"dsflash-json-speed-sol","code":0}
+{"t":"2026-10-08T17:25:21Z","event":"finished","job":"dsflash-json-speed-sol","exit_time":"2026-10-08T17:22:36Z"}
+{"t":"2026-10-08T17:25:21Z","event":"review-queued","job":"dsflash-json-speed-sol","review":"review-auto-dsflash-json-speed-sol-1725"}
+{"t":"2026-10-08T17:25:24Z","event":"finished","job":"dsflash-unpack-baseexc","exit_time":"2026-10-08T17:21:58Z"}
+{"t":"2026-10-08T17:25:24Z","event":"review-queued","job":"dsflash-unpack-baseexc","review":"review-auto-dsflash-unpack-baseexc-1725"}
+{"t":"2026-10-08T17:25:29Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T17:25:52Z","event":"review-started","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-1720"}
+{"t":"2026-10-08T17:30:12Z","event":"exited","job":"review-auto-dsflash-charmapcodec-1720","code":0}
+{"t":"2026-10-08T17:30:53Z","event":"resumed","job":"dsflash-descrtut","model":"deepseek-flash","session":"ses_ee8545f43ffe2M1vzaqn0NAd7j"}
+{"t":"2026-10-08T17:33:44Z","event":"accepted","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-1720","batch":"21g","commit":"85843a39c","branch":"fix/dsflash-charmapcodec","note":"(after return + integrity reject) test_charmapcodec 0/4->4/4 both kernels; release codecs.py restored byte-exact, buffer helper moved to runtime_adapters overlay; struct 37/44 + array 833/892 kept; clean check 1195/0 gates ok; integrity ok; overlaps 21f claude-io/bufio/pathlib (_io.py, kernels, README); follow-ups: re-certify calendar/decimal/bytes/tokenize/io timeouts, struct weakref error pre-existing"}
+{"t":"2026-10-08T17:33:44Z","event":"returned","job":"dsflash-codeccallbacks","review":"review-auto-dsflash-codeccallbacks-1709","commit":"454b1110a","round":1,"note":"(1st; test_codeccallbacks absent->43/43 both, clean check 1195/0, integrity ok sha256 faithful; blocker: surrogateescape decode indexes unclamped span -> IndexError (regression vs base/CPython); main moved to 21e: _utf7_decode final/consumed) -> returns/dsflash-codeccallbacks.md + held-resumes (DS Flash full)"}
+{"t":"2026-10-08T17:33:55Z","event":"queued","job":"dsflash-univnewlines","model":"deepseek-flash","line":"or-resume dsflash-univnewlines deepseek-flash ses_ee5e5c975ffetmyOU47tPoVto1","note":"from held-resumes (DS Flash 9 running + memoryview queued); no dsh session -> fresh"}
+{"t":"2026-10-08T17:33:55Z","event":"queued","job":"dsflash-time","model":"deepseek-flash","line":"or-resume dsflash-time deepseek-flash session-ced710d3-3cb1-45a6-bc5d-1af743b3c58e","note":"from held-resumes (DS Flash 12/12 with this)"}
+{"t":"2026-10-08T17:34:37Z","event":"quota","codex_week_used":84,"codex_credits":0,"claude_week_used":12,"claude_5h_used":24,"kimi_5h_used":0,"kimi_month_used":0.9879,"kimi_code_used":0,"deepseek_usd":290.71}
+{"t":"2026-10-08T17:34:40Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":84,"expected":85.8,"gap":-1.8,"status":"ok"}
