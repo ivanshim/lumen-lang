@@ -2,8 +2,25 @@
 // Character Database: https://www.unicode.org/Public/16.0.0/ucd/ .
 // Terms of use: https://www.unicode.org/license.txt .
 
+// Resolve the plain character prefix at compile time from the full property ranges.
+const ASCII_BITS: [u16; 128] = {
+    let mut result = [0; 128];
+    let mut range = 0;
+    while range < PROPERTIES.len() && PROPERTIES[range].0 < 128 {
+        let (first, last, mask) = PROPERTIES[range];
+        let mut code = first;
+        while code <= last && code < 128 {
+            result[code as usize] = mask;
+            code += 1;
+        }
+        range += 1;
+    }
+    result
+};
+
 pub fn bits(letter: char) -> u16 {
     let n = letter as u32;
+    if n < 128 { return ASCII_BITS[n as usize]; }
     let at = PROPERTIES.partition_point(|r| r.1 < n);
     PROPERTIES.get(at).filter(|r| r.0 <= n).map_or(0, |r| r.2)
 }
