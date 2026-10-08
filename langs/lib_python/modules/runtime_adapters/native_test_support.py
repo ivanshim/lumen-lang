@@ -11,6 +11,9 @@ from io import StringIO
 
 MISSING_C_DOCSTRINGS = True
 verbose = False
+
+# The tests that use this address replace the http connection with a fake one.
+TEST_HTTP_URL = "http://www.pythontest.net"
 is_wasi = False
 is_emscripten = False
 Py_DEBUG = False
@@ -1641,3 +1644,10 @@ def open_urlresource(url, *args, **kwargs):
     if not is_resource_enabled('urlfetch'):
         raise unittest.SkipTest('resource urlfetch is not enabled')
     raise NotImplementedError('HTTP resource retrieval is not supported')
+
+
+def control_characters_c0() -> list[str]:
+    """Returns a list of C0 control characters as strings.
+    C0 control characters defined as the byte range 0x00-0x1F, and 0x7F.
+    """
+    return [chr(c) for c in range(0x00, 0x20)] + ["\x7F"]

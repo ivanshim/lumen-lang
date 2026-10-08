@@ -2,6 +2,7 @@
 import socket
 import unittest
 _bind_nix_socket_error = None
+has_gethostname = True
 def skip_unless_bind_unix_socket(test):
     """Decorator for tests requiring a functional bind() for unix sockets."""
     if not hasattr(socket, 'AF_UNIX'):

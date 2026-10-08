@@ -1,8 +1,7 @@
 {
   "files": {
     "collections": "collections/__init__.py",
-    "unittest": "unittest/__init__.py",
-    "urllib": "urllib/__init__.py"
+    "unittest": "unittest/__init__.py"
   },
   "aliases": {
     "os.path": "path",
@@ -27,8 +26,6 @@
     "inspect": "runtime_adapters/native_inspect.py",
     "test.support": "runtime_adapters/native_test_support.py",
     "test.support.os_helper": "runtime_adapters/native_test_support_os_helper.py",
-    "http.client": "runtime_adapters/native_http_client.py",
-    "socket": "runtime_adapters/native_socket.py",
     "test.support.import_helper": "runtime_adapters/native_test_support_import_helper.py",
     "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
