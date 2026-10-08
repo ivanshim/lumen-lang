@@ -125,6 +125,7 @@ pub struct Engine<'a> {
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
+    locals_class: Option<Rc<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
@@ -1616,6 +1617,7 @@ impl<'a> Engine<'a> {
             inline_comp: None,
             location: None,
             frame_class: None,
+            locals_class: None,
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
             async_generators: HashMap::new(),
@@ -5831,6 +5833,280 @@ impl<'a> Engine<'a> {
         Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", Rc::as_ptr(object) as usize, file, line, name))
     }
 
+    /// A proxy over a frame's locals: a small thing that stands for the
+    /// names a frame keeps, so that reading and writing them through
+    /// Python reaches the frame itself.
+    fn locals_class(&mut self) -> Rc<Class> {
+        if let Some(class) = &self.locals_class { return class.clone(); }
+        let class = Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: Some("<class 'FrameLocalsProxy'>".to_string()),
+            name: "FrameLocalsProxy".to_string(), base: None, answers: Vec::new(), fields: Vec::new(),
+            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+            shared: RefCell::new(vec![(self.class_word("module").to_owned(), Value::text("builtins"))]),
+            weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false),
+            mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: RefCell::new(None) });
+        self.locals_class = Some(class.clone());
+        class
+    }
+
+    fn locals_proxy(value: &Value) -> Option<Rc<Instance>> {
+        let Value::Object(proxy) = value else { return None };
+        if proxy.class_now().name != "FrameLocalsProxy" { return None; }
+        Some(proxy.clone())
+    }
+
+    fn locals_proxy_frame(proxy: &Rc<Instance>) -> Option<Rc<Instance>> {
+        let held = proxy.fields.borrow().iter().find(|(name, _)| name == "\0frame").map(|(_, value)| value.clone())?;
+        match held.contents() { Value::Object(frame) => Some(frame), _ => None }
+    }
+
+    fn locals_extra_cell(proxy: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+        let held = proxy.fields.borrow().iter().find(|(name, _)| name == "\0extra").map(|(_, value)| value.clone())?;
+        match held { Value::Bond(cell) => Some(cell), _ => None }
+    }
+
+    fn locals_worth_cell(proxy: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+        let held = proxy.fields.borrow().iter().find(|(name, _)| name == "\0worth").map(|(_, value)| value.clone())?;
+        match held { Value::Bond(cell) => Some(cell), _ => None }
+    }
+
+    /// The names a frame keeps right now, as pairs, in slot order.
+    fn locals_local_pairs(&mut self, frame: &Rc<Instance>) -> Vec<(Value, Value)> {
+        self.refresh_frame(frame);
+        let held = frame.fields.borrow().get(3).map(|(_, value)| value.clone());
+        if let Some(Value::Bond(cell)) = held {
+            if let Value::Map(pairs) = cell.borrow().clone() { return pairs.to_vec(); }
+        }
+        Vec::new()
+    }
+
+    /// Rebuild a proxy's own reading of the frame: the names it keeps plus
+    /// whatever else was written into it and kept aside.
+    fn locals_rebuild(&mut self, proxy: &Rc<Instance>) {
+        let Some(frame) = Self::locals_proxy_frame(proxy) else { return };
+        let mut pairs = self.locals_local_pairs(&frame);
+        if let Some(cell) = Self::locals_extra_cell(proxy) {
+            if let Value::Map(extra) = cell.borrow().clone() {
+                for (key, value) in extra.iter() { pairs.push((key.clone(), value.clone())); }
+            }
+        }
+        if let Some(cell) = Self::locals_worth_cell(proxy) { *cell.borrow_mut() = Value::Map(Rc::new(pairs.into())); }
+    }
+
+    /// Make a proxy over a frame, kept on the frame so the same one comes
+    /// back for every read.
+    fn locals_make(&mut self, frame: &Rc<Instance>) -> Value {
+        let class = self.locals_class();
+        self.made += 1;
+        let worth = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))));
+        let extra = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))));
+        let proxy = Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
+            ("\0frame".to_string(), Value::Object(frame.clone())),
+            ("\0worth".to_string(), worth),
+            ("\0extra".to_string(), extra),
+        ])});
+        let value = Value::Object(proxy);
+        self.locals_rebuild(&match &value { Value::Object(p) => p.clone(), _ => unreachable!() });
+        value
+    }
+
+    fn locals_live_pairs(&mut self, proxy: &Rc<Instance>) -> Vec<(Value, Value)> {
+        let Some(frame) = Self::locals_proxy_frame(proxy) else { return Vec::new() };
+        let mut pairs = self.locals_local_pairs(&frame);
+        if let Some(cell) = Self::locals_extra_cell(proxy) {
+            if let Value::Map(extra) = cell.borrow().clone() {
+                for (key, value) in extra.iter() { pairs.push((key.clone(), value.clone())); }
+            }
+        }
+        pairs
+    }
+
+    fn locals_locate(&mut self, pairs: &[(Value, Value)], key: &Value) -> Res<Option<usize>> {
+        let wanted = self.special_key(key)?;
+        for (at, (candidate, _)) in pairs.iter().enumerate() {
+            if self.special_keys_equal(candidate, &wanted)? { return Ok(Some(at)); }
+        }
+        Ok(None)
+    }
+
+    fn locals_slot_of(&mut self, frame: &Rc<Instance>, key: &Value) -> Res<Option<usize>> {
+        if let Some(told) = self.unkeyable(key) { return Err(told); }
+        let wanted = self.special_key(key)?;
+        let routine = match frame.fields.borrow().get(6).map(|(_, value)| value.clone()) {
+            Some(Value::Routine(body)) => body, _ => return Ok(None),
+        };
+        for (at, name) in routine.idents.iter().enumerate() {
+            let visible = if routine.ident == "<genexpr>" && routine.formals.first() == Some(name) { ".0" } else { name.as_str() };
+            if !Self::public_name(visible) { continue; }
+            if self.special_keys_equal(&Value::text(visible), &wanted)? { return Ok(Some(at)); }
+        }
+        Ok(None)
+    }
+
+    fn locals_store_slot(frame: &Rc<Instance>, at: usize, value: Value) {
+        let held = frame.fields.borrow()[5].1.clone();
+        let Value::Tuple(mut row) = held else { return };
+        if let Some(Value::Binding(cell)) = row.get(at) { *cell.borrow_mut() = value; return; }
+        { let vec = Rc::make_mut(&mut *row); if at < vec.len() { vec[at] = value; } }
+        frame.fields.borrow_mut()[5].1 = Value::Tuple(row);
+    }
+
+    fn locals_extra_put(&mut self, proxy: &Rc<Instance>, key: &Value, value: Value) -> Res<()> {
+        let wanted = self.special_key(key)?;
+        let Some(cell) = Self::locals_extra_cell(proxy) else { return Ok(()) };
+        let mut pairs = match cell.borrow().clone() { Value::Map(map) => map.to_vec(), _ => Vec::new() };
+        match self.locals_locate(&pairs, &wanted)? {
+            Some(at) => pairs[at].1 = value,
+            None => pairs.push((wanted, value)),
+        }
+        *cell.borrow_mut() = Value::Map(Rc::new(pairs.into()));
+        Ok(())
+    }
+
+    /// The living namespace a class body builds, where the frame is such
+    /// a body: its own name slot holds the book the class is filled from.
+    fn locals_class_book(frame: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+        let body = match frame.fields.borrow().get(6).map(|(_, value)| value.clone()) { Some(Value::Routine(body)) => body, _ => return None };
+        let (book_name, _, _) = body.class_namespace.clone()?;
+        let at = body.idents.iter().position(|name| name == &book_name)?;
+        let held = match &frame.fields.borrow()[5].1 { Value::Tuple(items) => items.get(at).cloned(), _ => None }?;
+        Some(match held { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell, other => Rc::new(RefCell::new(other)) })
+    }
+
+    fn locals_assign(&mut self, proxy: &Rc<Instance>, key: &Value, value: Value) -> Res<()> {
+        if let Some(told) = self.unkeyable(key) { return Err(told); }
+        let Some(frame) = Self::locals_proxy_frame(proxy) else { return Ok(()) };
+        if let Some(book) = Self::locals_class_book(&frame) {
+            let name = key.plain();
+            if let Err(fault) = self.book_put(&book, &name, Some(value)) { self.carried = Some(fault); return Err(self.special_fault()); }
+            self.locals_rebuild(proxy);
+            return Ok(());
+        }
+        if let Some(at) = self.locals_slot_of(&frame, key)? {
+            Self::locals_store_slot(&frame, at, value);
+        } else {
+            self.locals_extra_put(proxy, key, value)?;
+        }
+        self.locals_rebuild(proxy);
+        Ok(())
+    }
+
+    fn locals_delete(&mut self, proxy: &Rc<Instance>, key: &Value) -> Res<()> {
+        if let Some(told) = self.unkeyable(key) { return Err(told); }
+        let Some(frame) = Self::locals_proxy_frame(proxy) else { return Err(self.key_absent(key)) };
+        if self.locals_slot_of(&frame, key)?.is_some() { return Err("ValueError: cannot remove local variables from FrameLocalsProxy".to_string()); }
+        let Some(cell) = Self::locals_extra_cell(proxy) else { return Err(self.key_absent(key)) };
+        let mut pairs = match cell.borrow().clone() { Value::Map(map) => map.to_vec(), _ => Vec::new() };
+        match self.locals_locate(&pairs, key)? {
+            Some(at) => { pairs.remove(at); *cell.borrow_mut() = Value::Map(Rc::new(pairs.into())); self.locals_rebuild(proxy); Ok(()) }
+            None => Err(self.key_absent(key)),
+        }
+    }
+
+    fn locals_find(&mut self, proxy: &Rc<Instance>, key: &Value) -> Res<Option<(Value, Value)>> {
+        if let Some(told) = self.unkeyable(key) { return Err(told); }
+        let pairs = self.locals_live_pairs(proxy);
+        match self.locals_locate(&pairs, key)? { Some(at) => Ok(Some(pairs[at].clone())), None => Ok(None) }
+    }
+
+    fn locals_method(&mut self, proxy: &Rc<Instance>, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+        match operation {
+            "keys" | "__reversed__" | "__iter__" => {
+                if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                let mut keys: Vec<Value> = self.locals_live_pairs(proxy).into_iter().map(|(key, _)| key).collect();
+                if operation == "__reversed__" { keys.reverse(); }
+                if operation == "__iter__" { let row = Value::array(keys); return self.core_iterator(&row); }
+                Ok(Value::array(keys))
+            }
+            "values" => {
+                if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                Ok(Value::array(self.locals_live_pairs(proxy).into_iter().map(|(_, value)| value).collect()))
+            }
+            "items" => {
+                if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                Ok(Value::array(self.locals_live_pairs(proxy).into_iter().map(|(key, value)| Value::tuple(vec![key, value])).collect()))
+            }
+            "copy" => {
+                if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                Ok(Value::Map(Rc::new(self.locals_live_pairs(proxy).into())))
+            }
+            "__len__" => {
+                if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                Ok(Value::Small(self.locals_live_pairs(proxy).len() as i64))
+            }
+            "__repr__" => {
+                if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                let map = Value::Map(Rc::new(self.locals_live_pairs(proxy).into()));
+                Ok(Value::text(&map.core_repr(self.lang.shortest_reals)))
+            }
+            "__getitem__" | "__contains__" => {
+                if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                match self.locals_find(proxy, &args[0])? {
+                    Some((_, value)) => Ok(value),
+                    None if operation == "__contains__" => Ok(Value::Flag(false)),
+                    None => Err(self.key_absent(&args[0])),
+                }
+            }
+            "__setitem__" => {
+                if args.len() != 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+                self.locals_assign(proxy, &args[0], args[1].clone())?;
+                Ok(Value::Null)
+            }
+            "__delitem__" => {
+                if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                self.locals_delete(proxy, &args[0])?;
+                Ok(Value::Null)
+            }
+            "get" => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+                match self.locals_find(proxy, &args[0])? {
+                    Some((_, value)) => Ok(value),
+                    None => Ok(args.get(1).cloned().unwrap_or(Value::Null)),
+                }
+            }
+            "setdefault" => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+                let key = args[0].clone();
+                match self.locals_find(proxy, &key)? {
+                    Some((_, value)) => Ok(value),
+                    None => { let default = args.get(1).cloned().unwrap_or(Value::Null); self.locals_assign(proxy, &key, default.clone())?; Ok(default) }
+                }
+            }
+            "pop" => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+                let key = args[0].clone();
+                if let Some(frame) = Self::locals_proxy_frame(proxy) {
+                    if self.locals_slot_of(&frame, &key)?.is_some() { return Err("ValueError: cannot remove local variables from FrameLocalsProxy".to_string()); }
+                }
+                let Some(cell) = Self::locals_extra_cell(proxy) else {
+                    return match args.get(1) { Some(default) => Ok(default.clone()), None => Err(self.key_absent(&key)) };
+                };
+                let mut pairs = match cell.borrow().clone() { Value::Map(map) => map.to_vec(), _ => Vec::new() };
+                match self.locals_locate(&pairs, &key)? {
+                    Some(at) => { let (_, value) = pairs.remove(at); *cell.borrow_mut() = Value::Map(Rc::new(pairs.into())); Ok(value) }
+                    None => match args.get(1) { Some(default) => Ok(default.clone()), None => Err(self.key_absent(&key)) },
+                }
+            }
+            "update" => {
+                if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                if let Some(source) = args.first() {
+                    let held = source.contents();
+                    match &held {
+                        Value::Map(map) => { for (key, value) in map.iter() { self.locals_assign(proxy, key, value.clone())?; } }
+                        Value::Object(other) if other.class_now().name == "FrameLocalsProxy" => {
+                            let other = other.clone();
+                            for (key, value) in self.locals_live_pairs(&other) { self.locals_assign(proxy, &key, value)?; }
+                        }
+                        _ => return Err("TypeError: update() argument must be dict or another FrameLocalsProxy".to_string()),
+                    }
+                }
+                Ok(Value::Null)
+            }
+            "__reduce__" | "__reduce_ex__" => Err("TypeError: cannot pickle 'FrameLocalsProxy' object".to_string()),
+            _ => Err(self.lang.method_errors["arguments"].clone()),
+        }
+    }
+
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let keys = &self.lang.trace_fields;
@@ -5911,8 +6187,14 @@ impl<'a> Engine<'a> {
             return Some(Value::Null);
         }
         if index != 12 { return None; }
-        self.refresh_frame(object);
-        Some(object.fields.borrow()[3].1.clone())
+        let held = object.fields.borrow().iter().find(|(name, _)| name == "\0locals_proxy").map(|(_, value)| value.clone());
+        if let Some(proxy) = held {
+            if let Value::Object(instance) = &proxy { self.locals_rebuild(instance); }
+            return Some(proxy);
+        }
+        let value = self.locals_make(object);
+        object.fields.borrow_mut().push(("\0locals_proxy".to_string(), value.clone()));
+        Some(value)
     }
 
     fn refresh_frame(&mut self, object: &Rc<Instance>) {
@@ -7584,6 +7866,12 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if let Some(proxy) = Self::locals_proxy(value) {
+            self.locals_rebuild(&proxy);
+            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
+                return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
+            }
+        }
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
@@ -9174,6 +9462,26 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if let Some(proxy) = Self::locals_proxy(a).or_else(|| Self::locals_proxy(b)) { self.locals_rebuild(&proxy); }
+        if let (Action::SetWrite(0), true) = (op, self.lang.or_maps) {
+            if let Some(proxy) = Self::locals_proxy(a) {
+                if let Value::Map(map) = b.contents() {
+                    for (key, value) in map.iter() { self.locals_assign(&proxy, key, value.clone())?; }
+                    return Ok(a.clone());
+                }
+            }
+        }
+        if matches!(op, Action::At) {
+            if let Some(proxy) = Self::locals_proxy(a) {
+                return match self.locals_find(&proxy, b)? { Some((_, value)) => Ok(value), None => Err(self.key_absent(b)) };
+            }
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            if let Some(proxy) = Self::locals_proxy(b) {
+                let found = self.locals_find(&proxy, a)?.is_some();
+                return Ok(Value::Flag(found == matches!(op, Action::Contains)));
+            }
+        }
         if matches!(op, Action::At) { if let Some(missing) = self.annotation_operation(a) { return Err(missing); } }
         if self.lang.or_maps && matches!(op, Action::BitEither | Action::SetWrite(0)) {
             fn mapping(value: &Value) -> Option<Value> {
@@ -9845,6 +10153,22 @@ impl<'a> Engine<'a> {
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
+        for value in args {
+            if let Some(proxy) = Self::locals_proxy(value) { self.locals_rebuild(&proxy); }
+        }
+        if op == Builtin::Replace && args.len() == 3 {
+            if let Some(proxy) = Self::locals_proxy(&args[2]) { self.locals_assign(&proxy, &args[0], args[1].clone())?; return Ok(Some(args[2].clone())); }
+        }
+        if op == Builtin::Erase && args.len() == 2 {
+            if let Some(proxy) = Self::locals_proxy(&args[0]) { self.locals_delete(&proxy, &args[1])?; return Ok(Some(Value::Null)); }
+        }
+        if op == Builtin::Reversed && args.len() == 1 {
+            if let Some(proxy) = Self::locals_proxy(&args[0]) {
+                let mut keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                keys.reverse();
+                return Ok(Some(Value::array(keys)));
+            }
+        }
         if op == Builtin::Hash && args.len() == 1 {
             if let Value::Tuple(items) = &args[0] {
                 if let Some(hash) = Self::tuple_hash_remembered(items) { return Ok(Some(hash)); }
@@ -11179,6 +11503,14 @@ impl<'a> Engine<'a> {
                     Some(self.class_get(singleton, name, false)?)
                 },
                 Action::Grab(name) if name.as_ref() == "__getformat__" && self.data.last().is_some_and(|value| matches!(value.contents(), Value::Real(_))) => { let value = self.drop_top()?; Some(self.class_get(value, name, false)?) },
+                Action::Grab(name) if self.data.last().is_some_and(|v| Self::locals_proxy(v).is_some()) => {
+                    let v = self.drop_top()?;
+                    if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name.as_ref()) {
+                        Some(Value::ValueMethod(Rc::new((v, name.to_string()))))
+                    } else {
+                        return Err(self.member_amiss(&v, &name).into());
+                    }
+                },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::ValueMethod(_) | Value::TextMethod(..)) || matches!(v, Value::Native(..)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
@@ -11383,6 +11715,12 @@ impl<'a> Engine<'a> {
                 let named = self.drop_top()?;
                 let holder = self.data.last().cloned().ok_or_else(|| self.special_fault())?;
                 let target = holder.contents();
+                if let Some(proxy) = Self::locals_proxy(&target) {
+                    self.drop_top()?;
+                    self.locals_delete(&proxy, &named)?;
+                    self.data.push(Value::Null);
+                    return Ok(());
+                }
                 if let Value::Fields(o) = &target {
                     let key = self.special_key(&named)?;
                     let mut kept = Vec::new();
@@ -17348,6 +17686,11 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if let Some(proxy) = Self::locals_proxy(receiver) {
+            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__len__", "__iter__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&operation) {
+                return self.locals_method(&proxy, operation, args, named);
+            }
+        }
         if operation == "classmethod_bind" {
             return match self.explicit_classmethod(receiver, args, named) {
                 Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),

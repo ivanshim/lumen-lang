@@ -2351,6 +2351,12 @@ impl<'a> Engine<'a> {
         Ok(alias)
     }
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if self.locals_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &c)) {
+            if args.len() != 1 { return Err(format!("TypeError: FrameLocalsProxy expected 1 argument, got {}", args.len()).into()); }
+            let Value::Object(frame) = args[0].contents() else { return Err(format!("TypeError: expect frame, not {}", args[0].core_kind()).into()); };
+            if !self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) { return Err(format!("TypeError: expect frame, not {}", args[0].core_kind()).into()); }
+            return Ok(self.locals_make(&frame));
+        }
         self.validate_class_spreads(&c, &args)?;
         if self.lang.fuller_classes && Self::super_descended(&c) { return self.super_made(c, args); }
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
@@ -3105,6 +3111,10 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if Self::locals_proxy(&subject).is_some()
+            && ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
+            return Ok(Value::ValueMethod(Rc::new((subject, name.to_string()))));
+        }
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
             return Ok(Value::text("The type of the None singleton."));
         }
