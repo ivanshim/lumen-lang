@@ -946,3 +946,6 @@ NotADirectoryError = NotADirectoryError
 PermissionError = PermissionError
 ProcessLookupError = ProcessLookupError
 TimeoutError = TimeoutError
+
+# This facade exposes the builtin namespace, which has no source file.
+del __file__

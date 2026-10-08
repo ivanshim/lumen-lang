@@ -54,6 +54,12 @@ def format_exception_only(exc, value=None):
         message = '<exception str() failed>'
     if kind is None:
         raise 'TypeError: an exception value is required'
+    if isinstance(exc, BaseException):
+        exception_type = type(exc)
+        kind = exception_type.__qualname__
+        module = exception_type.__module__
+        if module not in ('builtins', '__main__'):
+            kind = module + '.' + kind
     prefix = kind + ': '
     if message[:len(prefix)] == prefix:
         message = message[len(prefix):]
@@ -69,18 +75,26 @@ def format_exception_only(exc, value=None):
             shown = original.lstrip(' \n\f')
             removed = len(original) - len(shown)
             result.append('    ' + shown + '\n')
-            if exc.offset is not None:
-                start = exc.offset - 1 - removed
-                end = exc.end_offset
-                if end is None or end == 0:
-                    end = exc.offset
-                if end == exc.offset or end == -1:
-                    end = exc.offset + 1
+            if isinstance(exc.offset, int):
+                offset = exc.offset
+                if exc.lineno == exc.end_lineno:
+                    end = exc.end_offset
+                    if not isinstance(end, int) or end == 0:
+                        end = offset
+                else:
+                    end = len(original) + 1
+                if exc.text and offset > len(exc.text):
+                    offset = len(original) + 1
+                if exc.text and end > len(exc.text):
+                    end = len(original) + 1
+                if offset >= end or end < 0:
+                    end = offset + 1
+                start = offset - 1 - removed
                 if start >= 0:
                     padding = ''
                     for ch in shown[:start]:
                         padding += ch if ch.isspace() else ' '
-                    result.append('    ' + padding + '^' * max(1, min(end - exc.offset, len(shown) - start)) + '\n')
+                    result.append('    ' + padding + '^' * (end - offset) + '\n')
         message = str(exc.msg or '<no detail available>') + suffix
     result.append((prefix + message if message else kind) + '\n')
     notes = getattr(exc, '__notes__', None)

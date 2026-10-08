@@ -188,6 +188,9 @@ class _BinaryOutput(_StandardStream):
         return False
 
 class _Output(_StandardStream):
+    # The native text stream reads/writes Rust UTF-8 strings.
+    encoding = "utf-8"
+
     def __init__(self):
         self.buffer = _BinaryOutput()
     def write(self, *args, **keywords):
@@ -203,6 +206,9 @@ class _Output(_StandardStream):
         return False
 
 class _Error(_StandardStream):
+    # The native text stream reads/writes Rust UTF-8 strings.
+    encoding = "utf-8"
+
     def __init__(self):
         self.buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
@@ -218,6 +224,9 @@ class _Error(_StandardStream):
         return False
 
 class _Input(_BinaryInput):
+    # The native text stream reads/writes Rust UTF-8 strings.
+    encoding = "utf-8"
+
     def __init__(self):
         self.buffer = _BinaryInput()
     def read(self, size=-1):

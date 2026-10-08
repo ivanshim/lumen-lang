@@ -75,7 +75,7 @@ impl PythonVersion {
                 let components = self.tests.split('/').map(|part| format!("{part:?}")).collect::<Vec<_>>().join(", ");
                 source.replace("'tests', 'python'", &components)
             }
-            "doctest" => source.replace("/tests/python/test_", &format!("/{}/test_", self.tests)),
+            "doctest" | "_doctest_compat" => source.replace("/tests/python/test_", &format!("/{}/test_", self.tests)),
             "platform" => format!("{source}\ndef python_version():\n    return '{}'\n", self.release),
             _ => source.to_string(),
         }
