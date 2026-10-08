@@ -75,6 +75,8 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("argparse", include_str!("argparse.py"), "argparse.py"),
     ("array", include_str!("array.py"), "array.py"),
     ("ast", include_str!("ast.py"), "ast.py"),
+    ("asyncio", include_str!("asyncio/__init__.py"), "asyncio/__init__.py"),
+    ("asyncio.coroutines", include_str!("asyncio/coroutines.py"), "asyncio/coroutines.py"),
     ("atexit", include_str!("atexit.py"), "atexit.py"),
     ("base64", include_str!("base64.py"), "base64.py"),
     ("binascii", include_str!("binascii.py"), "binascii.py"),

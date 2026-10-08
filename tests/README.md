@@ -44,6 +44,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/test/support/__init__.py`: `patch` | `Lib/test/support/__init__.py`: helper function copied unchanged into the existing runtime adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/email/` | `Lib/email/`: every Python source, unchanged beneath a PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/codecs.py`, `stringprep.py`, `encodings/` | `Lib/codecs.py`, `Lib/stringprep.py`, and all 115 `Lib/encodings/` wrapper bodies, unchanged beneath provenance headers; reused from the signed codec port | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/unittest/mock.py`, `asyncio/coroutines.py` | Unchanged CPython package modules beneath PSF headers, incorporated from the unittest package port; coroutine package adapter exposes inspection only | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 | `python-3.14.8/test_zipfile/`, `test/archiver_tests.py`, `archivetestdata/{exe_with_z64,exe_with_zip,testtar.tar,zip_cp437_header.zip,zipdir.zip,zipdir_backslash.zip}` | `Lib/test/test_zipfile/` (all 11 files), `Lib/test/archiver_tests.py`, and archive fixtures, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
