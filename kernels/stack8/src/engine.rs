@@ -9030,9 +9030,21 @@ impl<'a> Engine<'a> {
         // method is bound to the class first, a plain routine is given
         // the class before the key.
         if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
-            if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
-                if self.exception_class(c) && matches!(hook.contents(), Value::Null) {
-                    return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
+            // A metaclass that reads by key governs the class's
+            // subscription: where it answers, its own item method is
+            // reached through the places below and the class-getitem
+            // here is not asked at all.
+            if self.special_value(a, 11).is_some() {
+                // The metaclass's own item method answers below.
+            } else if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
+                match hook.contents() {
+                    // A class-getitem standing as nothing marks the
+                    // class unsubscriptable, whether a fault kind or not.
+                    Value::Null => return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into()),
+                    // A text standing where a callable belongs is of the
+                    // wrong kind and is refused by that kind's own name.
+                    Value::Text(_) => return Err("TypeError: 'str' object is not callable".into()),
+                    _ => {}
                 }
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
@@ -9042,10 +9054,9 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words)) => Err(words),
                     Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
                 };
-            }
-            // A group class is parameterisable, as the reference's is;
-            // the other fault kinds are not subscriptable at all.
-            if self.exception_class(c) {
+            } else if self.exception_class(c) {
+                // A group class is parameterisable, as the reference's is;
+                // the other fault kinds are not subscriptable at all.
                 if c.has_public_field("\0group") {
                     let module = match self.import_module("types") {
                         Ok(module) => module,
