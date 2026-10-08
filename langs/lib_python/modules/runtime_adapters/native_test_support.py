@@ -1646,3 +1646,13 @@ def open_urlresource(url, *args, **kwargs):
 # Return the complete C0 control-character set used by protocol parsers.
 def control_characters_c0():
     return [chr(value) for value in range(32)] + ["\x7f"]
+
+
+# Require the native code object's retained source positions.
+def requires_debug_ranges(reason='requires co_positions / debug_ranges'):
+    return unittest.skipUnless(hasattr((lambda: None).__code__, 'co_positions'), reason)
+
+
+# Skip specialization checks when no specializing interpreter is present.
+def requires_specialization(test):
+    return unittest.skip('requires specialization')(test)

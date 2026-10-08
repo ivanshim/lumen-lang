@@ -39,6 +39,11 @@ def disco(co, lasti=-1, *, file=None):
     _refuse()
 
 hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
+# The native inspection bridge exposes an argument only for jump targets.
+hasarg = sorted(hasjump)
+hasjrel = sorted(hasjump)
+hasjabs = []
+hasexc = []
 
 class Positions:
     def __init__(self, values):

@@ -1,6 +1,7 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("_ast", include_str!("_ast.py"), "_ast.py"),
     ("_bisect", include_str!("_bisect.py"), "_bisect.py"),
     ("_blake2", include_str!("_blake2.py"), "_blake2.py"),
     ("_buffer", include_str!("_buffer.py"), "_buffer.py"),
@@ -149,6 +150,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("ntpath", include_str!("ntpath.py"), "ntpath.py"),
     ("nturl2path", include_str!("nturl2path.py"), "nturl2path.py"),
     ("numbers", include_str!("numbers.py"), "numbers.py"),
+    ("opcode", include_str!("opcode.py"), "opcode.py"),
     ("operator", concat!(include_str!("operator.py"), "\n", include_str!("runtime_adapters/operator.py")), "operator.py"),
     ("optparse", include_str!("optparse.py"), "optparse.py"),
     ("os", include_str!("os.py"), "os.py"),
@@ -209,6 +211,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.support._hypothesis_stubs", include_str!("test/support/_hypothesis_stubs/__init__.py"), "test/support/_hypothesis_stubs/__init__.py"),
     ("test.support._hypothesis_stubs._helpers", include_str!("test/support/_hypothesis_stubs/_helpers.py"), "test/support/_hypothesis_stubs/_helpers.py"),
     ("test.support._hypothesis_stubs.strategies", include_str!("test/support/_hypothesis_stubs/strategies.py"), "test/support/_hypothesis_stubs/strategies.py"),
+    ("test.support.bytecode_helper", include_str!("test/support/bytecode_helper.py"), "test/support/bytecode_helper.py"),
     ("test.support.hashlib_helper", include_str!("test/support/hashlib_helper.py"), "test/support/hashlib_helper.py"),
     ("test.support.hypothesis_helper", include_str!("test/support/hypothesis_helper.py"), "test/support/hypothesis_helper.py"),
     ("test.support.i18n_helper", include_str!("test/support/i18n_helper.py"), "test/support/i18n_helper.py"),
