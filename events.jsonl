@@ -8470,3 +8470,20 @@
 {"t":"2026-10-08T08:24:57Z","event":"review-started","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0824"}
 {"t":"2026-10-08T08:28:05Z","event":"exited","job":"dsflash-source-encoding","code":0}
 {"t":"2026-10-08T08:28:24Z","event":"exited","job":"review-auto-dsflash-bufio-0824","code":0}
+{"t":"2026-10-08T08:29:36Z","event":"finished","job":"dsflash-source-encoding","exit_time":"2026-10-08T08:28:05Z"}
+{"t":"2026-10-08T08:29:36Z","event":"review-queued","job":"dsflash-source-encoding","review":"review-auto-dsflash-source-encoding-0829"}
+{"t":"2026-10-08T08:29:41Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T08:29:57Z","event":"review-started","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-0824"}
+{"t":"2026-10-08T08:31:54Z","event":"exited","job":"stdlib-traceback","code":1}
+{"t":"2026-10-08T08:32:51Z","event":"accepted","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0824","batch":"21f","commit":"b2509a469","branch":"fix/dsflash-bufio","note":"test_bufio absent->4/4 both kernels (sha256 verified); time 217->123 s s8, 254->170 s mc7; readinto override bypass fixed (exact FileIO + identity guard); clean final check 1195/0, gates ok; integration: _io.py overlaps 21e codecs/email, 21f pathlib + claude-io (carry guarded refill into claude-io buffered impl, never replace wholesale), README provenance combine; coordinator re-certify coverage (check predates checker fix); FOLLOW-UPS: class-level readinto replacement probe"}
+{"t":"2026-10-08T08:34:13Z","event":"exited","job":"review-auto-stdlib-tempfile-0824","code":0}
+{"t":"2026-10-08T08:34:58Z","event":"review-started","job":"dsflash-source-encoding","review":"review-auto-dsflash-source-encoding-0829"}
+{"t":"2026-10-08T08:35:08Z","event":"queued","job":"dsflash-pyclbr","model":"deepseek-flash","line":"or-resume dsflash-pyclbr deepseek-flash ses_ee6bdce20ffe7FvK7vqnrn72jH","note":"held resume released (DS Flash 10/12)"}
+{"t":"2026-10-08T08:35:08Z","event":"queued","job":"dsflash-marshal","model":"deepseek-flash","line":"ds-new dsflash-marshal deepseek-flash","note":"new 3.14.8 subject (profile-scope not-yet library, medium): test_marshal; worktree fix/dsflash-marshal at 5ee3e1212; fills DS Flash 12/12"}
+{"t":"2026-10-08T08:35:25Z","event":"quota","codex_week_used":66,"codex_credits":0,"claude_week_used":7,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.9628,"kimi_code_used":0,"deepseek_usd":302.42}
+{"t":"2026-10-08T08:35:31Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":66,"expected":67.2,"gap":-1.2,"status":"ok"}
+{"t":"2026-10-08T08:35:41Z","event":"checkin","status":"done","actions":"accepted dsflash-bufio (b2509a469, 21f; test_bufio absent->4/4 both, time -43% s8 / -33% mc7; readinto override fix verified); released held dsflash-pyclbr resume (DS Flash); new DS Flash subject dsflash-marshal queued (test_marshal, worktree at 5ee3e1212; DS Flash 12/12); prune-merged 0 MB; luna FINDINGS appended","notes":"PR #540 (21e) CI in progress, pr-merge-watch running; box load 7.5, 11.9 GB avail, disk 80%; Mac disk 84%; Codex week 66%, Claude 5h 1%/week 7%; luna alert 47 = expected OpenClaw session, meter gap -1.2 ok; held: dsflash-colorize + code-module (wait stdlib-unittest), dspro-type-annotations (DS Pro busy), claude-pstats (Sonnet busy)"}
+{"t":"2026-10-08T08:39:59Z","event":"resumed","job":"dsflash-pyclbr","model":"deepseek-flash","session":"ses_ee6bdce20ffe7FvK7vqnrn72jH"}
+{"t":"2026-10-08T08:40:30Z","event":"exited","job":"review-auto-dsflash-source-encoding-0829","code":0}
+{"t":"2026-10-08T08:45:00Z","event":"started","job":"dsflash-marshal","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-08T08:48:24Z","event":"exited","job":"dsflash-future-stmt","code":0}
