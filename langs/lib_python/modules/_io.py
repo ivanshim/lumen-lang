@@ -855,12 +855,15 @@ class FileIO(_RawIOBase):
         os.ftruncate(self._fd, size)
         return size
 
+_FILEIO_READINTO = FileIO.readinto
+
 class _CheckedRaw:
     # Buffered streams refill through readinto() so that every raw object's
-    # length contract is checked in one place.  A plain file descriptor is
-    # the exception: read() there is a single bounded system call, so the
-    # file road below reaches it directly and the readinto road still
-    # validates every other raw.
+    # length contract is checked in one place.  A file descriptor whose
+    # readinto is still the FileIO one is the exception: read() there is a
+    # single bounded system call, so the file road below reaches it
+    # directly, while a subclass, class or instance that replaced readinto
+    # keeps the validation road untouched.
     def __init__(self, raw):
         self.raw = raw
         self._owned = True
@@ -891,8 +894,10 @@ class _CheckedRaw:
             if chunk is not None and not isinstance(chunk, bytes):
                 raise TypeError('read() should return bytes')
             return chunk
-        if isinstance(self.raw, FileIO):
-            data = self.raw.read(size)
+        raw = self.raw
+        if (type(raw) is FileIO and type(raw).readinto is _FILEIO_READINTO
+                and 'readinto' not in getattr(raw, '__dict__', ())):
+            data = raw.read(size)
             if data is None:
                 return None
             if not isinstance(data, bytes):
