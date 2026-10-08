@@ -468,16 +468,13 @@ class _Attempt:
             break
 
 
-def _run_example(source, globs):
+def _run_example(source, globs, buffer):
     """Run one example. Returns what it printed, and how it stopped."""
-    import io
-    buffer = io.StringIO()
-    saved = sys.stdout
     attempt = _Attempt(source, globs)
-    sys.stdout = buffer
     outcome = __call_outcome(attempt.call)
-    sys.stdout = saved
     got = buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
     if outcome[0]:
         if got and not got.endswith('\n'):
             got += '\n'
@@ -650,29 +647,40 @@ class DocTestRunner:
         globs = _copy_dict(test.globs)
         failures = 0
         tries = 0
-        for example in test.examples:
-            flags = self.optionflags
-            for flag in example.options:
-                if example.options[flag]:
-                    flags = flags | flag
-                else:
-                    flags = flags & ~flag
-            if flags & SKIP:
-                self.skips += 1
-                continue
-            tries += 1
-            report = self._check(test, example, globs, flags)
-            if report is not None:
-                failures += 1
-                self.reports.append(report)
-                if flags & FAIL_FAST:
-                    break
+        # One stream stands in for sys.stdout through a whole run, the way
+        # the reference runner keeps a single stand-in and drains it after
+        # each example: an object an early example binds out of sys.stdout
+        # then keeps writing where the later examples are read from.
+        import io
+        buffer = io.StringIO()
+        saved = sys.stdout
+        sys.stdout = buffer
+        try:
+            for example in test.examples:
+                flags = self.optionflags
+                for flag in example.options:
+                    if example.options[flag]:
+                        flags = flags | flag
+                    else:
+                        flags = flags & ~flag
+                if flags & SKIP:
+                    self.skips += 1
+                    continue
+                tries += 1
+                report = self._check(test, example, globs, flags, buffer)
+                if report is not None:
+                    failures += 1
+                    self.reports.append(report)
+                    if flags & FAIL_FAST:
+                        break
+        finally:
+            sys.stdout = saved
         self.tries += tries
         self.failures += failures
         return TestResults(failures, tries)
 
-    def _check(self, test, example, globs, flags):
-        got, error, message = _run_example(example.source, globs)
+    def _check(self, test, example, globs, flags, buffer):
+        got, error, message = _run_example(example.source, globs, buffer)
         where = 'File "' + str(test.filename) + '", line ' + \
                 str(example.lineno) + ', in ' + test.name + '\n'
         if _wants_exception(example.want):
