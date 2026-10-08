@@ -196,6 +196,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("subprocess", include_str!("subprocess.py"), "subprocess.py"),
     ("sys", include_str!("sys.py"), "sys.py"),
     ("sysconfig", include_str!("sysconfig.py"), "sysconfig.py"),
+    ("tabnanny", include_str!("tabnanny.py"), "tabnanny.py"),
     ("tempfile", include_str!("tempfile.py"), "tempfile.py"),
     ("test", include_str!("test/__init__.py"), "test/__init__.py"),
     ("test.audiotests", include_str!("test/audiotests.py"), "test/audiotests.py"),
