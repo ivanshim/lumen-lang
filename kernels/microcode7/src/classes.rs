@@ -4776,7 +4776,7 @@ impl<'a> Machine<'a> {
                 // dictionary of the run it was written in.
                 if let Some(globe)=&code.globe { return Ok(globe.clone()); }
                 if code.written_in.is_none() {
-                    if let Some(book) = code.globe.as_ref().and_then(|book| match book { Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell.clone()), Value::Dict(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }) { return Ok(Value::Shared(book)); }
+                    if let Some(book) = code.globe.as_ref().and_then(|book| match book { Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_)) => Some(cell.clone()), Value::Dict(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }) { return Ok(Value::Shared(book)); }
                     if let Some(Value::Thing(main)) = self.imported.get(self.detail("main")) {
                         if let Some((_, dictionary)) = main.holds.borrow().iter().find(|(name, _)| name == "\0dictionary") {
                             return Ok(dictionary.clone());

@@ -6207,7 +6207,7 @@ impl<'a> Machine<'a> {
             }
         };
         let callee = self.env_for(&p, env, args, frame)?;
-        let mut chosen = p.globe.as_ref().and_then(|book| match book { Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell.clone()), Value::Dict(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None });
+        let mut chosen = Self::explicit_globals(&p);
         let paused_names = if self.armed_names.is_none() && !self.annotation_scopes.is_empty() {
             if p.globe.is_none() {
                 let names = self.annotation_scopes.last().unwrap().1.clone();
@@ -12417,7 +12417,7 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let mut handed = match program.globe.as_ref().and_then(|book| match book { Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell.clone()), Value::Dict(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }) {
+        let mut handed = match Self::explicit_globals(&program) {
             Some(namespace) => Some(namespace),
             None if self.armed_names.is_some() => match &program.globe {
                 Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
