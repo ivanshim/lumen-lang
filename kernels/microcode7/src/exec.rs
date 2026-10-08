@@ -9775,7 +9775,7 @@ impl<'a> Machine<'a> {
     }
     /// A union's reading at the equality places: two unions are one
     /// where their member rows are equal member for member.
-    fn union_protocol(&mut self, union: &Value, name: &str, arguments: &[Value]) -> Res<Option<Value>> {
+    pub(super) fn union_protocol(&mut self, union: &Value, name: &str, arguments: &[Value]) -> Res<Option<Value>> {
         if !matches!(name, "__eq__" | "__ne__") || arguments.len() != 1 { return Ok(None); }
         let Value::Thing(object) = union.settled() else { return Ok(None); };
         let left = object.holds.borrow().iter().find(|entry| entry.0 == "__args__").map(|entry| entry.1.clone());

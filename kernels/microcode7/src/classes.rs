@@ -68,6 +68,8 @@ impl<'a> Machine<'a> {
         }
         if word == "Union" {
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
+            protocols.extend(["__eq__", "__ne__"].into_iter().map(|operation|
+                (operation.to_owned(), Self::wrap(127, vec![Value::text(operation)]))));
             // The reference builds a union by subscription; the folded
             // members are the very shape the class questions read.
             protocols.push(("__class_getitem__".to_owned(), Self::wrap(140, Vec::new())));
@@ -1611,6 +1613,20 @@ impl<'a> Machine<'a> {
                         Ok(self.prim(Prim::Weigh, "eval", &kept)?)
                     }
                     127 => {
+                        if let Some(operation) = kept.first().map(Value::bare) {
+                            let receiver = match values.first() {
+                                Some(value)=>value.settled(),
+                                None=>return Err(format!("TypeError: descriptor '{operation}' of 'typing.Union' object needs an argument").into()),
+                            };
+                            let genuine = matches!(&receiver, Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"));
+                            if !genuine {
+                                let received = Self::type_argument_kind(&receiver);
+                                return Err(format!("TypeError: descriptor '{operation}' requires a 'typing.Union' object but received a '{received}'").into());
+                            }
+                            let tail = &values[1..];
+                            if tail.len() != 1 { return Err(format!("TypeError: expected 1 argument, got {}", tail.len()).into()); }
+                            return self.union_protocol(&receiver, &operation, tail)?.ok_or_else(|| self.class_unready());
+                        }
                         let first = values.first().cloned().ok_or_else(|| self.class_unready())?;
                         let row = self.read_class_member(first, "__args__", true)?;
                         let mut parts = Vec::new();
@@ -3300,22 +3316,24 @@ impl<'a> Machine<'a> {
         let not_mine=Value::Refusal(Rc::from(self.rules.words_ext_stmt_class_special_declined.first().map(String::as_str).unwrap_or("NotImplemented")));
         let Some(first)=values.first().cloned() else{return Err(self.class_unready())};
         let second=values.get(1).cloned();
-        let same=|a:&Value,b:&Value|match (a,b){(Value::Thing(x),Value::Thing(y))=>Rc::ptr_eq(x,y),_=>contained_equal(a,b)};
         Ok(match which {
-            Some(0)=>match &second{
-                Some(other)=>match self.ask_special(&first, 2, std::slice::from_ref(other))? {
-                    Some(said@Value::Refusal(_))=>said,
-                    Some(said)=>Value::Flag(self.object_truth(&said)?),
-                    None=>if same(&first,other){Value::Flag(true)}else{not_mine},
-                },
-                None=>not_mine,
+            // Answer the base slot by identity; a user equality method is irrelevant here.
+            Some(0)=>{
+                let identical = match second.as_ref() {
+                    Some(other)=>self.prim(Prim::Selfsame, "", &[first.clone(), other.clone()])?,
+                    None=>Value::Flag(false),
+                };
+                if matches!(identical, Value::Flag(true)) { identical } else { not_mine }
             },
             Some(1)=>{
                 let Some(other)=second else{return Err(self.class_unready())};
                 match self.ask_special(&first,2,&[other.clone()])? {
                     Some(said@Value::Refusal(_))=>said,
                     Some(said)=>Value::Flag(!self.object_truth(&said)?),
-                    None=>if same(&first,&other){Value::Flag(false)}else{not_mine},
+                    None=>{
+                        let identity = self.prim(Prim::Selfsame, "", &[first.clone(), other])?;
+                        if matches!(identity, Value::Flag(true)) { Value::Flag(false) } else { not_mine }
+                    },
                 }
             }
             Some(2..=5)|Some(14)=>not_mine,

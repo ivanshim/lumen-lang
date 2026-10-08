@@ -7883,7 +7883,7 @@ impl<'a> Engine<'a> {
 
     /// A union's reading at the equality places: two unions are one
     /// where their member rows are equal member for member.
-    fn union_protocol(&mut self, union: &Value, place: usize, args: &[Value]) -> Flow<Option<Value>> {
+    pub(super) fn union_protocol(&mut self, union: &Value, place: usize, args: &[Value]) -> Flow<Option<Value>> {
         let Some(word) = self.lang.class_special.get(place).map(String::as_str) else { return Ok(None); };
         if !matches!(word, "__eq__" | "__ne__") || args.len() != 1 { return Ok(None); }
         let Value::Object(object) = union else { return Ok(None); };

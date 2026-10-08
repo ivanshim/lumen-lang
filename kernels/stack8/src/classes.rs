@@ -68,6 +68,11 @@ impl<'a> Engine<'a> {
         }
         if word == "Union" {
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
+            for place in [2usize, 3] {
+                if let Some(name) = self.lang.class_special.get(place) {
+                    hooks.push((name.clone(), Self::adapter(126, vec![Value::Small(place as i64)])));
+                }
+            }
             // The reference builds a union by subscription, which the
             // special form's own item method does; the folded members
             // are the very shape the class questions read a union by.
@@ -1536,6 +1541,18 @@ impl<'a> Engine<'a> {
                     Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
                 }
                 126 => {
+                    if let Some(Value::Small(place)) = w.1.first() {
+                        let name = self.lang.class_special[*place as usize].clone();
+                        let Some(subject) = args.first().map(Value::contents) else {
+                            return Err(format!("TypeError: descriptor '{name}' of 'typing.Union' object needs an argument").into());
+                        };
+                        if !matches!(&subject, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union")) {
+                            return Err(format!("TypeError: descriptor '{name}' requires a 'typing.Union' object but received a '{}'", Self::type_argument_kind(&subject)).into());
+                        }
+                        if args.len() != 2 { return Err(format!("TypeError: expected 1 argument, got {}", args.len() - 1).into()); }
+                        return self.union_protocol(&subject, *place as usize, &args[1..])?
+                            .ok_or_else(|| self.class_refusal());
+                    }
                     let Some(Value::Object(union)) = args.first() else { return Err(self.class_refusal()); };
                     let mut parts = Vec::new();
                     if let Some((_, Value::Tuple(members))) = union.fields.borrow().iter().find(|(key, _)| key == "__args__") {
@@ -2691,22 +2708,23 @@ impl<'a> Engine<'a> {
         let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
         let other = args.get(1).cloned();
         Ok(match place {
-            // A thing whose own class answers equality keeps that
-            // answer; anything else is alike only with itself.
+            // The root equality slot compares identity without calling overrides.
             0 => match other {
-                Some(v) => match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {
-                    Some(told @ Value::Declined(_)) => told,
-                    Some(told) => Value::Flag(self.special_truth(&told).map_err(Fault::Note)?),
-                    None => if Self::member_matches(&subject,&v) { Value::Flag(true) } else { declined() },
+                Some(v) => match self.special_dyad(&Action::Same, &subject, &v).map_err(Fault::Note)? {
+                    Value::Flag(true) => Value::Flag(true),
+                    _ => declined(),
                 },
-                _ => declined(),
+                None => declined(),
             },
             1 => {
                 let Some(v) = other else { return Err(self.class_refusal()); };
                 match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {
                     Some(told @ Value::Declined(_)) => told,
                     Some(told) => Value::Flag(!self.special_truth(&told).map_err(Fault::Note)?),
-                    None => if Self::member_matches(&subject,&v) {Value::Flag(false)} else {declined()},
+                    None => match self.special_dyad(&Action::Same, &subject, &v).map_err(Fault::Note)? {
+                        Value::Flag(true) => Value::Flag(false),
+                        _ => declined(),
+                    },
                 }
             }
             2..=5 | 14 => declined(),
