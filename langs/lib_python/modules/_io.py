@@ -1113,6 +1113,17 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+        if not isinstance(mode, str):
+            raise TypeError('invalid mode: %r' % (mode,))
+        modes = set(mode)
+        if modes - set('axrwb+t') or len(mode) > len(modes):
+            raise ValueError('invalid mode: %r' % mode)
+        if 't' in modes and 'b' in modes:
+            raise ValueError("can't have text and binary mode at once")
+        if sum(letter in modes for letter in 'xrwa') > 1:
+            raise ValueError("can't have read/write/append mode at once")
+        if not modes & set('xrwa'):
+            raise ValueError('must have exactly one read/write/append mode')
         if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode:
             if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
                 import os
