@@ -176,6 +176,8 @@ def _union_new(cls, *args, **kwargs):
 
 
 def _union_hash(union):
+    for member in union.__args__:
+        hash(member)
     return hash(frozenset(union.__args__))
 
 

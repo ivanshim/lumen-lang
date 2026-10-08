@@ -9750,7 +9750,7 @@ impl<'a> Engine<'a> {
                 // they hash, or sets the hash method to nothing, has
                 // things that cannot be hashed.
                 if matches!(self.special_value(&args[0], 8), Some(Value::Null)) {
-                    return Err(self.core_fault("core.unhashable", &args[0].core_kind()));
+                    return Err(self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])));
                 }
                 if let Some(answer) = self.special_call(&args[0], 8, Vec::new())? {
                     let answer = Self::worth_of(&answer).map_or(answer.clone(), |v| v.contents());
@@ -13943,6 +13943,8 @@ impl<'a> Engine<'a> {
     fn unhashable_named(v: &Value) -> String {
         match v {
             Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => Self::unhashable_named(&cell.borrow()),
+            // A class that cannot be hashed is named by the metaclass that made it so.
+            Value::Class(c) => Self::maker_beneath(c).map_or_else(|| v.core_kind(), |maker| maker.name.clone()),
             Value::Tuple(items) => match items.iter().find(|item| item.core_hash().is_none()) {
                 Some(item) => Self::unhashable_named(item),
                 None => v.core_kind(),

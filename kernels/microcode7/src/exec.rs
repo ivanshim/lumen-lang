@@ -16990,7 +16990,7 @@ impl<'a> Machine<'a> {
             (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
                 // Equality without a hash method, or the hash method set to
                 // nothing: such a thing cannot be a key.
-                return Err(self.core_complaint("core.unhashable", &one.kind_word()));
+                return Err(self.core_complaint("core.unhashable", &Self::unhashable_kind(one)));
             }
             (Prim::Hashed, [code @ Value::Wrapped(7, _)]) => Value::Small(Value::code_worth_hash(code).ok_or_else(|| self.bad_answer())?),
             (Prim::Hashed, [one]) => match self.ask_special(one, 8, &[])? {
@@ -23175,6 +23175,8 @@ impl<'a> Machine<'a> {
     fn unhashable_kind(value: &Value) -> String {
         match value {
             Value::Shared(cell) | Value::Mutable(cell, _) => Self::unhashable_kind(&cell.borrow()),
+            // A class that cannot be hashed is named by the metaclass that made it so.
+            Value::Blueprint(b) => Self::builder_over(b).map_or_else(|| value.kind_word(), |maker| maker.name.clone()),
             Value::Tuple(items) | Value::Row(items) => match items.iter().find(|item| item.hash_number().is_none()) {
                 Some(item) => Self::unhashable_kind(item),
                 None => value.kind_word(),
