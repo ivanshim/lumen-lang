@@ -8188,3 +8188,25 @@
 {"t":"2026-10-08T02:40:37Z","event":"review-started","job":"dsflash-locale","review":"review-auto-dsflash-locale-0159"}
 {"t":"2026-10-08T02:44:45Z","event":"exited","job":"review-auto-dsflash-locale-0159","code":0}
 {"t":"2026-10-08T02:45:39Z","event":"resumed","job":"dsflash-platform","model":"deepseek-flash","session":"ses_ee7a8378effeAojLGQhmouLatp"}
+{"t":"2026-10-08T02:48:54Z","event":"exited","job":"dsflash-charmapcodec","code":0}
+{"t":"2026-10-08T02:50:41Z","event":"review-started","job":"dsflash-type-aliases","review":"review-auto-dsflash-type-aliases-0235"}
+{"t":"2026-10-08T02:50:57Z","event":"finished","job":"dsflash-charmapcodec","exit_time":"2026-10-08T02:48:54Z"}
+{"t":"2026-10-08T02:50:57Z","event":"review-queued","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-0250"}
+{"t":"2026-10-08T02:51:04Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T02:51:13Z","event":"note","text":"prune-archive: removed 0 files (0 MB); 0 finished jobs"}
+{"t":"2026-10-08T02:51:22Z","event":"note","text":"archive-sync: archived to lumenlang2:coord-archive; pruned 8 old local items (active kept: _int21e claude-deque claude-io claude-io-sol dsflash-bufio dsflash-descrtut dsflash-future-stmt dsflash-genericalias dsflash-gettext dsflash-json-speed dsflash-json-speed-sol dsflash-picklebuffer dsflash-platform dsflash-pyclbr dsflash-shelve-dbm dsflash-shelve-dbm-sol dsflash-source-encoding dsflash-ucn dsflash-unicode-file dspro-argparse dspro-argparse-sol integrate-21e kimi-module perf-mc7-overhead review-auto-dsflash-type-aliases-0235 stdlib-descr stdlib-traceback stdlib-unittest stdlib-warnings stdlib-zipfile )"}
+{"t":"2026-10-08T02:51:26Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-08T02:52:51Z","event":"accepted","job":"dsflash-locale","review":"review-auto-dsflash-locale-0159","batch":"21f","commit":"d98d3ea58","branch":"fix/dsflash-locale","note":"test_locale 37->40/43 both kernels (0 fail/0 err, unsupported locales now upstream skips); clean final check 1194/0; byte-exact test_locale + locale.py vs 3.14.8; integration: apply variadic os_helper.unset to runtime_adapters/native_test_support_os_helper.py (combine with 21f stdlib-pathlib), keep main's upstream os_helper.py; FOLLOW-UPS: non-C locale support, setlocale category coercion/str-subclass collation (unexercised), stale tests/README.md:158 locale.py hash; coordinator to re-certify bytes/decimal/calendar/tokenize/io coverage"}
+{"t":"2026-10-08T02:53:00Z","event":"exited","job":"dsflash-ucn","code":0}
+{"t":"2026-10-08T02:55:07Z","event":"quota","codex_week_used":56,"codex_credits":0,"claude_week_used":5,"claude_5h_used":13,"kimi_5h_used":0,"kimi_month_used":0.9461,"kimi_code_used":0,"deepseek_usd":312.97}
+{"t":"2026-10-08T02:55:12Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":56,"expected":56.5,"gap":-0.5,"status":"ok"}
+{"t":"2026-10-08T02:55:19Z","event":"checkin","status":"done","actions":"accepted dsflash-locale (d98d3ea58, 21f; test_locale 37->40/43 both, clean check 1194/0; integration: variadic unset goes into the os_helper runtime adapter, combine with pathlib); released dsflash-robotparser (DS Flash) and dspro-tstring (DS Pro free after type-annotations) from held-resumes to queue; DS Flash fed: brief + worktree dsflash-pkgutil (test_pkgutil, main 5ee3e1212), ds-new queued (DS Flash 10 running + 2 queued = 12/12); prune-merged freed 0MB; luna FINDINGS appended","notes":"box load 7.5/8, 11.6 GB available, disk 79-80%; Mac disk 79%; Sol 11 feature + type-aliases review = 12/12, coroutines resume + 2 reviews queued; Kimi module (lverify), kimi-type-comments queued; Sonnet claude-deque; no open PRs; luna: no new alerts, meter gap -0.5 ok (Codex metered 56%); Claude 5h 12% week 5%"}
+{"t":"2026-10-08T02:55:32Z","event":"exited","job":"review-auto-dsflash-type-aliases-0235","code":0}
+{"t":"2026-10-08T02:55:42Z","event":"review-started","job":"dspro-type-annotations","review":"review-auto-dspro-type-annotations-0235"}
+{"t":"2026-10-08T02:56:09Z","event":"finished","job":"dsflash-ucn","exit_time":"2026-10-08T02:53:00Z"}
+{"t":"2026-10-08T02:56:09Z","event":"review-queued","job":"dsflash-ucn","review":"review-auto-dsflash-ucn-0256"}
+{"t":"2026-10-08T02:56:13Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T02:59:32Z","event":"exited","job":"review-auto-dspro-type-annotations-0235","code":0}
+{"t":"2026-10-08T03:00:43Z","event":"review-started","job":"dsflash-charmapcodec","review":"review-auto-dsflash-charmapcodec-0250"}
+{"t":"2026-10-08T03:04:19Z","event":"exited","job":"review-auto-dsflash-charmapcodec-0250","code":0}
+{"t":"2026-10-08T03:05:45Z","event":"review-started","job":"dsflash-ucn","review":"review-auto-dsflash-ucn-0256"}
