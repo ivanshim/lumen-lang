@@ -82,12 +82,8 @@ def getdoc(object):
 
 
 def stack(context=1):
-    # CPython walks the calls in progress and hands back a record for
-    # each, with the frame, the file and the line. No kernel here keeps
-    # the calls in progress as anything a program can reach, so an empty
-    # list would read as a program called from nowhere, which is never
-    # true. It refuses instead.
-    raise 'NotImplementedError: inspect.stack needs the calls in progress as objects, which this runtime does not keep'
+    import sys
+    return getouterframes(sys._getframe(1), context)
 
 
 def currentframe():
@@ -793,3 +789,29 @@ def getframeinfo(frame, context=1):
     else:
         code_context = index = None
     return Traceback(filename, lineno, frame.f_code.co_name, code_context, index)
+
+
+class FrameInfo(_frame_tuple('_FrameInfo', 'frame filename lineno function code_context index')):
+    def __new__(cls, frame, filename, lineno, function, code_context, index, *, positions=None):
+        value = super().__new__(cls, frame, filename, lineno, function, code_context, index)
+        value.positions = positions
+        return value
+
+    def __len__(self):
+        return 6
+
+    def __repr__(self):
+        return ('FrameInfo(frame={!r}, filename={!r}, lineno={!r}, function={!r}, '
+                'code_context={!r}, index={!r}, positions={!r})'.format(
+                self.frame, self.filename, self.lineno, self.function,
+                self.code_context, self.index, self.positions))
+
+
+def getouterframes(frame, context=1):
+    result = []
+    while frame is not None:
+        info = getframeinfo(frame, context)
+        result.append(FrameInfo(frame, info.filename, info.lineno, info.function,
+                               info.code_context, info.index, positions=info.positions))
+        frame = frame.f_back
+    return result
