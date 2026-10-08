@@ -1651,3 +1651,7 @@ def get_attribute(obj, name):
         raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
     else:
         return attribute
+
+# Return the complete C0 control-character set used by protocol parsers.
+def control_characters_c0():
+    return [chr(value) for value in range(32)] + ["\x7f"]
