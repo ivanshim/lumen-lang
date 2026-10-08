@@ -3929,6 +3929,19 @@ impl<'a> Machine<'a> {
                 return Ok(Self::wrap(135, vec![Value::tuple(vec![restore, Value::tuple(vec![receiver, Value::text(&word)])])]));
             }
         }
+        if let Value::Wrapped(3, bound) = &value {
+            if let Some(Value::Wrapped(36, definition)) = bound.first() {
+                let word = definition[0].bare();
+                let owner = definition.get(1).map(Value::bare).unwrap_or_else(|| self.detail("root").to_string());
+                match key {
+                    "__objclass__" => return Ok(self.kind_by_word(&owner).unwrap_or_else(|| Value::Blueprint(self.common_ancestor()))),
+                    _ if key == self.detail("qualified") => return Ok(Value::text(&[owner, word].join("."))),
+                    _ if key == self.detail("name") => return Ok(Value::text(&word)),
+                    _ if key == self.detail("doc") && word == "__str__" => return Ok(Value::text("Return str(self).")),
+                    _ => {},
+                }
+            }
+        }
         if let Value::Wrapped(14, arguments) = &value {
             if key == self.detail("receiver") {
                 if let Some(owner) = self.kind_by_word(&arguments[0].bare()) { return Ok(owner); }

@@ -38,6 +38,7 @@ thread_local! {
 /// class is built rather than read outright.
 struct ClassParts {
     lexical_members: Vec<String>,
+    written_on_self: Vec<String>,
     completed_class: Address,
     needs_class_cell: bool,
     class_cell_protocol: bool,
@@ -189,6 +190,7 @@ pub struct Builder<'a> {
     /// fault raised on the way into it names.
     declared_at: u32,
     adorned_from: Option<u32>,
+    unmangled_attributes: HashMap<usize, (Rc<str>, String)>,
     /// The slots the routine being built fills from what it carried
     /// away with it, gathered while its names are read.
     carrying: Vec<usize>,
@@ -664,7 +666,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, adorned_from: None, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, adorned_from: None, unmangled_attributes: HashMap::new(), carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -3947,8 +3949,13 @@ impl<'a> Builder<'a> {
         loop {
             if self.on_any("op.pipe") {
                 self.advance();
-                let field = self.need_word("after the member mark")?;
-                place = prim_call(Prim::Of, vec![place, constant(Value::text(&field))]);
+                let target_self = self.receiver_spells_self(self.pos);
+                let spelled = self.original_words[self.pos].lexeme.clone();
+                let field = Value::text(&self.need_word("after the member mark")?);
+                if target_self && self.table.has_any("ext.stmt.class.builder") {
+                    if let Value::Text(text) = &field { self.unmangled_attributes.insert(text.as_ptr() as usize, (text.clone(), spelled)); }
+                }
+                place = prim_call(Prim::Of, vec![place, constant(field)]);
                 place = self.called_on_value(place)?;
             } else if self.on_any("op.index.open") {
                 self.advance();
@@ -5269,7 +5276,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, written_on_self: Vec::new(), completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // The body uses the metaclass's actual mapping from its first statement.
@@ -5324,6 +5331,12 @@ impl<'a> Builder<'a> {
         self.class_met.pop();
         self.within = previous;
         self.named_before = named_outside;
+        let mut fields = std::mem::take(&mut self.parts().written_on_self);
+        fields.sort(); fields.dedup();
+        let namespace = self.parts().book.clone().expect("class namespace");
+        let target = self.read_to_write(namespace.ident.as_ref());
+        let names = constant(Value::tuple(fields.into_iter().map(|name| Value::text(&name)).collect()));
+        setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text("__static_attributes__")), names]));
         let parts = self.under_way.pop().expect("class body");
         if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
@@ -5475,7 +5488,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, written_on_self: Vec::new(), completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -5859,7 +5872,8 @@ impl<'a> Builder<'a> {
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
-        self.declared_at = match self.adorned_from.take() { Some(row) => row, None => (self.look().row as u32).saturating_sub(self.before) };
+        let header_row = self.adorned_from.take().unwrap_or_else(|| (self.look().row as u32).saturating_sub(self.before));
+        self.declared_at = header_row;
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let explicit = table.flag("ext.stmt.class.this.explicit");
@@ -5889,6 +5903,7 @@ impl<'a> Builder<'a> {
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.
         if self.on_stmt_end() && !self.block_opens_ahead() {
+            self.declared_at = header_row;
             let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
             return match named {
                 Form::Const(Value::Routine(p)) => Ok((p, Vec::new())),
@@ -5903,6 +5918,7 @@ impl<'a> Builder<'a> {
         let keep_defaults = table.flag("ext.syntax.call.bind_names");
         let spares_out = spares.clone();
         let local_defaults = spares.iter().map(|(place, _)| *place).collect();
+        self.declared_at = header_row;
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             r.layers.last_mut().unwrap().permits_async = deferred;
             r.generator_seen = deferred;
@@ -7628,7 +7644,8 @@ impl<'a> Builder<'a> {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
         }
         let table = self.table;
-        self.declared_at = match self.adorned_from.take() { Some(row) => row, None => (self.look().row as u32).saturating_sub(self.before) };
+        let header_row = self.adorned_from.take().unwrap_or_else(|| (self.look().row as u32).saturating_sub(self.before));
+        self.declared_at = header_row;
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
@@ -7667,6 +7684,7 @@ impl<'a> Builder<'a> {
         let declared = self.look().shape == Shape::Sign && table.separates(&self.look().lexeme);
         let statics_before = self.statics.len();
         self.pending_types = typed_names;
+        self.declared_at = header_row;
         let program = self.routine(&title, Holds::Every, Traps::Yields, params, least, |r| {
             r.layers.last_mut().unwrap().permits_async = deferred;
             r.generator_seen = deferred;
@@ -8732,6 +8750,28 @@ impl<'a> Builder<'a> {
         Ok(sequence(steps))
     }
 
+    fn receiver_spells_self(&self, position: usize) -> bool {
+        let mut cursor = match position.checked_sub(2) { Some(n) => n, None => return false };
+        let mut parentheses = 0;
+        while self.tokens[cursor].lexeme == ")" {
+            parentheses += 1;
+            if cursor == 0 { return false; } cursor -= 1;
+        }
+        if self.tokens[cursor].lexeme != "self" { return false; }
+        while parentheses > 0 {
+            if cursor == 0 { return false; } cursor -= 1;
+            if self.tokens[cursor].lexeme != "(" { return false; }
+            parentheses -= 1;
+        }
+        if cursor == 0 { return true; }
+        let previous = &self.tokens[cursor - 1];
+        if previous.lexeme == "." { return false; }
+        if self.tokens[cursor].lexeme == "(" {
+            return previous.shape != Shape::Bare && previous.lexeme != ")" && previous.lexeme != "]";
+        }
+        true
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         let compound = compound.map(|op| {
             if self.table.has_any("ext.builtin.bytes") && matches!(op, Prim::Plus | Prim::Times) { Prim::OctetAssign(op == Prim::Times) }
@@ -8749,6 +8789,19 @@ impl<'a> Builder<'a> {
         if let Form::Muted(inner) = expr {
             let written = self.write_into(*inner, gives_back, compound, assign)?;
             return Ok(Form::Muted(Box::new(written)));
+        }
+        if compound.is_none() && self.table.has_any("ext.stmt.class.builder") {
+            if let Form::Apply(Callee::Prim(Prim::Of, _), operands) = &expr {
+                if let Some(Form::Const(Value::Text(label))) = operands.get(1) {
+                    if let Some(source) = self.unmangled_attributes.get(&(label.as_ptr() as usize)).map(|entry| entry.1.clone()) {
+                        let omit_current = usize::from(self.in_class_body());
+                        if self.under_way.len() > omit_current {
+                            let index = self.under_way.len() - omit_current - 1;
+                            self.under_way[index].written_on_self.push(source);
+                        }
+                    }
+                }
+            }
         }
         // A bare name read only to be written over was no use of the
         // name: the write says it was written, as the reference counts
@@ -10889,12 +10942,20 @@ impl<'a> Builder<'a> {
                 };
                 continue;
             }
+            let is_self_name = self.receiver_spells_self(self.pos);
+            let source_label = self.original_words[self.pos].lexeme.clone();
             let named = self.need_word("after the member mark")?;
+            let member_text = Value::text(&named);
+            if is_self_name && table.has_any("ext.stmt.class.builder") {
+                if let Value::Text(label) = &member_text {
+                    self.unmangled_attributes.insert(label.as_ptr() as usize, (label.clone(), source_label));
+                }
+            }
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
             if calling && table.strings("ext.builtin.method.from_number").iter().any(|word| word.rsplit('.').next() == Some(named.as_str())) {
                 self.advance();
                 let values = self.args("syntax.call.close", "syntax.call.separator")?;
-                node = invoke(prim_call(Prim::Of, vec![node, constant(Value::text(&named))]), values);
+                node = invoke(prim_call(Prim::Of, vec![node, constant(member_text.clone())]), values);
                 continue;
             }
             let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
@@ -10904,10 +10965,10 @@ impl<'a> Builder<'a> {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
-                let test = prim_call(Prim::HasMember, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
+                let test = prim_call(Prim::HasMember, vec![Form::Read(held.clone()), constant(member_text.clone())]);
                 let begin = self.pos;
                 let yes = self.limb(Traps::Naught, |r| {
-                    let member = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
+                    let member = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(member_text.clone())]);
                     if !calling { return Ok(member); }
                     r.advance();
                     let args = r.args("syntax.call.close", "syntax.call.separator")?;
@@ -10927,7 +10988,7 @@ impl<'a> Builder<'a> {
                         return Ok(if calling { invoke(member, args) } else { member });
                     }
                     if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|key| table.spells(key, &named)) {
-                        args.insert(1, constant(Value::text(&named)));
+                        args.insert(1, constant(member_text.clone()));
                         return Ok(prim_call(Prim::Ask, args));
                     }
                     if let Some(op @ Prim::SetCall(1..=17)) = table.prims.get(&named).copied() {
@@ -10937,12 +10998,12 @@ impl<'a> Builder<'a> {
                         // what an absent member says; a table without
                         // those words keeps the old refusal.
                         if table.strings("ext.builtin.method.error.attribute").len() == 3 {
-                            return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                            return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(member_text.clone())]));
                         }
                         return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(14))) {
-                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(member_text.clone())]));
                     }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
@@ -10953,7 +11014,7 @@ impl<'a> Builder<'a> {
                     // into: the value is told it has no such member,
                     // whatever a name of that spelling holds.
                     if table.prims.get(&named).is_none() && table.strings("ext.builtin.method.error.attribute").len() == 3 {
-                        return Ok(prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]));
+                        return Ok(prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(member_text.clone())]));
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
@@ -10989,7 +11050,8 @@ impl<'a> Builder<'a> {
                 (true, Some(sigil)) => named.trim_start_matches(sigil).to_string(),
                 _ => named,
             };
-            given.push(constant(Value::text(&bare)));
+            let label_value = if owning { Value::text(&bare) } else { member_text.clone() };
+            given.push(constant(label_value));
             if calling {
                 self.advance();
                 given.extend(self.arguments_of(&bare, "syntax.call.close", "syntax.call.separator")?);

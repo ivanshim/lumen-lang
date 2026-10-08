@@ -198,6 +198,7 @@ struct Cycle {
 /// end without complaint.
 struct ClassBody {
     bindings: HashSet<String>,
+    static_members: HashSet<String>,
     class_cell: String,
     needs_class_cell: bool,
     class_cell_protocol: bool,
@@ -384,6 +385,7 @@ pub struct Compiler<'a> {
     /// fault raised on the way into it names.
     declared_at: u32,
     decoration_line: Option<u32>,
+    attribute_spelling: HashMap<usize, (Rc<str>, String)>,
     /// The slots the routine being put together fills from what it
     /// carried away, while its parameters are being read.
     carrying: Vec<usize>,
@@ -737,7 +739,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decoration_line: None, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decoration_line: None, attribute_spelling: HashMap::new(), carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -3563,8 +3565,13 @@ impl<'a> Compiler<'a> {
             if self.on_any(&self.lang.pipe_words) {
                 self.take();
                 keyed.clear();
-                let member = self.want_name("after the member mark")?;
-                self.act(Action::Grab(Rc::from(member.as_str())), 1);
+                let is_self = self.self_receiver(self.pos);
+                let original = self.spelled[self.pos].lexeme.clone();
+                let member: Rc<str> = self.want_name("after the member mark")?.into();
+                if is_self && !self.lang.module_doc.is_empty() {
+                    self.attribute_spelling.insert(Rc::as_ptr(&member) as *const () as usize, (member.clone(), original));
+                }
+                self.act(Action::Grab(member), 1);
                 self.called_on_value()?;
                 on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
@@ -6654,7 +6661,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, static_members: HashSet::new(), class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // Prepare the live mapping before ordered metadata stores and body statements.
         let metadata = std::mem::take(&mut self.gathering().shared);
@@ -6682,6 +6689,12 @@ impl<'a> Compiler<'a> {
             let names = self.gathering().bindings.iter().cloned().collect();
             self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
         }
+        let mut attributes: Vec<_> = self.gathering().static_members.iter().cloned().collect();
+        attributes.sort();
+        self.constant(Value::tuple(attributes.iter().map(|name| Value::text(name)).collect()));
+        let static_slot = self.gensym("static_attributes"); self.write(&static_slot);
+        self.gathering().shared.push(("__static_attributes__".into(), static_slot.clone()));
+        self.mirror_member("__static_attributes__", &static_slot)?;
         let parts = self.gathered.pop().expect("class body");
         if !parts.annotated.is_empty() && !lang.class_annotations.is_empty() {
             self.constant(Value::text(crate::code::ANNOTATE_WORD));
@@ -6867,7 +6880,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, static_members: HashSet::new(), class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // The module a class statement is written in is the module's
         // own `__name__`, read where the class is defined, as the
@@ -7250,7 +7263,8 @@ impl<'a> Compiler<'a> {
         // parameters and their defaults are read, so a routine written
         // within one of those is not handed them instead.
         let typed = std::mem::take(&mut self.pending_types);
-        self.declared_at = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
+        let definition_line = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
+        self.declared_at = definition_line;
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
@@ -7278,6 +7292,7 @@ impl<'a> Compiler<'a> {
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.
         if self.on_sep() && !self.block_ahead() {
+            self.declared_at = definition_line;
             return self.routine(name, formals, least, true, |a| {
             a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
@@ -7293,6 +7308,7 @@ impl<'a> Compiler<'a> {
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
         let spares_out = spares.clone();
+        self.declared_at = definition_line;
         let built = self.routine(name, formals, least, true, |a| {
             a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
@@ -7752,7 +7768,8 @@ impl<'a> Compiler<'a> {
         // written within one of those is not handed them instead.
         let typed = std::mem::take(&mut self.pending_types);
         let lang = self.lang;
-        self.declared_at = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
+        let definition_line = self.decoration_line.take().unwrap_or((self.look().row as u32).saturating_sub(self.before));
+        self.declared_at = definition_line;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
         let (formals, spares, _) = self.parameters(&name, &call)?;
@@ -7776,6 +7793,7 @@ impl<'a> Compiler<'a> {
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
         self.pending_types = typed;
+        self.declared_at = definition_line;
         let program = self.routine(&original, formals, least, true, |a| {
             a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
@@ -8970,6 +8988,24 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn self_receiver(&self, member_at: usize) -> bool {
+        let Some(mut at) = member_at.checked_sub(2) else { return false };
+        let mut groups = 0;
+        while self.tokens[at].lexeme == ")" {
+            groups += 1;
+            let Some(previous) = at.checked_sub(1) else { return false }; at = previous;
+        }
+        if self.tokens[at].lexeme != "self" { return false; }
+        for _ in 0..groups {
+            let Some(previous) = at.checked_sub(1) else { return false }; at = previous;
+            if self.tokens[at].lexeme != "(" { return false; }
+        }
+        at.checked_sub(1).is_none_or(|previous| {
+            let word = &self.tokens[previous];
+            word.lexeme != "." && (groups == 0 || !matches!(word.shape, Shape::Instr) && !matches!(word.lexeme.as_str(), ")" | "]"))
+        })
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         // The target came out as a load; turn it into a store.
@@ -8986,6 +9022,15 @@ impl<'a> Compiler<'a> {
                 false => Instr::Hush(true),
             });
             from += 1;
+        }
+        if compound.is_none() && !self.lang.module_doc.is_empty() {
+            if let Some(Instr::Act(Action::Grab(member), 1)) = target.last() {
+                if let Some(original) = self.attribute_spelling.get(&(Rc::as_ptr(member) as *const () as usize)).map(|(_, source)| source.clone()) {
+                    if let Some(depth) = self.gathered.len().checked_sub(1 + usize::from(self.in_class_body())) {
+                        self.gathered[depth].static_members.insert(original);
+                    }
+                }
+            }
         }
         // A bare name read only to be stored over was no use of the
         // name: the store says it was written, as the reference counts
@@ -11622,7 +11667,13 @@ impl<'a> Compiler<'a> {
                 }
                 continue;
             }
+            let receiver_is_self = self.self_receiver(self.pos);
+            let source_member = self.spelled[self.pos].lexeme.clone();
             let named = self.want_name("after the member mark")?;
+            let member_word: Rc<str> = Rc::from(named.as_str());
+            if !lang.module_doc.is_empty() && receiver_is_self {
+                self.attribute_spelling.insert(Rc::as_ptr(&member_word) as *const () as usize, (member_word.clone(), source_member));
+            }
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
             if member && lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(named.as_str())) {
                 self.constant(Value::text(&named));
@@ -11656,7 +11707,7 @@ impl<'a> Compiler<'a> {
                 self.read(&held);
                 self.let_go(&held);
                 if let Some(brackets) = &call {
-                    self.act(Action::Grab(named.as_str().into()), 1);
+                    self.act(Action::Grab(member_word.clone()), 1);
                     let callee = self.gensym("method_value");
                     self.write(&callee);
                     self.take();
@@ -11664,7 +11715,7 @@ impl<'a> Compiler<'a> {
                     self.read(&callee);
                     self.let_go(&callee);
                     self.act(Action::Invoke(named.as_str().into()), argc + 1);
-                } else { self.act(Action::Grab(named.as_str().into()), 1); }
+                } else { self.act(Action::Grab(member_word.clone()), 1); }
                 let finish = self.leap();
                 self.land(fallback);
                 self.pos = resume;
@@ -11707,16 +11758,16 @@ impl<'a> Compiler<'a> {
                     // the set like any other, where the language has the
                     // words for a member; a language without them keeps
                     // its refusal.
-                    else if lang.member_amiss.is_some() { self.act(Action::Grab(Rc::from(named.as_str())), 1); }
+                    else if lang.member_amiss.is_some() { self.act(Action::Grab(member_word.clone()), 1); }
                     else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
                 } else if matches!(native, Some(Builtin::Bytes(14))) && call.is_none() {
-                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
+                    self.act(Action::Grab(member_word.clone()), 1);
                 } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 } else if native.is_none() && call.is_none() && lang.member_amiss.is_some() {
-                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
+                    self.act(Action::Grab(member_word.clone()), 1);
                 } else if native.is_none() && lang.member_amiss.is_some() {
                     // The receiver's kind answers to no such name, and a
                     // definition wording that complaint has no pipe to
@@ -11734,7 +11785,7 @@ impl<'a> Compiler<'a> {
                         let argc = self.arguments_of(&named, &call)?;
                         self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                     }
-                    None => self.act(Action::Grab(Rc::from(named.as_str())), 1),
+                    None => self.act(Action::Grab(member_word.clone()), 1),
                 }
                 continue;
             }

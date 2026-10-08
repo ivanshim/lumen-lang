@@ -3486,6 +3486,20 @@ impl<'a> Engine<'a> {
                 return Ok(Self::adapter(132, vec![reduction]));
             }
         }
+        if let Value::Adapter(binding) = &subject {
+            if binding.0 == 3 {
+                if let Some(Value::Adapter(slot)) = binding.1.first() {
+                    if slot.0 == 30 {
+                        let member = slot.1[0].plain();
+                        let title = slot.1.get(1).map(Value::plain).unwrap_or_else(|| self.class_word("root").to_owned());
+                        if name == "__objclass__" { return Ok(self.spelled_kind(&title).unwrap_or_else(|| Value::Class(self.root_class()))); }
+                        if name == self.class_word("name") { return Ok(Value::text(&member)); }
+                        if name == self.class_word("qualified") { return Ok(Value::text(&format!("{title}.{member}"))); }
+                        if name == self.class_word("doc") && member == "__str__" { return Ok(Value::text("Return str(self).")); }
+                    }
+                }
+            }
+        }
         if let Value::Adapter(allocator) = &subject {
             if allocator.0 == 14 && name == self.class_word("receiver") {
                 if let Some(class) = self.spelled_kind(&allocator.1[0].plain()) { return Ok(class); }
