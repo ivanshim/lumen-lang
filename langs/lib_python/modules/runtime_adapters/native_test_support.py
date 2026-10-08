@@ -1744,3 +1744,7 @@ def _force_run(path, func, *args):
             print('re-run %s%r' % (func.__name__, args))
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
+
+# Return the complete C0 control-character set used by protocol parsers.
+def control_characters_c0():
+    return [chr(value) for value in range(32)] + ["\x7f"]

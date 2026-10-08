@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/codeop.py; PSF License.
 r"""Utilities to compile possibly incomplete Python source code.
 
 This module provides two interfaces, broadly similar to the builtin

@@ -242,6 +242,11 @@ pub struct Builder<'a> {
     /// assignment expression.
     named_blocked: bool,
     named_value: bool,
+    /// Whether the reader is inside the right operand of a `+` or `-`
+    /// whose left operand was one plain string or bytes literal: there
+    /// the reference reports an unparenthesized generator expression as
+    /// plain invalid syntax at its `for`.
+    string_sum_right: bool,
     pub presumed: HashMap<String, Signature>,
     pub seen: HashMap<String, Signature>,
     strict: bool,
@@ -322,6 +327,7 @@ pub struct Builder<'a> {
     generic_class_body: bool,
     generic_class_parameters: Vec<String>,
     annotations_as_strings: bool,
+    barry_as_flufl: bool,
     /// The future flags in force so far: those the caller handed over
     /// ahead of the reading, and any the text itself has imported.
     future_bits: i64,
@@ -666,7 +672,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, unpacked_annotation_positions: BTreeSet::new(), annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, unpacked_annotation_positions: BTreeSet::new(), annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1772,6 +1778,30 @@ impl<'a> Builder<'a> {
         self.address_to_read(name)
     }
 
+    /// A name the class body already keeps a place for is read from
+    /// that place, taken before any reading beyond the body. None where
+    /// the body has no such member; used where a live body namespace
+    /// does not answer, and where none stands before the body.
+    fn class_alias_read(&mut self, name: &str) -> Option<Form> {
+        let at = self.default_depth.unwrap_or(self.layers.len());
+        let slot = {
+            let (depth, names) = self.class_bindings.last()?;
+            if *depth != at { return None; }
+            names.get(name).cloned()?
+        };
+        // A place kept for the body's own depth is further off from
+        // anywhere deeper the name is read, by just how much deeper.
+        let slot = if at == self.layers.len() { slot } else { let mut moved = slot; moved.up += self.layers.len() - at; moved };
+        let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
+            && self.table.prims.contains_key(name)
+            && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
+        if conditional {
+            let fallback = self.read_fallback(name);
+            return Some(self.choose(Form::Missing(slot.clone()), fallback, Form::Read(slot)));
+        }
+        Some(Form::Read(slot))
+    }
+
     fn read(&mut self, name: &str) -> Form {
         if let Some((class, entries)) = &self.annotation_owner {
             if self.annotation_lookup && entries.iter().any(|entry| entry == name) {
@@ -1800,25 +1830,7 @@ impl<'a> Builder<'a> {
                 return sequence(vec![Form::Write(found, Box::new(read)), selected]);
             }
         }
-        let at = self.default_depth.unwrap_or(self.layers.len());
-        if let Some((depth, names)) = self.class_bindings.last() {
-            if *depth == at {
-                if let Some(slot) = names.get(name).cloned() {
-                    // A place kept for the body's own depth is further
-                    // off from anywhere deeper the name is read, by
-                    // just how much deeper that is.
-                    let slot = if at == self.layers.len() { slot } else { let mut moved = slot; moved.up += self.layers.len() - at; moved };
-                    let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
-                        && self.table.prims.contains_key(name)
-                        && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
-                    if conditional {
-                        let fallback = self.read_fallback(name);
-                        return self.choose(Form::Missing(slot.clone()), fallback, Form::Read(slot));
-                    }
-                    return Form::Read(slot);
-                }
-            }
-        }
+        if let Some(alias) = self.class_alias_read(name) { return alias; }
         // A name the class body has never bound at compile time may
         // still be one `locals()[k] = v` bound there while the body
         // ran, past what the body itself ever wrote: CPython looks
@@ -3546,6 +3558,7 @@ impl<'a> Builder<'a> {
                     let complaint = match original.as_str() { "braces" => "not a chance".to_owned(), name => format!("future feature {name} is not defined") };
                     return Err(format!("SyntaxError: {complaint}"));
                 }
+                if future && original == "barry_as_FLUFL" { self.barry_as_flufl = true; }
                 if future {
                     // The reference's CO_FUTURE_* bits, one per feature
                     // the text may name (generators' is retired to 0).
@@ -4794,7 +4807,7 @@ impl<'a> Builder<'a> {
             let value = if self.key("ext.stmt.class") {
                 let member = self.glance(1).lexeme.clone();
                 setup.push(self.class_with_receiver()?.0);
-                let mut nested = self.read(&member);
+                let mut nested = self.class_alias_read(&member).unwrap_or_else(|| self.read(&member));
                 while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
                 Some((member, nested))
             } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling()) {
@@ -5181,7 +5194,10 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.class") {
             word = self.glance(1).lexeme.clone();
             setup.push(self.class_with_receiver()?.0);
-            decorated = self.read(&word);
+            // The member just made stands in the body's own place, not
+            // yet in its live namespace; read it from the place, then
+            // put the finished member there once.
+            decorated = self.class_alias_read(&word).unwrap_or_else(|| self.read(&word));
         } else {
             if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
             if !self.key("stmt.function") {
@@ -5216,6 +5232,7 @@ impl<'a> Builder<'a> {
         let address = self.gensym("adorned_method");
         setup.push(Form::Write(address.clone(), Box::new(decorated)));
         self.class_bindings.last_mut().expect("the class namespace").1.insert(word.clone(), address.clone());
+        if let Some(mirror) = self.mirror_member(&word, &address) { setup.push(mirror); }
         Ok((word, address))
     }
 
@@ -5256,7 +5273,6 @@ impl<'a> Builder<'a> {
             let slot = self.gensym("inner_class");
             self.class_bindings.last_mut().expect("outer class").1.insert(named.clone(), slot.clone());
             setup.push(Form::Write(slot.clone(), Box::new(made)));
-            if let Some(mirror) = self.mirror_member(&named, &slot) { setup.push(mirror); }
         } else { setup.push(self.write(&named, made)); }
         Ok((sequence(setup), cannot))
     }
@@ -9443,7 +9459,7 @@ impl<'a> Builder<'a> {
                 continue;
             }
             if table.flag("ext.op.compare.chained") {
-                if let Some((operation, level, words)) = self.comparison_head() {
+                if let Some((operation, level, words)) = self.comparison_head()? {
                     if floor > level { break; }
                     let saved = self.gensym("middle");
                     let keep = Form::Write(saved.clone(), Box::new(left));
@@ -9524,7 +9540,7 @@ impl<'a> Builder<'a> {
                 left = prim_call(Prim::Akin, vec![left, against]);
                 continue;
             }
-            let head = self.comparison_head();
+            let head = self.comparison_head()?;
             let Some(mut op) = table.dyadic.get(&text).copied().or_else(|| {
                 head.map(|(prim, level, _)| crate::table::Infix { prim, level, right_assoc: false })
             }) else {
@@ -9553,7 +9569,11 @@ impl<'a> Builder<'a> {
                     prim_call(op.prim, vec![left, lazy])
                 }
                 other => {
-                    let right = self.expr(floor_right)?;
+                    let string_sum = matches!(op.prim, Prim::Plus | Prim::Minus) && self.pos - consumed == origin + 1 && matches!(self.tokens[origin].shape, Shape::Quote | Shape::ByteQuote);
+                    let outer = std::mem::replace(&mut self.string_sum_right, string_sum);
+                    let right = self.expr(floor_right);
+                    self.string_sum_right = outer;
+                    let right = right?;
                     // A bare name is fetched when the operator falls,
                     // not when it stands, so a write on the far side is
                     // seen by it. Nothing else is fetched that late: a
@@ -9585,19 +9605,45 @@ impl<'a> Builder<'a> {
         Ok(left)
     }
 
-    fn comparison_head(&self) -> Option<(Prim, u32, usize)> {
+    /// The comparison link standing at the reading's place, and how
+    /// many signs spell it. The old diamond `<>` is not a word of the
+    /// definition: with Barry's future import it is the not-equal
+    /// operator, two signs wide, and in a chain it is read link by
+    /// link like any other; without that import the pair is the
+    /// mistake the reference reports, wherever in the chain it stands.
+    fn comparison_head(&mut self) -> Res<Option<(Prim, u32, usize)>> {
         let t = self.table;
-        let first = self.look().spelling();
-        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", self.glance(1).spelling()) {
-            let membership = t.dyadic.get(self.glance(1).spelling())?;
-            return Some((Prim::Absent, membership.level, 2));
+        let first = self.look().spelling().to_string();
+        if t.has_any("ext.builtin.exceptions.syntax") && first == "<" && {
+            let next = self.glance(1);
+            let here = self.look();
+            next.lexeme == ">" && next.row == here.row && next.column == here.column + 1
+        } {
+            if !self.barry_as_flufl {
+                let here = self.look().clone();
+                self.range_end = Some((here.column + 2, here.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            let not_equal = t.dyadic.get("!=").ok_or("Python's not-equal operator is missing")?;
+            return Ok(Some((Prim::Ne, not_equal.level, 2)));
         }
-        let binary = t.dyadic.get(first)?;
-        match binary.prim {
+        if t.spells("ext.op.in.negated", &first) && t.spells("ext.op.in", self.glance(1).spelling()) {
+            let Some(membership) = t.dyadic.get(self.glance(1).spelling()) else { return Ok(None); };
+            return Ok(Some((Prim::Absent, membership.level, 2)));
+        }
+        let Some(binary) = t.dyadic.get(&first) else { return Ok(None); };
+        // Barry turns the two-character spelling into the mistake and
+        // keeps the old diamond for the operator.
+        if self.barry_as_flufl && matches!(binary.prim, Prim::Ne) {
+            let here = self.look().clone();
+            self.range_end = Some((here.column + here.lexeme.chars().count(), here.row));
+            return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
+        }
+        Ok(match binary.prim {
             Prim::Selfsame if t.spells("ext.op.identical.negated", self.glance(1).spelling()) => Some((Prim::Unlike, binary.level, 2)),
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Selfsame | Prim::Unlike | Prim::Contains | Prim::Absent => Some((binary.prim, binary.level, 1)),
             _ => None,
-        }
+        })
     }
 
     /// The next link runs beneath the true arm of this one. Its near
@@ -9608,7 +9654,7 @@ impl<'a> Builder<'a> {
         let far = self.gensym("next");
         let put = Form::Write(far.clone(), Box::new(side));
         let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
-        let answer = match self.comparison_head() {
+        let answer = match self.comparison_head()? {
             Some((following, tier, width)) if tier == level => {
                 let rest = self.comparison_tail(far.clone(), following, tier, width)?;
                 self.choose(test, rest, constant(Value::Flag(false)))
@@ -10077,8 +10123,9 @@ impl<'a> Builder<'a> {
             }
             // Resolve a shadowed owner before calling an entry whose full
             // dotted spelling would otherwise select a native primitive.
-            Shape::Bare if table.prims.contains_key(&t.lexeme)
-                && t.lexeme.split_once('.').is_some_and(|(kind, _)| self.uses_bound_callable(kind)) => {
+            Shape::Bare if t.lexeme.split_once('.').is_some_and(|(kind, _)| {
+                table.prims.contains_key(t.lexeme.as_str()) && self.uses_bound_callable(kind)
+            }) => {
                 self.advance();
                 let (kind, entry) = t.lexeme.split_once('.').expect("native entry spelling");
                 let owner = self.read(kind);
@@ -11619,6 +11666,7 @@ impl<'a> Builder<'a> {
         let mut preceding = 0;
         let mut clause_seen = false;
         let mut binding_names = false;
+        let mut for_at: Option<usize> = None;
         // The parameters of a lambda stand in the argument's own place
         // and mark their defaults there; the body's colon ends them.
         let mut defaults_open = 0usize;
@@ -11647,6 +11695,16 @@ impl<'a> Builder<'a> {
                 }
                 if word == ")" || (word == "," && !binding_names) {
                     if clause_seen && (preceding != 0 || word == ",") {
+                        if self.string_sum_right {
+                            if let Some(here) = for_at {
+                                let token = &self.tokens[here];
+                                self.range_end = Some((token.column + token.lexeme.chars().count(), token.row));
+                                self.pos = here;
+                            } else {
+                                self.pos = begins;
+                            }
+                            return Err("SyntaxError: invalid syntax".to_owned());
+                        }
                         let last = &self.tokens[at - 1];
                         self.range_end = Some((last.column + last.lexeme.chars().count(), last.row));
                         self.pos = begins;
@@ -11656,6 +11714,7 @@ impl<'a> Builder<'a> {
                     preceding += 1; begins = at + 1; clause_seen = false;
                 }
                 if self.table.spells("ext.op.comprehension.for", word) {
+                    if for_at.is_none() { for_at = Some(at); }
                     clause_seen = true;
                     binding_names = true;
                 } else if self.table.spells("ext.op.comprehension.in", word) { binding_names = false; }
