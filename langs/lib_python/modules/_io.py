@@ -695,6 +695,7 @@ class IncrementalNewlineDecoder:
         return self._impl.newlines
 
 class FileIO(_RawIOBase):
+    _closed = True
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:
@@ -709,7 +710,7 @@ class FileIO(_RawIOBase):
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
-        self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb') + ('+' if '+' in mode else '')
+        self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' or '+' in mode else 'wb') + ('+' if '+' in mode else '')
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
         owned = False
@@ -1051,7 +1052,9 @@ class _Open:
                     buffer = BufferedWriter(raw, size)
                 if binary:
                     return buffer
-                return TextIOWrapper(buffer, encoding, errors, newline, line_buffering=buffering == 1)
+                stream = TextIOWrapper(buffer, encoding, errors, newline, line_buffering=buffering == 1)
+                stream.mode = mode
+                return stream
             except:
                 raw.close()
                 raise

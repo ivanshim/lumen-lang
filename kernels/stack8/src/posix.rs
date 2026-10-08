@@ -109,7 +109,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 libc::O_CREAT, libc::O_EXCL, libc::O_TRUNC, libc::O_NONBLOCK,
                 libc::O_CLOEXEC, libc::O_DIRECTORY, libc::O_NOFOLLOW,
                 libc::SEEK_SET, libc::SEEK_CUR, libc::SEEK_END, libc::F_OK,
-                libc::R_OK, libc::W_OK, libc::X_OK];
+                libc::R_OK, libc::W_OK, libc::X_OK, libc::O_TMPFILE];
             Ok(Value::tuple(row.into_iter().map(|n| Value::Small(n as i64)).collect()))
         },
         "stat" | "lstat" | "fstat" => {
