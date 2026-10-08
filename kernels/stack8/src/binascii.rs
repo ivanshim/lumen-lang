@@ -164,7 +164,7 @@ impl Engine<'_> {
                 let class = module.fields.borrow().iter().find(|(name, _)| name == class_name).map(|(_, value)| value.contents());
                 let Some(Value::Class(class)) = class else { continue; };
                 let actual = object.class_now();
-                if !std::rc::Rc::ptr_eq(&actual, &class) && !actual.lineage.iter().any(|base| std::rc::Rc::ptr_eq(base, &class)) { continue; }
+                if !std::rc::Rc::ptr_eq(&actual, &class) && !actual.lineage.borrow().iter().any(|base| std::rc::Rc::ptr_eq(base, &class)) { continue; }
                 if class_name == "memoryview" {
                     match self.class_get(held.clone(), "c_contiguous", false) {
                         Ok(value) if !self.truth(&value) => return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into()),
