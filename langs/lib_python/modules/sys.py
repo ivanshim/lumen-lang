@@ -4,14 +4,18 @@ _host_stream_write = __stream_write
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
-# Startup has no warning-option switches in the isolated Python environment.
-warnoptions = []
+# Startup options are actual host invocation state, independent of parent filters.
+_startup_environment = __posix('environ')[1]
+_warning_options = _startup_environment.get(b'LUMEN_PYTHON_WARNOPTIONS', b'').decode()
+warnoptions = _warning_options.split('\x1f') if _warning_options else []
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# The isolated default contains the library's own source location.
-# Callers add other directories explicitly; a program's directory is not
-# placed ahead of the embedded library merely because it contains a script.
-path = [__file__.rsplit('/', 1)[0]]
+# Startup places the script directory (or -m working directory) first,
+# then any enabled Python search path and the embedded library location.
+path = [_startup_environment.get(b'LUMEN_PYTHON_START_PATH', b'').decode(), __file__.rsplit('/', 1)[0]]
+_search_path = _startup_environment.get(b'LUMEN_PYTHON_SEARCH_PATH', b'').decode()
+if _search_path:
+    path[1:1] = _search_path.split(':')
 maxsize = 9223372036854775807
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'
@@ -43,7 +47,7 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 1
+    ignore_environment = int(_startup_environment.get(b'LUMEN_PYTHON_IGNORE_ENV', b'0') == b'1')
     verbose = 0
     bytes_warning = 0
     quiet = 0
@@ -521,3 +525,8 @@ def gettrace():
 
 def settrace(trace):
     __trace_native__(1, trace)
+
+
+def getrefcount(object, /):
+    """Return live shared-storage ownership, including interpreter temporaries."""
+    return __program_namespace('refcount', object)

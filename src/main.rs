@@ -185,6 +185,8 @@ struct Invocation {
     program_args: Vec<String>,
     python: Option<&'static python_versions::PythonVersion>,
     dev_mode: bool,
+    ignore_environment: bool,
+    warning_options: Vec<String>,
     module_source: Option<String>,
     module_name: Option<String>,
 }
@@ -555,6 +557,22 @@ fn run_all() {
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
     std::env::set_var("LUMEN_PYTHON_DEV_MODE", if inv.dev_mode { "1" } else { "0" });
+    if inv.python.is_some() {
+        let mut options = if inv.ignore_environment { Vec::new() } else {
+            env::var("PYTHONWARNINGS").unwrap_or_default().split(',')
+                .filter(|option| !option.is_empty()).map(str::to_owned).collect::<Vec<_>>()
+        };
+        options.extend(inv.warning_options.iter().cloned());
+        let mut seen = std::collections::HashSet::new();
+        options.retain(|option| seen.insert(option.clone()));
+        env::set_var("LUMEN_PYTHON_WARNOPTIONS", options.join("\u{1f}"));
+        env::set_var("LUMEN_PYTHON_IGNORE_ENV", if inv.ignore_environment { "1" } else { "0" });
+        env::set_var("LUMEN_PYTHON_START_PATH", if inv.module_name.is_some() {
+            env::current_dir().unwrap_or_default().to_string_lossy().into_owned()
+        } else { Path::new(&inv.file).parent().unwrap_or_else(|| Path::new("")).to_string_lossy().into_owned() });
+        env::set_var("LUMEN_PYTHON_SEARCH_PATH", if inv.ignore_environment { String::new() } else { env::var("PYTHONPATH").unwrap_or_default() });
+    }
+
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
     if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
@@ -873,6 +891,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut emit: Option<Language> = None;
     let mut python: Option<String> = None;
     let mut dev_mode = false;
+    let mut ignore_environment = false;
+    let mut warning_options = Vec::new();
     let mut file: Option<String> = None;
     let mut module_source = None;
     let mut module_name = None;
@@ -886,7 +906,27 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     // Options may precede the file; `--lang` may also follow it directly.
     loop {
+        let python_startup = language.as_ref().map_or_else(|| {
+            rest.windows(2).any(|pair| pair[0] == "--lang" && pair[1] == "python")
+                || rest.iter().any(|word| word == "-m")
+                || env::var("LUMEN_LANG").map_or_else(|_| {
+                    rest.iter().any(|word| word.to_str().is_some_and(|text| text.ends_with(".py")))
+                }, |name| name == "python")
+        }, |chosen| chosen.name() == "python") || python.is_some();
         match rest.first().and_then(|a| a.to_str()) {
+            Some("-E") if file.is_none() && python_startup => {
+                ignore_environment = true;
+                rest = &rest[1..];
+            }
+            Some(option) if file.is_none() && python_startup && option.starts_with("-W") => {
+                let (action, used) = if option == "-W" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (option[2..].to_string(), 1) };
+                warning_options.push(action);
+                rest = &rest[used..];
+            }
+
             Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
@@ -1086,7 +1126,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             program_args.extend(selection.split(',').filter(|name| !name.is_empty()).map(str::to_owned));
         }
     }
-    Invocation { kernel, file, serve, language, emit, python, dev_mode, module_source, module_name, program_args }
+    Invocation { kernel, file, serve, language, emit, python, dev_mode, ignore_environment, warning_options, module_source, module_name, program_args }
 }
 
 /// The language whose embedded definition claims the file's extension.

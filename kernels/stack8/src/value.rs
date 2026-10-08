@@ -895,6 +895,52 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
 }
 
 impl Value {
+    /// Actual shared-storage owners, including live interpreter temporaries.
+    pub(super) fn shared_owners(&self) -> Option<usize> {
+        macro_rules! owners { ($cell:expr) => { Some(Rc::strong_count($cell)) }; }
+        match self {
+            Value::Codepoints(p) => owners!(p),
+            Value::ValueMethod(p) => owners!(p),
+            Value::View(p) => owners!(p),
+            Value::Native(_, p) => owners!(p),
+            Value::Cursor(p) => owners!(p),
+            Value::Trace(p) => owners!(p),
+            Value::Hashed(p) => owners!(p),
+            Value::Fields(p) => owners!(p),
+            Value::Walking(p) => owners!(p),
+            Value::Declined(p) => owners!(p),
+            Value::Walk(p) => owners!(p),
+            Value::Bytes(p, ..) => owners!(p),
+            Value::Export(p) => owners!(p),
+            Value::ByteKind(_, p) => owners!(p),
+            Value::Adapter(p) => owners!(p),
+            Value::Counted(p) => owners!(p),
+            Value::Huge(p) => owners!(p),
+            Value::Frac(p) => owners!(p),
+            Value::Real(p) => owners!(p),
+            Value::Complex(p) => owners!(p),
+            Value::Text(p) => owners!(p),
+            Value::Words(p, _) => owners!(p),
+            Value::Array(p) => owners!(p),
+            Value::Tuple(p) => owners!(p),
+            Value::Generator(p) => owners!(p),
+            Value::Set(p) => owners!(p),
+            Value::SetWalk(p, _) => owners!(p),
+            Value::Slice(p) => owners!(p),
+            Value::Map(p) => owners!(p),
+            Value::Class(p) => owners!(p),
+            Value::Object(p) => owners!(p),
+            Value::Tie(p) => owners!(p),
+            Value::Routine(p) => owners!(p),
+            Value::Descriptor(p) => owners!(p),
+            Value::Faint(p) => owners!(p),
+            Value::Collection(cell, _) => owners!(cell),
+            Value::Bond(cell) | Value::Binding(cell) => cell.borrow().shared_owners(),
+            Value::Method(_, _, stamp) => owners!(stamp),
+            _ => None,
+        }
+    }
+
     pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }

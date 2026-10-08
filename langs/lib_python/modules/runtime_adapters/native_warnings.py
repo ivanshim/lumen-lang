@@ -267,3 +267,57 @@ def _deprecated(name, message=_DEPRECATED_MSG, *, remove, _version=sys.version_i
     else:
         msg = message.format(name=name, remove=remove_formatted)
         warn(msg, DeprecationWarning, stacklevel=3)
+
+
+class _OptionError(Exception):
+    pass
+
+
+def _startup_filter(option):
+    import re
+    import builtins
+    fields = option.split(':')
+    if len(fields) > 5:
+        raise _OptionError('too many fields (max 5): %r' % option)
+    fields += [''] * (5 - len(fields))
+    action, message, category, module, lineno = [field.strip() for field in fields]
+    if not action:
+        action = 'default'
+    if action == 'all':
+        action = 'always'
+    else:
+        choices = [name for name in ('default', 'always', 'ignore', 'module', 'once', 'error') if name.startswith(action)]
+        if len(choices) != 1:
+            raise _OptionError('invalid action: %r' % action)
+        action = choices[0]
+    if not category:
+        category = Warning
+    elif '.' not in category:
+        name = category
+        category = getattr(builtins, name, None)
+        if category is None:
+            raise _OptionError('unknown warning category: %r' % name)
+    else:
+        name, _, attribute = category.rpartition('.')
+        try:
+            category = getattr(__import__(name, None, None, [attribute]), attribute)
+        except (ImportError, AttributeError):
+            raise _OptionError('invalid module name: %r' % name)
+    if not isinstance(category, type) or not issubclass(category, Warning):
+        raise _OptionError('invalid warning category: %r' % category)
+    try:
+        lineno = int(lineno or '0')
+        if lineno < 0:
+            raise ValueError
+    except ValueError:
+        raise _OptionError('invalid lineno')
+    message = re.escape(message)
+    module = re.escape(module) + ('\\Z' if module else '')
+    filterwarnings(action, message, category, module, lineno)
+
+
+for _option in sys.warnoptions:
+    try:
+        _startup_filter(_option)
+    except _OptionError as _error:
+        sys.stderr.write('Invalid -W option ignored: ' + str(_error) + '\n')

@@ -586,6 +586,7 @@ impl MapStore {
             self.span = self.slots.pop().expect("last map position");
             self.serial = dictionary_turn();
             *self.place.borrow_mut() = None;
+            self.spellings.get_mut().take();
         }
         result
     }
@@ -596,6 +597,7 @@ impl MapStore {
         self.pairs.push((key, value));
         Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.pairs.last().expect("new pair").0);
         *self.place.borrow_mut() = None;
+        self.spellings.get_mut().take();
     }
 
     pub fn push(&mut self, incoming: (Value, Value)) {
@@ -628,6 +630,7 @@ impl MapStore {
         self.pairs.remove(at);
         self.slots.remove(at);
         *self.place.borrow_mut() = None;
+        self.spellings.get_mut().take();
     }
 
     /// Rows and their positions have to agree before a cursor can inspect them.
@@ -657,6 +660,7 @@ impl MapStore {
         self.span = 0;
         self.entry_budget = (1, 0, true);
         *self.place.borrow_mut() = None;
+        self.spellings.get_mut().take();
         self.pairs.clear();
         self.slots.clear();
     }
@@ -764,6 +768,52 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
 }
 
 impl Value {
+    /// Read ownership from the allocation itself, without cloning its value.
+    pub(super) fn allocation_holds(&self) -> Option<usize> {
+        let count = match self {
+            Self::Unpaired(cell) => Rc::strong_count(cell),
+            Self::Member(cell, _) => Rc::strong_count(cell),
+            Self::Window(cell, _) => Rc::strong_count(cell),
+            Self::Row(cell) => Rc::strong_count(cell),
+            Self::Intrinsic(_, cell) => Rc::strong_count(cell),
+            Self::Iterator(cell) => Rc::strong_count(cell),
+            Self::Backtrace(cell) => Rc::strong_count(cell),
+            Self::Attributes(cell) => Rc::strong_count(cell),
+            Self::Refusal(cell) => Rc::strong_count(cell),
+            Self::Cursor(cell) => Rc::strong_count(cell),
+            Self::Arguments(cell) => Rc::strong_count(cell),
+            Self::Octets { cell, .. } => Rc::strong_count(cell),
+            Self::Export(cell) => Rc::strong_count(cell),
+            Self::OctetKind { shown: cell, .. } => Rc::strong_count(cell),
+            Self::Wrapped(_, cell) => Rc::strong_count(cell),
+            Self::Progression(cell) => Rc::strong_count(cell),
+            Self::Huge(cell) => Rc::strong_count(cell),
+            Self::Frac(cell) => Rc::strong_count(cell),
+            Self::Complex(cell) => Rc::strong_count(cell),
+            Self::Text(cell) => Rc::strong_count(cell),
+            Self::TextRow(cell, _) => Rc::strong_count(cell),
+            Self::Vector(cell) => Rc::strong_count(cell),
+            Self::Tuple(cell) => Rc::strong_count(cell),
+            Self::Generator(cell) => Rc::strong_count(cell),
+            Self::Set(cell) => Rc::strong_count(cell),
+            Self::SetCursor { source: cell, .. } => Rc::strong_count(cell),
+            Self::Span(cell) => Rc::strong_count(cell),
+            Self::Dict(cell) => Rc::strong_count(cell),
+            Self::Couple(cell) => Rc::strong_count(cell),
+            Self::Blueprint(cell) => Rc::strong_count(cell),
+            Self::Thing(cell) => Rc::strong_count(cell),
+            Self::Routine(cell) => Rc::strong_count(cell),
+            Self::Bound(cell, _) => Rc::strong_count(cell),
+            Self::Adorned(cell) => Rc::strong_count(cell),
+            Self::Dim(cell) => Rc::strong_count(cell),
+            Self::Mutable(binding, _) => Rc::strong_count(binding),
+            Self::Shared(binding) => return binding.borrow().allocation_holds(),
+            Self::Method(_, _, mark) => Rc::strong_count(mark),
+            _ => return None,
+        };
+        Some(count)
+    }
+
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }

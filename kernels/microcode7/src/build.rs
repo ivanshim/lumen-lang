@@ -3717,19 +3717,20 @@ impl<'a> Builder<'a> {
                     leaving
                 } else {
                     value = prim_call(Prim::StartContext, vec![manager_read]);
-                    manager
+                    manager.clone()
                 };
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
-                value = Form::Read(entered);
+                if asynchronous { steps.push(Form::Forget(manager)); }
+                value = Form::Release(entered);
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
-                steps.push(Form::Write(place, Box::new(value)));
+                steps.push(Form::Write(place.clone(), Box::new(value)));
                 let start = self.pos;
                 let mut boundary = start;
                 let mut closing = Vec::new();
@@ -3748,6 +3749,7 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: cannot assign to expression"));
                 }
                 steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
+                if table.has_any("ext.stmt.class.special") { steps.push(Form::Forget(place)); }
                 self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }

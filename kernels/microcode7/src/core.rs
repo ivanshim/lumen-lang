@@ -107,7 +107,6 @@ impl Value {
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             // The entry __slots__ lays down for a name reads as a
             // member descriptor, the same word type() gives that accessor.
-            Self::Wrapped(32, parts) if matches!(parts.as_slice(), [Value::Text(name), Value::Blueprint(_)] if name.as_ref() != "__weakref__") => "member_descriptor",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {
                 if let Some(Self::Blueprint(_)) = parts.get(1) { "method" } else { "builtin_function_or_method" }

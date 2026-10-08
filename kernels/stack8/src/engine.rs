@@ -4100,6 +4100,7 @@ impl<'a> Engine<'a> {
         let namespace = program.globe.as_ref().and_then(|globals| match globals {
             Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
             Value::Map(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            Value::Object(_) if Self::worth_of(globals).is_some_and(|storage| matches!(storage.contents(), Value::Map(_))) => Some(Rc::new(RefCell::new(globals.clone()))),
             _ => None,
         });
         let supplied = namespace.is_some();
@@ -5009,6 +5010,7 @@ impl<'a> Engine<'a> {
                 }
             }
             return Ok(item);
+        }
         // Only a suspended body and the wrapper above know a word for
         // being sent into; every other walk refuses the send here, where
         // the reference would look one up and not find it.
@@ -20419,7 +20421,7 @@ impl<'a> Engine<'a> {
                 let step = as_index(&args[0])?;
                 match step {
                     0 => {
-                        arity(6)?;
+                        if !matches!(args.len(), 6 | 7) { return Err(format!("{}() expects 6 or 7 arguments", name)); }
                         use std::os::unix::ffi::OsStrExt as _;
                         let sp = self.wording();
                         let mut words = one_after_another(&args[1]).into_iter();
@@ -20436,6 +20438,10 @@ impl<'a> Engine<'a> {
                             let name = self.lang.bytes_of(&name.display(&sp));
                             let worth = self.lang.bytes_of(&worth.display(&sp));
                             asked.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
+                        }
+                        if let Some(directory) = args.get(6).filter(|value| !matches!(value, Value::Null)) {
+                            let bytes = self.lang.bytes_of(&directory.display(&sp));
+                            asked.current_dir(std::ffi::OsStr::from_bytes(&bytes));
                         }
                         let stdin_mode = as_index(&args[3])?;
                         let stdout_mode = as_index(&args[4])?;
@@ -20711,6 +20717,12 @@ impl<'a> Engine<'a> {
             }
             Builtin::ProductStep => self.iterator_operation(args)?,
             Builtin::ProgramNamespace => {
+                if let [Value::Text(command), value] = args.as_slice() {
+                    if command.as_ref() == "refcount" {
+                        return value.shared_owners().map(|owners| Value::Small(owners as i64))
+                            .ok_or_else(|| "NotImplementedError: inline values have no shared allocation counter".to_string());
+                    }
+                }
                 if matches!(args.as_slice(), [Value::Text(key)] if key.as_ref() == "recursion_depth") {
                     return Ok(Value::Small((self.calls.len() + self.reaching) as i64));
                 }

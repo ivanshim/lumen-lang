@@ -3922,8 +3922,15 @@ impl<'a> Machine<'a> {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
             if destination.capture_slots.borrow().contains(&slot.at) {
-                let Value::Shared(cell) = &destination.cells.borrow()[slot.at] else { unreachable!() };
-                *cell.borrow_mut() = stored;
+                let binding = match &destination.cells.borrow()[slot.at] {
+                    Value::Shared(cell) => cell.clone(),
+                    _ => unreachable!("captured binding owns a shared cell"),
+                };
+                *binding.borrow_mut() = stored;
+                if Rc::ptr_eq(destination, &self.outermost) {
+                    self.booked_write(slot.at, &slot.ident, Some(Value::Shared(binding.clone())));
+                    self.space_mirror_binding(slot.at, &binding);
+                }
                 return Ok(());
             }
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#') {
@@ -4186,6 +4193,7 @@ impl<'a> Machine<'a> {
                 }
             }
             return Ok(next);
+        }
         // Only a suspended body and the wrapper above know a word for
         // being sent into; every other walk refuses the send here, where
         // the reference would look one up and not find it.
@@ -5495,6 +5503,7 @@ impl<'a> Machine<'a> {
 
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
+        if address.ident.starts_with('#') { self.store(address, frame, Value::Unset)?; }
         if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned();
         let arguments = match raised {
@@ -5753,6 +5762,8 @@ impl<'a> Machine<'a> {
                     return Some(current);
                 }
                 if index == 13 {
+                    let saved = item.holds.borrow()[4].1.clone();
+                    if !matches!(saved, Value::Nil) { return Some(saved); }
                     // A frame retains its own namespace even when a caller
                     // reads it from a different execution context.
                     let program = match item.holds.borrow()[5].1.clone() {
@@ -6769,6 +6780,7 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
+                    if address.ident.starts_with('#') { self.store(address, frame, Value::Unset)?; }
                     if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.strings("ext.stmt.class.special.unready").first().map(String::as_str).unwrap_or_default().to_owned().into());
@@ -10074,12 +10086,17 @@ impl<'a> Machine<'a> {
                         self.shut_generator(&walk)?;
                         return Ok(Value::Nil);
                     }
+                    // Code and globals survive clear(), but the callable and its
+                    // activation do not. In particular, an exception's frame must
+                    // not keep a function alive merely to describe its code.
+                    let globals_key = self.rules.trace_words[13].to_string();
+                    let globals = self.activation_member(&Value::Thing(item.clone()), &globals_key);
                     let mut holds = item.holds.borrow_mut();
-                    if let Value::Bound(body, _) = &holds[5].1 {
-                        // A frame can share its environment with an eval caller.
-                        // Release this frame's ownership without clearing that caller.
-                        holds[5].1 = Value::Bound(body.clone(), Env::make(0, None));
+                    if let Value::Bound(callable, _) = &holds[5].1 {
+                        let code = callable.definition.clone().unwrap_or_else(|| Rc::new((**callable).clone()));
+                        holds[5].1 = Value::Bound(code, Env::make(0, None));
                     }
+                    if let Some(globals) = globals { holds[4].1 = globals; }
                     holds[3].1 = Value::Nil;
                     holds[6].1 = Value::Nil;
                     return Ok(Value::Nil);
@@ -12378,6 +12395,7 @@ impl<'a> Machine<'a> {
         match program.globe.as_ref()? {
             Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_)) => Some(cell.clone()),
             globals @ Value::Dict(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            mapping @ Value::Thing(_) if Self::underlying(mapping).is_some_and(|row| matches!(row.settled(), Value::Dict(_))) => Some(Rc::new(RefCell::new(mapping.clone()))),
             _ => None,
         }
     }
@@ -12727,7 +12745,7 @@ impl<'a> Machine<'a> {
                 body_namespace = Some(Value::tuple(vec![book, cell, Value::Flag(*protocol)]));
             }
         }
-        let mut outcome = self.traced_result(outcome);
+        let outcome = self.traced_result(outcome);
         if outcome.is_ok() && self.body_namespace.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, &program)) {
             let captured = body_namespace.unwrap_or_else(|| {
                 let entries = program.idents.iter().zip(frame.cells.borrow().iter())
@@ -19612,6 +19630,12 @@ impl<'a> Machine<'a> {
                 Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Prim::ProgramNames => {
+                if v.len() == 2 && matches!(&v[0], Value::Text(word) if word.as_ref() == "refcount") {
+                    match v[1].allocation_holds() {
+                        Some(holds) => return Ok(Value::Small(holds as i64)),
+                        None => return Err(String::from("NotImplementedError: inline values have no shared allocation counter")),
+                    }
+                }
                 if v.len() == 1 && matches!(&v[0], Value::Text(word) if word.as_ref() == "recursion_depth") {
                     return Ok(Value::Small(self.standing as i64));
                 }
@@ -20790,7 +20814,7 @@ impl<'a> Machine<'a> {
                 let step = as_index(&v[0])?;
                 match step {
                     0 => {
-                        if v.len() != 6 { return Err(format!("{}() expects 6 arguments, got {}", name, v.len())); }
+                        if !(6..=7).contains(&v.len()) { return Err(format!("{}() expects 6 or 7 arguments, got {}", name, v.len())); }
                         use std::os::unix::ffi::OsStrExt as _;
                         let w = self.wording();
                         let mut raising;
@@ -20814,6 +20838,13 @@ impl<'a> Machine<'a> {
                                 let worth = self.table.raw_of(&worth.render(w));
                                 raising.env(std::ffi::OsStr::from_bytes(&called), std::ffi::OsStr::from_bytes(&worth));
                             }
+                        }
+                        match v.get(6) {
+                            Some(path) if !matches!(path, Value::Nil) => {
+                                let location = self.table.raw_of(&path.render(w));
+                                raising.current_dir(std::ffi::OsStr::from_bytes(&location));
+                            }
+                            _ => {},
                         }
                         let in_mode = as_index(&v[3])?;
                         let out_mode = as_index(&v[4])?;

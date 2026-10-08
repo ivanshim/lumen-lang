@@ -50,9 +50,11 @@ def _stream_mode(stream, is_stderr=False):
 
 
 class _Readable:
-    def __init__(self, handle, which):
+    def __init__(self, handle, which, encoding=None, errors=None):
         self._handle = handle
         self._which = which
+        self.encoding = encoding
+        self.errors = errors
         self.closed = False
 
     def read(self, size=-1):
@@ -60,7 +62,9 @@ class _Readable:
             raise ValueError('I/O operation on closed file')
         result = _subprocess(3, self._handle, self._which)
         if result is None or result is False:
-            return b''
+            result = b''
+        if self.encoding:
+            return result.decode(self.encoding, self.errors).replace('\r\n', '\n').replace('\r', '\n')
         return result
 
     def close(self):
@@ -68,13 +72,19 @@ class _Readable:
 
 
 class _Writable:
-    def __init__(self, handle):
+    def __init__(self, handle, encoding=None, errors=None):
         self._handle = handle
+        self.encoding = encoding
+        self.errors = errors
         self.closed = False
 
     def write(self, data):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+        if self.encoding:
+            size = len(data)
+            _subprocess(1, self._handle, data.encode(self.encoding, self.errors))
+            return size
         return _subprocess(1, self._handle, data)
 
     def close(self):
@@ -96,21 +106,29 @@ class Popen:
             argv = [args]
         else:
             argv = list(args)
+        if text is not None and universal_newlines is not None and bool(text) != bool(universal_newlines):
+            raise SubprocessError('Cannot disambiguate when both text and universal_newlines are supplied but different. Pass one or the other.')
+        self.text_mode = bool(text or universal_newlines or encoding or errors)
+        self.encoding = (encoding or 'utf-8') if self.text_mode else None
+        self.errors = errors or 'strict'
         if env is None:
             env = {}
+        if cwd is not None:
+            import os
+            cwd = os.fspath(cwd)
         in_mode = _stream_mode(stdin)
         out_mode = _stream_mode(stdout)
         err_mode = _stream_mode(stderr, True)
-        handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode)
+        handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode, cwd)
         if handle is False:
             raise OSError(2, 'No such file or directory', argv[0])
         self._handle = handle
         self._stderr_to_stdout = stderr == STDOUT
         self.args = argv
         self.returncode = None
-        self.stdin = _Writable(handle) if in_mode == 1 else None
-        self.stdout = _Readable(handle, 0) if out_mode == 1 else None
-        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1) if err_mode in (1, 3) else None)
+        self.stdin = _Writable(handle, self.encoding, self.errors) if in_mode == 1 else None
+        self.stdout = _Readable(handle, 0, self.encoding, self.errors) if out_mode == 1 else None
+        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1, self.encoding, self.errors) if err_mode in (1, 3) else None)
 
     def poll(self):
         if self.returncode is not None:
@@ -171,7 +189,10 @@ class Popen:
         out = self.stdout.read() if self.stdout is not None else None
         if self._stderr_to_stdout:
             if self.stdout is not None:
-                out = out + self._read_stream(1)
+                extra = self._read_stream(1)
+                if self.encoding:
+                    extra = extra.decode(self.encoding, self.errors).replace('\r\n', '\n').replace('\r', '\n')
+                out = out + extra
             err = None
         else:
             err = self.stderr.read() if self.stderr is not None else None

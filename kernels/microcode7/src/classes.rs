@@ -1533,7 +1533,7 @@ impl<'a> Machine<'a> {
         if let Value::Blueprint(declaring) = &layout[0] {
             if let Value::Thing(instance) = receiver.settled() {
                 let actual = instance.blueprint();
-                if Rc::ptr_eq(&actual, declaring) || actual.ancestry.iter().any(|parent| Rc::ptr_eq(parent, declaring)) { return Ok(()); }
+                if Rc::ptr_eq(&actual, declaring) || actual.ancestry.borrow().iter().any(|parent| Rc::ptr_eq(parent, declaring)) { return Ok(()); }
             }
             return Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object", layout[1].bare(), declaring.name, Self::type_argument_kind(receiver)).into());
         }
@@ -4988,7 +4988,7 @@ impl<'a> Machine<'a> {
                 let class = class.clone();
                 // Only the members a value of the kind answers to are read
                 // here; the class's own names stay the class's own.
-                let directory = self.ordinary_directory(&Value::Blueprint(class.clone()));
+                let directory = self.ordinary_directory(&Value::Blueprint(class.clone()))?;
                 let answers = matches!(&directory, Value::Vector(items) if items.iter().any(|entry| entry.bare() == key));
                 if answers {
                     if let Ok(member) = self.read_class_member(Value::Blueprint(class.clone()), key, true) {

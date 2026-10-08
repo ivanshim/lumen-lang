@@ -1493,7 +1493,7 @@ impl<'a> Engine<'a> {
         let Value::Class(owner) = &parts[1] else { return Err(self.class_refusal()); };
         if let Value::Object(object) = subject.contents() {
             let kind = object.class_now();
-            if Rc::ptr_eq(&kind, owner) || kind.lineage.iter().any(|base| Rc::ptr_eq(base, owner)) { return Ok(()); }
+            if Rc::ptr_eq(&kind, owner) || kind.lineage.borrow().iter().any(|base| Rc::ptr_eq(base, owner)) { return Ok(()); }
         }
         Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object", parts[2].plain(), owner.name, Self::type_argument_kind(subject)).into())
     }
@@ -4403,7 +4403,7 @@ impl<'a> Engine<'a> {
                 let class = class.clone();
                 // Only the members a value of the kind answers to are read
                 // here; the class's own names stay the class's own.
-                let directory = self.default_directory(&Value::Class(class.clone()));
+                let directory = self.default_directory(&Value::Class(class.clone()))?;
                 let answers = matches!(&directory, Value::Array(items) if items.iter().any(|entry| entry.plain() == name));
                 if answers {
                     match self.class_get(Value::Class(class.clone()), name, true) {
@@ -6137,7 +6137,7 @@ impl<'a> Engine<'a> {
                 // kind it is the one value of, which is the list the
                 // reference gives both the singleton and its type.
                 if matches!(one.contents(), Value::Null | Value::Ellipsis | Value::Declined(_)) {
-                    let kind = self.named_kind(&one.contents();
+                    let kind = self.named_kind(&one.contents());
                     if matches!(kind, Value::Class(_)) { return self.default_directory(&kind); }
                 }
                 self.default_directory(&one)

@@ -2122,7 +2122,8 @@ impl Lang {
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
             ("ext.builtin.sre", Builtin::Sre),
-            ("ext.builtin.unicodedata.decomposition | ext.builtin.multibyte";
+            ("ext.builtin.unicodedata.decomposition", Builtin::UnicodeDecomposition),
+            ("ext.builtin.multibyte", Builtin::Multibyte),
             ("ext.builtin.class.derive", Builtin::DeriveClass),
             ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),
