@@ -132,7 +132,10 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
     // Keep the ported routine for the earlier kernels, while the full
     // Python kernels retain their builtin's optional places argument.
     let library = if full && language == "python" {
-        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys", library)
+        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys{}", library,
+            format!("{}{}",
+                if env::var("LUMEN_COMMAND_SOURCE").is_ok() { "\nimport os, linecache\nlinecache._register_code(sys._getframe().f_code, os.environ['LUMEN_COMMAND_SOURCE'], '<string>')\nimport importlib._bootstrap\n__loader__ = importlib._bootstrap.BuiltinImporter\n__spec__ = None\ndel __file__" } else { "" },
+                if env::var("LUMEN_WARNOPTIONS").is_ok_and(|options| !options.is_empty()) { "\nimport warnings" } else { "" }))
     } else { library };
     let lead = source.len() - source.trim_start().len();
     if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
@@ -593,6 +596,8 @@ fn run_all() {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };
     let source = without_shebang(source);
+    if inv.language.name() == "python" && inv.file == "<string>" { env::set_var("LUMEN_COMMAND_SOURCE", &source); }
+    else { env::remove_var("LUMEN_COMMAND_SOURCE"); }
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();
@@ -658,7 +663,7 @@ fn run_all() {
     // The path as the run was started with it, links and all: a
     // complaint about reading the program names it the way its reader
     // named it, which is how the reference names it too.
-    request.push(("SELF".to_string(), "given".to_string(), inv.file.clone(), false));
+    request.push(("SELF".to_string(), "given".to_string(), if inv.file == "<string>" { "-c".to_owned() } else { inv.file.clone() }, false));
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
     // A full Python kernel names the binary itself, so a program that
@@ -898,6 +903,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut module_source = None;
     let mut module_name = None;
     let mut warning_options = Vec::new();
+    let mut tracing_limit = None;
+    let mut extended_options = Vec::new();
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -963,6 +970,31 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 };
                 warning_options.push(option);
             }
+            Some("-c") if file.is_none() => {
+                if rest.len() < 2 { usage(program); }
+                file = Some("<string>".to_owned());
+                module_source = Some(said(&rest[1]));
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[2..];
+                break;
+            }
+            Some(flag) if file.is_none() && (flag == "-X" || flag.starts_with("-X") && flag.len() > 2) => {
+                let (setting, used) = if flag == "-X" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                extended_options.push(setting.clone());
+                if setting == "tracemalloc" { tracing_limit = Some(1); }
+                else if let Some(limit) = setting.strip_prefix("tracemalloc=") {
+                    tracing_limit = Some(limit.parse::<usize>().ok().filter(|n| *n > 0 && *n <= 65535).unwrap_or_else(|| {
+                        eprintln!("invalid number of frames for tracemalloc"); process::exit(1);
+                    }));
+                }
+                rest = &rest[used..];
+            }
+            Some("-E" | "-I" | "-s" | "-S" | "-u" | "-B" | "-q" | "-O" | "-OO" | "-P" | "-R" | "-b" | "-bb") if file.is_none() => {
+                rest = &rest[1..];
+            }
             Some("--serve") => {
                 if rest.len() < 2 {
                     eprintln!("Error: --serve requires an address or a port");
@@ -992,8 +1024,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 let path = module.replace('.', "/");
                 let mut found = None;
-                for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
-                    if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                let mut directories = vec![std::path::PathBuf::from(".")];
+                if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                for directory in directories {
+                    for relative in [format!("{path}.py"), format!("{path}/__main__.py")] {
+                        let candidate = directory.join(relative);
+                        if let Ok(source) = fs::read_to_string(&candidate) {
+                            found = Some((candidate.to_string_lossy().into_owned(), source)); break;
+                        }
+                    }
+                    if found.is_some() { break; }
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
@@ -1077,6 +1117,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
         process::exit(0);
     }
 
+    if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
+    else { env::remove_var("LUMEN_TRACE_FRAMES"); }
     let file = file.unwrap_or_else(|| usage(program));
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
@@ -1101,6 +1143,10 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
+    if language.name() == "python" {
+        let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
+        env::set_var("LUMEN_XOPTIONS", encoded);
+    } else { env::remove_var("LUMEN_XOPTIONS"); }
     Invocation { kernel, file, serve, language, emit, python, module_source, module_name, warning_options, program_args: rest.iter().map(said).collect() }
 }
 

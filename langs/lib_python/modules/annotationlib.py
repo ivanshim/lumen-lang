@@ -450,7 +450,7 @@ def _forward_annotation(thunk, arguments=(), owner=None):
                 inserted.append(name)
         result = thunk(*arguments)
         for value in symbols:
-            value.__forward_module__ = module
+            value.__forward_module__ = None
             value.__owner__ = owner
             value.__globals__ = namespace
             value.__forward_is_class__ = isinstance(owner, type)

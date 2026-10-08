@@ -2404,6 +2404,7 @@ impl<'a> Machine<'a> {
             },
             (None,None)=>{self.made+=1;Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of:class.clone(),holds:RefCell::new(Vec::new()),turn:self.made}))},
         };
+        self.trace_allocation(&created);
         if metaclass {self.finish_class_construction(&created,&class,given.clone())?;}
         if let Value::Thing(thing)=&created {
             // A thing whose class bids farewell is noted, so that a round
@@ -3977,7 +3978,9 @@ impl<'a> Machine<'a> {
                 // handed; one the program wrote answers the outermost
                 // dictionary of the run it was written in.
                 if let Some(globe)=&code.globe { return Ok(globe.clone()); }
-                if code.written_in.is_none(){return Ok(Value::Shared(self.constructor_world(&code).unwrap_or_else(||self.book_about(true))));}
+                let dictionary = self.constructor_world(&code)
+                    .or_else(|| self.space_book_for(&code)).unwrap_or_else(|| self.world_kept());
+                return Ok(Value::Shared(dictionary));
             }
             // The builtins a routine reaches its unbound names through.
             if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key) {

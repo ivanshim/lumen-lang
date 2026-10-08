@@ -74,6 +74,12 @@ impl Machine<'_> {
         self.warning_get(owner, native_name)
     }
     fn warning_operation(&mut self, task: u8, positional: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        let bounds = self.extent;
+        let result = self.warning_work(task, positional, keywords);
+        self.extent = bounds;
+        result
+    }
+    fn warning_work(&mut self, task: u8, positional: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         if task > 1 {
             if !keywords.is_empty() { return Err(String::from("TypeError: native warnings operation takes no keyword arguments")); }
             let count = if task == 6 { 1 } else { 0 };
@@ -274,7 +280,7 @@ impl Machine<'_> {
         if matches!(name, Value::Nil) { return Ok(Value::Nil); }
         let code = match self.warning_send(loader, "get_source", vec![name]) {
             Ok(code) => code,
-            Err(message) if message.starts_with("ImportError:") => { self.got_away = None; return Ok(Value::Nil); }
+            Err(message) if self.got_away.as_ref().map_or(message.starts_with("ImportError:"), |raised| self.escape_names(raised, "ImportError")) => { self.got_away = None; return Ok(Value::Nil); }
             Err(message) => return Err(message),
         };
         if matches!(code.settled(), Value::Nil) { return Ok(Value::Nil); }
@@ -320,14 +326,42 @@ impl Machine<'_> {
                     if exists { return Ok(None); }
                     continue;
                 }
-                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), Value::Nil, Value::Nil])?;
+                let location = match qualified.rsplit_once('.') {
+                    Some((ancestor, _)) => {
+                        let parent = self.load_namespace(ancestor)?;
+                        if self.attribute(&parent, "__path__").is_some() { self.warning_get(parent, "__path__")? }
+                        else { match self.read_class_member(parent, "__path__", false) {
+                            Ok(value) => value, Err(fault) if self.missing_member_escape(&fault) => Value::Nil,
+                            Err(fault) => return Err(self.carried_native_fault(fault)),
+                        } }
+                    }
+                    None => Value::Nil,
+                };
+                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), location, Value::Nil])?;
                 if matches!(specification.settled(), Value::Nil) { continue; }
                 let loader = self.warning_get(specification.clone(), "loader")?;
-                let namespace = self.warning_send(loader.clone(), "create_module", vec![specification.clone()])?;
-                if matches!(namespace.settled(), Value::Nil) { return Err(String::from("ImportError: finder loader did not create a module")); }
-                if let Value::Thing(module) = &namespace { module.holds.borrow_mut().push((String::from("__spec__"), specification)); }
+                let created = self.warning_send(loader.clone(), "create_module", vec![specification.clone()])?;
+                let namespace = match created.settled() {
+                    Value::Nil => {
+                        self.made += 1;
+                        let holds = vec![(String::from("__doc__"), Value::Nil), (String::from("__name__"), Value::text(qualified))];
+                        Value::Thing(Rc::new(Thing { of: self.native_kind("module"), reclassified: RefCell::new(None), turn: self.made, holds: RefCell::new(holds) }))
+                    }
+                    _ => created,
+                };
+                let bootstrap_module = self.load_namespace("importlib._bootstrap")?;
+                self.warning_send(bootstrap_module, "_init_module_attrs", vec![specification, namespace.clone()])?;
                 self.imported.insert(qualified.to_owned(), namespace.clone()); self.namespace_places.borrow_mut().take(); self.refresh_import_table(qualified);
-                self.warning_send(loader, "exec_module", vec![namespace.clone()])?;
+                let completion = self.warning_send(loader, "exec_module", vec![namespace.clone()]);
+                if completion.is_err() {
+                    self.imported.remove(qualified); self.namespace_places.borrow_mut().take(); self.refresh_import_table(qualified);
+                }
+                completion?;
+                if let Some((ancestor, member)) = qualified.rsplit_once('.') {
+                    if let Some(parent) = self.imported.get(ancestor).cloned() {
+                        self.alter_class_member(parent, member, Some(namespace.clone()), false).map_err(|fault| self.carried_native_fault(fault))?;
+                    }
+                }
                 return Ok(Some(namespace));
             }
             Ok(None)
@@ -356,5 +390,50 @@ impl Machine<'_> {
             }
         }
         Ok(())
+    }
+}
+
+impl Machine<'_> {
+    fn trace_allocation(&mut self, subject: &Value) {
+        if self.allocation_limit == 0 { return; }
+        if let Value::Thing(instance) = subject {
+            let mut positions = Vec::with_capacity(self.allocation_limit.min(8));
+            let mut activation = self.active_trace.clone();
+            while let Some(current) = activation.take() {
+                let fields = current.holds.borrow();
+                let file = match &fields[5].1 { Value::Bound(code, _) => code.written_in.as_deref().unwrap_or(&self.entry_file), _ => &self.entry_file };
+                let counterpart = ["/modules/builtins.py", "/modules/_pyio.py", "/modules/_io.py"].iter().any(|suffix| file.ends_with(suffix));
+                if !counterpart {
+                    if let Value::Small(number) = fields[0].1.settled() { positions.push((file.to_owned(), number)); }
+                }
+                if positions.len() >= self.allocation_limit { break; }
+                if let Value::Thing(previous) = &fields[2].1 { activation = Some(previous.clone()); }
+            }
+            positions.reverse();
+            let address = Rc::as_ptr(instance) as usize;
+            if self.made & 63 == 0 { self.allocations.retain(|_, record| record.0.strong_count() > 0); }
+            self.allocations.insert(address, (Rc::downgrade(instance), positions));
+        }
+    }
+    fn allocation_operation(&mut self, values: &[Value]) -> Result<Value, String> {
+        let task = values.first().map(Value::settled);
+        let answer = match task {
+            Some(Value::Small(0)) if values.len() == 2 => {
+                if let Value::Thing(object) = values[1].settled() {
+                    self.allocations.get(&(Rc::as_ptr(&object) as usize)).filter(|(weak, _)| weak.strong_count() != 0)
+                        .map(|(_, entries)| Value::tuple(entries.iter().map(|entry| Value::tuple(vec![Value::text(&entry.0), Value::Small(entry.1)])).collect())).unwrap_or(Value::Nil)
+                } else { Value::Nil }
+            }
+            Some(Value::Small(1)) if values.len() == 2 => {
+                let Value::Small(depth) = values[1].settled() else { return Err(String::from("TypeError: traceback depth must be an integer")); };
+                if !(1..=65535).contains(&depth) { return Err(String::from("ValueError: the number of frames must be in range [1; 65535]")); }
+                if self.allocation_limit == 0 { self.allocation_limit = depth as usize; self.last_allocation_limit = self.allocation_limit; } Value::Nil
+            }
+            Some(Value::Small(2)) if values.len() == 1 => { self.allocations.clear(); self.allocation_limit = 0; Value::Nil }
+            Some(Value::Small(3)) if values.len() == 1 => Value::Flag(self.allocation_limit != 0),
+            Some(Value::Small(4)) if values.len() == 1 => Value::Small(self.last_allocation_limit as i64),
+            _ => return Err(String::from("ValueError: invalid allocation tracing operation")),
+        };
+        Ok(answer)
     }
 }

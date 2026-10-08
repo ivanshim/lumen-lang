@@ -243,6 +243,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("token", include_str!("token.py"), "token.py"),
     ("tokenize", include_str!("tokenize.py"), "tokenize.py"),
     ("traceback", include_str!("traceback.py"), "traceback.py"),
+    ("tracemalloc", include_str!("tracemalloc.py"), "tracemalloc.py"),
     ("types", include_str!("types.py"), "types.py"),
     ("typing", include_str!("typing.py"), "typing.py"),
     ("unicodedata", include_str!("unicodedata.py"), "unicodedata.py"),

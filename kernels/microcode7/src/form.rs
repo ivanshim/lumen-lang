@@ -180,6 +180,7 @@ pub enum Prim {
     WorldBook,
     /// The names about the call: a copy inside a routine, the outermost
     /// dictionary outside one (ext.builtin.locals).
+    AllocationTrace,
     HereBook,
     /// Text read and run as statements (ext.builtin.exec).
     Perform,

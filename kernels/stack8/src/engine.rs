@@ -96,6 +96,9 @@ fn watch_host_signals() {
 
 pub struct Engine<'a> {
     contexts: crate::context::ContextStore,
+    allocation_depth: usize,
+    allocation_retained_depth: usize,
+    allocation_sites: HashMap<usize, (Weak<Instance>, Vec<(String, i64)>)>,
     warning_revision: i64,
     warning_lock_depth: usize,
     warning_module: Option<Value>,
@@ -1514,6 +1517,8 @@ impl<'a> Engine<'a> {
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
+            allocation_retained_depth: std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(1),
+            allocation_depth: if lang.allocation_trace.is_empty() { 0 } else { std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(0) }, allocation_sites: HashMap::new(),
             warning_revision: 0, warning_lock_depth: 0, warning_module: None, warning_bound: None, finder_active: std::collections::HashSet::new(),
             constructor_indices: RefCell::new(HashMap::new()),
             member_words: [
@@ -1916,6 +1921,8 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
+        // The top-level run has returned; shutdown callbacks have no Python caller.
+        if !self.lang.warning_backend.is_empty() { self.trace_frame = None; self.location = None; }
         self.settle_departed();
         if let Some(named) = self.lang.destructor.clone().as_deref() {
             // The words an object says as it goes: the destructor the
@@ -19440,6 +19447,7 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProductStep => self.iterator_operation(args)?,
+            Builtin::AllocationTrace => self.allocation_command(args)?,
             Builtin::ProgramNamespace => {
 
                 if let [value] = args.as_slice() {

@@ -13,6 +13,16 @@ while _startup_options:
     warnoptions.append(_tail[:_size])
     _startup_options = _tail[_size:]
 del _startup_options
+_xoptions = {}
+_startup_options = __posix('environ')[1].get(b'LUMEN_XOPTIONS', b'').decode('utf-8')
+while _startup_options:
+    _size, _tail = _startup_options.split(':', 1)
+    _size = int(_size)
+    _option = _tail[:_size]
+    _name, _equals, _value = _option.partition('=')
+    _xoptions[_name] = _value if _equals else True
+    _startup_options = _tail[_size:]
+del _startup_options
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
 # The isolated default contains the library's own source location.

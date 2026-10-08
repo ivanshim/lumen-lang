@@ -2264,6 +2264,7 @@ impl<'a> Engine<'a> {
             self.made += 1;
             Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made}))
         };
+        self.remember_allocation(&object);
         if makes_classes { self.initialise_made_class(&object, &c, args.clone())?; }
         if let Value::Object(o) = &object {
             // One whose class has last words to say is remembered, so that

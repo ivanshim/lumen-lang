@@ -509,6 +509,7 @@ pub enum Builtin {
     ModuleLoad,
     MemberSet,
     MemberGet,
+    AllocationTrace,
     ProgramNamespace,
     ProductStep,
     FrameModule,

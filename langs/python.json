@@ -4110,6 +4110,7 @@
   ],
   "ext.builtin.iter.stop_value": [],
   "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.allocation.trace": ["__allocation_trace"],
   "ext.system.warnings": [
     "_warnings",
     "warn",

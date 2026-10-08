@@ -1,9 +1,4 @@
-# Helpers that run a second interpreter. The host runs a file, so the
-# CPython-style arguments a test hands over (options, a `-c` with code,
-# a file) are turned into a file to run plus the program's own words;
-# options that mean nothing to this host are dropped, and `-c code` is
-# written to a scratch file first.
-
+# Subprocess helpers preserve the Python command line, including startup options.
 import os
 import subprocess
 import sys
@@ -14,35 +9,9 @@ from test import support
 
 def _to_file_args(args):
     args = list(args)
-    file = None
-    rest = []
-    i = 0
-    n = len(args)
-    while i < n:
-        a = args[i]
-        if a == '-c':
-            code = args[i + 1]
-            directory = tempfile.mkdtemp(prefix='script_helper_')
-            file = os.path.join(directory, 'code.py')
-            with open(file, 'w', encoding='utf-8') as out:
-                out.write(code)
-            i += 2
-        elif a == '-m' and i + 1 < n:
-            file = '-m'
-            rest = args[i + 1:]
-            break
-        elif a in ('-X', '-W', '-Q') and i + 1 < n:
-            i += 2
-        elif len(a) > 2 and a[:2] in ('-X', '-W', '-Q'):
-            i += 1
-        elif a in ('-E', '-I', '-s', '-S', '-u', '-B', '-d', '-v', '-q',
-                   '-O', '-OO', '-P', '-R', '-t', '-tt', '-b', '-bb', '-i', '-x'):
-            i += 1
-        else:
-            file = a
-            rest = args[i + 1:]
-            break
-    return file, rest
+    if not args:
+        raise ValueError('an interpreter command is required')
+    return args[0], args[1:]
 
 
 def make_script(script_dir, script_basename, source, omit_suffix=False):

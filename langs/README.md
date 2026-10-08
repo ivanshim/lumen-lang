@@ -4496,6 +4496,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
+| `ext.builtin.allocation.trace` | - | - | `__allocation_trace` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
 | `ext.builtin.args.all.outside` | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - | - | - | - |
@@ -6090,3 +6091,5 @@ still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
 `ext.system.warnings` names the Python native warnings backend and its entry points. The full kernels own filtering, registry versions, caller selection and locking; the public library owns warning formatting and capture hooks.
+
+Python `ext.builtin.allocation.trace` exposes allocation traceback lookup and tracing control for native instance storage. Both full kernels record real caller frames when tracing is active; I/O counterpart frames stand for native operations and are omitted.

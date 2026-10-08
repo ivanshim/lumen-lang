@@ -254,6 +254,23 @@ class _HostFile:
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
+        # Keep an owned descriptor until close or finalization, including when
+        # the text buffer itself was filled through a separate read primitive.
+        import posix
+        flags = posix.O_RDWR if '+' in mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
+        if appending:
+            flags |= posix.O_CREAT | posix.O_APPEND
+        self._descriptor = posix.open(name, flags, 0o666)
+
+    def __del__(self):
+        if getattr(self, '_descriptor', None) is None or getattr(self, 'closed', True):
+            return
+        try:
+            import warnings
+            warnings.warn('unclosed file %r' % self, ResourceWarning,
+                          stacklevel=2, source=self, skip_file_prefixes=(__file__,))
+        finally:
+            self.close()
 
     def _open(self):
         if self.closed:

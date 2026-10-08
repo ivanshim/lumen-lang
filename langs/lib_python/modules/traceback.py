@@ -15,12 +15,13 @@ def format_tb(tb, limit=None, exc=None):
         line = item.tb_lineno
         entry = '  File "' + filename + '", line ' + str(line) + ', in ' + code.co_name + '\n'
         try:
-            import builtins
-            with builtins.open(filename) as source:
-                contents = source.read()
-            if contents[:1] == '\ufeff':
-                contents = contents[1:]
-            lines = contents.splitlines()
+            import linecache
+            lines = linecache.getlines(filename, item.tb_frame.f_globals)
+            if not lines:
+                lines = linecache._getlines_from_code(code)
+            lines = [text.rstrip('\n') for text in lines]
+            if lines and lines[0].startswith('\ufeff'):
+                lines[0] = lines[0][1:]
             shown = lines[line - 1].strip()
             mark = None
             if isinstance(exc, AssertionError) and shown.startswith('assert '):
@@ -36,6 +37,23 @@ def format_tb(tb, limit=None, exc=None):
                     mark = len(expression)
             if shown:
                 entry += '    ' + shown + '\n'
+                if mark is None and filename.startswith('<') and filename.endswith('>'):
+                    begin, finish = item.tb_colno, item.tb_end_colno
+                    if begin is not None and finish is not None and item.tb_end_lineno == line:
+                        original = lines[line - 1]
+                        fragment = original.encode('utf-8')[begin:finish].decode('utf-8')
+                        padding = len(original.encode('utf-8')[:begin].decode('utf-8')) - (len(original) - len(original.lstrip()))
+                        if padding >= 0 and fragment:
+                            indicator = '^' * len(fragment)
+                            try:
+                                import ast
+                                node = ast.parse(fragment, mode='eval').body
+                                if isinstance(node, ast.Call):
+                                    prefix = len(fragment.encode('utf-8')[:node.func.end_col_offset].decode('utf-8'))
+                                    indicator = '~' * prefix + '^' * (len(fragment) - prefix)
+                            except (SyntaxError, AttributeError, NotImplementedError):
+                                pass
+                            entry += '    ' + ' ' * padding + indicator + '\n'
                 if mark is not None and mark > 0:
                     entry += '    ' + ' ' * (7 if shown.startswith('assert ') else 0) + '^' * mark + '\n'
         except (OSError, IndexError, UnicodeError):
