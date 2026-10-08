@@ -8417,3 +8417,22 @@
 {"t":"2026-10-08T07:28:07Z","event":"finished","job":"stdlib-descr","exit_time":"2026-10-08T07:23:59Z"}
 {"t":"2026-10-08T07:28:07Z","event":"review-queued","job":"stdlib-descr","review":"review-auto-stdlib-descr-0728"}
 {"t":"2026-10-08T07:28:09Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T07:28:47Z","event":"resumed","job":"stdlib-warnings","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T07:33:32Z","event":"started","job":"claude-deque","model":"claude-sonnet-5-5","via":"claude-run","mode":"resume"}
+{"t":"2026-10-08T07:33:48Z","event":"review-started","job":"claude-pstats","review":"review-auto-claude-pstats-0727"}
+{"t":"2026-10-08T07:34:30Z","event":"integrity","job":"dsflash-pyclbr","review":"review-auto-dsflash-pyclbr-0712","commit":"8286a27a4","model":"deepseek-v4.1-flash","round":1,"note":"spoofed dependency: placeholder _testmultiphase.py module registered only so test collection imports succeed; also ast.parse loops on ';' separators, swallows SyntaxError (x =), test_pyclbr pickle test fails both kernels; absent->5/6 both kernels kept; clean check 1195/0 -> returns + held-resumes (DS Flash full)"}
+{"t":"2026-10-08T07:35:21Z","event":"quota","codex_week_used":64,"codex_credits":0,"claude_week_used":7,"claude_5h_used":12,"kimi_5h_used":0,"kimi_month_used":0.9593,"kimi_code_used":0,"deepseek_usd":303.48}
+{"t":"2026-10-08T07:35:26Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":64,"expected":65.4,"gap":-1.4,"status":"ok"}
+{"t":"2026-10-08T07:35:38Z","event":"checkin","status":"done","actions":"REJECT (integrity) dsflash-pyclbr (1st: placeholder _testmultiphase module spoofs availability; ast ';' loop, swallowed SyntaxError, pickle test fails) -> returns + held-resumes (DS Flash 12/12); resumed claude-deque on the free Sonnet slot (claude-pstats finished 07:24Z, review running); prune-merged freed 0MB; luna FINDINGS appended","notes":"box load 7.0, 10.6 GB available, disk 80%; Mac disk 84%; Sol 11 feature + review slot busy (claude-pstats review), robotparser-sol + stdlib-descr review queued; DS Flash 12/12, DS Pro tstring, Kimi module + type-comments queued, Sonnet claude-deque; no open PRs; luna no new alerts, gap -1.4 ok; Codex week 64%; Claude 5h 11% week 7%"}
+{"t":"2026-10-08T07:37:11Z","event":"exited","job":"kimi-module","code":0}
+{"t":"2026-10-08T07:37:11Z","event":"started","job":"kimi-type-comments","model":"kimi-k3","mode":"fresh"}
+{"t":"2026-10-08T07:38:21Z","event":"finished","job":"kimi-module","exit_time":"2026-10-08T07:37:11Z"}
+{"t":"2026-10-08T07:38:21Z","event":"review-queued","job":"kimi-module","review":"review-auto-kimi-module-0738"}
+{"t":"2026-10-08T07:38:25Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T07:39:27Z","event":"exited","job":"review-auto-claude-pstats-0727","code":0}
+{"t":"2026-10-08T07:40:50Z","event":"review-started","job":"stdlib-descr","review":"review-auto-stdlib-descr-0728"}
+{"t":"2026-10-08T07:46:47Z","event":"exited","job":"stdlib-tarfile","code":0}
+{"t":"2026-10-08T07:47:52Z","event":"review-started","job":"kimi-module","review":"review-auto-kimi-module-0738"}
+{"t":"2026-10-08T07:48:40Z","event":"finished","job":"stdlib-tarfile","exit_time":"2026-10-08T07:46:47Z"}
+{"t":"2026-10-08T07:48:40Z","event":"review-queued","job":"stdlib-tarfile","review":"review-auto-stdlib-tarfile-0748"}
+{"t":"2026-10-08T07:48:42Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
