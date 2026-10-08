@@ -3741,6 +3741,9 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Some(proxy) = self.locals_proxy(&value) {
+            if Self::locals_member(key) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), key.to_owned())); }
+        }
         if let Some(answer) = self.coroutine_attribute(&value.settled(), key)? { return Ok(answer); }
         let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
         if self.names_in_calls && !key.starts_with("__") {

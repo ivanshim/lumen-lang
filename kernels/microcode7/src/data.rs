@@ -21,6 +21,10 @@ pub struct Env {
     /// Slots used by closures after this call returns.
 
     pub weak_callback_frame: Cell<bool>,
+    /// Names a proxy over this frame has put aside: names the code
+    /// reserved no slot for, kept here so every reading of the frame,
+    /// `locals()` among them, sees them.
+    pub extra: RefCell<Vec<(Value, Value)>>,
 }
 
 impl Drop for Env {
@@ -29,7 +33,7 @@ impl Drop for Env {
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false), extra: RefCell::new(Vec::new()) })
     }
 }
 
