@@ -80,7 +80,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("builtins", include_str!("builtins.py"), "builtins.py"),
     ("calendar", include_str!("calendar.py"), "calendar.py"),
     ("cmath", include_str!("cmath.py"), "cmath.py"),
-    ("codecs", include_str!("codecs.py"), "codecs.py"),
+    ("codecs", concat!(include_str!("codecs.py"), "\n", include_str!("runtime_adapters/codecs.py")), "codecs.py"),
     ("collections.abc", include_str!("collections/abc.py"), "collections/abc.py"),
     ("collections", include_str!("collections.py"), "collections/__init__.py"),
     ("colorsys", include_str!("colorsys.py"), "colorsys.py"),
