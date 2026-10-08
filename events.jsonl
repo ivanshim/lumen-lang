@@ -8252,3 +8252,17 @@
 {"t":"2026-10-08T03:54:20Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":57,"expected":58.7,"gap":-1.7,"status":"ok"}
 {"t":"2026-10-08T03:54:26Z","event":"checkin","status":"done","actions":"accepted perf-mc7-overhead (e4d0dae23, 21f; iter/datetime time gains both kernels, pass counts unchanged, clean check 1195/0; overall +10% target not met); prune-merged freed 0MB; luna FINDINGS appended","notes":"box load 8.75/8, 11.8 GB available, disk 78%; Mac disk 81%; Sol 12/12 (11 jobs + source-encoding review); DS Flash 11 running + charmapcodec queued = 12/12 (waits for load gate); DS Pro tstring; Kimi module running, type-comments queued; Sonnet claude-deque; held: colorize/code-module await stdlib-unittest, claude-pstats awaits Sonnet, dspro-type-annotations awaits DS Pro; no open PRs; luna: no new alerts, gap -1.7 ok; Claude 5h 2% week 5%"}
 {"t":"2026-10-08T03:57:10Z","event":"exited","job":"review-auto-dsflash-source-encoding-0331","code":0}
+{"t":"2026-10-08T04:11:29Z","event":"exited","job":"claude-deque","code":0}
+{"t":"2026-10-08T04:13:00Z","event":"finished","job":"claude-deque","exit_time":"2026-10-08T04:11:29Z"}
+{"t":"2026-10-08T04:13:01Z","event":"review-queued","job":"claude-deque","review":"review-auto-claude-deque-0412"}
+{"t":"2026-10-08T04:13:07Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T04:13:07Z","event":"review-started","job":"claude-deque","review":"review-auto-claude-deque-0412"}
+{"t":"2026-10-08T04:13:34Z","event":"returned","job":"dsflash-source-encoding","review":"review-auto-dsflash-source-encoding-0331","commit":"d08c6a250","round":1,"note":"(1st; test_source_encoding 49->89/93 both kernels but 4 reference failures remain in a 94-test subject (cp949/cp932/shift-jis decoding, binary-literal SyntaxWarning); introduced bug: CP1252 tables map undefined bytes 81/8D/8F/90/9D) -> returns + held-resumes (DS Flash full)"}
+{"t":"2026-10-08T04:13:43Z","event":"started","job":"claude-pstats","model":"claude-sonnet-5-5","via":"claude-run","mode":"resume"}
+{"t":"2026-10-08T04:14:32Z","event":"quota","codex_week_used":58,"codex_credits":0,"claude_week_used":5,"claude_5h_used":2,"kimi_5h_used":0,"kimi_month_used":0.9525,"kimi_code_used":0,"deepseek_usd":307.79}
+{"t":"2026-10-08T04:14:38Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":58,"expected":59.5,"gap":-1.5,"status":"ok"}
+{"t":"2026-10-08T04:14:46Z","event":"checkin","status":"done","actions":"returned dsflash-source-encoding (1st) -> held-resumes (DS Flash 12/12); resumed claude-pstats on the free Sonnet slot; prune-merged freed 0MB; claude-deque review auto-started","notes":"box load 8.2, 9.1 GB avail, disk 79%; Mac disk 81%; no open PRs; luna: 1 expected OpenClaw turn, meter gap -1.5 ok"}
+{"t":"2026-10-08T04:15:07Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-08T04:16:38Z","event":"exited","job":"review-auto-claude-deque-0412","code":0}
+{"t":"2026-10-08T04:22:11Z","event":"resumed","job":"dsflash-charmapcodec","model":"deepseek-flash","session":"ses_ee73f6e22ffeP8mCdrMlaOKyu6"}
+{"t":"2026-10-08T04:25:22Z","event":"exited","job":"dsflash-bufio","code":0}
