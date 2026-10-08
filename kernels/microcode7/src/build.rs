@@ -12775,7 +12775,17 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
         Form::Const(v) => literal(v, constants, indexed),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
+        Form::Write(slot, child) if slot.ident.starts_with("#called") && matches!(child.as_ref(), Form::Const(Value::Text(_))) => {
+            if let Form::Const(Value::Text(member)) = child.as_ref() { named(member, &[], names); }
+        }
         Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Apply(Callee::Prim(Prim::Of | Prim::Onto | Prim::HasMember | Prim::SetMember | Prim::Pluck, spelling), args) if spelling.is_empty() => {
+            for (at, argument) in args.iter().enumerate() {
+                if let (1, Form::Const(Value::Text(member))) = (at, argument) {
+                    named(member, &[], names);
+                } else { children.push(argument); }
+            }
+        }
         Form::Apply(callee, args) => {
             if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
             match callee {

@@ -13531,7 +13531,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
                 let name = cell.ident.to_string();
                 if !name.starts_with('#') && !locals.contains(&name) && !names.contains(&name) { names.push(name); }
             }
-            Instr::Act(Action::Grab(name) | Action::Plant(name), _) | Instr::Act(Action::Builtin(_, name), _) if !name.is_empty() => {
+            Instr::Act(Action::Grab(name) | Action::Plant(name) | Action::Uproot(name) | Action::HasMember(name) | Action::RestoreMember(name) | Action::BondField(name), _) | Instr::Act(Action::Builtin(_, name), _) if !name.is_empty() => {
                 if !names.iter().any(|n| n == name.as_ref()) { names.push(name.to_string()); }
             }
             _ => {}
