@@ -21222,6 +21222,11 @@ impl<'a> Engine<'a> {
                     });
                 }
                 arity(1)?;
+                if self.fuller_classes() {
+                    if let Value::Class(class) = args[0].contents() {
+                        return Ok(Self::maker_beneath(&class).map_or_else(|| self.kind_maker_word(), Value::Class));
+                    }
+                }
                 if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
                     // A value that stands for a kind is itself of the
                     // kind builtin's kind, whatever kind it stands for.

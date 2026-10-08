@@ -3948,6 +3948,19 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if self.rules.class_builder {
+            match &value {
+                Value::Intrinsic(Prim::Octets(which @ 0..=1), _) => {
+                    let canonical = self.octet_type(*which != 0);
+                    return self.read_class_member(canonical, key, direct);
+                }
+                Value::Intrinsic(Prim::SortOf, _) if key == self.detail("allocate") => {
+                    let owner = self.builder_blueprint();
+                    return self.read_class_member(Value::Blueprint(owner), key, direct);
+                }
+                _ => {},
+            }
+        }
         if self.rules.words_ext_stmt_class_detail_root_members.get(10).is_some_and(|word|word==key) && matches!(value.settled(),Value::Set(_)) {
             let ancestor=self.common_ancestor();
             let member=self.from_the_root(key,false,&ancestor).ok_or_else(||self.class_unready())?;
@@ -5893,6 +5906,15 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
         let settled = parent.settled();
+        if self.rules.class_builder {
+            if let Value::Wrapped(8, names) = &settled {
+                if let Some(Value::Text(spelling)) = names.first() {
+                    if let Some(primitive) = self.table.prims.get(spelling.as_ref()) {
+                        return self.parent_from_type(&Value::Intrinsic(*primitive, spelling.clone()));
+                    }
+                }
+            }
+        }
         if matches!(&settled,Value::Wrapped(9,parts) if parts.is_empty()){let name=self.table.strings("ext.stmt.class.parent").first().cloned().unwrap_or_default();return Ok(self.native_kind(&name));}
         if self.rules.class_builder && self.spells_property_kind(&settled) { return Ok(self.property_blueprint()); }
         if self.table.has_any("ext.builtin.bool.base") && matches!(settled, Value::Intrinsic(Prim::Truthful, _)) { return Err(self.table.single("ext.builtin.bool.base").unwrap_or("").to_owned().into()); }

@@ -3412,6 +3412,14 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if !self.lang.class_builder.is_empty() {
+            if let Value::Native(Builtin::Bytes(tag @ 0..=1), _) = &subject {
+                return self.class_get(self.byte_kind(*tag == 1), name, plain);
+            }
+            if matches!(subject, Value::Native(Builtin::SortOf, _)) && name == self.class_word("allocate") {
+                return Ok(Self::adapter(40, Vec::new()));
+            }
+        }
         if matches!(&subject,Value::Adapter(entry) if entry.0==9 && entry.1.is_empty()) {
             let title=self.lang.parent_words.first().cloned().unwrap_or_default();let class=self.kind_class(&title);
             return self.class_get(Value::Class(class),name,plain);
@@ -5636,6 +5644,17 @@ impl<'a> Engine<'a> {
         protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if c.python_names.borrow().is_some() { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
+        if !self.lang.class_builder.is_empty() {
+            if let Value::Adapter(reference) = value.contents() {
+                if reference.0 == 8 {
+                    if let Some(Value::Text(word)) = reference.1.first() {
+                        if let Some(operation) = self.lang.builtins.get(word.as_ref()).copied() {
+                            return self.type_base(&Value::Native(operation, word.clone()));
+                        }
+                    }
+                }
+            }
+        }
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }
         if let Value::Adapter(w)=value.contents() {if w.0==9 && w.1.is_empty(){let name=self.lang.parent_words.first().cloned().unwrap_or_default();return Ok(self.kind_class(&name));}}
         match value.contents() {
