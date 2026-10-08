@@ -81,6 +81,18 @@ fn integer(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<i64, String> {
     }
 }
 
+// A count, a maximum split or a search bound given where a text method
+// expects one: anything that is no whole number is refused with the
+// wording the text kind itself uses, so a bare code-point text and a
+// plain one complain alike.
+fn whole_count(v: &Value, _fault: &dyn Fn(&str) -> String) -> Result<i64, String> {
+    match v.contents() {
+        Value::Small(n) => Ok(n), Value::Flag(b) => Ok(i64::from(b)),
+        Value::Huge(n) => Ok(n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX })),
+        other => Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+    }
+}
+
 fn text(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<String, String> {
     if let Value::Text(s) = v.contents() { Ok(s.to_string()) } else { Err(fault("arguments")) }
 }
@@ -89,127 +101,64 @@ fn bound(n: i64, length: usize) -> usize {
     if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length) }
 }
 
-/// A text that keeps a lone surrogate answers the searching and the
-/// cutting questions by walking the code units it keeps, so a half of a
-/// surrogate pair is compared, found and handed back as the very unit it
-/// is, rather than as the noncharacter a stand-in text would carry.
-fn codepoint_text_work(row: &[u32], op: &str, a: &[Value], fault: &dyn Fn(&str) -> String) -> Answer {
-    let piece = |span: &[u32]| Value::from_codes(span.to_vec());
-    match op {
-        "find" | "rfind" | "index" | "rindex" | "count" => {
-            if a.is_empty() || a.len() > 3 { return Err(fault("arguments")); }
-            let floor = match a.get(1) { None | Some(Value::Null) => 0, Some(v) => integer(v, fault)? };
-            let ceil = match a.get(2) { None | Some(Value::Null) => row.len() as i64, Some(v) => integer(v, fault)? };
-            let begin = bound(floor, row.len());
-            let end = bound(ceil, row.len());
-            let needle = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
-            if floor > row.len() as i64 || begin > end {
-                if matches!(op, "index" | "rindex") { return Err(fault("substring")); }
-                return Ok(if op == "count" { Value::Small(0) } else { Value::Small(-1) });
-            }
-            let span = &row[begin..end];
-            if op == "count" {
-                if needle.is_empty() { return Ok(Value::Small(span.len() as i64 + 1)); }
-                let mut seen = 0i64;
-                let mut at = 0usize;
-                while at + needle.len() <= span.len() {
-                    if span[at..at + needle.len()] == needle[..] { seen += 1; at += needle.len(); } else { at += 1; }
+/// Cut a row of code units into pieces on a separator row, or on runs
+/// of whitespace where none was given, with at most `limit` cuts. An
+/// empty separator is refused; every piece keeps the units it held.
+pub(crate) fn split_units(units: &[u32], separator: Option<&[u32]>, limit: usize, reverse: bool) -> Result<Vec<Vec<u32>>, ()> {
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    match separator {
+        Some(sep) => {
+            if sep.is_empty() { return Err(()); }
+            if reverse {
+                let mut stop = units.len();
+                while pieces.len() < limit {
+                    if stop < sep.len() { break; }
+                    let Some(at) = (0..=stop - sep.len()).rev().find(|&at| units[at..at + sep.len()] == *sep) else { break };
+                    pieces.push(units[at + sep.len()..stop].to_vec());
+                    stop = at;
                 }
-                return Ok(Value::Small(seen));
-            }
-            let mut hit = None;
-            if needle.is_empty() {
-                hit = Some(if matches!(op, "rfind" | "rindex") { span.len() } else { 0 });
+                pieces.push(units[..stop].to_vec());
+                pieces.reverse();
             } else {
-                let backwards = matches!(op, "rfind" | "rindex");
-                let mut at = 0usize;
-                while at + needle.len() <= span.len() {
-                    if span[at..at + needle.len()] == needle[..] {
-                        hit = Some(at);
-                        if !backwards { break; }
-                    }
-                    at += 1;
+                let mut begin = 0;
+                while pieces.len() < limit {
+                    if begin + sep.len() > units.len() { break; }
+                    let Some(at) = (begin..=units.len() - sep.len()).find(|&at| units[at..at + sep.len()] == *sep) else { break };
+                    pieces.push(units[begin..at].to_vec());
+                    begin = at + sep.len();
                 }
-            }
-            match hit {
-                Some(at) => Ok(Value::Small((begin + at) as i64)),
-                None if matches!(op, "index" | "rindex") => Err(fault("substring")),
-                None => Ok(Value::Small(-1)),
+                pieces.push(units[begin..].to_vec());
             }
         }
-        "split" | "rsplit" => {
-            if a.len() > 2 { return Err(fault("arguments")); }
-            let separator = a.first().filter(|v| !matches!(v.contents(), Value::Null))
-                .map(|v| v.contents().text_codes().ok_or_else(|| fault("arguments"))).transpose()?;
-            let Some(separator) = separator else { return Err(fault("separator")); };
-            if separator.is_empty() { return Err(fault("separator")); }
-            let limit = match a.get(1) { None | Some(Value::Null) => -1, Some(v) => integer(v, fault)? };
-            let room = if limit < 0 { usize::MAX } else { limit as usize };
-            let mut breaks = Vec::new();
-            let mut at = 0usize;
-            while at + separator.len() <= row.len() {
-                if row[at..at + separator.len()] == separator[..] { breaks.push(at); at += separator.len(); } else { at += 1; }
-            }
-            let kept: Vec<usize> = if op == "split" { breaks.into_iter().take(room).collect() }
-                else { let spent = breaks.len().saturating_sub(room); breaks.split_off(spent) };
-            let mut spans = Vec::new();
-            let mut edge = 0usize;
-            for stop in kept { spans.push(piece(&row[edge..stop])); edge = stop + separator.len(); }
-            spans.push(piece(&row[edge..]));
-            Ok(Value::array(spans).held(true))
-        }
-        "partition" | "rpartition" => {
-            if a.len() != 1 { return Err(fault("arguments")); }
-            let separator = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
-            if separator.is_empty() { return Err(fault("separator")); }
-            let from_end = op == "rpartition";
-            let mut at = None;
-            let mut i = 0usize;
-            while i + separator.len() <= row.len() {
-                if row[i..i + separator.len()] == separator[..] {
-                    at = Some(i);
-                    if !from_end { break; }
+        None => {
+            let blank = |n: u32| (28..=31).contains(&n) || char::from_u32(n).is_some_and(char::is_whitespace);
+            if reverse {
+                let mut stop = units.len();
+                loop {
+                    while stop > 0 && blank(units[stop - 1]) { stop -= 1; }
+                    if stop == 0 { break; }
+                    if pieces.len() == limit { pieces.push(units[..stop].to_vec()); break; }
+                    let mut begin = stop;
+                    while begin > 0 && !blank(units[begin - 1]) { begin -= 1; }
+                    pieces.push(units[begin..stop].to_vec());
+                    stop = begin;
                 }
-                i += 1;
-            }
-            let (head, middle, tail) = match at {
-                Some(i) => (row[..i].to_vec(), separator.clone(), row[i + separator.len()..].to_vec()),
-                None if from_end => (Vec::new(), Vec::new(), row.to_vec()),
-                None => (row.to_vec(), Vec::new(), Vec::new()),
-            };
-            Ok(Value::tuple(vec![piece(&head), piece(&middle), piece(&tail)]))
-        }
-        "replace" => {
-            if a.len() < 2 || a.len() > 3 { return Err(fault("arguments")); }
-            let old = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
-            let new = a[1].contents().text_codes().ok_or_else(|| fault("arguments"))?;
-            let limit = match a.get(2) { None | Some(Value::Null) => -1, Some(v) => integer(v, fault)? };
-            let room = if limit < 0 { usize::MAX } else { limit as usize };
-            let mut out: Vec<u32> = Vec::new();
-            let mut done = 0usize;
-            if old.is_empty() {
-                for &unit in row.iter() {
-                    if done < room { out.extend_from_slice(&new); done += 1; }
-                    out.push(unit);
-                }
-                if done < room { out.extend_from_slice(&new); }
-                return Ok(piece(&out));
-            }
-            let mut at = 0usize;
-            while at < row.len() {
-                if done < room && at + old.len() <= row.len() && row[at..at + old.len()] == old[..] {
-                    out.extend_from_slice(&new);
-                    at += old.len();
-                    done += 1;
-                } else {
-                    out.push(row[at]);
-                    at += 1;
+                pieces.reverse();
+            } else {
+                let mut begin = 0;
+                loop {
+                    while begin < units.len() && blank(units[begin]) { begin += 1; }
+                    if begin >= units.len() { break; }
+                    if pieces.len() == limit { pieces.push(units[begin..].to_vec()); break; }
+                    let mut stop = begin;
+                    while stop < units.len() && !blank(units[stop]) { stop += 1; }
+                    pieces.push(units[begin..stop].to_vec());
+                    begin = stop;
                 }
             }
-            Ok(piece(&out))
         }
-        _ => Err(fault("arguments")),
     }
+    Ok(pieces)
 }
 
 /// The names a value of a builtin kind answers to, by the working
@@ -239,7 +188,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     names.contains(&operation)
 }
 
-pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String) -> Answer {
+pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String, allow_cycles: bool) -> Answer {
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
         let slots: &[&str] = match op {
@@ -260,7 +209,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     let arity = |lo, hi| if a.len() >= lo && a.len() <= hi { Ok(()) } else { Err(fault("arguments")) };
     let held = receiver.contents();
     let store = |v: Value| -> Answer {
-        if let Value::Collection(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
+        if let Value::Collection(cell, _) = receiver { if !allow_cycles && reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
     // A map keyed by the members of whatever it was asked of, each key
     // holding the one value given, or nothing where none was.
@@ -326,8 +275,149 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             };
             return Ok(Value::Flag(valid));
         }
-        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex" | "count" | "split" | "rsplit" | "replace" | "partition" | "rpartition") => {
-            return codepoint_text_work(row, op, a, fault);
+        // A text kept apart as bare code points -- a lone half of a
+        // surrogate pair among them -- answers the workings that walk
+        // it one unit at a time. The re-casing is the text kind's own,
+        // so a sigma at the end of a word and every scalar around a
+        // unit no `char` holds are cased exactly as `str.lower` and
+        // `str.upper` case them.
+        Value::Codepoints(row) if op == "upper" || op == "lower" => {
+            arity(0, 0)?;
+            let work = if op == "upper" { crate::strings::TextOp::Upper } else { crate::strings::TextOp::Lower };
+            return Ok(Value::from_codes(crate::strings::recase_units(row, work)));
+        }
+        // Where a piece stands inside a row of units, counted in units,
+        // its bounds read the way every text search reads them. An
+        // empty piece stands at the near edge of the window.
+        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex") => {
+            arity(1, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
+                match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
+            };
+            let last = row.len() as i64;
+            let mut low = edge(a.get(1), 0)?;
+            let mut high = edge(a.get(2), last)?;
+            if low < 0 { low = (last + low).max(0); }
+            if high < 0 { high = (last + high).max(0); }
+            let past = low > last;
+            let low = low.clamp(0, last) as usize;
+            let high = high.clamp(0, last) as usize;
+            let window: &[u32] = if low <= high { &row[low..high] } else { &[] };
+            let mut place = None;
+            if sought.is_empty() {
+                if low <= high && !past { place = Some(if matches!(op, "rfind" | "rindex") { high } else { low }); }
+            } else if sought.len() <= window.len() {
+                let mut reach: Vec<usize> = (0..=window.len() - sought.len()).collect();
+                if matches!(op, "rfind" | "rindex") { reach.reverse(); }
+                place = reach.into_iter().find(|&at| window[at..at + sought.len()] == sought[..]).map(|at| low + at);
+            }
+            if place.is_none() && matches!(op, "index" | "rindex") { return Err(fault("substring")); }
+            return Ok(Value::Small(place.map_or(-1, |at| at as i64)));
+        }
+        // A count walks the selected window the same way, never letting
+        // one match keep the next from being found after it.
+        Value::Codepoints(row) if op == "count" => {
+            arity(1, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
+                match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
+            };
+            let last = row.len() as i64;
+            let mut low = edge(a.get(1), 0)?;
+            let mut high = edge(a.get(2), last)?;
+            if low < 0 { low = (last + low).max(0); }
+            if high < 0 { high = (last + high).max(0); }
+            let past = low > last;
+            let low = low.clamp(0, last) as usize;
+            let high = high.clamp(0, last) as usize;
+            if past || low > high { return Ok(Value::Small(0)); }
+            if sought.is_empty() { return Ok(Value::Small((high - low) as i64 + 1)); }
+            let window = &row[low..high];
+            let mut total = 0i64;
+            let mut at = 0usize;
+            while at + sought.len() <= window.len() {
+                if window[at..at + sought.len()] == sought[..] { total += 1; at += sought.len(); } else { at += 1; }
+            }
+            return Ok(Value::Small(total));
+        }
+        // A cut at the first or the last separator hands the three parts
+        // back, each keeping the code units it was made of.
+        Value::Codepoints(row) if op == "partition" || op == "rpartition" => {
+            arity(1, 1)?;
+            let separator = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if separator.is_empty() { return Err(fault("separator")); }
+            let backwards = op == "rpartition";
+            let mut found = None;
+            let mut at = 0usize;
+            while at + separator.len() <= row.len() {
+                if row[at..at + separator.len()] == separator[..] {
+                    found = Some(at);
+                    if !backwards { break; }
+                }
+                at += 1;
+            }
+            let (front, middle, back) = match found {
+                Some(at) => (row[..at].to_vec(), separator.clone(), row[at + separator.len()..].to_vec()),
+                None if backwards => (Vec::new(), Vec::new(), row.to_vec()),
+                None => (row.to_vec(), Vec::new(), Vec::new()),
+            };
+            return Ok(Value::tuple(vec![Value::from_codes(front), Value::from_codes(middle), Value::from_codes(back)]));
+        }
+        // Every run the pattern matches is swapped for the replacement,
+        // no more often than the count allows; an empty pattern stands
+        // before every unit and once past the last one.
+        Value::Codepoints(row) if op == "replace" => {
+            arity(2, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let instead = a[1].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let limit = a.get(2).map_or(Ok(-1), |v| whole_count(v, fault))?;
+            let allowed = if limit < 0 { usize::MAX } else { limit as usize };
+            let mut answer = Vec::with_capacity(row.len() + instead.len());
+            let mut swaps = 0usize;
+            if sought.is_empty() {
+                if swaps < allowed { answer.extend_from_slice(&instead); swaps += 1; }
+                for &unit in row.iter() {
+                    answer.push(unit);
+                    if swaps < allowed { answer.extend_from_slice(&instead); swaps += 1; }
+                }
+            } else {
+                let mut at = 0usize;
+                while at < row.len() {
+                    if swaps < allowed && at + sought.len() <= row.len() && row[at..at + sought.len()] == sought[..] {
+                        answer.extend_from_slice(&instead);
+                        at += sought.len();
+                        swaps += 1;
+                    } else {
+                        answer.push(row[at]);
+                        at += 1;
+                    }
+                }
+            }
+            return Ok(Value::from_codes(answer));
+        }
+        // A string kept as code units because a surrogate half cannot
+        // live in a Rust str still splits, and each piece keeps the
+        // units it was cut from.
+        Value::Codepoints(row) if op == "split" || op == "rsplit" => {
+            arity(0, 2)?;
+            let separator = match a.first().map(Value::contents) {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.text_codes().ok_or_else(|| fault("arguments"))?),
+            };
+            let raw = match a.get(1) {
+                None => -1i64,
+                Some(v) => match v.contents() {
+                    Value::Small(n) => n,
+                    Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
+                    Value::Flag(b) => i64::from(b),
+                    other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+                },
+            };
+            let limit = if raw < 0 { usize::MAX } else { raw as usize };
+            let pieces = split_units(row.as_ref(), separator.as_deref(), limit, op == "rsplit")
+                .map_err(|_| fault("separator"))?;
+            return Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true));
         }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;
@@ -363,8 +453,23 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 }
                 "split" | "rsplit" => {
                     arity(0,2)?;
-                    let limit = a.get(1).filter(|x| !matches!(x,Value::Null)).map(|x| integer(x,fault)).transpose()?.unwrap_or(-1);
-                    let limit = if limit < 0 { usize::MAX } else { limit as usize };
+                    let raw = match a.get(1) {
+                        None => -1i64,
+                        Some(v) => match v.contents() {
+                            Value::Small(n) => n,
+                            Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
+                            Value::Flag(b) => i64::from(b),
+                            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+                        },
+                    };
+                    let limit = if raw < 0 { usize::MAX } else { raw as usize };
+                    if matches!(a.first().map(Value::contents), Some(Value::Codepoints(_))) {
+                        let separator = a.first().and_then(|v| v.contents().text_codes());
+                        let codes: Vec<u32> = s.chars().map(u32::from).collect();
+                        let pieces = split_units(&codes, separator.as_deref(), limit, op == "rsplit")
+                            .map_err(|_| fault("separator"))?;
+                        return Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true));
+                    }
                     let sep = a.first().filter(|x| !matches!(x,Value::Null)).map(|x| text(x,fault)).transpose()?;
                     let mut parts: Vec<String> = Vec::new();
                     if let Some(sep) = sep {
