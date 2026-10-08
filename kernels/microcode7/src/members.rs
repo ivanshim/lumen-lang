@@ -46,6 +46,14 @@ pub fn answers_to(value: &Value, operation: &str) -> bool {
         .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
 }
 
+/// Whether the table above is the whole of what a value's kind answers
+/// to: a kind whose line there is only a part of its members (the bytes
+/// kinds) is not one.
+pub fn lists_members(value: &Value) -> bool {
+    let kind = value.settled().kind_word();
+    kind != "bytearray" && KIND_MEMBERS.iter().any(|(named, _)| *named == kind)
+}
+
 pub fn gather(source: &Value, bad: &dyn Fn(&str)->String) -> Result<Vec<Value>,String> {
     let source=source.settled();
     let mut result=Vec::new();

@@ -369,7 +369,9 @@ def _strip_typing_prefix(text):
     return text.replace('typing.', '')
 
 
-def formatannotation(annotation, base_module=None):
+def formatannotation(annotation, base_module=None, *, quote_annotation_strings=True):
+    if not quote_annotation_strings and isinstance(annotation, str):
+        return annotation
     if getattr(annotation, '__module__', None) == 'typing':
         return _strip_typing_prefix(repr(annotation))
     if isinstance(annotation, types.GenericAlias):

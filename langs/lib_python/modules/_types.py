@@ -1,21 +1,13 @@
 # Bindings and constructors for CPython Modules/_typesmodule.c.
 # PSF License.
-class CellType:
-    def __init__(self, *contents):
-        if len(contents) > 1:
-            raise TypeError('cell expected at most 1 argument, got ' + str(len(contents)))
-        self._contents = list(contents)
-
-    @property
-    def cell_contents(self):
-        if len(self._contents) == 0:
-            raise ValueError('Cell is empty')
-        return self._contents[0]
-
-    def __repr__(self):
-        if len(self._contents) == 0:
-            return '<cell: empty>'
-        return '<cell: ' + repr(self._contents[0]) + '>'
+# Discover the native closure-cell type used by functions and their annotations.
+def _cell_sample():
+    value = None
+    def keep():
+        return value
+    return keep.__closure__[0]
+CellType = type(_cell_sample())
+del _cell_sample
 
 
 class _MethodSample:
@@ -148,9 +140,16 @@ class SimpleNamespace:
 # found by getattr, so the name is asked for directly.
 def _kind_name(kind):
     try:
-        return str(kind.__name__)
+        name = str(kind.__qualname__)
+        home = kind.__module__
     except BaseException:
-        return repr(kind)
+        try:
+            return str(kind.__name__)
+        except BaseException:
+            return repr(kind)
+    if home in ('builtins', None):
+        return name
+    return str(home) + '.' + name
 
 
 # A kind named with the kinds it was given, as list[int] is.
@@ -257,8 +256,6 @@ try:
 except TypeError as _exc:
     TracebackType = type(_exc.__traceback__)
     FrameType = type(_exc.__traceback__.tb_frame)
-class UnionType:
-    def __new__(cls, *args, **kwargs):
-        raise TypeError("cannot create 'types.UnionType' instances")
+UnionType = type(int | str)
 
 __all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']

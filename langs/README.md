@@ -4103,6 +4103,14 @@ only. The extension labels so far, all from PHP:
   of making a thing, and hand over what walking the class yields. Each
   is given the class first. These stand in for a metaclass's `__call__`
   and `__iter__`, which an enumeration needs.
+- `ext.builtin.partial_repr`: native partial representation bridge. It retains
+  the callable, positional tuple and keyword dictionary before user code runs,
+  renders positional and keyword values first, then the callable, and reads
+  inherited slot storage without invoking overridden attribute getters.
+- `ext.builtin.annotation_call`: private adapter that calls an annotator with
+  format 2 and an isolated name lookup scope. Missing names become symbolic in
+  the first forward-reference attempt; all global, closure and class names do
+  in STRING and the second attempt. Ordinary calls retain their own lookups.
 - `ext.stmt.class.annotations`: the word under which a class carries a
   map of the names annotated in its body, in the order written, each
   standing for nothing; the annotations themselves are read past.
@@ -4500,6 +4508,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
+| `ext.builtin.annotation_call` | - | - | `__annotation_call__` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
 | `ext.builtin.args.all.outside` | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - | - | - | - |
@@ -4835,6 +4844,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.pickle_buffer` | - | - | `__pickle_buffer_native__` | - | - | - | - | - | - | - |
+| `ext.builtin.partial_repr` | - | - | `__partial_repr__` | - | - | - | - | - | - | - |
 | `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
