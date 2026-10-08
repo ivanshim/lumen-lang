@@ -9218,3 +9218,32 @@
 {"t":"2026-10-08T21:15:58Z","event":"checkin","status":"done","actions":"returned claude-urllib (1st; _socket setsockopt fake success + getaddrinfo ignores family/flags) -> returns, held for Sonnet slot; returned dsflash-code-module (2nd; reprlib regression, test_dynamic kernel disagreement, 19 broken progress lines, parser depth guard unlabelled) -> or-resume queued; handed-over dsflash-univnewlines (3rd; sized/CR stdin readline hangs) -> brief-dsflash-univnewlines-sol.md, sol-new queued; released held dsflash-fileio to queue (DS Flash 12/12); prune-merged 0MB; luna FINDINGS appended","notes":"integrate-21f still running, no open PR; Codex weekly 92% (alert already sent); Kimi month 99.7%; box load 6.4, 11.4 GB avail, disk 76%; Mac disk 86%; Claude 5h 7%/week 13%; luna 1 alert = OpenClaw session, gap -1.9 ok; event-ship push of coord-log rejected by GitHub (commit_refs failure)"}
 {"t":"2026-10-08T21:16:28Z","event":"review-started","job":"dsflash-genericalias","review":"review-auto-dsflash-genericalias-2055"}
 {"t":"2026-10-08T21:16:37Z","event":"exited","job":"dsflash-pyclbr","code":0}
+{"t":"2026-10-08T21:17:11Z","event":"exited","job":"stdlib-bytes","code":0}
+{"t":"2026-10-08T21:19:54Z","event":"exited","job":"integrate-21f","code":0}
+{"t":"2026-10-08T21:21:28Z","event":"review-started","job":"dsflash-time","review":"review-auto-dsflash-time-2106"}
+{"t":"2026-10-08T21:21:31Z","event":"finished","job":"dsflash-pyclbr","exit_time":"2026-10-08T21:16:36Z"}
+{"t":"2026-10-08T21:21:31Z","event":"review-queued","job":"dsflash-pyclbr","review":"review-auto-dsflash-pyclbr-2121"}
+{"t":"2026-10-08T21:21:34Z","event":"finished","job":"stdlib-bytes","exit_time":"2026-10-08T21:17:11Z"}
+{"t":"2026-10-08T21:21:34Z","event":"review-queued","job":"stdlib-bytes","review":"review-auto-stdlib-bytes-2121"}
+{"t":"2026-10-08T21:21:41Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T21:23:04Z","event":"exited","job":"review-auto-dsflash-genericalias-2055","code":0}
+{"t":"2026-10-08T21:24:13Z","event":"exited","job":"review-auto-dsflash-time-2106","code":0}
+{"t":"2026-10-08T21:24:18Z","event":"exited","job":"stdlib-type-params","code":0}
+{"t":"2026-10-08T21:25:35Z","event":"exited","job":"claude-pstats-sol","code":0}
+{"t":"2026-10-08T21:26:22Z","event":"exited","job":"dsflash-descrtut","code":0}
+{"t":"2026-10-08T21:26:30Z","event":"resumed","job":"dsflash-fileio","model":"deepseek-flash","session":"session-99069daf-b090-448e-8eae-68e388ece646"}
+{"t":"2026-10-08T21:26:44Z","event":"finished","job":"claude-pstats-sol","exit_time":"2026-10-08T21:25:35Z"}
+{"t":"2026-10-08T21:26:44Z","event":"review-queued","job":"claude-pstats-sol","review":"review-auto-claude-pstats-sol-2126"}
+{"t":"2026-10-08T21:26:47Z","event":"finished","job":"dsflash-descrtut","exit_time":"2026-10-08T21:26:22Z"}
+{"t":"2026-10-08T21:26:47Z","event":"review-queued","job":"dsflash-descrtut","review":"review-auto-dsflash-descrtut-2126"}
+{"t":"2026-10-08T21:26:53Z","event":"finished","job":"stdlib-type-params","exit_time":"2026-10-08T21:24:18Z"}
+{"t":"2026-10-08T21:26:53Z","event":"review-queued","job":"stdlib-type-params","review":"review-auto-stdlib-type-params-2126"}
+{"t":"2026-10-08T21:26:55Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T21:31:31Z","event":"review-started","job":"dsflash-pyclbr","review":"review-auto-dsflash-pyclbr-2121"}
+{"t":"2026-10-08T21:34:47Z","event":"accepted","job":"integrate-21f","batch":"21f","commit":"0779afeed","note":"coordinator: final check on 0779afeed clean (1196/0, gates ok, 0 regression/disagree/broken; decimal length 286->306 = coverage gain); 12 branches; s8 11260->11468/12612, mc7 11180->11388/12522, 156 files; stack8 glob 136->178s timing only"}
+{"t":"2026-10-08T21:34:47Z","event":"integrated","job":"integrate-21f","batch":"21f","pr":541,"commit":"041ba692","note":"HISTORY.md 1bi added; pr-merge-watch running"}
+{"t":"2026-10-08T21:34:47Z","event":"follow-up","job":"integrate-21f","text":"stack8 test_glob run time 136->178s (+31%) since batch 21f; new subject"}
+{"t":"2026-10-08T21:34:56Z","event":"accepted","job":"dsflash-time","review":"review-auto-dsflash-time-2106","batch":"21g","commit":"0fde75c01","branch":"fix/dsflash-time","note":"(DS Flash, after return) test_time absent->40/64 (24 upstream skips, 0 F/E) both kernels; real clock_gettime CPU clocks + integer ns; clean check 1195/0 gates ok, no regression/disagree; 294 count lines match count-batch21e; integrity ok sha256 faithful; base 21e; overlaps 21f perf-mc7-overhead/pathlib/platform (keep upstream platform.py libc_ver) + 21g tempfile/zipfile/shutil time.py, json-speed/zoneinfo/unicodedata/kimi-module; follow-ups: re-certify decimal/bytes/calendar-CLI/tokenize/io timeouts, keep raw independence output, regen backend probe with 3.14.8"}
+{"t":"2026-10-08T21:35:16Z","event":"handed-over","job":"dsflash-genericalias","review":"review-auto-dsflash-genericalias-2055","commit":"0204c57e7","round":3,"note":"(3rd return -> Sol hand-over; test_genericalias 37/37 both kept, clean check 1195/0 gates ok, integrity ok; introduced: public sys.getrefcount without inline-value support -> 14 test_array test_bug_782369 skip->error per kernel; 27 PROGRESS LINE BROKEN = coverage, re-certify; overlaps 21f coroutines/warnings/type-aliases + 21g charmapcodec/kimi-module) -> brief-dsflash-genericalias-sol.md, sol-new queued"}
+{"t":"2026-10-08T21:35:39Z","event":"exited","job":"review-auto-dsflash-pyclbr-2121","code":0}
+{"t":"2026-10-08T21:36:32Z","event":"resumed","job":"dsflash-code-module","model":"deepseek-flash","session":"session-e05ae267-9864-4f7d-8212-8e05dc54c595"}
