@@ -8787,6 +8787,8 @@ impl<'a> Compiler<'a> {
     fn statement_annotation(&self) -> Option<usize> {
         let lang = self.lang;
         if lang.annotation_marks.is_empty() { return None; }
+        // The colon a lambda opens its body with is no annotation mark.
+        if self.tokens.get(self.pos).map_or(false, |word| word.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &word.spelling())) { return None; }
         let pairs: Vec<&Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets,
             &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
         let mut depth = 0usize;

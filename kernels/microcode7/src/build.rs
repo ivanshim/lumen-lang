@@ -8668,6 +8668,8 @@ impl<'a> Builder<'a> {
     /// sheltered by brackets are part of the place, not its declaration.
     fn declaration_mark(&self) -> Option<usize> {
         if !self.table.has_any("ext.stmt.annotation") { return None; }
+        // The colon a lambda opens its body with marks no annotation.
+        if self.tokens.get(self.pos).map_or(false, |token| token.shape == Shape::Bare && self.table.spells("ext.op.lambda", &token.spelling())) { return None; }
         let mut closings = Vec::new();
         let mut at = self.pos;
         while let Some(token) = self.tokens.get(at) {
