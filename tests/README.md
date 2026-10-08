@@ -21,6 +21,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | Directory | Source | Release / tag | Commit / release date | License |
 |---|---|---|---|---|
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_deque.py` | `Lib/test/test_deque.py`, copied byte for byte (SHA-256 `9a718a5fabfe51632b276d3e440391ba3c3ef7297446b18200dfd701a9e611cd`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -33,6 +34,11 @@ The suite also holds `test_ordered_dict.py` and `test_defaultdict.py`,
 copied byte for byte from `v3.14.8`; the support they import
 (`test/mapping_tests.py` and `test/support/import_helper.py`) was already
 present unchanged at that commit.
+`test_deque.py` is likewise copied byte for byte from `v3.14.8`. The support it
+imports, `test/seq_tests.py` (SHA-256
+`8d3af229c2b6d204410badfaf530e902aa451ae10500662049c7941709d3a591`, listed below)
+and `test/support/__init__.py`, was already present, so no support file had to
+be added.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
