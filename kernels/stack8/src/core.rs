@@ -157,6 +157,10 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
+            // A name's cell is no thing of its own: what is kept in it
+            // hashes as the kept value hashes, there being no cell in
+            // the reference's own accounts.
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().core_hash(),
             Value::Complex(z) => {
                 if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
                 let a = crate::complex::real(z.real).core_hash()?;

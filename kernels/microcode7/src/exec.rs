@@ -9112,8 +9112,12 @@ impl<'a> Machine<'a> {
             instance.framed_in = None;
             for key in self.rules.words_ext_system_module_name {
                 match self.mapping_read(&namespace, key) {
-                    Ok(Some(Value::Text(name))) => { instance.framed_in = Some(name); break; }
-                    Ok(Some(_)) => break,
+                    // The entry may stand behind a binding's cell; the
+                    // name caught is the text it keeps either way.
+                    Ok(Some(found)) => {
+                        if let Value::Text(name) = found.settled() { instance.framed_in = Some(name); }
+                        break;
+                    }
                     _ => {}
                 }
             }
