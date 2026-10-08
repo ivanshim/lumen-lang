@@ -110,3 +110,6 @@ def name(char, default=None):
 
 def lookup(name):
     return __sre_native(5, name.upper())
+
+# Native Unicode decomposition retains main's complete database binding.
+decomposition = __unicode_decomposition

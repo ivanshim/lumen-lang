@@ -1842,16 +1842,17 @@ def write_mirror(lang, d, files, reasons):
         aliases = layout.get("aliases", {})
         adapters = layout.get("adapters", {})
         embedded_data = layout.get("data", {})
+        replacements = layout.get("replacements", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
             relative = source.relative_to(modules).as_posix()
-            if relative in adapters.values():
+            if relative in adapters.values() or relative in replacements.values():
                 continue
             name = relative[:-(len(ext) + 1)].replace("/", ".")
             if name.endswith(".__init__"):
                 name = name[:-9]
             location = locations.get(name, relative)
-            source_expr = f'include_str!({json.dumps(relative)})'
+            source_expr = f'include_str!({json.dumps(replacements.get(name, relative))})'
             for variable, data_file in embedded_data.get(name, {}).items():
                 prefix = json.dumps(variable + ' = r"""')
                 suffix = json.dumps('"""\n')

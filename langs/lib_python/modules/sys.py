@@ -336,10 +336,10 @@ float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111
 
-def intern(string):
+def intern(string, /):
     if not isinstance(string, str):
-        raise 'TypeError: intern() argument must be str'
-    return string
+        raise TypeError('intern() argument must be str, not ' + type(string).__name__)
+    return __intern_native__(string)
 
 # The builtin kinds whose rough count below stands for them and their
 # subclasses that say nothing of their own measurement.
@@ -514,3 +514,10 @@ if __program_namespace().get('__spec__') is not None:
     path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
     flags.isolated = 0
     flags.safe_path = False
+
+def gettrace():
+    return __trace_native__(0)
+
+
+def settrace(trace):
+    __trace_native__(1, trace)
