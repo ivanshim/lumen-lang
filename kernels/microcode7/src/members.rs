@@ -572,10 +572,10 @@ impl Request<'_> {
         self.replace(Value::Vector(crate::tuples::Sequence::plain(values)))
     }
     // A pair written over the value its key already holds, or added last.
-    fn enter(&self,entries:&mut Vec<(Value,Value)>,key:Value,value:Value){
+    fn enter(&self,entries:&mut Vec<(Value,Value)>,key:Value,value:Value)->bool{
         match entries.iter_mut().find(|e|same_item(&e.0,&key,self.names.keys_by_worth)){
-            Some(entry)=>entry.1=value,
-            None=>entries.push((key,value)),
+            Some(entry)=>{entry.1=value;false},
+            None=>{entries.push((key,value));true},
         }
     }
     fn on_map(&self,mut entries:Vec<(Value,Value)>,indexed:Option<&crate::data::MapStore>)->ResultValue{
@@ -599,12 +599,18 @@ impl Request<'_> {
             }
             entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth))
         };
+        let old_span=indexed.map_or(0,|s|s.span);
+        let old_epoch=indexed.map_or(0,|s|s.clear_epoch);
+        let mut slots=indexed.map_or_else(||(0..entries.len()).collect::<Vec<_>>(),|s|s.slots_synced());
+        let mut span=old_span;
+        let mut budget=indexed.map_or((1,0,true),|store|store.entry_budget);
         match self.operation{
             // The pair written last comes out, key and value together.
             "popitem"=>{
                 self.takes(0,0)?;
                 let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
-                self.replace(Value::Dict(Rc::new(entries.into())))?;
+                span=slots.pop().expect("removed map position");
+                self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, slots, span, old_epoch, budget))))?;
                 let raw = if let Value::Keyed(item, _) = key { item.as_ref().clone() } else { key };
                 return Ok(Value::tuple(vec![raw,value]));
             }
@@ -613,17 +619,17 @@ impl Request<'_> {
                 let portion=if self.operation=="keys"{'k'}else if self.operation=="values"{'v'}else{'i'};
                 return Ok(Value::Window(Rc::new(self.target.clone()),portion));
             }
-            "copy"=>{self.takes(0,0)?;return Ok(Value::Dict(Rc::new(entries.into())).keep(true));}
-            "clear"=>{self.takes(0,0)?;entries.clear();}
+            "copy"=>{self.takes(0,0)?;let copied=indexed.map_or_else(||entries.clone().into(),|store|store.copy_dictionary());return Ok(Value::Dict(Rc::new(copied)).keep(true));}
+            "clear"=>{self.takes(0,0)?;entries.clear();slots.clear();span=0;budget=(1,0,true);}
             "get"|"setdefault"|"pop"=>{
                 self.takes(1,2)?;let key=&self.given[0];
                 if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
                 if let Some(index)=found(&entries,key){
-                    let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries.into())))?;}return Ok(answer);
+                    let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);slots.remove(index);self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, slots, span, old_epoch, budget))))?;}return Ok(answer);
                 }
                 if self.operation=="pop"&&self.given.len()==1{return Err(self.fail("key")+&key.repr(&self.names));}
                 let answer=self.given.get(1).cloned().unwrap_or(Value::Nil);
-                if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(entries.into())))?;}return Ok(answer);
+                if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));crate::data::MapStore::extend_positions(&mut slots,&mut span,&mut budget,&entries.last().expect("added map member").0);self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, slots, span, old_epoch, budget))))?;}return Ok(answer);
             }
             // Each pair goes in as it is met, so that the pairs read before
             // an ill-shaped one are kept when the call stops on it.
@@ -631,23 +637,23 @@ impl Request<'_> {
                 self.takes(0,1)?;let mut stopped=None;
                 if let Some(source)=self.given.first(){
                     match source.settled(){
-                        Value::Dict(d)=>{for (key,value) in d.iter(){self.enter(&mut entries,key.clone(),value.clone());}}
+                        Value::Dict(d)=>{for (key,value) in d.iter(){if self.enter(&mut entries,key.clone(),value.clone()){crate::data::MapStore::extend_positions(&mut slots,&mut span,&mut budget,&entries.last().expect("added map member").0);}}}
                         other=>{
                             for item in gather(&other,self.complaint)?{
                                 let values=gather(&item,self.complaint)?;
                                 if values.len()!=2{stopped=Some(self.fail("arguments"));break;}
-                                self.enter(&mut entries,values[0].clone(),values[1].clone());
+                                if self.enter(&mut entries,values[0].clone(),values[1].clone()){crate::data::MapStore::extend_positions(&mut slots,&mut span,&mut budget,&entries.last().expect("added map member").0);}
                             }
                         }
                     }
                 }
-                if stopped.is_none(){for (key,value) in self.named{self.enter(&mut entries,Value::text(key),value.clone());}}
-                self.replace(Value::Dict(Rc::new(entries.into())))?;
+                if stopped.is_none(){for (key,value) in self.named{if self.enter(&mut entries,Value::text(key),value.clone()){crate::data::MapStore::extend_positions(&mut slots,&mut span,&mut budget,&entries.last().expect("added map member").0);}}}
+                self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, slots, span, old_epoch, budget))))?;
                 return match stopped{Some(words)=>Err(words),None=>Ok(Value::Nil)};
             }
             _=>return Err(self.unknown()),
         }
-        self.replace(Value::Dict(Rc::new(entries.into())))
+        self.replace(Value::Dict(Rc::new(crate::data::MapStore::kept(entries, slots, span, old_epoch.wrapping_add(1), budget))))
     }
     fn fill_fields(&self,template:&str)->Result<String,String>{
         let input:Vec<char>=template.chars().collect();let mut pos=0;let mut ordinal=0;let mut mode=0u8;let mut output=String::new();
