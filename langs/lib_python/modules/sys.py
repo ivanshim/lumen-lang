@@ -10,6 +10,8 @@ argv = __program_namespace()['__program_argv']
 # Callers add other directories explicitly; a program's directory is not
 # placed ahead of the embedded library merely because it contains a script.
 path = [__file__.rsplit('/', 1)[0]]
+# Native imports use path directly; metadata finders register separately.
+meta_path = []
 maxsize = 9223372036854775807
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'
