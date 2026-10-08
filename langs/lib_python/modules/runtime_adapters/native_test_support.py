@@ -280,6 +280,13 @@ def skip_if_sanitizer(reason=None, **sanitizers):
 import os
 import time
 import re
+# Does strftime() accept glibc extension widths such as '%4Y'?
+has_strftime_extensions = False
+if sys.platform != 'win32':
+    try:
+        has_strftime_extensions = time.strftime('%4Y') != '%4Y'
+    except ValueError:
+        pass
 TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python-3.14.8')
 REPO_ROOT = os.path.dirname(os.path.dirname(TEST_HOME_DIR))
 _header = 'nP'
@@ -1543,6 +1550,23 @@ class _LocaleContextDecorator:
             with _run_with_locale(self.catstr, *self.locales):
                 return func(*args, **kwargs)
         return inner
+
+
+_buggy_ucrt = None
+
+
+def skip_if_buggy_ucrt_strfptime(test):
+    """Skip tests using buggy MSVC UCRT strptime/strftime."""
+    import locale
+    global _buggy_ucrt
+    if _buggy_ucrt is None:
+        if (sys.platform == 'win32' and
+                locale.getencoding() == 'cp65001' and
+                time.localtime().tm_zone == ''):
+            _buggy_ucrt = True
+        else:
+            _buggy_ucrt = False
+    return unittest.skip('buggy MSVC UCRT strptime/strftime')(test) if _buggy_ucrt else test
 
 
 def run_with_locale(catstr, *locales):

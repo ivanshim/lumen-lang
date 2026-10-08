@@ -20780,6 +20780,22 @@ impl<'a> Machine<'a> {
                             let kind=Value::Blueprint(self.clock_record_type());
                             return self.clock_record(kind,vec![Value::tuple(contents)]).map_err(|escape|self.carried_native_fault(escape));
                         }
+                        if matches!(operation.as_ref(),"thread_time"|"process_time") && v.len()==1 {
+                            #[cfg(target_os = "linux")]
+                            {
+                                extern "C" { fn getrusage(who:i32,tally:*mut i64)->i32; }
+                                // Six pairs of whole seconds and millionths: the run's own use first, then the system's.
+                                let mut tally=[0i64;18];
+                                let whose=if operation.as_ref()=="thread_time" {1} else {0};
+                                if unsafe{getrusage(whose,tally.as_mut_ptr())}!=0 {return Err(String::from("OSError: processor time is unavailable"));}
+                                let busy=tally[0] as f64+tally[1] as f64/1000000.0+tally[2] as f64+tally[3] as f64/1000000.0;
+                                let mut worth=crate::data::worth_of_binary(busy,self.rules.count_ext_system_real_digits.unwrap_or(15));
+                                if let Value::Frac(ratio)=&mut worth {Rc::make_mut(ratio).float_style=true;}
+                                return Ok(worth);
+                            }
+                            #[cfg(not(target_os = "linux"))]
+                            return Err(String::from("OSError: processor time is unavailable"));
+                        }
                     }
                 }
                 // With one flag, where the table allows, the answer is a

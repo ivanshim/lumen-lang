@@ -20629,6 +20629,26 @@ impl<'a> Engine<'a> {
                             let class=Value::Class(self.calendar_kind());
                             return self.calendar_sequence(class,vec![Value::tuple(fields)]).map_err(|fault|{self.carried=Some(fault);self.special_fault()});
                         }
+                        if matches!(task.as_ref(),"process_time"|"thread_time") && args.len()==1 {
+                            #[cfg(target_os = "linux")]
+                            {
+                                #[repr(C)]
+                                struct Moment { seconds:i64,micros:i64 }
+                                #[repr(C)]
+                                struct Spending { user:Moment,system:Moment,tally:[i64;14] }
+                                extern "C" { fn getrusage(who:i32,into:*mut Spending)->i32; }
+                                let mut spent=Spending{user:Moment{seconds:0,micros:0},system:Moment{seconds:0,micros:0},tally:[0;14]};
+                                // Processor time is asked of the whole process, or of the thread alone.
+                                let who=if task.as_ref()=="process_time" {0} else {1};
+                                if unsafe{getrusage(who,&mut spent)}!=0 {return Err("OSError: processor time is unavailable".into())}
+                                let busy=spent.user.seconds as f64+spent.user.micros as f64/1e6+spent.system.seconds as f64+spent.system.micros as f64/1e6;
+                                let mut told=crate::value::real_of(busy,self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                                if let Value::Real(real)=&mut told {Rc::make_mut(real).floating=true;}
+                                return Ok(told);
+                            }
+                            #[cfg(not(target_os = "linux"))]
+                            return Err("OSError: processor time is unavailable".into());
+                        }
                     }
                 }
                 #[cfg(target_os = "linux")]

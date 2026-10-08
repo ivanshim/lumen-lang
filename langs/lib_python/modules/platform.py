@@ -12,3 +12,16 @@ def system():
 
 def machine():
     return __host_info()[2]
+
+def libc_ver():
+    # Which C library the run stands on, read from the libraries the
+    # host has mapped into it; their names carry no version here.
+    try:
+        loaded = open('/proc/self/maps').read()
+    except OSError:
+        return ('', '')
+    if 'libc.musl' in loaded or 'ld-musl' in loaded:
+        return ('musl', '')
+    if 'libc.so.6' in loaded or 'libc-' in loaded:
+        return ('glibc', '')
+    return ('', '')
