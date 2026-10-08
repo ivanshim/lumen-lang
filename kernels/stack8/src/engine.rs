@@ -26440,20 +26440,20 @@ impl Engine<'_> {
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
         let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        if args.get(3).is_some_and(|value| matches!(value.contents(), Value::Small(bits) if bits & 1024 != 0)) {
+            let ast = self.route_module("ast")?;
+            let parser = self.member_of(ast, "_compile_ast")?.ok_or_else(|| self.source_unready())?;
+            return self.call_held(parser, vec![args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone(), args.get(5).cloned().unwrap_or(Value::Small(-1)), args.get(6).cloned().unwrap_or(Value::Null)]);
+        }
         let source = match args[0].contents() {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
             Value::Object(tree) => {
-                // A tree from the library's ast reader keeps the text it
-                // was read from; compiling the tree compiles that text.
-                let fields = tree.fields.borrow();
-                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source");
-                match held {
-                    Some((_, value)) => match value.contents() {
-                        Value::Text(source) => source,
-                        _ => return Err(self.source_unready()),
-                    },
-                    None => return Err(self.source_unready()),
+                let module = self.route_module("ast")?;
+                let converter = self.member_of(module, "_compile_source")?.ok_or_else(|| self.source_unready())?;
+                match self.call_held(converter, vec![Value::Object(tree), Value::Text(manner.clone())])?.contents() {
+                    Value::Text(text) => text,
+                    _ => return Err(self.source_unready()),
                 }
             }
             _ => return Err(self.source_unready()),

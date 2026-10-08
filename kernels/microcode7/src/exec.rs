@@ -26797,23 +26797,25 @@ impl<'a> Machine<'a> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
         let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
+        if let Some(Value::Small(flags)) = v.get(3).map(Value::settled) {
+            if flags & 1024 != 0 {
+                let namespace = self.load_namespace("ast")?;
+                let read = self.attribute(&namespace, "_compile_ast").ok_or_else(|| self.source_refused())?;
+                let mut handed = v[..4].to_vec();
+                handed.push(v.get(5).cloned().unwrap_or(Value::Small(-1)));
+                handed.push(v.get(6).cloned().unwrap_or(Value::Nil));
+                return self.core_run(&read, handed);
+            }
+        }
         let source = match v[0].settled() {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
             Value::Thing(tree) => {
-                // A syntax tree the library's ast module hands over
-                // carries the text it was parsed from; compiling the
-                // tree compiles that text.
-                let mut carried = None;
-                for (word, worth) in tree.holds.borrow().iter() {
-                    if word == "_lumen_tree_source" {
-                        carried = Some(worth.settled());
-                    }
-                }
-                match carried {
-                    Some(Value::Text(s)) => s,
-                    _ => return Err(self.source_refused()),
-                }
+                let owner = self.load_namespace("ast")?;
+                let function = self.attribute(&owner, "_compile_source").ok_or_else(|| self.source_refused())?;
+                let converted = self.core_run(&function, vec![Value::Thing(tree), Value::Text(manner.clone())])?;
+                if let Value::Text(code) = converted.settled() { code }
+                else { return Err(self.source_refused()); }
             }
             _ => return Err(self.source_refused()),
         };
