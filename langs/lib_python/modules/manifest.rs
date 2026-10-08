@@ -266,6 +266,11 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("warnings", include_str!("runtime_adapters/native_warnings.py"), "warnings.py"),
     ("wave", include_str!("wave.py"), "wave.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("zipapp", include_str!("zipapp.py"), "zipapp.py"),
+    ("zipfile", include_str!("zipfile/__init__.py"), "zipfile/__init__.py"),
+    ("zipfile.__main__", include_str!("zipfile/__main__.py"), "zipfile/__main__.py"),
+    ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
+    ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 
