@@ -334,10 +334,10 @@ float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111
 
-def intern(string):
+def intern(string, /):
     if not isinstance(string, str):
-        raise 'TypeError: intern() argument must be str'
-    return string
+        raise TypeError('intern() argument must be str, not ' + type(string).__name__)
+    return __intern_native__(string)
 
 # The builtin kinds whose rough count below stands for them and their
 # subclasses that say nothing of their own measurement.
@@ -502,3 +502,11 @@ def getfilesystemencoding():
 def getfilesystemencodeerrors():
     return "surrogateescape"
 
+
+
+def gettrace():
+    return __trace_native__(0)
+
+
+def settrace(trace):
+    __trace_native__(1, trace)

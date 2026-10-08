@@ -370,6 +370,31 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Err(String::from("TypeError: argument must be str")),
         };
     }
+    if action == 11 {
+        let supplied = input.get(1).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
+        let plain = supplied.type_text();
+        if matches!(&plain, Value::Text(text) if text.is_ascii()) { return Ok(plain); }
+        let codes = plain.character_numbers().ok_or_else(|| {
+            let kind = match supplied.settled() { Value::Nil => "None".to_string(), other => other.kind_word() };
+            format!("TypeError: normalize() argument 2 must be str, not {kind}")
+        })?;
+        // A stowed half is passed through as it stands; only the run
+        // of real characters around it is folded.
+        let mut folded: Vec<u32> = Vec::with_capacity(codes.len());
+        let mut plain = String::new();
+        for number in codes {
+            if let Some(letter) = char::from_u32(number) { plain.push(letter); continue; }
+            folded.extend(crate::unicode::collated(&plain).chars().map(|c| c as u32));
+            plain.clear();
+            folded.push(number);
+        }
+        folded.extend(crate::unicode::collated(&plain).chars().map(|c| c as u32));
+        return Ok(Value::characters(folded));
+    }
+    if action == 12 {
+        let point = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
+        return Ok(Value::text(&crate::unicode::decomposition(point)));
+    }
     if !matches!(action, 0 | 7 | 8) {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {
@@ -489,3 +514,25 @@ fn character_category(number: u32) -> &'static str {
 
 fn alphabetic(n: u32) -> bool { matches!(character_category(n), "Lu" | "Ll" | "Lt" | "Lm" | "Lo") }
 fn white(n: u32) -> bool { matches!(n, 28..=31) || char::from_u32(n).is_some_and(char::is_whitespace) }
+
+// Return the database mapping for one Unicode character, including surrogate halves.
+pub fn decompose(args: &[Value]) -> Result<Value, String> {
+    let [source] = args else { return Err(format!("TypeError: decomposition() takes exactly one argument ({} given)", args.len())); };
+    let invalid = || {
+        let kind = match source.settled() { Value::Nil => "None".to_owned(), other => other.kind_word() };
+        format!("TypeError: decomposition() argument must be a unicode character, not {kind}")
+    };
+    let point = match source.type_text() {
+        Value::Text(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(point), None) => point as u32,
+                _ => return Err(invalid()),
+            }
+        }
+        Value::Unpaired(points) if points.len() == 1 => points[0],
+        Value::Unpaired(_) => return Err(invalid()),
+        _ => return Err(invalid()),
+    };
+    Ok(Value::text(&crate::unicode::decomposition(point)))
+}
