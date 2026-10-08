@@ -1642,8 +1642,16 @@ impl<'a> Machine<'a> {
             let [value] = given else { return Err(String::from("TypeError: state is not a dictionary").into()) };
             let Value::Dict(pairs) = value.settled() else { return Err(String::from("TypeError: state is not a dictionary").into()) };
             for (key, item) in pairs.iter() {
-                let Value::Text(name) = key else { return Err(String::from("TypeError: attribute name must be string").into()) };
-                self.alter_class_member(Value::Thing(thing.clone()), name, Some(item.clone()), true)?;
+                // A key of a kind standing on text names a member by its
+                // whole worth, as an attribute name must; anything else
+                // is no name at all.
+                let bare = match key { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+                let held = match bare.settled() {
+                    Value::Text(_) => bare.settled(),
+                    _ => Self::underlying(&bare).map(|under| under.settled()).unwrap_or_else(|| bare.settled()),
+                };
+                let Value::Text(name) = held else { return Err(String::from("TypeError: attribute name must be string").into()) };
+                self.alter_class_member(Value::Thing(thing.clone()), &name, Some(item.clone()), true)?;
             }
             return Ok(Value::Nil);
         }

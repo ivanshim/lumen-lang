@@ -1238,8 +1238,13 @@ impl<'a> Engine<'a> {
             let [state] = args else { return Err("TypeError: state is not a dictionary".into()) };
             let Value::Map(entries) = state.contents() else { return Err("TypeError: state is not a dictionary".into()) };
             for (key, item) in entries.iter() {
-                let Value::Text(word) = key else { return Err("TypeError: attribute name must be string".into()) };
-                self.class_write(Value::Object(object.clone()), word, Some(item.clone()), true)?;
+                // A key of a kind standing on text names a member by its
+                // whole worth, as an attribute name must; anything else
+                // is no name at all.
+                let bare = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                let held = Self::worth_of(&bare).unwrap_or_else(|| bare.contents());
+                let Value::Text(word) = held else { return Err("TypeError: attribute name must be string".into()) };
+                self.class_write(Value::Object(object.clone()), &word, Some(item.clone()), true)?;
             }
             return Ok(Value::Null);
         }
