@@ -12,17 +12,9 @@ to Zip archives.
 
 #from importlib import _bootstrap_external
 #from importlib import _bootstrap  # for _verbose_message
-try:
-    import _frozen_importlib_external as _bootstrap_external
-except ImportError:
-    # This runtime answers imports itself and carries the import
-    # machinery under importlib; use it where the frozen name is absent.
-    import importlib._bootstrap_external as _bootstrap_external
-from importlib._bootstrap_external import _unpack_uint16, _unpack_uint32, _unpack_uint64
-try:
-    import _frozen_importlib as _bootstrap  # for _verbose_message
-except ImportError:
-    import importlib._bootstrap as _bootstrap
+import _frozen_importlib_external as _bootstrap_external
+from _frozen_importlib_external import _unpack_uint16, _unpack_uint32, _unpack_uint64
+import _frozen_importlib as _bootstrap  # for _verbose_message
 import _imp  # for check_hash_based_pycs
 import _io  # for open
 import marshal  # for loads
@@ -828,10 +820,3 @@ def _get_module_code(self, fullname):
             raise ZipImportError(msg, name=fullname) from import_error
         else:
             raise ZipImportError(f"can't find module {fullname!r}", name=fullname)
-
-# The reader installs no zip path hook of its own; stand this one where
-# the reference stands its frozen counterpart, so that a path entry
-# naming a zip archive is asked of it.
-import sys as _zip_sys
-if zipimporter not in _zip_sys.path_hooks:
-    _zip_sys.path_hooks.insert(0, zipimporter)

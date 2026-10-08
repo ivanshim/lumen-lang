@@ -33,6 +33,15 @@ def import_module(name, package=None):
 # asks after is installed here beside it, once, so `path_hooks`,
 # `meta_path` and `path_importer_cache` hold the finders CPython's own
 # FileFinder, PathFinder and zipimporter provide.
+
+
+def _zip_path_hook(path):
+    # Ask zipimport only when a path entry is offered: importing it
+    # while importlib is being read would close a circle, so the hook
+    # stands in its place and brings it in on the first ask.
+    import zipimport
+    return zipimport.zipimporter(path)
+
 import sys as _machinery_sys
 
 if not getattr(_machinery_sys, '_lumen_importers_ready', False):
@@ -43,4 +52,6 @@ if not getattr(_machinery_sys, '_lumen_importers_ready', False):
         pass
     else:
         _machinery_external._install(_machinery_bootstrap)
+        if _zip_path_hook not in _machinery_sys.path_hooks:
+            _machinery_sys.path_hooks.insert(0, _zip_path_hook)
         _machinery_sys._lumen_importers_ready = True

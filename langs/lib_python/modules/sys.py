@@ -522,3 +522,8 @@ def gettrace():
 
 def settrace(trace):
     __trace_native__(1, trace)
+
+# The import machinery the reference begins with: bringing it in while
+# `sys` is made means the frozen-name stand-ins for the bootstrap
+# modules resolve to the finished modules instead of starting a circle.
+import importlib as _importlib

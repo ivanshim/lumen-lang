@@ -3543,11 +3543,11 @@ impl<'a> Machine<'a> {
         if !is_type && self.table.spells("ext.builtin.bytes.from_int",key) {
             return Some(Value::Member(Rc::new(value.clone()),"integer_bytes".into()));
         }
-        if self.table.strings("ext.builtin.bytes.to_int").iter().any(|word| word.rsplit('.').next() == Some(key)) {
-            let owner = if let Value::Thing(instance) = value { Value::Blueprint(instance.blueprint().clone()) }
-                else if is_type { value.clone() }
-                else { Value::Intrinsic(Prim::AsInt, Rc::from(self.table.strings("builtin.to_int").first().map(String::as_str)?)) };
-            return Some(Value::Member(Rc::new(owner), "integer_from_bytes".into()));
+        if let Some(spelling) = self.table.strings("ext.builtin.bytes.to_int").iter().find(|word| word.rsplit('.').next() == Some(key)) {
+            // `from_bytes` answers as the class's own builtin, the very
+            // value a read of the name written whole in the program
+            // gives, so the two roads agree about what it is.
+            return Some(Value::Intrinsic(Prim::Octets(15), Rc::from(spelling.as_str())));
         }
         let at = words.iter().take(3).position(|word| word == key)?;
         if at == 2 { return Some(Value::Member(Rc::new(value.clone()), "integer_size".into())); }

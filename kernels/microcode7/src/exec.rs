@@ -24993,12 +24993,9 @@ impl Machine<'_> {
                 };
                 (text, Some(location.clone()))
             },
-            None => {
-                let source = self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
-                    let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
-                    format!("{before}{path}{after}")
-                })?;
-                (Rc::from(source.as_str()), self.library_module_file(path))
+            None => match self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned() {
+                Some(source) => (Rc::from(source.as_str()), self.library_module_file(path)),
+                None => return self.python_import_fallback(path),
             },
         };
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() {
@@ -25202,6 +25199,49 @@ impl Machine<'_> {
         self.importing.remove(path);
         self.refresh_import_table(path);
         Ok(value)
+    }
+
+    /// A name the reader cannot answer itself is offered to the reference
+    /// machinery the library carries: the finders standing on the meta
+    /// path and the hooks over `sys.path` that a program or a loader put
+    /// in place. The loader a finder names is run, and the module it makes
+    /// is kept as any other, so the second ask is answered from the cache
+    /// without running it again.
+    fn python_import_fallback(&mut self, path: &str) -> Result<Value, String> {
+        let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+        let missing = format!("{before}{path}{after}");
+        let bootstrap = match self.load_namespace("importlib._bootstrap") {
+            Ok(namespace) => namespace,
+            Err(_) => return Err(missing),
+        };
+        let search = match path.rsplit_once('.') {
+            Some((owner, _)) => match self.load_namespace(owner) {
+                Ok(parent) => self.read_class_member(parent, "__path__", true).ok().map(|found| found.settled()).unwrap_or(Value::Nil),
+                Err(_) => Value::Nil,
+            },
+            None => Value::Nil,
+        };
+        let find = match self.read_class_member(bootstrap.clone(), "_find_spec", true) {
+            Ok(callable) => callable.settled(),
+            Err(_) => return Err(missing),
+        };
+        let spec = match self.apply_class_member(find, vec![Value::text(path), search]) {
+            Ok(spec) => spec,
+            Err(_) => return Err(missing),
+        };
+        if matches!(spec.settled(), Value::Nil) { return Err(missing); }
+        let load = match self.read_class_member(bootstrap, "_load", true) {
+            Ok(callable) => callable.settled(),
+            Err(_) => return Err(missing),
+        };
+        let namespace = match self.apply_class_member(load, vec![spec]) {
+            Ok(namespace) => namespace,
+            Err(Escape::Error(message)) => return Err(message),
+            Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+        };
+        self.imported.insert(path.to_owned(), namespace.clone());
+        self.refresh_import_table(path);
+        Ok(namespace)
     }
 
     /// A dotted name uses its owner's current search directories. Ordinary

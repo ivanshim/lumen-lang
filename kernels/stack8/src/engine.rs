@@ -24582,7 +24582,7 @@ impl Engine<'_> {
             },
             None => match self.module_sources.get(path).filter(|_| parent.is_none() || registering_alias || self.lang.module_path.is_none()).cloned() {
                 Some(source) => (source, self.library_module_file(path)),
-                None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
+                None => return self.python_import_fallback(path),
             },
         };
         if self.lang.module_path.is_none() {
@@ -24763,6 +24763,48 @@ impl Engine<'_> {
             }
         }
         self.importing.remove(path);
+        self.refresh_module_cache(path);
+        Ok(module)
+    }
+
+    /// A name the reader cannot answer itself is offered to the
+    /// reference machinery the library carries: the finders standing on
+    /// the meta path and the hooks over `sys.path` that a program or a
+    /// loader put in place. The loader a finder names is run, and the
+    /// module it makes is kept as any other, so the second ask is
+    /// answered from the cache without running it again.
+    fn python_import_fallback(&mut self, path: &str) -> Flow<Value> {
+        let missing = Self::named_fault(&self.lang.import_missing, path);
+        let bootstrap = match self.import_module("importlib._bootstrap") {
+            Ok(module) => module,
+            Err(_) => return Err(missing.into()),
+        };
+        let search = match path.rsplit_once('.') {
+            Some((parent, _)) => match self.import_module(parent) {
+                Ok(owner) => self.import_member(&owner, parent, "__path__").ok().map(|found| found.contents()).unwrap_or(Value::Null),
+                Err(_) => Value::Null,
+            },
+            None => Value::Null,
+        };
+        let find = match self.import_member(&bootstrap, "importlib._bootstrap", "_find_spec") {
+            Ok(callable) => callable,
+            Err(_) => return Err(missing.into()),
+        };
+        let spec = match self.class_apply(find, vec![Value::text(path), search]) {
+            Ok(spec) => spec,
+            Err(_) => return Err(missing.into()),
+        };
+        if matches!(spec.contents(), Value::Null) { return Err(missing.into()); }
+        let load = match self.import_member(&bootstrap, "importlib._bootstrap", "_load") {
+            Ok(callable) => callable,
+            Err(_) => return Err(missing.into()),
+        };
+        let module = match self.class_apply(load, vec![spec]) {
+            Ok(module) => module,
+            Err(said) => return Err(said.into()),
+        };
+        self.modules.insert(path.to_string(), module.clone());
+        self.module_addresses_ready.set(false);
         self.refresh_module_cache(path);
         Ok(module)
     }

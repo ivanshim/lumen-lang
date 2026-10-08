@@ -3028,13 +3028,11 @@ impl<'a> Engine<'a> {
         if !kind && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) {
             return Some(Value::ValueMethod(Rc::new((subject.clone(), "integer_bytes".to_string()))));
         }
-        if self.lang.byte_words["ext.builtin.bytes.to_int"].iter().any(|word| word.rsplit('.').next() == Some(name)) {
-            let owner = match subject {
-                Value::Object(o) => Value::Class(o.class_now().clone()),
-                _ if kind => subject.clone(),
-                _ => Value::Native(Builtin::ToInt, Rc::from(self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ToInt)?.0.as_str())),
-            };
-            return Some(Value::ValueMethod(Rc::new((owner, "integer_from_bytes".into()))));
+        if let Some(spelling) = self.lang.byte_words["ext.builtin.bytes.to_int"].iter().find(|word| word.rsplit('.').next() == Some(name)) {
+            // `from_bytes` answers as the class's own builtin, the same
+            // value a read of the name written whole in the program
+            // gives, so the two roads agree about what it is.
+            return Some(Value::Native(Builtin::Bytes(15), Rc::from(spelling.as_str())));
         }
         if kind && name == layout[0] { return Some(Value::Small(layout[if subclass { 6 } else { 3 }].parse().ok()?)); }
         if kind && name == layout[1] { return Some(Value::Small(layout[4].parse().ok()?)); }
