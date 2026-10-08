@@ -2073,6 +2073,10 @@ impl<'a> Machine<'a> {
                     233 if values.len()==1=>self.display_clock_record(&values[0]),
                     234 if values.len()==1=>self.reduce_clock_record(&values[0]),
                     237=>self.replace_clock_record(values),
+                    238 if values.len() == 2 => {
+                        let row = Self::underlying(&values[0]).ok_or_else(|| String::from("TypeError: invalid struct_time receiver"))?;
+                        Ok(self.prim(Prim::At, "", &[row, values[1].clone()])?)
+                    },
                     14 if !values.is_empty()=>{
                         let target = values.remove(0);
                         let word=kept[0].bare();
@@ -2968,7 +2972,7 @@ impl<'a> Machine<'a> {
             // property, is tied to it; a kept accessor reads at once.
 
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 233..=235 | 237,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 233..=235 | 237 | 238,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
@@ -3602,7 +3606,7 @@ impl<'a> Machine<'a> {
         for (spelling, class) in &self.native_kinds { if spelling == "struct_time" { return class.clone(); } }
         let parent=self.native_kind("tuple");
         let mut ranks=parent.ancestry.borrow().clone(); ranks.insert(0,parent.clone());
-        let mut members=vec![("__module__".to_string(),Value::text("time")),("__getitem__".into(),Value::Intrinsic(Prim::ValueMethod,Rc::from("tuple.__getitem__"))),("__new__".to_string(),self.native_allocation("struct_time"))];
+        let mut members=vec![("__module__".to_string(),Value::text("time")),("__getitem__".into(),Self::wrap(238,Vec::new())),("__new__".to_string(),self.native_allocation("struct_time"))];
         for (name, tag) in [("__repr__",233),("__str__",233),("__reduce__",234),("__replace__",237)] { members.push((name.into(),Self::wrap(tag,Vec::new()))); }
         for (name, count) in [("n_sequence_fields",9),("n_fields",11),("n_unnamed_fields",0)] { members.push((name.into(),Value::Small(count))); }
         members.push(("__match_args__".into(), Value::tuple(["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst"].into_iter().map(Value::text).collect())));

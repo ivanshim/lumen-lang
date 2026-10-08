@@ -9402,6 +9402,14 @@ impl<'a> Builder<'a> {
                     return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
                 }
             }
+            if table.has_any("ext.builtin.exceptions.syntax") && text == "<>" && !self.barry_as_flufl {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
+            }
+            if table.has_any("ext.builtin.exceptions.syntax") && text == "!=" && self.barry_as_flufl {
+                self.range_end = Some((t.column + 2, t.row));
+                return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
+            }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {
                 self.advance();
@@ -9596,7 +9604,7 @@ impl<'a> Builder<'a> {
         let Some(binary) = t.dyadic.get(&first) else { return Ok(None); };
         // Barry turns the two-character spelling into the mistake and
         // keeps the old diamond for the operator.
-        if self.barry_as_flufl && matches!(binary.prim, Prim::Ne) {
+        if self.barry_as_flufl && first != "<>" && matches!(binary.prim, Prim::Ne) {
             let here = self.look().clone();
             self.range_end = Some((here.column + here.lexeme.chars().count(), here.row));
             return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));

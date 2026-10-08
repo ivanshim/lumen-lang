@@ -9737,6 +9737,18 @@ impl<'a> Compiler<'a> {
                 let word = if text == "&" { "and" } else { "or" };
                 return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
             }
+            if !lang.syntax_members.is_empty() && text == "<>" && !self.barry_as_flufl {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?".into());
+            }
+            if !lang.syntax_members.is_empty() && text == "!=" && self.barry_as_flufl {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
+            }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
                 self.take();
                 let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
@@ -9935,7 +9947,7 @@ impl<'a> Compiler<'a> {
         }
         // Where Barry is at the helm the two-character spelling is the
         // one that is wrong, and the old diamond is the one to write.
-        if self.barry_as_flufl && matches!(action, Action::Ne) {
+        if self.barry_as_flufl && word != "<>" && matches!(action, Action::Ne) {
             return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
         }
         Ok(matches!(action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Same | Action::Unsame | Action::Contains | Action::Lacks)

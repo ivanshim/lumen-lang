@@ -6228,8 +6228,8 @@ impl<'a> Machine<'a> {
         let outcome = if p.generator && self.rules.suspends {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
-        self.leave_function_globals(previous);
         if let Some(world) = annotation_world { self.world_book = world; }
+        self.leave_function_globals(previous);
         if let Some(scopes) = paused_names { self.annotation_scopes = scopes; }
         self.reading_now = suspended_reading;
         outcome

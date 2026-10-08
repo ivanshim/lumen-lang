@@ -1969,6 +1969,10 @@ impl<'a> Engine<'a> {
                 233 if args.len() == 1 => self.calendar_repr(&args[0]),
                 234 if args.len() == 1 => self.calendar_reduce(&args[0]),
                 237 => self.calendar_replace(args),
+                238 if args.len() == 2 => {
+                    let row = Self::worth_of(&args[0]).ok_or_else(|| Fault::Note("TypeError: invalid struct_time receiver".into()))?;
+                    self.special_dyad(&crate::code::Action::At, &row, &args[1]).map_err(Fault::Note)
+                },
                 14 if !args.is_empty() => {
                     let kind = args.remove(0);
                     let word = w.1[0].plain();
@@ -3012,7 +3016,7 @@ impl<'a> Engine<'a> {
                 29 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 | 30 | 79..=80 | 200..=203 | 233..=235 | 237 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                20..=27 | 30 | 79..=80 | 200..=203 | 233..=235 | 237 | 238 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => self.property_reading(&o, &w.1[0].plain()), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -3036,7 +3040,7 @@ impl<'a> Engine<'a> {
         if let Some((_, found)) = self.kind_classes.iter().find(|(word, _)| word == "struct_time") { return found.clone(); }
         let tuple = self.kind_class("tuple");
         let mut lineage = vec![tuple.clone()]; lineage.extend(tuple.lineage.borrow().iter().cloned());
-        let fields = vec![("__module__".into(), Value::text("time")), ("__getitem__".into(), Value::Native(Builtin::ValueMethod, Rc::from("tuple.__getitem__"))), ("__new__".into(), self.native_allocator("struct_time")), ("__repr__".into(), Self::adapter(233, vec![])), ("__str__".into(), Self::adapter(233, vec![])), ("__reduce__".into(), Self::adapter(234, vec![])), ("__replace__".into(), Self::adapter(237, vec![])), ("__match_args__".into(), Value::tuple(["tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst"].into_iter().map(Value::text).collect())), ("n_sequence_fields".into(), Value::Small(9)), ("n_fields".into(), Value::Small(11)), ("n_unnamed_fields".into(), Value::Small(0))];
+        let fields = vec![("__module__".into(), Value::text("time")), ("__getitem__".into(), Self::adapter(238, vec![])), ("__new__".into(), self.native_allocator("struct_time")), ("__repr__".into(), Self::adapter(233, vec![])), ("__str__".into(), Self::adapter(233, vec![])), ("__reduce__".into(), Self::adapter(234, vec![])), ("__replace__".into(), Self::adapter(237, vec![])), ("__match_args__".into(), Value::tuple(["tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst"].into_iter().map(Value::text).collect())), ("n_sequence_fields".into(), Value::Small(9)), ("n_fields".into(), Value::Small(11)), ("n_unnamed_fields".into(), Value::Small(0))];
         let kind = Rc::new(Class { name: "struct_time".into(), outline: Some("<class 'time.struct_time'>".into()), base: Some(tuple.clone()), direct: vec![tuple], lineage: RefCell::new(lineage), answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![("\0kind".into(), Value::text("struct_time"))], shared: RefCell::new(fields), weak_storage: std::cell::Cell::new(None), declares_slots: true, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: RefCell::new(None) });
         self.kind_classes.push(("struct_time".into(), kind.clone()));
         kind
