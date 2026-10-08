@@ -767,9 +767,22 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
     match portion { 'k' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum ReferenceState { Permanent, Counted(usize) }
+
+impl ReferenceState {
+    pub(super) fn as_python(self) -> i64 {
+        if let Self::Counted(owners) = self { owners as i64 }
+        else { i64::from(0xc000_0000_u32) }
+    }
+}
+
 impl Value {
     /// Read ownership from the allocation itself, without cloning its value.
-    pub(super) fn allocation_holds(&self) -> Option<usize> {
+    pub(super) fn allocation_holds(&self) -> Option<ReferenceState> {
+        // An inline identity has no allocation that copying or dropping could release.
+        if matches!(self, Self::Nil | Self::Flag(_) | Self::Small(_) | Self::Ellipsis | Self::Channel(_)) {
+            return Some(ReferenceState::Permanent);
+        }
         let count = match self {
             Self::Unpaired(cell) => Rc::strong_count(cell),
             Self::Member(cell, _) => Rc::strong_count(cell),
@@ -811,7 +824,7 @@ impl Value {
             Self::Method(_, _, mark) => Rc::strong_count(mark),
             _ => return None,
         };
-        Some(count)
+        Some(ReferenceState::Counted(count))
     }
 
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }

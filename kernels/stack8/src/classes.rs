@@ -142,9 +142,10 @@ impl<'a> Engine<'a> {
             let get = self.class_word("descriptor.get").to_owned();
             c.shared.borrow_mut().push((get.clone(), self.held_kind_descriptor(word, &get)));
         }
+        if word == "NoneType" { c.shared.borrow_mut().push((self.class_word("doc").to_string(), Value::text("The type of the None singleton."))); }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
-            for name in self.lang.class_special.iter().enumerate().filter(|(at, _)| *at == 8 || *at == 17 && word != "NoneType").map(|(_, name)| name) {
+            for name in self.lang.class_special.iter().enumerate().filter(|(at, _)| *at == 8 || word == "NoneType" && *at == 9 || *at == 17 && word != "NoneType").map(|(_, name)| name) {
                 c.shared.borrow_mut().push((name.clone(), self.held_kind_descriptor(word, name)));
             }
         }
@@ -3154,6 +3155,9 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if name == self.class_word("text_signature") {
+            if let Some(header) = self.builtin_text_signature(&subject) { return Ok(Value::text(header)); }
+        }
         if self.names_property_class(&subject) { let class = self.property_class(); return self.class_get(Value::Class(class), name, plain); }
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
             return Ok(Value::text("The type of the None singleton."));
@@ -3280,10 +3284,19 @@ impl<'a> Engine<'a> {
     /// which reads as a builtin whose signature cannot be recovered.
     fn builtin_text_signature(&self, subject: &Value) -> Option<&'static str> {
         match subject.contents() {
+            Value::ValueMethod(bound) if ["__dir__", "__bool__"].contains(&bound.1.as_str()) => Some("($self, /)"),
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
             Value::Adapter(w) if w.0 == 0 && matches!(w.1.first(), Some(Value::Tuple(_))) => Some("()"),
-            Value::Adapter(w) if w.0 == 2 && w.1.first().is_some_and(|entry| entry.plain() == self.class_word("subclass")) => Some("()"),
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(inner)) if inner.0 == 0) => Some("($self, /)"),
+            Value::Adapter(w) if w.0 == 2 && w.1.first().is_some_and(|entry| entry.plain() == self.class_word("subclass")) => Some("($type, /)"),
+            Value::Adapter(w) if w.0 == 2 && w.1.is_empty() => Some("($self, /, *args, **kwargs)"),
+            Value::Adapter(w) if w.0 == 1 => Some("($type, *args, **kwargs)"),
+            Value::Adapter(w) if w.0 == 30 && w.1.first().is_some_and(|entry| entry.plain() == "__subclasshook__") => Some("($type, object, /)"),
+            Value::Adapter(w) if w.0 == 30 && w.1.first().is_some_and(|entry| entry.plain() == "__dir__") => Some("($self, /)"),
+            Value::Adapter(w) if w.0 == 29 && w.1.get(1).is_some_and(|entry| entry.plain() == "__bool__") => Some("($self, /)"),
+            Value::Adapter(w) if w.0 == 29 && w.1.first().is_some_and(|v| v.plain() == "type") && w.1.get(1).is_some_and(|v| v.plain() == self.class_word("order")) => Some("($self, /)"),
+            Value::Adapter(w) if w.0 == 3 => w.1.first().and_then(|method| self.builtin_text_signature(method)),
             _ => None,
         }
     }
@@ -4410,7 +4423,7 @@ impl<'a> Engine<'a> {
                         Ok(member) => {
                             // The initialiser told to subclasses binds the
                             // class and not the value, as a class method does.
-                            let receiver = if name == self.class_word("subclass") { Value::Class(class.clone()) } else { subject.clone() };
+                            let receiver = if name == self.class_word("subclass") || self.lang.class_details.get("root.members").and_then(|row| row.get(14)).is_some_and(|word| word == name) { Value::Class(class.clone()) } else { subject.clone() };
                             return self.bind_class_value(member, Some(receiver), class);
                         }
                         Err(fault) if self.attribute_fault(&fault) => {}
@@ -4745,6 +4758,10 @@ impl<'a> Engine<'a> {
     pub(super) fn class_annotations(&mut self,c:&Rc<Class>) -> Flow<Value> {
         let word=self.lang.class_annotations[0].clone();
         if let Some((_,held))=c.shared.borrow().iter().find(|(n,_)|*n==word || n == "__annotations_cache__") { return Ok(held.clone()); }
+        let native = Self::own_kind(c).is_some()
+            || self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, c))
+            || self.class_maker.as_ref().is_some_and(|maker| Rc::ptr_eq(maker, c));
+        if native { return Err(self.missing_member(&Value::Class(c.clone()), &word)); }
         let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
         let overwritten = { let members = c.shared.borrow(); members.iter().find(|(key, _)| key == &annotate).or_else(|| members.iter().find(|(key, _)| key == "__annotate_func__")).map(|(_, value)| value.contents()) };
         let made = match overwritten {

@@ -94,6 +94,7 @@ impl Value {
                 let wrapper = descriptor.1.len() == 2 && matches!(descriptor.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, form)| form == "wrapper_descriptor"));
                 if wrapper { "method-wrapper" } else { "builtin_function_or_method" }
             },
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(getter)) if getter.0 == 0) => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Adapter(function) if function.0 == 180 => "function",

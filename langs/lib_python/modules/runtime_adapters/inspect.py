@@ -1519,8 +1519,42 @@ def _signature_fromstr(cls, obj, s, skip_bound_arg=True):
     Parameter = cls._parameter_cls
 
     clean_signature, self_parameter = _signature_strip_non_python_syntax(s)
-
     program = "def foo" + clean_signature + ": pass"
+    parts = [part.strip() for part in clean_signature[1:-1].split(',')]
+    if parts and not parts[-1]:
+        parts.pop()
+    simple = True
+    for part in parts:
+        if part not in ('/', '*') and not part.lstrip('*').isidentifier():
+            simple = False
+            break
+    if simple:
+        # Parameter-only Clinic signatures need syntax validation, not a syntax tree.
+        try:
+            compile(program, '<signature>', 'exec')
+        except SyntaxError:
+            raise ValueError("{!r} builtin has invalid signature".format(obj)) from None
+        parameters = []
+        kind = Parameter.POSITIONAL_OR_KEYWORD
+        for part in parts:
+            if part == '/':
+                parameters = [p.replace(kind=Parameter.POSITIONAL_ONLY) for p in parameters]
+            elif part == '*':
+                kind = Parameter.KEYWORD_ONLY
+            elif part.startswith('**'):
+                parameters.append(Parameter(part[2:], Parameter.VAR_KEYWORD))
+            elif part.startswith('*'):
+                parameters.append(Parameter(part[1:], Parameter.VAR_POSITIONAL))
+                kind = Parameter.KEYWORD_ONLY
+            else:
+                parameters.append(Parameter(part, kind))
+        if self_parameter is not None:
+            bound = getattr(obj, '__self__', None)
+            if bound is not None and (ismodule(bound) or skip_bound_arg):
+                parameters.pop(0)
+            elif parameters:
+                parameters[0] = parameters[0].replace(kind=Parameter.POSITIONAL_ONLY)
+        return cls(parameters, return_annotation=cls.empty)
 
     try:
         module = ast.parse(program)

@@ -894,11 +894,24 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
     match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum Retention { Immortal, Owners(usize) }
+
+impl Retention {
+    pub(super) fn python_count(self) -> i64 {
+        match self {
+            Self::Owners(count) => count as i64,
+            // CPython's immortal header marker describes lifetime, not an owner count.
+            Self::Immortal => (3_u32 << 30) as i64,
+        }
+    }
+}
+
 impl Value {
     /// Actual shared-storage owners, including live interpreter temporaries.
-    pub(super) fn shared_owners(&self) -> Option<usize> {
-        macro_rules! owners { ($cell:expr) => { Some(Rc::strong_count($cell)) }; }
+    pub(super) fn shared_owners(&self) -> Option<Retention> {
+        macro_rules! owners { ($cell:expr) => { Some(Retention::Owners(Rc::strong_count($cell))) }; }
         match self {
+            Value::Small(_) | Value::Flag(_) | Value::Null | Value::Ellipsis | Value::Stream(_) => Some(Retention::Immortal),
             Value::Codepoints(p) => owners!(p),
             Value::ValueMethod(p) => owners!(p),
             Value::View(p) => owners!(p),

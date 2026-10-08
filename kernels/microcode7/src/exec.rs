@@ -7928,7 +7928,7 @@ impl<'a> Machine<'a> {
                             Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
                                 return self.read_class_member(values[0].settled(), &values[1].bare(), false);
                             },
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Nil | Value::Ellipsis | Value::Refusal(_) | Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -8588,6 +8588,7 @@ impl<'a> Machine<'a> {
             let extended = self.rules.words_ext_stmt_class_detail_root_members.get(12).is_some_and(|key| key == name);
             if ordinary || extended { return Some(usize::MAX - 2); }
         }
+        if matches!(value.settled(), Value::Nil) && matches!(special, Some(8 | 9)) { return special; }
         let mark = Self::native_mark(value)?;
         if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(name) {
             if matches!(mark, 'e' | 'E' | 'd') { return Some(usize::MAX); }
@@ -14895,32 +14896,52 @@ impl<'a> Machine<'a> {
         Self::carries_instance_past(value, false)
     }
 
+    /// Leaves can be classified by borrowing them. Containers and cells need
+    /// the cycle-aware walk; none of their members are retained here.
+    fn immediate_instance(value: &Value, into_sets: bool) -> Option<bool> {
+        match value {
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => Some(true),
+            Value::Wrapped(3 | 132, parts) if matches!(parts.first(), Some(Value::Routine(_) | Value::Bound(..))) => Some(true),
+            Value::Blueprint(plan) => Some(Self::builder_over(plan).is_some()),
+            Value::Shared(_) | Value::Mutable(..) | Value::Row(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) => None,
+            Value::Set(_) if into_sets => None,
+            _ => Some(false),
+        }
+    }
+
     /// Walk cells once without following a deep row through the call stack.
     /// A nested list can still hold a custom object whose repr must run.
     fn carries_instance_past(value: &Value, into_sets: bool) -> bool {
+        if let Some(answer) = Self::immediate_instance(value, into_sets) { return answer; }
         let mut passed = std::collections::HashSet::new();
         let mut pending = vec![value.clone()];
         while let Some(value) = pending.pop() {
-            match value {
-                Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => return true,
-                Value::Wrapped(3 | 132, parts) if matches!(parts.first(), Some(Value::Routine(_) | Value::Bound(..))) => return true,
-                Value::Blueprint(plan) if Self::builder_over(&plan).is_some() => return true,
-                Value::Shared(cell) | Value::Mutable(cell, _) => {
-                    if passed.insert(Rc::as_ptr(&cell) as usize) {
-                        pending.push(cell.borrow().clone());
-                    }
+            if let Some(answer) = Self::immediate_instance(&value, into_sets) {
+                if answer { return true; }
+                continue;
+            }
+            let mut remember = |part: &Value| -> bool {
+                match Self::immediate_instance(part, into_sets) {
+                    Some(answer) => answer,
+                    None => { pending.push(part.clone()); false },
                 }
-                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => pending.extend(items.iter().cloned()),
+            };
+            match value {
+                Value::Shared(cell) | Value::Mutable(cell, _) => {
+                    if passed.insert(Rc::as_ptr(&cell) as usize) && remember(&cell.borrow()) { return true; }
+                }
+                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => {
+                    if items.iter().any(&mut remember) { return true; }
+                }
                 Value::Dict(items) => {
                     for (key, held) in items.iter() {
-                        pending.push(key.clone());
-                        pending.push(held.clone());
+                        if remember(key) || remember(held) { return true; }
                     }
                 }
                 Value::Set(store) if into_sets => {
                     if passed.insert(Rc::as_ptr(&store) as *const () as usize) {
                         if let Ok(held) = store.try_borrow() {
-                            pending.extend(held.entries.iter().map(|(_, item)| item.clone()));
+                            if held.entries.iter().any(|(_, item)| remember(item)) { return true; }
                         }
                     }
                 }
@@ -19632,7 +19653,7 @@ impl<'a> Machine<'a> {
             Prim::ProgramNames => {
                 if v.len() == 2 && matches!(&v[0], Value::Text(word) if word.as_ref() == "refcount") {
                     match v[1].allocation_holds() {
-                        Some(holds) => return Ok(Value::Small(holds as i64)),
+                        Some(state) => return Ok(Value::Small(state.as_python())),
                         None => return Err(String::from("NotImplementedError: inline values have no shared allocation counter")),
                     }
                 }
@@ -19765,7 +19786,7 @@ impl<'a> Machine<'a> {
                 // A kind read as a class answers for its own making, the
                 // way a class does, whatever word spells the kind.
                 if v[1].bare() == self.rules.detail_allocate && matches!(&v[0], Value::Intrinsic(op, _) if op.names_a_kind()) { return Ok(Value::Flag(true)); }
-                if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
+                if self.has_class_order() && matches!(&v[0],Value::Nil|Value::Ellipsis|Value::Refusal(_)|Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
                 if self.has_class_order() && word==self.detail("allocate") {
                     return self.read_class_member(v[0].settled(),&word,false).map(|_|Value::Flag(true)).or_else(|escape|if self.missing_member_escape(&escape){Ok(Value::Flag(false))}else{Err(escape)}).map_err(|escape|self.carried_native_fault(escape));

@@ -83,6 +83,7 @@ impl Value {
             Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
             Self::Wrapped(133, _) => "method_descriptor",
             Self::Wrapped(134, _) => "builtin_function_or_method",
+            Self::Wrapped(3, parts) if parts.first().is_some_and(|call| matches!(call, Self::Wrapped(0, _))) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _) | Self::Intrinsic(..))) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(60, _))) => {
                 let Some(Self::Wrapped(_, slot)) = kept.first() else { unreachable!() };

@@ -6125,10 +6125,13 @@ Python text methods validate named error policies in development mode (`-X dev`)
 `ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.
 
 The Python program-namespace primitive accepts `refcount` and a value to read
-its actual shared-allocation owners, including interpreter temporaries. Inline
-values have no shared allocation counter and raise `NotImplementedError`.
-`sys.getrefcount` exposes this ownership information; numeric counts need not
-match CPython's object representation.
+its actual shared-allocation owners, including interpreter temporaries. Canonical
+inline integers, booleans and singletons cannot be deallocated and report
+CPython's immortal lifetime marker. `sys.getrefcount` exposes this ownership
+information; heap counts need not match CPython's object representation.
+Native frame inspection walks `sys._getframe()` and its `f_back` links.
+Parameter-only native text signatures are syntax-validated by `compile()` and
+read directly into inspect parameters without requiring syntax-tree support.
 
 Python startup accepts `-E`, `-Woption` and `-W option` before a source or `-m`
 module. `-E` ignores Python environment configuration while preserving the

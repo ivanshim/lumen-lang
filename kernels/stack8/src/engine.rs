@@ -7589,6 +7589,7 @@ impl<'a> Engine<'a> {
         if matches!(subject.contents(), Value::Slice(_)) && (self.lang.class_special.get(79).is_some_and(|word| word == name) || self.lang.class_details.get("root.members").and_then(|row| row.get(12)).is_some_and(|word| word == name)) {
             return Some(usize::MAX - 2);
         }
+        if matches!(subject.contents(), Value::Null) && self.native_slots.get(name).is_some_and(|slot| matches!(slot, 8 | 9)) { return self.native_slots.get(name).copied(); }
         let family = Self::native_family(subject)?;
         if self.lang.constructor.as_deref() == Some(name) {
             if matches!(family, Kindred::Set(_) | Kindred::Map) { return Some(usize::MAX); }
@@ -10729,7 +10730,7 @@ impl<'a> Engine<'a> {
                     Some(self.class_get(singleton, name, false)?)
                 },
                 Action::Grab(name) if name.as_ref() == "__getformat__" && self.data.last().is_some_and(|value| matches!(value.contents(), Value::Real(_))) => { let value = self.drop_top()?; Some(self.class_get(value, name, false)?) },
-                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::ValueMethod(_) | Value::TextMethod(..)) || matches!(v, Value::Native(..)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Null | Value::Ellipsis | Value::Declined(_) | Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::ValueMethod(_) | Value::TextMethod(..)) || matches!(v, Value::Native(..)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
@@ -12135,7 +12136,7 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() && name.as_ref() == self.class_word("kind") {
                     self.data.push(Value::Flag(true)); return Ok(());
                 }
-                if self.fuller_classes() && name.as_ref()==self.class_word("allocate") {
+                if self.fuller_classes() && (name.as_ref()==self.class_word("allocate") || matches!(held.contents(), Value::Null | Value::Ellipsis | Value::Declined(_))) {
                     let found=self.class_get(held.clone(),name,false);
                     match found {Ok(_)=>{self.data.push(Value::Flag(true));return Ok(())},Err(fault) if self.attribute_fault(&fault)=>{self.data.push(Value::Flag(false));return Ok(())},Err(fault)=>return Err(fault)}
                 }
@@ -20719,7 +20720,7 @@ impl<'a> Engine<'a> {
             Builtin::ProgramNamespace => {
                 if let [Value::Text(command), value] = args.as_slice() {
                     if command.as_ref() == "refcount" {
-                        return value.shared_owners().map(|owners| Value::Small(owners as i64))
+                        return value.shared_owners().map(|state| Value::Small(state.python_count()))
                             .ok_or_else(|| "NotImplementedError: inline values have no shared allocation counter".to_string());
                     }
                 }

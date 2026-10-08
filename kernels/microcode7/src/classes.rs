@@ -151,9 +151,10 @@ impl<'a> Machine<'a> {
             }
         }
         self.native_kinds.push((word.to_owned(),kind.clone()));
+        if word == "NoneType" { kind.shared.borrow_mut().push((self.detail("doc").to_owned(), Value::text("The type of the None singleton."))); }
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
             for (at, key) in self.rules.specials.iter().enumerate() {
-                if at == 8 || at == 17 && word != "NoneType" { kind.shared.borrow_mut().push((key.clone(), self.kind_entry(word, key))); }
+                if at == 8 || at == 9 && word == "NoneType" || at == 17 && word != "NoneType" { kind.shared.borrow_mut().push((key.clone(), self.kind_entry(word, key))); }
             }
         }
         if matches!(word, "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
@@ -3574,6 +3575,10 @@ impl<'a> Machine<'a> {
     pub(super) fn blueprint_annotations(&mut self,b:&Rc<Blueprint>)->Res {
         let word=self.rules.words_ext_stmt_class_annotations.first().map(String::as_str).unwrap_or_default().to_owned();
         if let Some(own)=Self::own_entry(b,&word).or_else(|| Self::own_entry(b, "__annotations_cache__")){return Ok(own);}
+        let builtin = self.ancestor.as_ref().is_some_and(|base| Rc::ptr_eq(b, base))
+            || self.builder_kind.as_ref().is_some_and(|builder| Rc::ptr_eq(b, builder))
+            || Self::native_word(b).is_some();
+        if builtin { return Err(self.absent_attribute(&Value::Blueprint(b.clone()), &word)); }
         let title = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
         let made = match Self::own_entry(b, &title).or_else(|| Self::own_entry(b, "__annotate_func__")).map(|entry| entry.settled()) {
             Some(Value::Nil) => self.collection_cell(Value::Dict(Rc::new(Vec::new().into()))),
@@ -3698,6 +3703,12 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if key == self.detail("text_signature") {
+            match self.builtin_text_signature(&value) {
+                Some(signature) => return Ok(Value::text(signature)),
+                None => (),
+            }
+        }
         if self.spells_property_kind(&value) { let owner = self.property_blueprint(); return self.read_class_member(Value::Blueprint(owner), key, direct); }
         let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
         if self.names_in_calls && !key.starts_with("__") {
@@ -3868,8 +3879,23 @@ impl<'a> Machine<'a> {
         match subject.settled() {
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
+            Value::Member(_, member) if member == "__dir__" || member == "__bool__" => Some("($self, /)"),
             Value::Wrapped(0, parts) if matches!(parts.first(), Some(Value::Tuple(_))) => Some("()"),
-            Value::Wrapped(2, parts) if parts.first().is_some_and(|entry| entry.bare() == self.detail("subclass")) => Some("()"),
+            Value::Wrapped(3, parts) => match parts.first() {
+                Some(Value::Wrapped(0, _)) => Some("($self, /)"),
+                Some(callable) => self.builtin_text_signature(callable),
+                None => None,
+            },
+            Value::Wrapped(2, parts) if parts.first().is_some_and(|entry| entry.bare() == self.detail("subclass")) => Some("($type, /)"),
+            Value::Wrapped(2, parts) if parts.is_empty() => Some("($self, /, *args, **kwargs)"),
+            Value::Wrapped(1, _) => Some("($type, *args, **kwargs)"),
+            Value::Wrapped(36, parts) => match parts.first().map(Value::bare).as_deref() {
+                Some("__subclasshook__") => Some("($type, object, /)"),
+                Some("__dir__") => Some("($self, /)"),
+                _ => None,
+            },
+            Value::Wrapped(60, parts) if parts.get(1).is_some_and(|item| item.bare() == "__bool__") => Some("($self, /)"),
+            Value::Wrapped(60, parts) if matches!(parts.first(), Some(owner) if owner.bare() == "type") && parts.get(1).is_some_and(|method| method.bare() == self.detail("order")) => Some("($self, /)"),
             _ => None,
         }
     }
@@ -4982,6 +5008,11 @@ impl<'a> Machine<'a> {
         }
         // A lone singleton carries the members of the kind it is the one
         // value of, read upon it as a thing of that kind reads them.
+        // Whatever is no thing is of the kind the kind primitive names
+        // for it, where it names one.
+        if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
+            if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
+        }
         if matches!(value, Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
             let owner = self.kind_named_after(&value);
             if let Value::Blueprint(class) = owner.settled() {
@@ -4994,16 +5025,12 @@ impl<'a> Machine<'a> {
                     if let Ok(member) = self.read_class_member(Value::Blueprint(class.clone()), key, true) {
                         // The initialiser told to subclasses binds the class
                         // and not the value, as a class method does.
-                        let receiver = if key == self.detail("subclass") { Value::Blueprint(class.clone()) } else { value.clone() };
+                        let class_method = key == self.detail("subclass") || self.rules.words_ext_stmt_class_detail_root_members.get(14).is_some_and(|word| word == key);
+                        let receiver = if class_method { Value::Blueprint(class.clone()) } else { value.clone() };
                         return self.member_binding(member, Some(receiver), class);
                     }
                 }
             }
-        }
-        // Whatever is no thing is of the kind the kind primitive names
-        // for it, where it names one.
-        if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
-            if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
         }
         // A builtin accessor answers for the text signature it announces,
         // the word the reference reads to recover its parameters.
