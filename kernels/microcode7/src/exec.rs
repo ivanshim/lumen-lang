@@ -14184,10 +14184,13 @@ impl<'a> Machine<'a> {
     /// `store_write`, so a key already there is kept in its first
     /// place with its value overwritten, and a new key is added last.
     fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
-        let incoming = match (expanded, item.settled()) {
-            (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
-            (true, Value::Dict(entries)) => entries.to_vec(),
-            _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
+        let incoming = if expanded {
+            self.mapping_pairs(item)?
+        } else {
+            match item.settled() {
+                Value::Couple(pair) => vec![pair.as_ref().clone()],
+                _ => return Err(self.mapping_amiss(item)),
+            }
         };
         for (key, value) in incoming {
             if let Some(words) = self.cannot_key(&key) { return Err(words); }
@@ -17216,6 +17219,47 @@ impl<'a> Machine<'a> {
         Ok(Value::Dict(Rc::new(result.into())))
     }
 
+    /// The pairs of a mapping offered to a `**` spread: a dictionary's
+    /// own pairs, or the keys another thing's `keys` member hands over,
+    /// each read back by subscript. A thing answering to no such member
+    /// is no mapping at all.
+    fn mapping_pairs(&mut self, source: &Value) -> Result<Vec<(Value, Value)>, String> {
+        let candidate = match source.settled() {
+            Value::Dict(_) => source.settled(),
+            _ => Self::underlying(source).map(|under| under.settled()).unwrap_or_else(|| source.settled()),
+        };
+        match candidate {
+            Value::Dict(entries) => Ok(entries.to_vec()),
+            Value::Attributes(owner) => Ok(self.attribute_entries(&owner)),
+            value @ Value::Thing(_) => {
+                let reader = match self.read_class_member(value.clone(), "keys", false) {
+                    Ok(method) => Some(method),
+                    Err(escaped) if self.missing_member_escape(&escaped) => { self.sought_in_vain = None; None },
+                    Err(escaped) => return Err(self.suspension_fault(escaped)),
+                };
+                let Some(reader) = reader else { return Err(self.mapping_amiss(&value)); };
+                let keys = self.apply_class_member(reader, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
+                let mut pairs = Vec::new();
+                for key in self.gathered_members(&keys)? {
+                    let item = self.prim(Prim::At, "", &[value.clone(), key.clone()])?;
+                    pairs.push((key, item));
+                }
+                Ok(pairs)
+            }
+            value => Err(self.mapping_amiss(&value)),
+        }
+    }
+
+    /// The complaint a value that is no mapping draws: the label's two
+    /// pieces with the value's kind written between them.
+    fn mapping_amiss(&self, value: &Value) -> String {
+        let words = self.table.strings("ext.syntax.map.spread.unmapped");
+        match words.len() {
+            0 => format!("TypeError: '{}' object is not a mapping", value.kind_word()),
+            _ => format!("{}{}{}", words[0], value.kind_word(), words.get(1).map_or("", String::as_str)),
+        }
+    }
+
     fn collection_cell(&self, value: Value) -> Value {
         match value {
             Value::Vector(_) | Value::Dict(_) if self.names_in_calls =>
@@ -18883,7 +18927,10 @@ impl<'a> Machine<'a> {
             }
             Prim::ExtendLiteral(dictionary, expanded) => {
                 if let Value::Set(kept) = &v[0] {
-                    let additions = if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] };
+                    // A set display takes its spread value's members in
+                    // its own words, so an unwalkable value is said of
+                    // plainly rather than as a call's spread says it.
+                    let additions = if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] };
                     let held = kept.clone();
                     for addition in additions { self.set_include(&held, addition)?; }
                     v[0].clone()
@@ -18899,10 +18946,13 @@ impl<'a> Machine<'a> {
                     // than the one map it grows, so paying to clone it
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
-                    let incoming = match &v[1] {
-                        Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
-                        Value::Dict(entries) if expanded => entries.to_vec(),
-                        _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
+                    let incoming = if expanded {
+                        self.mapping_pairs(&v[1])?
+                    } else {
+                        match &v[1] {
+                            Value::Couple(pair) => vec![pair.as_ref().clone()],
+                            _ => return Err(self.mapping_amiss(&v[1])),
+                        }
                     };
                     let mut combined = prior.to_vec();
                     for (key, value) in incoming {

@@ -11400,7 +11400,10 @@ impl<'a> Engine<'a> {
                 let gathered_so_far = both.next().expect("growing literal").contents();
                 let next = both.next().expect("literal item");
                 if let Value::Set(cell) = gathered_so_far {
-                    let incoming = if *spread { self.spread_members(&next)? } else { vec![next] };
+                    // A set display takes each spread value apart itself,
+                    // so a value that cannot be walked speaks as the
+                    // reference does of it, not as a call's spread does.
+                    let incoming = if *spread { self.comprehension_items(&next)? } else { vec![next] };
                     for item in incoming { self.set_put(&cell, item)?; }
                     Value::Set(cell)
                 } else if *map {
@@ -11412,10 +11415,16 @@ impl<'a> Engine<'a> {
                     // and grows in step with the rows rather than being
                     // thrown away and rebuilt on the next key.
                     let mut pairs = match gathered_so_far { Value::Map(p) => p, _ => unreachable!() };
-                    let new_pairs = match (spread, next.contents()) {
-                        (true, Value::Map(p)) => p.to_vec(),
-                        (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
-                        _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
+                    let new_pairs = if *spread {
+                        // A `**` item takes any mapping, by the same
+                        // protocol the reference reads one, so a thing
+                        // of the program's own is spread as well.
+                        self.mapping_entries(&next)?
+                    } else {
+                        match next.contents() {
+                            Value::Tie(p) => vec![(p.0.clone(), p.1.clone())],
+                            _ => return Err(self.mapping_amiss(&next).into()),
+                        }
                     };
                     for (key, value) in new_pairs {
                         if let Some(told) = self.unkeyable(&key) { return Err(told.into()); }
@@ -17555,6 +17564,35 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(Value::Map(Rc::new(pairs.into())))
+    }
+
+    /// The pairs of a mapping offered to a `**` spread: a map's own
+    /// pairs, or the keys another thing's `keys` method hands over, each
+    /// read back by subscript. A thing answering to no such method is no
+    /// mapping, and is said of by its kind.
+    fn mapping_entries(&mut self, source: &Value) -> Res<Vec<(Value, Value)>> {
+        let held = source.contents();
+        if let Value::Map(pairs) = &held { return Ok(pairs.to_vec()); }
+        if let Some(reader) = self.member_of(held.clone(), "keys")? {
+            let window = self.call_held(reader, Vec::new())?;
+            let mut entries = Vec::new();
+            for key in self.core_members(&window)? {
+                let value = self.special_dyad(&Action::At, &held, &key)?;
+                entries.push((key, value));
+            }
+            return Ok(entries);
+        }
+        Err(self.mapping_amiss(&held).into())
+    }
+
+    /// The complaint a value that is no mapping draws: the label's two
+    /// pieces with the value's kind written between them.
+    fn mapping_amiss(&self, value: &Value) -> String {
+        let words = &self.lang.spread_unmapped;
+        match words.len() {
+            0 => format!("TypeError: '{}' object is not a mapping", value.core_kind()),
+            _ => format!("{}{}{}", words[0], value.core_kind(), words.get(1).map_or("", String::as_str)),
+        }
     }
 
     fn byte_fault(&self, part: &str) -> String {
