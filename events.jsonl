@@ -8886,3 +8886,20 @@
 {"t":"2026-10-08T15:18:23Z","event":"exited","job":"review-auto-stdlib-shutil-1506","code":0}
 {"t":"2026-10-08T15:18:23Z","event":"review-started","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-1517"}
 {"t":"2026-10-08T15:25:18Z","event":"exited","job":"review-auto-stdlib-tempfile-1517","code":0}
+{"t":"2026-10-08T15:34:21Z","event":"returned","job":"stdlib-zipfile","review":"review-auto-stdlib-zipfile-1456","commit":"5ca10b94b","round":4,"note":"(Sol 4th; clean check 1195/0, indep 0; core 0->228/331, Path 51->53/54, package 281 pass both kernels kept; private-cache fixed; introduced: -E sets ignore_environment but sys.py still prepends PYTHONPATH; carry 21e repair 02fdc2b9d) -> returns/stdlib-zipfile.md + sol-resume queued"}
+{"t":"2026-10-08T15:34:21Z","event":"returned","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-1517","commit":"0654e5d79","round":2,"note":"(2nd; both earlier blockers fixed; tempfile 100->108/118 0 err both kernels, io 566->617/669; clean check 1195/0; sole blocker: merged stack8 replace_item/put_key push into KeyedPairs via deref -> slot/row mismatch panic; fix = merge 21e repair 02fdc2b9d) -> returns/stdlib-tempfile.md + sol-resume queued"}
+{"t":"2026-10-08T15:34:21Z","event":"returned","job":"stdlib-shutil","review":"review-auto-stdlib-shutil-1506","commit":"4365b0a39","round":1,"note":"(1st; test_shutil collects 0 (imports tarfile+zipfile missing from main) -> no subject gain; clean check 1195/0, posixpath 87->89/94 both, integrity ok) -> returns/stdlib-shutil.md: merge accepted tarfile fddb4a8bc + fix/stdlib-zipfile head + 21e repair; sol-resume queued behind zipfile"}
+{"t":"2026-10-08T15:34:21Z","event":"queued","job":"stdlib-zipfile","model":"gpt-6.1-sol","line":"sol-resume stdlib-zipfile"}
+{"t":"2026-10-08T15:34:21Z","event":"queued","job":"stdlib-tempfile","model":"gpt-6.1-sol","line":"sol-resume stdlib-tempfile"}
+{"t":"2026-10-08T15:34:21Z","event":"queued","job":"stdlib-shutil","model":"gpt-6.1-sol","line":"sol-resume stdlib-shutil"}
+{"t":"2026-10-08T15:34:26Z","event":"resumed","job":"stdlib-zipfile","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T15:35:13Z","event":"quota","codex_week_used":81,"codex_credits":0,"claude_week_used":11,"claude_5h_used":13,"kimi_5h_used":0,"kimi_month_used":0.9854,"kimi_code_used":0,"deepseek_usd":294.0}
+{"t":"2026-10-08T15:35:19Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":81,"expected":82.2,"gap":-1.2,"status":"ok"}
+{"t":"2026-10-08T15:35:31Z","event":"checkin","status":"done","actions":"returned stdlib-zipfile (4th; -E ignores-env but PYTHONPATH still read) -> sol-resume (dispatched); returned stdlib-tempfile (2nd; merged stack8 KeyedPairs push bypass, fix = 21e repair 02fdc2b9d) -> sol-resume queued; returned stdlib-shutil (1st; test_shutil collects 0, needs tarfile+zipfile) -> sol-resume queued behind zipfile; prune-merged freed 0MB; luna FINDINGS appended","notes":"box load 2.6, 13.4 GB avail, disk 85% (no idle accepted target/ to delete; all large worktrees active/returned); Mac disk 86%; PR #540 (21e) CI in progress, pr-merge-watch on; Codex week 81%; Claude 5h 12%/week 11%; luna no new alerts, gap -1.2 ok; held: 4 DS Flash resumes + dspro-type-annotations (slots full)"}
+{"t":"2026-10-08T15:39:27Z","event":"resumed","job":"stdlib-tempfile","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T15:48:43Z","event":"exited","job":"stdlib-unittest","code":0}
+{"t":"2026-10-08T15:50:29Z","event":"resumed","job":"stdlib-shutil","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T15:51:45Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-08T15:53:07Z","event":"finished","job":"stdlib-unittest","exit_time":"2026-10-08T15:48:43Z"}
+{"t":"2026-10-08T15:53:07Z","event":"review-queued","job":"stdlib-unittest","review":"review-auto-stdlib-unittest-1553"}
+{"t":"2026-10-08T15:53:09Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
