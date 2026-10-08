@@ -2512,7 +2512,7 @@ class _Parser:
             for target in targets:
                 self.set_store(target, Del)
             return self.located(Delete, first, self.toks[self.at - 1], targets=targets)
-        if first.kind == 'name' and word in _STMT_WORDS and word not in ('yield', 'await'):
+        if first.kind == 'name' and word in _STMT_WORDS and word not in ('yield', 'await', 'lambda'):
             _no_tree()
         node, ls, le = self.parse_expr(True)
         if self.at_op(':'):
@@ -3292,7 +3292,6 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = Expression(body=node)
         _check_features(tree, feature_version)
-        tree._lumen_tree_source = source
         return tree
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
@@ -3302,10 +3301,17 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         _check_type_comments(toks, comments)
     parser = _Parser(source, toks)
     tree = parser.parse_module()
+    if type_comments:
+        for row, column, text in comments:
+            payload = text[1:].lstrip(' \t')
+            if payload.startswith('type:'):
+                payload = payload[5:].lstrip(' \t')
+                if payload[:6] == 'ignore' and (len(payload) == 6 or
+                        (ord(payload[6]) < 128 and not payload[6].isalnum())):
+                    tree.type_ignores.append(TypeIgnore(lineno=row, tag=payload[6:]))
     if mode == 'single':
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
-    tree._lumen_tree_source = source
     return tree
 
 def dump(
