@@ -7099,6 +7099,8 @@ impl<'a> Engine<'a> {
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
+        // A builtin value carries no docstring of its own: reading one is not a fault.
+        if name == self.class_word("doc") && matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Flag(_) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) | Value::Bytes(..)) { return Ok(Some(Value::Null)); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
@@ -10613,6 +10615,14 @@ impl<'a> Engine<'a> {
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::BindValueMethod(operation) => {
                 let target = self.drop_top()?.held(false);
+                // A kind whose members are all listed refuses a method it does not carry now, not at the call.
+                if matches!(target.contents(), Value::Tuple(_) | Value::Null | Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Frac(_) | Value::Complex(_))
+                    && !crate::methods::answered(&target, operation) {
+                    let name = self.spelled_member(operation);
+                    self.absent_member = Some((name.clone(), target.clone()));
+                    let told = self.member_amiss(&target, &name);
+                    if !told.is_empty() { return Err(told.into()); }
+                }
                 self.bound_value_method(target, operation)?
             }
             Action::Not => {
@@ -15352,6 +15362,7 @@ impl<'a> Engine<'a> {
             }
             let index = match at {
                 Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                Value::Flag(truth) => Some(usize::from(*truth)),
                 _ => as_index(at).ok(),
             };
             return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| match self.lang.sequence_values {

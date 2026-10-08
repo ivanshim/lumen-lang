@@ -8832,6 +8832,7 @@ impl<'a> Machine<'a> {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
         if name == self.detail("doc") && matches!(value.settled(), Value::Nil) { return Some(Value::text("The type of the None singleton.")); }
+        if name == self.detail("doc") && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Flag(_) | Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) | Value::Set(_) | Value::Octets { .. } | Value::Intrinsic(..)) { return Some(Value::Nil); }
         if matches!(value, Value::Window(_, 'm')) && matches!(name, "get" | "keys" | "values" | "items" | "copy") {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
         }
@@ -9623,6 +9624,12 @@ impl<'a> Machine<'a> {
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
     fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+        // A kind whose members are all listed refuses a method it does not carry now, not at the call.
+        let held = receiver.settled();
+        if (matches!(held, Value::Nil) || matches!(held.kind_word().as_str(), "tuple" | "int" | "bool" | "float" | "complex"))
+            && !crate::members::answers_to(&held, operation) {
+            return Err(self.member_missing(&receiver, operation).into());
+        }
         if operation == "__index__" {
             if self.native_place(&receiver, operation).is_none() {
                 return Err(self.member_missing(&receiver, operation).into());
