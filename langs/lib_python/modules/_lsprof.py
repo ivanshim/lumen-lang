@@ -174,7 +174,7 @@ class Profiler:
         if self._subcalls and before is not None and before.tally is not None:
             sub = before.tally.subs.get(key)
             if sub is None:
-                sub = before.tally.subs[key] = _Tally(code)
+                sub = before.tally.subs[key] = _Tally(tally.code)
             sub.open += 1
         self._top = _Context(tally, key, before, self._timer(), frame)
 

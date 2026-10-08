@@ -6052,10 +6052,13 @@ impl<'a> Machine<'a> {
     /// The call of a builtin told of to the routine put in the way of
     /// calls, before and after, with the builtin itself.
     fn call_told(&mut self, stands: Value, target: &Form, args: &[Form], frame: &Rc<Env>) -> Res {
+        // The arguments are worked out first, once and in order, so that
+        // what they call is not taken for part of the builtin.
+        let given: Vec<Form> = self.value_list(args, frame)?.into_iter().map(Form::Const).collect();
         let standing = self.active_trace.clone();
         self.natives_told.set(true);
         let answer = match self.tell_watcher("c_call", &standing, stands.clone()) {
-            Ok(()) => self.call_stands(stands.clone(), target, args, frame),
+            Ok(()) => self.call_stands(stands.clone(), target, &given, frame),
             Err(away) => Err(away),
         };
         self.natives_told.set(false);
@@ -7028,15 +7031,12 @@ impl<'a> Machine<'a> {
                 // A builtin function or method named outright is told of
                 // before and after, with the builtin itself; a method's
                 // receiver is worked out once here and handed on.
-                let mut forms = args.clone();
-                let callable = match (op, args.first()) {
-                    (Prim::ValueMethod, Some(first)) => {
-                        let receiver = self.value_of(first, frame)?;
-                        forms[0] = Form::Const(receiver.clone());
-                        Value::Member(Rc::new(receiver), name.to_string())
-                    }
+                let values = self.value_list(args, frame)?;
+                let callable = match (op, values.first()) {
+                    (Prim::ValueMethod, Some(receiver)) => Value::Member(Rc::new(receiver.clone()), name.to_string()),
                     _ => Value::Intrinsic(*op, name.clone()),
                 };
+                let forms: Vec<Form> = values.into_iter().map(Form::Const).collect();
                 let standing = self.active_trace.clone();
                 self.natives_told.set(true);
                 let answer = match self.tell_watcher("c_call", &standing, callable.clone()) {
