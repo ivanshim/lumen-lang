@@ -14632,31 +14632,51 @@ impl<'a> Machine<'a> {
         Self::carries_instance_past(value, false)
     }
 
+    /// Leaves can be classified by borrowing them. Containers and cells need
+    /// the cycle-aware walk; none of their members are retained here.
+    fn immediate_instance(value: &Value, into_sets: bool) -> Option<bool> {
+        match value {
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => Some(true),
+            Value::Blueprint(plan) => Some(Self::builder_over(plan).is_some()),
+            Value::Shared(_) | Value::Mutable(..) | Value::Row(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) => None,
+            Value::Set(_) if into_sets => None,
+            _ => Some(false),
+        }
+    }
+
     /// Walk cells once without following a deep row through the call stack.
     /// A nested list can still hold a custom object whose repr must run.
     fn carries_instance_past(value: &Value, into_sets: bool) -> bool {
+        if let Some(answer) = Self::immediate_instance(value, into_sets) { return answer; }
         let mut passed = std::collections::HashSet::new();
         let mut pending = vec![value.clone()];
         while let Some(value) = pending.pop() {
-            match value {
-                Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => return true,
-                Value::Blueprint(plan) if Self::builder_over(&plan).is_some() => return true,
-                Value::Shared(cell) | Value::Mutable(cell, _) => {
-                    if passed.insert(Rc::as_ptr(&cell) as usize) {
-                        pending.push(cell.borrow().clone());
-                    }
+            if let Some(answer) = Self::immediate_instance(&value, into_sets) {
+                if answer { return true; }
+                continue;
+            }
+            let mut remember = |part: &Value| -> bool {
+                match Self::immediate_instance(part, into_sets) {
+                    Some(answer) => answer,
+                    None => { pending.push(part.clone()); false },
                 }
-                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => pending.extend(items.iter().cloned()),
+            };
+            match value {
+                Value::Shared(cell) | Value::Mutable(cell, _) => {
+                    if passed.insert(Rc::as_ptr(&cell) as usize) && remember(&cell.borrow()) { return true; }
+                }
+                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => {
+                    if items.iter().any(&mut remember) { return true; }
+                }
                 Value::Dict(items) => {
                     for (key, held) in items.iter() {
-                        pending.push(key.clone());
-                        pending.push(held.clone());
+                        if remember(key) || remember(held) { return true; }
                     }
                 }
                 Value::Set(store) if into_sets => {
                     if passed.insert(Rc::as_ptr(&store) as *const () as usize) {
                         if let Ok(held) = store.try_borrow() {
-                            pending.extend(held.entries.iter().map(|(_, item)| item.clone()));
+                            if held.entries.iter().any(|(_, item)| remember(item)) { return true; }
                         }
                     }
                 }
