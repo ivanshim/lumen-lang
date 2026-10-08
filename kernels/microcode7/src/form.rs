@@ -838,11 +838,14 @@ pub struct Routine {
     pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
+    pub cells: Vec<String>,
     pub flags: i64,
     /// The future flags in force where the text was read, as the
     /// reference's code objects carry them in co_flags.
     pub future_bits: i64,
     pub lineless: bool,
+    pub locations: Option<Value>,
+    pub stack_bound: Option<i64>,
     pub doc: Option<String>,
     pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.
@@ -1086,8 +1089,16 @@ impl Form {
             | Self::Located(_, _, inner) | Self::CellOrSaid(_, _, _, inner)
             | Self::HeldEither(_, _, _, inner) => descend.push(inner),
             Self::Apply(callee, arguments) => {
+                let excluded = match callee {
+                    Callee::Prim(Prim::Of | Prim::ReadMember | Prim::WriteMember | Prim::HasMember | Prim::Ask | Prim::Onto, _) => 1..2,
+                    Callee::Prim(Prim::BringModule, _) => 0..1,
+                    Callee::Prim(Prim::ImportMember, _) => 1..arguments.len(),
+                    _ => 0..0,
+                };
                 if let Callee::Code(target) = callee { descend.push(target); }
-                descend.extend(arguments);
+                for (slot, argument) in arguments.iter_mut().enumerate() {
+                    if !excluded.contains(&slot) || !matches!(argument, Self::Const(Value::Text(_))) { descend.push(argument); }
+                }
             }
             Self::Dyad { a, b, .. } => for input in [a, b] {
                 match input { Input::Form(inner) => descend.push(inner), Input::Const(value) => alter(value, old, new, inline)?, _ => {} }
@@ -1121,9 +1132,6 @@ impl Form {
 
 impl Routine {
     pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
-        if values.len() != self.literals.len() {
-            return Err("NotImplementedError: changing the constant table length is unavailable".into());
-        }
         let mut literals = Vec::new();
         for value in values {
             literals.push(match value.settled() {
@@ -1131,8 +1139,12 @@ impl Routine {
                 plain => plain,
             });
         }
-        let inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter().map(|value|
-            if let Value::Small(n) = value { *n >= 0 && *n < 256 } else { false }).collect());
+        let mut inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter()
+            .map(|value| matches!(value, Value::Small(0..=255))).collect());
+        if inline.iter().skip(values.len()).any(|slot| !slot) {
+            return Err(String::from("NotImplementedError: removing native constant operands is unavailable"));
+        }
+        while inline.len() < values.len() { inline.push(false); }
         for (index, entry) in self.literals.iter().enumerate() {
             if self.literals.iter().skip(index + 1).any(|other|
                 std::mem::discriminant(entry) == std::mem::discriminant(other) && entry.equals(other)) {
@@ -1142,9 +1154,9 @@ impl Routine {
         let mut adjusted = self.clone();
         adjusted.body.change_literals(&self.literals, &literals, &inline)?;
         adjusted.immediate_slots = Some(inline);
-        adjusted.doc = literals.first().and_then(|value| match value {
-            Value::Text(word) => Some(word.to_string()), _ => None,
-        });
+        adjusted.doc = if adjusted.flags & (1 << 26) != 0 {
+            literals.first().and_then(|value| match value { Value::Text(word) => Some(word.to_string()), _ => None })
+        } else { None };
         adjusted.literals = literals;
         Ok(adjusted)
     }

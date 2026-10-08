@@ -2889,7 +2889,8 @@
     "co_filename",
     "co_firstlineno",
     "__annotate__",
-    "co_freevars"
+    "co_freevars",
+    "co_cellvars"
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
