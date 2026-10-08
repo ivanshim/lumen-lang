@@ -6,10 +6,12 @@
 #
 # A small reader gives parse() a deliberately narrow subset of the grammar
 # (see below): expression and assignment statements, def and async def with
-# their parameter lists, for/with/while/try and the async forms, with
-# CPython's node classes and positions. Everything else a syntax tree would
-# serve -- walking, dumping, unparsing, and source outside the subset --
-# still says it has no tree rather than return something shaped like one.
+# their parameter lists, if/elif/else, for/with/while/try and the async
+# forms, with CPython's node classes and positions. Blocks keep their own
+# indentation (tabs expanded), and a statement at a column no block owns
+# is IndentationError. Everything else a syntax tree would serve --
+# walking, dumping, unparsing, and source outside the subset -- still says
+# it has no tree rather than return something shaped like one.
 #
 # With type_comments=True, CPython's type-comment rules are applied: a
 # '# type: ...' comment attaches to the assignment, 'for'/'with' header,
@@ -190,7 +192,13 @@ def _read_escape(source, i, is_bytes):
         if close >= n:
             raise 'SyntaxError: malformed \\N character escape'
         import unicodedata
-        return (unicodedata.lookup(source[i + 2:close]), close + 1)
+        try:
+            named = unicodedata.lookup(source[i + 2:close])
+        except KeyError:
+            named = None
+        if named is None or len(named) != 1:
+            raise 'SyntaxError: unknown Unicode character name'
+        return (named, close + 1)
     # An unknown escape keeps the backslash, as Python does.
     return ('\\' + c, i + 1)
 
@@ -430,9 +438,10 @@ def literal_eval(node_or_string):
 # classes with CPython's positions. It reads assignment and expression
 # statements over names, numbers, strings, f-strings, calls, subscripts,
 # attribute reads, tuples, lists, dicts, sets and the common operators,
-# and the compound statements def, async def, for, async for, with, async
-# with, while and try/finally, with pass, break, continue and return in
-# their bodies. func_type mode reads a '(...) -> ...' signature.
+# and the compound statements def, async def, if/elif/else, for, async
+# for, with, async with, while and try/except/else/finally, with pass,
+# break, continue, return and assert among the simple statements.
+# func_type mode reads a '(...) -> ...' signature.
 # Positions follow CPython 3.12+ for f-strings: a FormattedValue covers
 # its braces, a text Constant covers exactly its source (a doubled brace
 # covers both source braces), and adjacent text pieces merge across
@@ -445,6 +454,12 @@ def literal_eval(node_or_string):
 
 def _syntax(message):
     raise 'SyntaxError: ' + message
+
+def _indent(message):
+    raise 'IndentationError: ' + message
+
+def _tab(message):
+    raise 'TabError: ' + message
 
 def _no_tree():
     raise _NO_TREE
@@ -471,6 +486,10 @@ class Module(AST):
     _attributes = ()
 
 class Expression(AST):
+    _fields = ('body',)
+    _attributes = ()
+
+class Interactive(AST):
     _fields = ('body',)
     _attributes = ()
 
@@ -543,6 +562,12 @@ class Continue(stmt):
 class Return(stmt):
     _fields = ('value',)
 
+class Assert(stmt):
+    _fields = ('test', 'msg')
+
+class If(stmt):
+    _fields = ('test', 'body', 'orelse')
+
 class AugAssign(stmt):
     _fields = ('target', 'op', 'value')
 
@@ -551,6 +576,9 @@ class While(stmt):
 
 class Try(stmt):
     _fields = ('body', 'handlers', 'orelse', 'finalbody')
+
+class ExceptHandler(AST):
+    _fields = ('type', 'name', 'body')
 
 class For(stmt):
     _fields = ('target', 'iter', 'body', 'orelse', 'type_comment')
@@ -570,11 +598,11 @@ class withitem(AST):
 
 class FunctionDef(stmt):
     _fields = ('name', 'args', 'body', 'decorator_list', 'returns',
-               'type_comment')
+               'type_comment', 'type_params')
 
 class AsyncFunctionDef(stmt):
     _fields = ('name', 'args', 'body', 'decorator_list', 'returns',
-               'type_comment')
+               'type_comment', 'type_params')
 
 class arguments(AST):
     _fields = ('posonlyargs', 'args', 'vararg', 'kwonlyargs', 'kw_defaults',
@@ -1134,16 +1162,23 @@ _BINOPS = {'+': Add, '-': Sub, '*': Mult, '/': Div, '//': FloorDiv,
 # Statement classes whose parse reads through the whole suite, newlines
 # included; the token after one is already the next statement's first.
 _COMPOUND = (FunctionDef, AsyncFunctionDef, For, AsyncFor, With,
-             AsyncWith, While, Try)
+             AsyncWith, While, Try, If)
 _CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
 _UNARY = {'+': UAdd, '-': USub, '~': Invert}
 
 class _Parser:
-    def __init__(self, source, toks, comments=None, fv=None):
+    def __init__(self, source, toks, comments=None, fv=None, optimize=-1,
+                 fold_debug=False):
         self.source = source
         self.toks = toks
         self.at = 0
         self.fv = _feature_minor(fv)
+        self.optimize = optimize
+        self.fold_debug = fold_debug
+        self.lines = source.split('\n')
+        self.icols = {}
+        self.indent_stack = [0]
+        self.tabws = {0: ''}
         # Type comments by row, from the comments _lex recorded; a row is
         # struck out as its comment attaches to a node, and a type comment
         # left over at the end of the module is a misplaced one.
@@ -1154,6 +1189,45 @@ class _Parser:
                 payload = _type_comment_payload(text)
                 if payload is not None:
                     self.tcomments[row] = payload
+
+    def indent_col(self, tok):
+        # A statement's indentation: the line's leading whitespace, each
+        # tab advancing to the next multiple of eight, as CPython's
+        # tokenizer measures it.
+        row = tok.srow
+        known = self.icols.get(row)
+        if known is not None:
+            return known
+        text = self.lines[row - 1] if row - 1 < len(self.lines) else ''
+        col = 0
+        i = 0
+        stop = tok.scol
+        while i < stop and i < len(text):
+            if text[i] == '\t':
+                col += 8 - col % 8
+            else:
+                col += 1
+            i += 1
+        self.icols[row] = col
+        return col
+
+    def prefix_len(self, tok):
+        # The leading whitespace of the token's line, in characters; a
+        # statement's first token always stands right after it.
+        text = self.lines[tok.srow - 1] if tok.srow - 1 < len(self.lines) else ''
+        i = 0
+        n = len(text)
+        while i < n and (text[i] == ' ' or text[i] == '\t' or text[i] == '\f'):
+            i += 1
+        return i
+
+    def at_clause(self, word, parent_col):
+        # A clause keyword (else, except, ...) opening a line of its own
+        # at the owning statement's indentation.
+        tok = self.peek()
+        return (tok.kind == 'name' and tok.text == word and
+                tok.scol == self.prefix_len(tok) and
+                self.indent_col(tok) == parent_col)
 
     def take_comment(self, row):
         # The type comment standing on row, struck out so it cannot
@@ -1191,30 +1265,83 @@ class _Parser:
         return self.pop()
 
     def parse_module(self):
+        return Module(body=self.parse_block(0), type_ignores=[])
+
+    def parse_block(self, indent):
+        # A block is the run of statements whose first token stands at
+        # the block's own column; a token further left belongs to an
+        # enclosing block, one further right is an error.
         body = []
         while True:
             while self.peek().kind == 'newline':
                 self.pop()
-            if self.peek().kind == 'end':
-                break
-            stmt = self.parse_stmt()
-            body.append(stmt)
             tok = self.peek()
             if tok.kind == 'end':
                 break
-            if tok.kind == 'newline':
-                continue
-            if self.at_op(';'):
+            if tok.scol != self.prefix_len(tok):
+                _syntax('invalid syntax')
+            col = self.indent_col(tok)
+            if col < indent:
+                if col not in self.indent_stack:
+                    _indent('unindent does not match any outer indentation level')
+                break
+            if col > indent:
+                _indent('unexpected indent')
+            ws = self.lines[tok.srow - 1][:tok.scol]
+            known = self.tabws.get(indent)
+            if known is None:
+                self.tabws[indent] = ws
+            elif known != ws:
+                _tab('inconsistent use of tabs and spaces in indentation')
+            body.append(self.parse_stmt())
+            if type(body[-1]) not in _COMPOUND:
+                while self.at_op(';'):
+                    self.pop()
+                    if self.peek().kind in ('newline', 'end'):
+                        break
+                    body.append(self.parse_simple_stmt())
+        return body
+
+    def parse_suite(self, parent_col):
+        # The ':' is already read. Either the rest of the line is the
+        # suite -- simple statements alone -- or the suite is the run of
+        # statements one indentation deeper.
+        if self.peek().kind != 'newline':
+            body = [self.parse_simple_stmt()]
+            while self.at_op(';'):
                 self.pop()
-                continue
-            if type(stmt) in _COMPOUND:
-                # A compound statement's suite already swallowed the
-                # newlines up to the next statement's first token.
-                continue
+                if self.peek().kind in ('newline', 'end'):
+                    break
+                body.append(self.parse_simple_stmt())
+            return body
+        while self.peek().kind == 'newline':
+            self.pop()
+        tok = self.peek()
+        if tok.kind == 'end' or self.indent_col(tok) <= parent_col:
+            _indent('expected an indented block')
+        indent = self.indent_col(tok)
+        self.indent_stack.append(indent)
+        body = self.parse_block(indent)
+        self.indent_stack.pop()
+        return body
+
+    def expect_name(self, word):
+        tok = self.peek()
+        if tok.kind != 'name' or tok.text != word:
             _syntax('invalid syntax')
-        return Module(body=body, type_ignores=[])
+        return self.pop()
+
+    def tail_of(self, body, fallback):
+        if body:
+            last = body[-1]
+            if getattr(last, 'end_lineno', None) is not None:
+                return (last.end_lineno, last.end_col_offset)
+        return fallback
 
     def parse_stmt(self):
+        # A word that opens a block of its own is read here; anything
+        # else, the simple statement words included, is left to the
+        # simple-statement reader below.
         tok = self.peek()
         if tok.kind == 'name':
             word = tok.text
@@ -1235,25 +1362,32 @@ class _Parser:
                 return self.parse_with(False)
             if word == 'while':
                 return self.parse_while()
+            if word == 'if':
+                return self.parse_if()
             if word == 'try':
                 return self.parse_try()
+            if word in ('elif', 'else', 'except', 'finally'):
+                _syntax('invalid syntax')
+        return self.parse_simple_stmt()
+
+    def parse_simple_stmt(self):
+        # An expression, an assignment, or one of the simple statement
+        # words. A word that opens a block of its own is refused: an
+        # inline suite and the run after a semicolon take simple
+        # statements alone.
+        tok = self.peek()
+        if tok.kind == 'name':
+            word = tok.text
+            if word == 'return':
+                return self.parse_return()
+            if word == 'assert':
+                return self.parse_assert()
             if word == 'pass' or word == 'break' or word == 'continue':
                 self.pop()
                 cls = Pass if word == 'pass' else (
                     Break if word == 'break' else Continue)
                 return cls(lineno=tok.srow, col_offset=tok.scol,
                            end_lineno=tok.erow, end_col_offset=tok.ecol)
-            if word == 'return':
-                self.pop()
-                value = None
-                end = (tok.erow, tok.ecol)
-                ahead = self.peek()
-                if (ahead.kind != 'newline' and ahead.kind != 'end' and
-                        not self.at_op(';')):
-                    value, vs, end = self.parse_expr(True)
-                return Return(value=value, lineno=tok.srow,
-                              col_offset=tok.scol, end_lineno=end[0],
-                              end_col_offset=end[1])
             if word in _STMT_WORDS and word != 'await' and \
                     not (word == 'async' and self.fv < 5):
                 _no_tree()
@@ -1285,40 +1419,74 @@ class _Parser:
         return Expr(value=node, lineno=ls[0], col_offset=ls[1],
                     end_lineno=le[0], end_col_offset=le[1])
 
-    def parse_body(self, base_col):
-        # The suite after a compound statement's ':': statements on the
-        # header's own line, or an indented block whose statements all
-        # stand right of the header. The lexer drops indentation, so the
-        # block's edge is read from each statement's column.
-        if self.peek().kind == 'newline':
+    def parse_if(self):
+        tok = self.expect_name('if')
+        test, ts, te = self.parse_expr(False)
+        self.expect_op(':')
+        body = self.parse_suite(self.indent_col(tok))
+        orelse = self.parse_else(self.indent_col(tok))
+        end = self.tail_of(orelse or body, te)
+        return If(test=test, body=body, orelse=orelse,
+                  lineno=tok.srow, col_offset=tok.scol,
+                  end_lineno=end[0], end_col_offset=end[1])
+
+    def parse_else(self, parent_col):
+        while self.peek().kind == 'newline':
             self.pop()
-            body = []
-            while True:
-                while self.peek().kind == 'newline':
-                    self.pop()
-                tok = self.peek()
-                if tok.kind == 'end' or tok.scol <= base_col:
-                    break
-                body.append(self.parse_stmt())
-                tok = self.peek()
-                if tok.kind == 'newline' or tok.kind == 'end':
-                    continue
-                if self.at_op(';'):
-                    self.pop()
-                    continue
-                if type(body[-1]) in _COMPOUND:
-                    continue
-                _syntax('invalid syntax')
-            if not body:
-                _syntax('expected an indented block')
-            return body
-        body = [self.parse_stmt()]
-        while self.at_op(';'):
+        if self.at_clause('elif', parent_col):
+            start = self.pop()
+            test, ts, te = self.parse_expr(False)
+            self.expect_op(':')
+            body = self.parse_suite(parent_col)
+            orelse = self.parse_else(parent_col)
+            end = self.tail_of(orelse or body, te)
+            return [If(test=test, body=body, orelse=orelse,
+                       lineno=start.srow, col_offset=start.scol,
+                       end_lineno=end[0], end_col_offset=end[1])]
+        if self.at_clause('else', parent_col):
             self.pop()
-            if self.peek().kind == 'newline' or self.peek().kind == 'end':
-                break
-            body.append(self.parse_stmt())
-        return body
+            self.expect_op(':')
+            return self.parse_suite(parent_col)
+        return []
+
+    def parse_except(self, parent_col):
+        tok = self.expect_name('except')
+        type_ = None
+        name = None
+        if not self.at_op(':'):
+            type_, ts, te = self.parse_expr(False)
+            if self.at_name('as'):
+                self.pop()
+                word = self.pop()
+                if word.kind != 'name':
+                    _syntax('invalid syntax')
+                name = word.text
+        self.expect_op(':')
+        body = self.parse_suite(parent_col)
+        end = self.tail_of(body, (tok.erow, tok.ecol))
+        return ExceptHandler(type=type_, name=name, body=body,
+                             lineno=tok.srow, col_offset=tok.scol,
+                             end_lineno=end[0], end_col_offset=end[1])
+
+    def parse_assert(self):
+        tok = self.expect_name('assert')
+        test, ts, te = self.parse_or()
+        msg = None
+        if self.at_op(','):
+            self.pop()
+            msg, ms, te = self.parse_or()
+        return Assert(test=test, msg=msg, lineno=tok.srow,
+                      col_offset=tok.scol, end_lineno=te[0],
+                      end_col_offset=te[1])
+
+    def parse_return(self):
+        tok = self.expect_name('return')
+        value = None
+        le = (tok.erow, tok.ecol)
+        if self.peek().kind not in ('newline', 'end') and not self.at_op(';'):
+            value, vs, le = self.parse_expr(True)
+        return Return(value=value, lineno=tok.srow, col_offset=tok.scol,
+                      end_lineno=le[0], end_col_offset=le[1])
 
     def parse_def(self, is_async):
         start = self.peek()
@@ -1326,8 +1494,7 @@ class _Parser:
             if self.fv < 5:
                 _syntax('Async functions are only supported in Python 3.5 and greater')
             self.pop()
-        dtok = self.peek()
-        self.pop()
+        dtok = self.expect_name('def')
         tok = self.peek()
         if tok.kind != 'name':
             _syntax('invalid syntax')
@@ -1339,7 +1506,7 @@ class _Parser:
         returns = None
         if self.at_op('->'):
             self.pop()
-            returns, rs, re = self.parse_expr(False)
+            returns, rs, re = self.parse_or()
         colon = self.expect_op(':')
         found = []
         if self.peek().kind == 'newline':
@@ -1362,51 +1529,63 @@ class _Parser:
                 row += 1
         if len(found) > 1:
             _syntax('Cannot have two type comments on def')
-        body = self.parse_body(start.scol)
-        last = body[-1]
+        body = self.parse_suite(self.indent_col(start))
+        end = self.tail_of(body, (dtok.erow, dtok.ecol))
         cls = AsyncFunctionDef if is_async else FunctionDef
         return cls(name=name, args=args, body=body, decorator_list=[],
                    returns=returns, type_comment=found[-1] if found else None,
-                   lineno=start.srow, col_offset=start.scol,
-                   end_lineno=last.end_lineno, end_col_offset=last.end_col_offset)
+                   type_params=[], lineno=start.srow, col_offset=start.scol,
+                   end_lineno=end[0], end_col_offset=end[1])
 
     def parse_params(self):
-        # The parameter list after '('. A type comment closes with the
-        # comma or newline ending its parameter's line and attaches to
-        # that parameter; the def's own comment is read by parse_def.
+        # The parameter list after '('. Positional parameters come first
+        # (once a default is given the rest of the positional run needs
+        # one too), '/' closes the positional-only run once, '*' and '**'
+        # come after, and nothing follows '**' but the close. A type
+        # comment closes with the comma or newline ending its parameter's
+        # line and attaches to that parameter.
         posonly = None
         args = []
+        kwonlyargs = []
+        kw_defaults = []
+        defaults = []
         vararg = None
         kwarg = None
-        defaults = []
+        current = args
         starred = False
+        defaulted = False
         while not self.at_op(')'):
-            current = None
+            if kwarg is not None:
+                _syntax('invalid syntax')
+            node = None
+            row = -1
             if self.at_op('/'):
                 tok = self.pop()
                 if self.fv < 8:
                     _syntax('Positional-only parameters are only supported in Python 3.8 and greater')
-                if posonly is not None or starred:
+                if posonly is not None or starred or not current:
                     _syntax('invalid syntax')
-                posonly = args
+                posonly = current
                 args = []
+                current = args
                 row = tok.srow
             elif self.at_op('*'):
                 tok = self.pop()
                 if starred:
                     _syntax('invalid syntax')
                 starred = True
+                current = kwonlyargs
                 name_tok = self.peek()
-                if name_tok.kind != 'name':
-                    row = tok.srow
-                else:
+                if name_tok.kind == 'name' and name_tok.text not in _STMT_WORDS:
                     self.pop()
                     vararg = arg(arg=name_tok.text, lineno=name_tok.srow,
                                  col_offset=name_tok.scol,
                                  end_lineno=name_tok.erow,
                                  end_col_offset=name_tok.ecol)
-                    current = vararg
+                    node = vararg
                     row = name_tok.srow
+                else:
+                    row = tok.srow
             elif self.at_op('**'):
                 self.pop()
                 name_tok = self.peek()
@@ -1417,39 +1596,51 @@ class _Parser:
                             col_offset=name_tok.scol,
                             end_lineno=name_tok.erow,
                             end_col_offset=name_tok.ecol)
-                current = kwarg
+                node = kwarg
                 row = name_tok.srow
             else:
                 name_tok = self.peek()
-                if name_tok.kind != 'name':
+                if name_tok.kind != 'name' or name_tok.text in _STMT_WORDS:
                     _syntax('invalid syntax')
                 self.pop()
-                if self.at_op(':'):
-                    _no_tree()
-                current = arg(arg=name_tok.text, lineno=name_tok.srow,
-                              col_offset=name_tok.scol,
-                              end_lineno=name_tok.erow,
-                              end_col_offset=name_tok.ecol)
+                node = arg(arg=name_tok.text, lineno=name_tok.srow,
+                           col_offset=name_tok.scol,
+                           end_lineno=name_tok.erow,
+                           end_col_offset=name_tok.ecol)
                 row = name_tok.srow
-                if starred:
-                    _no_tree()
-                args.append(current)
+                if self.at_op(':'):
+                    self.pop()
+                    node.annotation, ans, ane = self.parse_or()
+                    row = ane[0]
+                default = None
                 if self.at_op('='):
                     self.pop()
-                    default, ds, de = self.parse_or()
-                    defaults.append(default)
+                    default, ds, de = self.parse_expr(False)
                     row = de[0]
-            if self.at_op(','):
+                if starred:
+                    kwonlyargs.append(node)
+                    kw_defaults.append(default)
+                else:
+                    current.append(node)
+                    if default is not None:
+                        defaults.append(default)
+                        defaulted = True
+                    elif defaulted:
+                        _syntax('non-default argument follows default argument')
+            more = self.at_op(',')
+            if more:
                 row = self.pop().srow
-            if current is not None:
+            if node is not None and row >= 0:
                 comment = self.take_comment(row)
                 if comment is not None:
-                    current.type_comment = comment
+                    node.type_comment = comment
+            if not more:
+                break
         if posonly is None:
             posonly = []
         return arguments(posonlyargs=posonly, args=args, vararg=vararg,
-                         kwonlyargs=[], kw_defaults=[], kwarg=kwarg,
-                         defaults=defaults)
+                         kwonlyargs=kwonlyargs, kw_defaults=kw_defaults,
+                         kwarg=kwarg, defaults=defaults)
 
     def parse_for(self, is_async):
         start = self.peek()
@@ -1457,8 +1648,7 @@ class _Parser:
             if self.fv < 5:
                 _syntax('Async for loops are only supported in Python 3.5 and greater')
             self.pop()
-        ftok = self.peek()
-        self.pop()
+        self.expect_name('for')
         target, ts, te = self.parse_target()
         self.set_store(target)
         if not self.at_name('in'):
@@ -1466,13 +1656,19 @@ class _Parser:
         self.pop()
         iter_, is_, ie = self.parse_expr(True)
         colon = self.expect_op(':')
-        body = self.parse_body(start.scol)
-        last = body[-1]
+        oneline = self.peek().kind != 'newline'
+        body = self.parse_suite(self.indent_col(start))
+        orelse = []
+        if self.at_clause('else', self.indent_col(start)):
+            self.pop()
+            self.expect_op(':')
+            orelse = self.parse_suite(self.indent_col(start))
+        end = self.tail_of(orelse or body, (colon.erow, colon.ecol))
         cls = AsyncFor if is_async else For
-        return cls(target=target, iter=iter_, body=body, orelse=[],
-                   type_comment=self.take_comment(colon.srow),
+        return cls(target=target, iter=iter_, body=body, orelse=orelse,
+                   type_comment=None if oneline else self.take_comment(colon.srow),
                    lineno=start.srow, col_offset=start.scol,
-                   end_lineno=last.end_lineno, end_col_offset=last.end_col_offset)
+                   end_lineno=end[0], end_col_offset=end[1])
 
     def parse_with(self, is_async):
         start = self.peek()
@@ -1480,8 +1676,7 @@ class _Parser:
             if self.fv < 5:
                 _syntax('Async with statements are only supported in Python 3.5 and greater')
             self.pop()
-        wtok = self.peek()
-        self.pop()
+        self.expect_name('with')
         parenthesized = self.at_op('(')
         if parenthesized:
             self.pop()
@@ -1504,37 +1699,62 @@ class _Parser:
             if self.at_name('as'):
                 _no_tree()
         colon = self.expect_op(':')
-        body = self.parse_body(start.scol)
-        last = body[-1]
+        oneline = self.peek().kind != 'newline'
+        body = self.parse_suite(self.indent_col(start))
+        end = self.tail_of(body, (colon.erow, colon.ecol))
         cls = AsyncWith if is_async else With
         return cls(items=items, body=body,
-                   type_comment=self.take_comment(colon.srow),
+                   type_comment=None if oneline else self.take_comment(colon.srow),
                    lineno=start.srow, col_offset=start.scol,
-                   end_lineno=last.end_lineno, end_col_offset=last.end_col_offset)
+                   end_lineno=end[0], end_col_offset=end[1])
 
     def parse_while(self):
-        wtok = self.pop()
+        wtok = self.expect_name('while')
         test, ts, te = self.parse_expr(False)
         self.expect_op(':')
-        body = self.parse_body(wtok.scol)
-        last = body[-1]
-        return While(test=test, body=body, orelse=[], lineno=wtok.srow,
-                     col_offset=wtok.scol, end_lineno=last.end_lineno,
-                     end_col_offset=last.end_col_offset)
+        body = self.parse_suite(self.indent_col(wtok))
+        orelse = []
+        if self.at_clause('else', self.indent_col(wtok)):
+            self.pop()
+            self.expect_op(':')
+            orelse = self.parse_suite(self.indent_col(wtok))
+        end = self.tail_of(orelse or body, te)
+        return While(test=test, body=body, orelse=orelse, lineno=wtok.srow,
+                     col_offset=wtok.scol, end_lineno=end[0],
+                     end_col_offset=end[1])
 
     def parse_try(self):
-        ttok = self.pop()
+        tok = self.expect_name('try')
         self.expect_op(':')
-        body = self.parse_body(ttok.scol)
-        if not self.at_name('finally'):
-            _no_tree()
-        self.pop()
-        self.expect_op(':')
-        finalbody = self.parse_body(ttok.scol)
-        last = finalbody[-1]
-        return Try(body=body, handlers=[], orelse=[], finalbody=finalbody,
-                   lineno=ttok.srow, col_offset=ttok.scol,
-                   end_lineno=last.end_lineno, end_col_offset=last.end_col_offset)
+        body = self.parse_suite(self.indent_col(tok))
+        handlers = []
+        orelse = []
+        finalbody = []
+        while True:
+            while self.peek().kind == 'newline':
+                self.pop()
+            if self.at_clause('except', self.indent_col(tok)):
+                handlers.append(self.parse_except(self.indent_col(tok)))
+                continue
+            break
+        while self.peek().kind == 'newline':
+            self.pop()
+        if self.at_clause('else', self.indent_col(tok)):
+            self.pop()
+            self.expect_op(':')
+            orelse = self.parse_suite(self.indent_col(tok))
+            while self.peek().kind == 'newline':
+                self.pop()
+        if self.at_clause('finally', self.indent_col(tok)):
+            self.pop()
+            self.expect_op(':')
+            finalbody = self.parse_suite(self.indent_col(tok))
+        if not handlers and not orelse and not finalbody:
+            _syntax('invalid syntax')
+        end = self.tail_of(finalbody or orelse or body, (tok.erow, tok.ecol))
+        return Try(body=body, handlers=handlers, orelse=orelse,
+                   finalbody=finalbody, lineno=tok.srow, col_offset=tok.scol,
+                   end_lineno=end[0], end_col_offset=end[1])
 
     def parse_func_type(self):
         # func_type mode: '(type, *type, **type) -> type'. The starred
@@ -1731,12 +1951,6 @@ class _Parser:
 
     def parse_unary(self):
         tok = self.peek()
-        if tok.kind == 'name' and tok.text == 'await' and self.fv >= 5:
-            self.pop()
-            operand, os, oe = self.parse_unary()
-            node = Await(value=operand, lineno=tok.srow, col_offset=tok.scol,
-                         end_lineno=oe[0], end_col_offset=oe[1])
-            return (node, (tok.srow, tok.scol), oe)
         if tok.kind == 'op' and tok.text in _UNARY:
             self.pop()
             operand, os, oe = self.parse_unary()
@@ -1747,7 +1961,18 @@ class _Parser:
         return self.parse_power()
 
     def parse_power(self):
-        node, ls, le = self.parse_postfix()
+        tok = self.peek()
+        if tok.kind == 'name' and tok.text == 'await' and self.fv >= 5:
+            # await takes a primary alone: 'await f() ** 2' squares the
+            # awaited value, and 'await -x' is no expression at all.
+            self.pop()
+            operand, os, oe = self.parse_postfix()
+            node = Await(value=operand, lineno=tok.srow, col_offset=tok.scol,
+                         end_lineno=oe[0], end_col_offset=oe[1])
+            ls = (tok.srow, tok.scol)
+            le = oe
+        else:
+            node, ls, le = self.parse_postfix()
         if self.at_op('**'):
             self.pop()
             right, rs, re = self.parse_unary()
@@ -1831,6 +2056,8 @@ class _Parser:
                 return self.keyword_constant(tok, False)
             if word == 'None':
                 return self.keyword_constant(tok, None)
+            if word == '__debug__' and (self.fold_debug or self.optimize >= 1):
+                return self.keyword_constant(tok, self.optimize < 1)
             if word in _STMT_WORDS or word in ('and', 'or', 'is', 'in', 'not', 'if', 'else'):
                 if self.fv < 5 and (word == 'async' or word == 'await'):
                     pass
@@ -2150,14 +2377,36 @@ def _check_type_comments(toks, comments):
         seg.append(tok.text)
         after_comma = False
 
+def _several_statements(toks):
+    # One statement alone may be a single text read; a second beginning
+    # past a line's end makes the text more than one.
+    body = False
+    for tok in toks:
+        if tok.kind == 'newline' or tok.kind == 'end':
+            if body and tok.kind == 'newline':
+                body = 'broken'
+            continue
+        if body == 'broken':
+            return True
+        body = True
+    return False
+
+def _parse_for_compile(source, filename, mode, type_comments, optimize):
+    # compile() with PyCF_ONLY_AST hands the text here with the flags
+    # already read: whether type comments are wanted, and the
+    # optimisation setting, both positional here because the kernels'
+    # own call carries no keywords.
+    return parse(source, filename, mode, type_comments=bool(type_comments),
+                 optimize=optimize)
+
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
-          feature_version=None, optimize=-1):
+          feature_version=None, optimize=-1, fold_debug=False):
     if type(source) != type(''):
         _no_tree()
     fv = _feature_minor(feature_version)
     if mode == 'eval':
         toks = _lex(source, 0, len(source), 1, 0, False)
-        parser = _Parser(source, toks, None, fv)
+        parser = _Parser(source, toks, None, fv, optimize, fold_debug)
         while parser.peek().kind == 'newline':
             parser.pop()
         node, ls, le = parser.parse_expr(False)
@@ -2168,14 +2417,17 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, None, fv)
         return parser.parse_func_type()
-    if mode != 'exec':
+    if mode != 'exec' and mode != 'single':
         _no_tree()
     comments = []
     toks = _lex(source, 0, len(source), 1, 0, False,
                 comments if type_comments else None)
     if type_comments:
         _check_type_comments(toks, comments)
-    parser = _Parser(source, toks, comments if type_comments else None, fv)
+    if mode == 'single' and _several_statements(toks):
+        raise SyntaxError('multiple statements found while compiling a single statement')
+    parser = _Parser(source, toks, comments if type_comments else None, fv,
+                     optimize, fold_debug)
     tree = parser.parse_module()
     if type_comments:
         parser.check_comments()
@@ -2186,7 +2438,22 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
                 ignores.append(TypeIgnore(lineno=row, tag=tag))
         tree.type_ignores = ignores
     tree._lumen_tree_source = source
+    if mode == 'single':
+        tree = Interactive(body=tree.body)
+        tree._lumen_tree_source = source
     return tree
+
+def _tree_for_compile(source, filename, mode, type_comments, optimize):
+    # compile() reaches the reader with the flags already read: whether
+    # type comments were asked for, and the optimisation those flags
+    # imply, both positional because the kernels' own call carries no
+    # keywords. A level below nought is PyCF_ONLY_AST alone, whose tree
+    # leaves the names the optimiser would settle as they are; a level
+    # from nought up is PyCF_OPTIMIZED_AST, whose tree settles them.
+    if optimize < 0:
+        return parse(source, filename, mode, type_comments=bool(type_comments))
+    return parse(source, filename, mode, type_comments=bool(type_comments),
+                 optimize=optimize, fold_debug=True)
 
 def unparse(ast_obj):
     raise _NO_TREE
