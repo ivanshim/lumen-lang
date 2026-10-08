@@ -427,29 +427,15 @@ def _docstring_of_module(names):
 
 # ---------------------------------------------------------------- running
 
-def _reference_module(namespace):
-    """The name the reference suite gives the module a test file stands for.
-
-    The suite is run one file at a time from its own directory, so the file's
-    own name is the only module identity there is; the reference runner would
-    import the same file under its package name instead. Only the exception
-    line needs that name, so it is worked out here rather than by writing a
-    borrowed `__name__` into the examples' namespace, which would misname
-    every class the examples define."""
-    path = namespace.get('__file__', '') or ''
-    if '/tests/python/test_' in path and path.endswith('.py'):
-        return 'test.' + path.rsplit('/', 1)[-1][:-3]
-    return None
-
-
 def _exception_detail(error, message, namespace=None):
-    """The last line of a traceback: the kind and, after it, the message."""
+    """The last line of a traceback: the kind and, after it, the message.
+
+    The name is the exception class's own, read from its metadata; nothing
+    about the namespace the example ran in changes it."""
     if isinstance(error, BaseException):
         kind = error.__class__
         detail = kind.__name__
         module = kind.__module__
-        if module == '__main__' and namespace is not None:
-            module = _reference_module(namespace) or namespace.get('__name__', module)
         if module != 'builtins' and module != '__main__':
             detail = module + '.' + detail
         text = str(error)

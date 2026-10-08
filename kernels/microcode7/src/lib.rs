@@ -373,8 +373,12 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
+    // A suite test file stands under its package name rather than as
+    // `__main__`, so its classes and exceptions carry the name the
+    // reference runner gives them.
+    let suite_module = std::env::var("LUMEN_TEST_MODULE").ok();
     table.strings("ext.system.module.name").iter().for_each(|binding| {
-        machine.define(binding, Value::text("__main__"));
+        machine.define(binding, Value::text(suite_module.as_deref().unwrap_or("__main__")));
     });
     // The documentation of a program that opens with none is nothing,
     // under its name all the same.
