@@ -4900,7 +4900,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 let value = match (module, value) {
-                    (true, Some(held)) => Some(Value::Bond(Rc::new(RefCell::new(self.keep_collection(held))))),
+                    (true, Some(held)) => Some(self.keep_collection(held)),
                     (_, other) => other,
                 };
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
@@ -5140,6 +5140,13 @@ impl<'a> Engine<'a> {
                             return Ok(());
                         }
                     }
+                    // A name the module takes on for itself keeps a
+                    // binding of its own, which later writings write
+                    // through: a name read out of the module's dictionary
+                    // answers with the binding's keeping and does not
+                    // follow a writing that comes after.
+                    members.push((name.into(), Value::Bond(Rc::new(RefCell::new(v)))));
+                    return Ok(());
                 }
                 members.push((name.into(),v));
             },
