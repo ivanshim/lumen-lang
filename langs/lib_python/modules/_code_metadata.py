@@ -147,6 +147,7 @@ def positions(code):
                 item = (line, line, column, column + (second & 15))
         except StopIteration:
             raise ValueError('invalid location table') from None
+        item = tuple(None if part == -1 else part for part in item)
         for _ in range(length):
             yield item
 

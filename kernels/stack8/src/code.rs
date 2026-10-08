@@ -1133,3 +1133,48 @@ impl Routine {
         Ok(result)
     }
 }
+
+impl Routine {
+    // A replacement table governs saved frames as well as code inspection.
+    pub fn mapped_line(&self, instruction: i64) -> Option<Option<i64>> {
+        let Value::Bytes(storage, ..) = self.location_bytes.as_ref()? else { return None };
+        let bytes = storage.borrow();
+        fn number(bytes: &[u8], cursor: &mut usize) -> Option<i64> {
+            let mut result = 0i64;
+            for shift in (0..63).step_by(6) {
+                let byte = *bytes.get(*cursor)?;
+                *cursor += 1;
+                result |= i64::from(byte & 63) << shift;
+                if byte & 64 == 0 { return Some(result); }
+            }
+            None
+        }
+        let mut cursor = 0;
+        let mut offset = 0i64;
+        let mut line = i64::from(self.declared_on);
+        while let Some(header) = bytes.get(cursor).copied() {
+            cursor += 1;
+            let kind = (header >> 3) & 15;
+            let length = i64::from(header & 7) + 1;
+            let present = match kind {
+                13 | 14 => {
+                    let Some(delta) = number(&bytes, &mut cursor) else { return Some(None) };
+                    line += if delta & 1 == 0 { delta >> 1 } else { -(delta >> 1) };
+                    if kind == 14 {
+                        for _ in 0..3 { if number(&bytes, &mut cursor).is_none() { return Some(None); } }
+                    }
+                    true
+                }
+                10..=12 => { line += i64::from(kind - 10); cursor += 2; true }
+                15 => false,
+                _ => { cursor += 1; true }
+            };
+            if cursor > bytes.len() { return Some(None); }
+            if instruction >= offset && instruction < offset + length {
+                return Some(if present && line != -1 { Some(line) } else { None });
+            }
+            offset += length;
+        }
+        Some(None)
+    }
+}

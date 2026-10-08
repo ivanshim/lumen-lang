@@ -5726,8 +5726,12 @@ impl<'a> Machine<'a> {
                     }
                     return Some(Value::Shared(self.world_kept()));
                 }
-                if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
-                    return Some(Value::Nil);
+                if index == 4 {
+                    let saved = item.holds.borrow();
+                    if let Value::Bound(program, _) = &saved[5].1 {
+                        if let Some(row) = program.retained_row(Self::activation_instruction(item)) { return Some(row); }
+                        if program.lineless { return Some(Value::Nil); }
+                    }
                 }
                 if index != 12 { return None; }
                 self.update_activation_locals(item);

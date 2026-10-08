@@ -5546,8 +5546,14 @@ impl<'a> Engine<'a> {
             }
             return Some(Value::Bond(self.outer_book_made()));
         }
-        if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
-            return Some(Value::Null);
+        if index == 4 {
+            let fields = object.fields.borrow();
+            if let Value::Routine(body) = &fields[6].1 {
+                if let Some(line) = body.mapped_line(Self::frame_instruction(object)) {
+                    return Some(line.map_or(Value::Null, Value::Small));
+                }
+                if body.lineless { return Some(Value::Null); }
+            }
         }
         if index != 12 { return None; }
         self.refresh_frame(object);

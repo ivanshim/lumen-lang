@@ -1161,3 +1161,44 @@ impl Routine {
         Ok(adjusted)
     }
 }
+
+impl Routine {
+    // Source-less ranges in retained tables also hide a frame's line.
+    pub fn retained_row(&self, target: i64) -> Option<Value> {
+        let Value::Octets { cell, .. } = self.locations.as_ref()? else { return None };
+        let held = cell.borrow();
+        let mut remaining = held.iter().copied();
+        let mut row = self.declared_on as i64;
+        let mut visited = 0;
+        let unsigned = |input: &mut std::iter::Copied<std::slice::Iter<'_, u8>>| -> Option<i64> {
+            let mut bits = 0;
+            let mut amount = 0;
+            loop {
+                let next = input.next()?;
+                if bits >= 63 { return None; }
+                amount |= (next as i64 & 0x3f) << bits;
+                if next & 0x40 == 0 { return Some(amount); }
+                bits += 6;
+            }
+        };
+        while let Some(tag) = remaining.next() {
+            let width = (tag & 7) as i64 + 1;
+            let format = tag >> 3 & 0xf;
+            if format == 13 || format == 14 {
+                let Some(step) = unsigned(&mut remaining) else { return Some(Value::Nil) };
+                row += if step & 1 != 0 { -(step / 2) } else { step / 2 };
+                if format == 14 && (0..3).any(|_| unsigned(&mut remaining).is_none()) { return Some(Value::Nil); }
+            } else if format < 13 {
+                if format >= 10 { row += (format - 10) as i64; }
+                let payload = if format < 10 { 1 } else { 2 };
+                for _ in 0..payload { if remaining.next().is_none() { return Some(Value::Nil); } }
+            }
+            visited += width;
+            // Numbered forms begin at one; table entries begin at zero.
+            if (visited - width..visited).contains(&(target - 1)) {
+                return Some(if format == 15 || row == -1 { Value::Nil } else { Value::Small(row) });
+            }
+        }
+        Some(Value::Nil)
+    }
+}
