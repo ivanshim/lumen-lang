@@ -8946,6 +8946,11 @@ impl<'a> Machine<'a> {
         if matches!(value.settled(), Value::Refusal(_) | Value::Ellipsis) && matches!(name, "__reduce_ex__" | "__reduce__") {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
+        if name == "__reduce_ex__" {
+            if let Some(window) = Self::window_inside(value) {
+                return Some(Value::Member(Rc::new(window), String::from("callable_reduce_ex")));
+            }
+        }
         if name == self.detail("doc") && matches!(value.settled(), Value::Nil) { return Some(Value::text("The type of the None singleton.")); }
         if matches!(value, Value::Window(_, 'm')) && matches!(name, "get" | "keys" | "values" | "items" | "copy") {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
@@ -9275,7 +9280,7 @@ impl<'a> Machine<'a> {
     pub(super) fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
         if self.trace_kind.as_ref().map_or(false, |known| Rc::ptr_eq(known, &class)) { return self.traceback_from_parts(args); }
         self.check_constructor_expansion(&class, &args)?;
-        if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator")) {
+        if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator" | "dict_keys" | "dict_values" | "dict_items")) {
             return Err(format!("TypeError: cannot create '{}' instances", class.name).into());
         }
         // A blueprint holding a program for being called answers the call
@@ -9869,6 +9874,7 @@ impl<'a> Machine<'a> {
         if name == "classmethod_get" { return self.get_native_classmethod(receiver, arguments, keywords); }
         if name == "callable_reduce_ex" {
             if arguments.len() != 1 || !keywords.is_empty() { return Err("TypeError: __reduce_ex__() takes exactly one argument".to_owned().into()); }
+            if Self::window_inside(receiver).is_some() { return Err(format!("TypeError: cannot pickle '{}' object", receiver.kind_word()).into()); }
             self.check_reduction_protocol(&arguments[0])?;
             let reducer = self.read_class_member(receiver.clone(), "__reduce__", false)?;
             return self.apply_class_member(reducer, vec![]);
@@ -14837,7 +14843,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
-        if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_)) {
+        if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_) | Value::Window(..)) {
             return self.object_words_inner(subject, quoted);
         }
         let ceiling = self.recursion_ceiling();
@@ -15050,6 +15056,25 @@ impl<'a> Machine<'a> {
                 let of = self.object_words(&parts[1], true)?;
                 let named = if routine.qualification.is_empty() { routine.ident.as_str() } else { routine.qualification.as_str() };
                 Ok(format!("<bound method {named} of {of}>"))
+            }
+            // A window on to a map's keys, values or pairs is shown by
+            // walking its members, so it keeps both the count of how
+            // deep the writing stands and a note on the window itself,
+            // and one reached from within its own members stands as an
+            // ellipsis instead of running on forever.
+            Value::Window(owner, portion) => {
+                if *portion == 'm' {
+                    let rendering = self.object_words(owner, true)?;
+                    return Ok(format!("mappingproxy({rendering})"));
+                }
+                if !crate::data::window_entered(owner, *portion) { return Ok(String::from("...")); }
+                let rendering = (|| {
+                    let contents = subject.settled();
+                    self.object_words(&contents, true)
+                })();
+                crate::data::window_left(owner, *portion);
+                let body = rendering?;
+                Ok(format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, body))
             }
             // This walk holds a collection's members and not the cell
             // about them, so it leaves its own note on the members it
@@ -28905,6 +28930,7 @@ impl Machine<'_> {
         let live = if op == Prim::Iterator && input.len() == 1 { self.live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
         let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some((**owner).clone()), _ => None };
+        let window_face = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, portion))) if *portion != 'm' => Some((owner.clone(), *portion)), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one; the value is kept before it settles into a copy.
@@ -29072,6 +29098,10 @@ impl Machine<'_> {
                 if let Some(owner) = &window_owner {
                     let rendering = self.object_words(owner, true)?;
                     return Ok(Value::text(&format!("mappingproxy({rendering})")));
+                }
+                if let Some((owner, letter)) = &window_face {
+                    let rendering = self.object_words(&Value::Window(owner.clone(), *letter), true)?;
+                    return Ok(Value::text(&rendering));
                 }
                 if let Value::Wrapped(3, parts) = &input[0] {
                     if !self.rules.detail_main.is_empty() && parts.len() == 2

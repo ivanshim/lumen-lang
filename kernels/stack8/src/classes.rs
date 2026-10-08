@@ -2337,7 +2337,7 @@ impl<'a> Engine<'a> {
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.typing_instance(c, args);
         }
-        if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
+        if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator" | "dict_keys" | "dict_values" | "dict_items")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
         if Self::own_kind(&c).as_deref() == Some("function") && self.lang.trace_fields.len() > 18 {
@@ -3240,7 +3240,7 @@ impl<'a> Engine<'a> {
             }
         }
         if name == self.class_word("allocate") && matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) { return Ok(self.root_allocator()); }
-        if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::Adapter(entry) if entry.0 == 3))) {
+        if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::View(_)) || matches!(&subject, Value::Adapter(entry) if entry.0 == 3))) {
             return Ok(Value::ValueMethod(Rc::new((subject, String::from("callable_reduce_ex")))));
         }
         if matches!(&subject, Value::Adapter(parts) if parts.0 == 4 || parts.0 == 5 || parts.0 == 29 && parts.1.len() == 3) {
