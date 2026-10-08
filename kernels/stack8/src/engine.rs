@@ -6788,6 +6788,15 @@ impl<'a> Engine<'a> {
     /// which `alike`, a free function, cannot call — only where the
     /// place itself cannot say. The keyed form of the key comes back
     /// beside the place, ready to store should the key be new.
+    /// Whether two snapshots of a map hold the same rows in the same
+    /// order, by the place each key and value stands rather than by any
+    /// equality a program's own code would run. A frame refresh rebuilds
+    /// the same rows as fresh Rcs, so this tells such a refresh from a
+    /// real write the comparison made.
+    fn same_rows(one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> bool {
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| left.same_place(right) && lv.same_place(rv))
+    }
+
     fn map_locate(&mut self, pairs: &[(Value, Value)], store: Option<&crate::value::KeyedPairs>, key: &Value) -> Res<(Option<usize>, Value)> {
         let keyed = self.special_key(key)?;
         if let (Some(store), Ok(keytext)) = (store, keyed.member_key()) {
@@ -19840,19 +19849,17 @@ impl<'a> Engine<'a> {
                 if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
                 let key = self.special_key(&args[0])?;
                 // A comparison the lookup makes may hand the program's own
-                // code the frame being written, and refreshing that frame
-                // builds an equal map in the same cell. Retrying on every
-                // such refresh would never settle, so a few rounds are
-                // enough: after them the snapshot in hand is written into,
-                // the way a map whose keys keep changing under a lookup is
-                // settled rather than chased forever.
-                let mut rounds = 0u32;
+                // code the frame being written, and that run rebuilds the
+                // frame's map in the same cell with the same rows. Such a
+                // refresh must not be mistaken for a change: it is retried
+                // only while the rows really differ, so a real mutation the
+                // comparison made is kept rather than discarded.
                 loop {
                     let Value::Map(before) = cell.borrow().clone() else { return Err(self.special_fault()); };
                     let (found, keyed) = self.map_locate(&before, Some(&before), &key)?;
-                    rounds += 1;
-                    if Self::map_size(&cell).1 != before.revision && rounds < 16 { continue; }
-                    let mut next = before.clone();
+                    let fresh = match cell.borrow().clone() { Value::Map(now) => now, _ => return Err(self.special_fault()) };
+                    if fresh.revision != before.revision && !Self::same_rows(&before, &fresh) { continue; }
+                    let mut next = fresh;
                     match found {
                         Some(at) => {
                             let rows = Rc::make_mut(&mut next);

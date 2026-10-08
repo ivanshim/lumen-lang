@@ -637,7 +637,16 @@ impl KeyedPairs {
         let known = self.compiled_names.borrow();
         let prior = known.get(binding).and_then(Option::as_ref);
         if let Some((_, row)) = prior.filter(|(spelling, _)| spelling.as_ref() == name) {
-            return Ok(Some(*row));
+            // The address is only good while the row it names still
+            // stands there holding this spelling; a mutation that moved
+            // the rows leaves a stale address behind, which must fall
+            // back to a fresh search rather than index past the end.
+            let holds = self.rows.get(*row).is_some_and(|(key, _)| match key {
+                Value::Text(word) => word.as_ref() == name,
+                Value::Hashed(pair) => matches!(&pair.0, Value::Text(word) if word.as_ref() == name),
+                _ => false,
+            });
+            if holds { return Ok(Some(*row)); }
         }
         drop(known);
         let row = self.named_row(name)?;

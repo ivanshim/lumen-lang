@@ -7975,19 +7975,17 @@ impl<'a> Machine<'a> {
                             if let Some(cell) = cell_here.and_then(|cell| Self::dict_cell(&Value::Shared(cell))) {
                                 // The lookup may run a key's own `__eq__`,
                                 // and that run may reach back and rebuild the
-                                // frame whose dictionary sits in this cell:
-                                // an equal store each time. A handful of
-                                // rounds is enough to notice a real change;
-                                // past them the snapshot in hand is written
-                                // into, so the write settles instead of
-                                // spinning on its own refresh.
-                                let mut rounds = 0u32;
+                                // frame whose dictionary sits in this cell
+                                // with the same entries. Retrying only while
+                                // the entries really differ keeps a mutation
+                                // the comparison made instead of discarding
+                                // it, and lets an equal rebuild settle.
                                 loop {
                                     let Value::Dict(snapshot) = cell.borrow().clone() else { return Err(self.bad_answer().into()); };
                                     let (position, stored_key) = self.map_locate(&snapshot, Some(&snapshot), &key)?;
-                                    rounds += 1;
-                                    if Self::dict_extent(&cell).1 != snapshot.serial && rounds < 16 { continue; }
-                                    let mut updated = snapshot.clone();
+                                    let fresh = match cell.borrow().clone() { Value::Dict(now) => now, _ => return Err(self.bad_answer().into()) };
+                                    if fresh.serial != snapshot.serial && !Self::same_store(&snapshot, &fresh) { continue; }
+                                    let mut updated = fresh;
                                     if let Some(at) = position {
                                         let rows = Rc::make_mut(&mut updated);
                                         let through = match (&rows[at].1, &value) {
@@ -14844,6 +14842,15 @@ impl<'a> Machine<'a> {
     /// which `same_item`, a free function, cannot call — only where
     /// the place itself cannot say. The keyed form of the key comes
     /// back beside the place, ready to store should the key be new.
+    /// Whether two snapshots of a dictionary hold the same entries in
+    /// the same order, by the place each key and value stands rather
+    /// than by any equality a program's own code would run. A frame
+    /// refresh rebuilds the same entries as fresh Rcs, so this tells
+    /// such a refresh from a real write the comparison made.
+    fn same_store(one: &crate::data::MapStore, other: &crate::data::MapStore) -> bool {
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| left.selfsame(right) && lv.selfsame(rv))
+    }
+
     fn map_locate(&mut self, entries: &[(Value, Value)], store: Option<&crate::data::MapStore>, key: &Value) -> Result<(Option<usize>, Value), String> {
         let keyed = self.hash_key(key)?;
         if let (Some(store), Ok(address)) = (store, keyed.hash_address()) {

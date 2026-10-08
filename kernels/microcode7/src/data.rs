@@ -477,7 +477,11 @@ impl MapStore {
     /// Cache positions only; every read still observes the current value.
     pub fn namespace_slot_position(&self, slot: usize, name: &str) -> Result<Option<usize>, ()> {
         if let Some(Some((word, at))) = self.namespace_slots.borrow().get(slot) {
-            if word.as_ref() == name { return Ok(Some(*at)); }
+            // The address only holds while the pair it names still
+            // stands there with this spelling; a stale one falls back to
+            // a fresh search instead of reading past the end.
+            let holds = word.as_ref() == name && self.pairs.get(*at).is_some_and(|(key, _)| key.bare() == name);
+            if holds { return Ok(Some(*at)); }
         }
         let found = self.namespace_position(name)?;
         if let Some(at) = found {
