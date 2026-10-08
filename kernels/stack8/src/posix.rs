@@ -217,7 +217,12 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         "confstr" => {
             let setting = number(0)? as i32;
             let span = libc::confstr(setting, std::ptr::null_mut(), 0);
-            if span == 0 { Ok(Value::Null) }
+            if span == 0 {
+                // An unknown selector leaves errno set; an empty value
+                // would have reported the room for its terminating NUL.
+                let raised = std::io::Error::last_os_error().raw_os_error().filter(|code| *code != 0);
+                Err(raised.unwrap_or(libc::EINVAL))
+            }
             else {
                 let mut storage = vec![0u8; span];
                 libc::confstr(setting, storage.as_mut_ptr().cast(), span);

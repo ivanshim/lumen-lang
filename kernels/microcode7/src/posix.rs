@@ -268,7 +268,15 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
             "confstr" => {
                 let which = int(0)? as libc::c_int;
                 let extent = libc::confstr(which, std::ptr::null_mut(), 0);
-                if extent == 0 { Ok(Value::Nil) }
+                if extent == 0 {
+                    // A selector the library does not know has left an
+                    // errno behind; a value that is merely empty would
+                    // have asked for room for its terminating zero.
+                    match std::io::Error::last_os_error().raw_os_error() {
+                        Some(code) if code != 0 => Err(code),
+                        _ => Err(libc::EINVAL),
+                    }
+                }
                 else {
                     let mut landing = vec![0u8; extent];
                     libc::confstr(which, landing.as_mut_ptr().cast(), extent);

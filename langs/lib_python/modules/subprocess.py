@@ -49,10 +49,24 @@ def _stream_mode(stream, is_stderr=False):
     return 2
 
 
+# A pipe opened for text has each result decoded and its line endings
+# normalised: CRLF and a lone CR both become the one LF, the universal
+# newline rule the reference applies while reading. Binary pipes keep
+# their bytes untouched.
+def _text_of(data, encoding, errors):
+    text = data.decode(encoding, errors or 'strict')
+    if '\r' in text:
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+    return text
+
+
 class _Readable:
-    def __init__(self, handle, which):
+    def __init__(self, handle, which, text=False, encoding='utf-8', errors=None):
         self._handle = handle
         self._which = which
+        self._text = text
+        self._encoding = encoding
+        self._errors = errors
         self.closed = False
 
     def read(self, size=-1):
@@ -60,7 +74,9 @@ class _Readable:
             raise ValueError('I/O operation on closed file')
         result = _subprocess(3, self._handle, self._which)
         if result is None or result is False:
-            return b''
+            result = b''
+        if self._text:
+            return _text_of(result, self._encoding, self._errors)
         return result
 
     def close(self):
@@ -68,13 +84,20 @@ class _Readable:
 
 
 class _Writable:
-    def __init__(self, handle):
+    def __init__(self, handle, text=False, encoding='utf-8', errors=None):
         self._handle = handle
+        self._text = text
+        self._encoding = encoding
+        self._errors = errors
         self.closed = False
 
     def write(self, data):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+        if self._text and isinstance(data, str):
+            # The host writes '\n' already, so universal newline output
+            # needs no change here.
+            data = data.encode(self._encoding, self._errors or 'strict')
         return _subprocess(1, self._handle, data)
 
     def close(self):
@@ -115,9 +138,9 @@ class Popen:
         self._stderr_to_stdout = stderr == STDOUT
         self.args = argv
         self.returncode = None
-        self.stdin = _Writable(handle) if in_mode == 1 else None
-        self.stdout = _Readable(handle, 0) if out_mode == 1 else None
-        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1) if err_mode in (1, 3) else None)
+        self.stdin = _Writable(handle, self._text, self._encoding, self._errors) if in_mode == 1 else None
+        self.stdout = _Readable(handle, 0, self._text, self._encoding, self._errors) if out_mode == 1 else None
+        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1, self._text, self._encoding, self._errors) if err_mode in (1, 3) else None)
 
     def poll(self):
         if self.returncode is not None:
@@ -152,7 +175,9 @@ class Popen:
     def _read_stream(self, which):
         result = _subprocess(3, self._handle, which)
         if result is None or result is False:
-            return b''
+            result = b''
+        if self._text:
+            return _text_of(result, self._encoding, self._errors)
         return result
 
     def communicate(self, input=None, timeout=None):
@@ -188,9 +213,9 @@ class Popen:
             self.returncode = self.wait()
         if self._text:
             if isinstance(out, bytes):
-                out = out.decode(self._encoding, self._errors or 'strict')
+                out = _text_of(out, self._encoding, self._errors)
             if isinstance(err, bytes):
-                err = err.decode(self._encoding, self._errors or 'strict')
+                err = _text_of(err, self._encoding, self._errors)
         return (out, err)
 
     def kill(self):

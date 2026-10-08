@@ -93,7 +93,7 @@ def confstr(name, /):
         try:
             name = _confstr_names[name]
         except KeyError:
-            raise ValueError('invalid configuration name') from None
+            raise ValueError('unrecognized configuration name') from None
     return _call('confstr', _cint(name))
 
 
