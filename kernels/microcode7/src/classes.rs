@@ -4372,7 +4372,10 @@ impl<'a> Machine<'a> {
                 return Ok(evaluator);
             }
             if self.rules.words_ext_stmt_class_annotations.first().map(String::as_str)==Some(key){return self.blueprint_annotations(b);}
-            if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            // During class building this marker can still be absent.
+            let entry = self.rules.words_ext_stmt_class_detail_abstract.first().filter(|word| word.as_str() == key)
+                .map_or_else(|| self.inherited_entry(b, key), |_| Self::own_entry(b, key));
+            if let Some(found) = entry { return self.member_binding(found, None, b.clone()); }
             // The classes built beneath this one, the live ones, as the
             // reference's own type.__subclasses__ tells them.
             if key==self.detail("subclasses") && !self.detail("subclasses").is_empty() { return Ok(Self::wrap(204, vec![value.clone()])); }

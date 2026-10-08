@@ -3773,7 +3773,11 @@ impl<'a> Engine<'a> {
                     return Ok(callable);
                 }
                 if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
-                if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                // Abstract-marker lookup uses this class's own type slot.
+                let stored = if self.lang.class_details.get("abstract").and_then(|words| words.first()).is_some_and(|word| word == name) {
+                    Self::own_class_value(c, name)
+                } else { self.class_value(c, name) };
+                if let Some(v) = stored { return self.bind_class_value(v, None, c.clone()); }
                 // The classes written beneath this one, the live ones,
                 // as the reference's own type.__subclasses__ tells them.
                 if !self.class_word("subclasses").is_empty() && name==self.class_word("subclasses") { return Ok(Self::adapter(204, vec![subject.clone()])); }

@@ -66,6 +66,7 @@ def _signature_from_function(cls, func, skip_bound_arg=True,
             cls, func, skip_bound_arg, globals, locals, eval_str,
             annotation_format=annotation_format)
     except (NameError, NotImplementedError) as error:
-        if annotation_format != Format.FORWARDREF:
+        if (annotation_format != Format.FORWARDREF
+                or not isinstance(error.__context__, NotImplementedError)):
             raise
         raise ValueError('native annotation metadata cannot provide a forward-reference signature') from error
