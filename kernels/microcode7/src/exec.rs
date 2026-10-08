@@ -10275,7 +10275,7 @@ impl<'a> Machine<'a> {
                 let result = self.value_member(&Value::text(&replacement), name, arguments, keywords)?;
                 return Ok(if name == "isascii" { Value::Flag(false) } else { result });
             }
-            if matches!(name, "find" | "rfind" | "index" | "rindex" | "count" | "split" | "rsplit" | "replace" | "partition" | "rpartition") {
+            if matches!(name, "find" | "rfind" | "index" | "rindex" | "count" | "replace" | "partition" | "rpartition") {
                 let label = format!("ext.builtin.text.{}", name);
                 if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(word, _)| *word == label) {
                     let mut input = vec![actual.clone()];
