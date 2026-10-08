@@ -11816,14 +11816,20 @@ impl<'a> Machine<'a> {
     }
 
     fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
-        // Where every place is an ordinary one, none of the worths given
-        // carries a name or a scattering, and there are exactly as many
-        // of them as there are places, the row given is already the row
-        // wanted; the sorting below would only build it again.
-        if manners.len() == values.len()
-            && manners.iter().all(|how| matches!(how, 'b' | 'p'))
-            && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset)) {
-            return Ok(values);
+        // Plain positional arguments already occupy their final slots. Missing
+        // optional positions retain the frame's live defaults, including named-
+        // only defaults. Named, spread, variadic and erroneous calls still sort.
+        if values.len() <= manners.len()
+            && manners.iter().all(|how| matches!(how, 'b' | 'p' | 'n'))
+            && manners[..values.len()].iter().all(|how| matches!(how, 'b' | 'p'))
+            && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset))
+            && (values.len()..manners.len()).all(|at| {
+                let slot = program.formal_slots[at];
+                program.carried.contains(&slot) || program.local_defaults.contains(&slot)
+            }) {
+            let mut fitted = values;
+            fitted.resize(manners.len(), Value::Unset);
+            return Ok(fitted);
         }
         let (positional, named) = self.open_arguments(values)?;
         let mut fitted = vec![Value::Unset; manners.len()];
@@ -12196,10 +12202,12 @@ impl<'a> Machine<'a> {
 
     fn invoke_body(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
         // Internal branch arms already use the caller frame and take no arguments.
+        // Their bodies are omitted from exposed code constants and cannot be
+        // rewritten. Other functions' rewrites do not disable this shortcut.
         // Keep normal drive checkpoints without building a temporary callable.
         if program.frameless && !program.generator && program.taking.is_none()
             && program.formals.is_empty() && program.least == 0 && program.gather_from.is_none()
-            && args.is_empty() && self.written_over.is_empty() {
+            && args.is_empty() {
             if self.reads_handed { self.pending.clear(); }
             return self.drive(program, env);
         }

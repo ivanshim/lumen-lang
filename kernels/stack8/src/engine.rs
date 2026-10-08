@@ -3615,14 +3615,18 @@ impl<'a> Engine<'a> {
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
     fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
-        // The common call: as many plain arguments as there are plain
-        // places, none of them named or spread and none of them a hole.
-        // Such a row already stands in the order the frame wants, so it
-        // is handed over whole rather than taken apart and put together.
-        if args.len() == rules.len()
-            && rules.iter().all(|rule| *rule < 2)
-            && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank)) {
-            return Ok(args);
+        // Ordered arguments need no unpacking when their remaining places
+        // already have defaults. Leave those places blank for the normal
+        // frame initialization, which still supplies the current default values.
+        let ordered = args.len();
+        if ordered <= rules.len()
+            && rules.iter().all(|rule| *rule <= 2)
+            && rules.iter().take(ordered).all(|rule| *rule < 2)
+            && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank))
+            && (ordered..rules.len()).all(|slot| program.carried.contains(&slot)) {
+            let mut filled = args;
+            filled.resize(rules.len(), Value::Blank);
+            return Ok(filled);
         }
         let items = self.call_items(args)?;
         let mut frame = vec![Value::Blank; rules.len()];
