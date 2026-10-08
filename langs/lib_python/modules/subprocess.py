@@ -188,6 +188,8 @@ class Popen:
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
         if input is not None:
+            if self.stdin.closed:
+                raise ValueError('I/O operation on closed file')
             if self.text_mode:
                 input = input.encode(self.encoding, self.errors)
             _subprocess(1, self._handle, input)
