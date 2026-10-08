@@ -31,7 +31,7 @@ class MappingProxyType:
     __slots__ = ('_mapping',)
 
     def __init__(self, mapping):
-        if not hasattr(mapping, 'keys') or not hasattr(mapping, '__getitem__') or isinstance(mapping, (list, tuple)):
+        if not hasattr(mapping, '__getitem__') or isinstance(mapping, (list, tuple)):
             raise TypeError('mappingproxy() argument must be a mapping, not ' + type(mapping).__name__)
         self._mapping = mapping
 
