@@ -9166,3 +9166,32 @@
 {"t":"2026-10-08T20:34:38Z","event":"exited","job":"review-auto-dsflash-fileio-2029","code":0}
 {"t":"2026-10-08T20:34:52Z","event":"checkin","status":"done","actions":"accepted stdlib-shutil (947b4b7a8, 21g; shutil 0->140/224 both, 0 fail); released held dsflash-unpack-baseexc to queue (DS Flash 11/12); prune-merged freed 0MB; luna checks ok","notes":"Codex weekly 91% (alert already sent at 90%); 2 DS resumes still held (colorize, contextlib-async); integrate-21f still running (no open PR); box load 8.1 so queued resume waits for gate; disks Mac 87% box 74%"}
 {"t":"2026-10-08T20:35:24Z","event":"resumed","job":"dsflash-unpack-baseexc","model":"deepseek-flash","session":"session-c03923bc-76ba-4156-9d0e-eff7a5e46e66"}
+{"t":"2026-10-08T20:38:27Z","event":"exited","job":"stdlib-doctest","code":1}
+{"t":"2026-10-08T20:42:34Z","event":"exited","job":"stdlib-unicodedata","code":0}
+{"t":"2026-10-08T20:45:27Z","event":"finished","job":"stdlib-unicodedata","exit_time":"2026-10-08T20:42:34Z"}
+{"t":"2026-10-08T20:45:27Z","event":"review-queued","job":"stdlib-unicodedata","review":"review-auto-stdlib-unicodedata-2045"}
+{"t":"2026-10-08T20:45:30Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T20:46:25Z","event":"review-started","job":"stdlib-unicodedata","review":"review-auto-stdlib-unicodedata-2045"}
+{"t":"2026-10-08T20:47:54Z","event":"exited","job":"dsflash-code-module","code":0}
+{"t":"2026-10-08T20:48:42Z","event":"exited","job":"claude-urllib","code":0}
+{"t":"2026-10-08T20:49:53Z","event":"exited","job":"dsflash-univnewlines","code":0}
+{"t":"2026-10-08T20:50:33Z","event":"finished","job":"claude-urllib","exit_time":"2026-10-08T20:48:42Z"}
+{"t":"2026-10-08T20:50:33Z","event":"review-queued","job":"claude-urllib","review":"review-auto-claude-urllib-2050"}
+{"t":"2026-10-08T20:50:36Z","event":"finished","job":"dsflash-code-module","exit_time":"2026-10-08T20:47:54Z"}
+{"t":"2026-10-08T20:50:36Z","event":"review-queued","job":"dsflash-code-module","review":"review-auto-dsflash-code-module-2050"}
+{"t":"2026-10-08T20:50:39Z","event":"finished","job":"dsflash-univnewlines","exit_time":"2026-10-08T20:49:53Z"}
+{"t":"2026-10-08T20:50:39Z","event":"review-queued","job":"dsflash-univnewlines","review":"review-auto-dsflash-univnewlines-2050"}
+{"t":"2026-10-08T20:50:45Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T20:51:25Z","event":"review-started","job":"claude-urllib","review":"review-auto-claude-urllib-2050"}
+{"t":"2026-10-08T20:52:06Z","event":"exited","job":"review-auto-stdlib-unicodedata-2045","code":0}
+{"t":"2026-10-08T20:54:12Z","event":"returned","job":"dsflash-fileio","review":"review-auto-dsflash-fileio-2029","commit":"c7fd3af82","round":1,"note":"(DS Flash, 1st; FileIO 94->97/100 both kept, clean check 1195/0 gates ok, integrity ok sha256 faithful; introduced: dropped FileIO duplicate-b rejection lets builtins.open(path,'wbb',buffering=0) truncate the file before failing - open() must validate mode first; base 21d, overlaps 21f claude-io/bufio/pathlib/coroutines/warnings + 21g charmapcodec/tempfile/zipfile/zoneinfo/kimi-module) -> returns/dsflash-fileio.md, held (DS Flash 12/12)"}
+{"t":"2026-10-08T20:54:12Z","event":"accepted","job":"stdlib-unicodedata","review":"review-auto-stdlib-unicodedata-2045","batch":"21g","commit":"928301bd4","branch":"fix/stdlib-unicodedata","note":"(GPT-6.1 Sol, after return) test_unicodedata import fail->55/61 both kernels (6 upstream skips, 0 fail); Unicode 16.0 + 3.2 UCD; compile-time import callbacks in both scanners; clean check 1195/0 gates ok, independence 0; integrity ok sha256 faithful (387 upstream files); incorporates 21e; overlaps 21f dsflash-ucn/unicode-file/perf-mc7-overhead + 21g source-encoding/json-speed/kimi-module/dspro-tstring; follow-ups: re-certify mc7 io 510->585 + tokenize 126->132 recovered coverage, decimal/bytes/io/calendar/tokenize timeouts, statistics flake known, unicodedata runtime margin 54s of 870s cap"}
+{"t":"2026-10-08T20:54:12Z","event":"note","text":"released held or-resume dsflash-colorize + dsflash-contextlib-async to queue (DS Flash 10/12 running)"}
+{"t":"2026-10-08T20:54:44Z","event":"quota","codex_week_used":92,"codex_credits":0,"claude_week_used":13,"claude_5h_used":7,"kimi_5h_used":0,"kimi_month_used":0.9968,"kimi_code_used":0,"deepseek_usd":284.02}
+{"t":"2026-10-08T20:54:51Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":92,"expected":93.3,"gap":-1.3,"status":"ok"}
+{"t":"2026-10-08T20:55:24Z","event":"exited","job":"dsflash-genericalias","code":0}
+{"t":"2026-10-08T20:55:48Z","event":"exited","job":"review-auto-claude-urllib-2050","code":0}
+{"t":"2026-10-08T20:55:49Z","event":"finished","job":"dsflash-genericalias","exit_time":"2026-10-08T20:55:24Z"}
+{"t":"2026-10-08T20:55:49Z","event":"review-queued","job":"dsflash-genericalias","review":"review-auto-dsflash-genericalias-2055"}
+{"t":"2026-10-08T20:55:55Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T20:56:25Z","event":"review-started","job":"dsflash-code-module","review":"review-auto-dsflash-code-module-2050"}
