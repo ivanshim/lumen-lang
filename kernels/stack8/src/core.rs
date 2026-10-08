@@ -98,6 +98,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 131 => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
+            Value::Adapter(w) if w.0 == 16 => if w.1.first().is_some_and(|name| matches!(name.plain().as_str(), "__dict__" | "__weakref__")) { "getset_descriptor" } else { "member_descriptor" },
             Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 235 | 236) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
@@ -199,6 +200,7 @@ impl Value {
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
+            Value::Adapter(parts) if parts.0 == 7 => Self::code_field_hash(self),
             Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::ValueMethod(bound) => {
                 let owner = match &bound.0 {
