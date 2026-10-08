@@ -128,7 +128,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("importlib._bootstrap_external", include_str!("importlib/_bootstrap_external.py"), "importlib/_bootstrap_external.py"),
     ("importlib.machinery", include_str!("importlib/machinery.py"), "importlib/machinery.py"),
     ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
-    ("inspect", concat!(include_str!("runtime_adapters/native_inspect.py"), "\n", include_str!("runtime_adapters/inspect.py")), "inspect.py"),
+    ("inspect", concat!(include_str!("inspect.py"), "\n", include_str!("runtime_adapters/inspect.py")), "inspect.py"),
     ("io", include_str!("io.py"), "io.py"),
     ("ipaddress", include_str!("ipaddress.py"), "ipaddress.py"),
     ("itertools", include_str!("itertools.py"), "itertools.py"),

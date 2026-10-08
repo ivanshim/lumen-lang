@@ -2050,7 +2050,9 @@ impl<'a> Builder<'a> {
             (group, slot)
         }));
         let mut flags = 3i64;
-        if self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { flags += 16; }
+        flags |= if doc.is_none() { 0 } else { 0x4000000 };
+        flags |= if self.in_class_body() { 0x8000000 } else { 0 };
+        if self.layers.iter().enumerate().skip(1).any(|(level, s)| s.holds == Holds::Every && self.class_bindings.iter().all(|(depth, _)| *depth != level + 1)) { flags += 16; }
         for (kind, bit) in [('v', 4), ('k', 8)] {
             if taking.as_ref().map_or(false, |rules| rules.contains(&kind)) { flags |= bit; }
         }
@@ -2059,7 +2061,9 @@ impl<'a> Builder<'a> {
         let mut referenced = Vec::new();
         let mut suspension = false;
         if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-        inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
+        let mut local_or_cell = locals.clone();
+        local_or_cell.extend(scope.reaching.iter().map(|cell| cell.ident.to_string()));
+        inspect_form(&body, &local_or_cell, &mut literals, &mut referenced, &mut suspension);
         if scope.permits_async && suspension {
             if let Some(at) = scope.return_value_at {
                 self.pos = at;
@@ -5230,7 +5234,7 @@ impl<'a> Builder<'a> {
             namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
-        let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !3;
+        let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !(0x8000000 | 3);
         let made = prim_call(Prim::ClassWork(16), vec![Form::Read(builder), constant(Value::Routine(Rc::new(code))), constant(Value::text(&title)), Form::Read(header)]);
         if self.in_class_body() {
             let slot = self.gensym("inner_class");

@@ -27,6 +27,15 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_patma.py` | `Lib/test/test_patma.py` (unchanged; SHA-256 `ce4a802e1722fdd02ca6da58138a465a050edd360a150bbbba829586b3d15f55`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/{test_pickle,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/codeop.py` | `Lib/codeop.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/__init__.py` | `Lib/test/test_inspect/__init__.py`, unchanged; SHA-256 `9b2cce72fa8c7a7e688a79d55e15ea4914078c81058b0289ceb80cd5b69821c9` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_deferred_annotations.py` | `Lib/test/test_inspect/inspect_deferred_annotations.py`, unchanged; SHA-256 `e5a5fbf9ecd990cfa51812a5a4aaa23b1313af3189bfb892febd307068c8d750` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_fodder.py` | `Lib/test/test_inspect/inspect_fodder.py`, unchanged; SHA-256 `c418221061e9818de6b0624f5c5d9dbe725cc7f61431d0302fa641af94764a81` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_fodder2.py` | `Lib/test/test_inspect/inspect_fodder2.py`, unchanged; SHA-256 `66cfe2a9a93c6fb704856ee7249a38a353748954be76e6ca6b230789e7cb7cb0` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stock_annotations.py` | `Lib/test/test_inspect/inspect_stock_annotations.py`, unchanged; SHA-256 `0c9c665429a34dc1ec6832ff33d62ed05798ce0953dd681481b6330eb84a3c62` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stringized_annotations.py` | `Lib/test/test_inspect/inspect_stringized_annotations.py`, unchanged; SHA-256 `3100c0f9c80ee313ba939ba7870a6da629f55b3b6afc2ba2ba952706cb2bd934` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stringized_annotations_2.py` | `Lib/test/test_inspect/inspect_stringized_annotations_2.py`, unchanged; SHA-256 `e9ea40815a00612f56b6534c812c10766ed9ba2fc497219737d1577ecc1ccbbb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stringized_annotations_pep695.py` | `Lib/test/test_inspect/inspect_stringized_annotations_pep695.py`, unchanged; SHA-256 `ebc8b2025fb8c53022db62cdb5bf37d6ad00cb641c5a1824aed3dc346b777258` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/test_inspect.py` | `Lib/test/test_inspect/test_inspect.py`, unchanged; SHA-256 `a0a78e87e27bdf723dbae8f9a74d9fc0c364531ddfcfc8650883a00423584787` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
@@ -150,7 +159,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `dataclasses.py` | runtime adapter / implementation | `c8cf26b317b606e905a14cd497518fda1a742ca2ce34b29482aad5e4f761a9d5` | `e8439c8b111856645a8b31e0dbbba532b494426399bad456079c0e5730ad322e` |
 | `datetime.py` | runtime adapter / implementation | `0af428249328576d82d9b122a0d30fd6d15a22470886355d69aef460d76cacaf` | `742884b0c8e7dc69911858245db4f34d42e8ec0f769d580c570bd56032b0866c` |
 | `decimal.py` | runtime adapter / implementation | `34c68ae6da3863025093c6f9a3f332ef1a54ebeb4bb1bab7c1533d6b69ff5f0b` | `af29fa99aa720a68cab5a6384c7beba4c8e9480a6c1d53a512efeeb5a7e5c781` |
-| `dis.py` | runtime adapter / implementation | `374060342c94ef73b6e91a9644868d0460d8d35f19c7ac0fc1561f0b99670b00` | `17d4d9a9195c9ee5aa27a96f3e0871f9363fd501e3a64ef20cb1cc876d7ad553` |
+| `dis.py` | runtime adapter / implementation | `3b72c1a94e25a5a4772e515c1dd9bf823b3ac978fe77a2ec9a6f49173b0aed02` | `17d4d9a9195c9ee5aa27a96f3e0871f9363fd501e3a64ef20cb1cc876d7ad553` |
 | `doctest.py` | runtime adapter / implementation | `ad615d7193536046381d5d66eadab014bcd7edf7b1815add0cf7c50750fd7e03` | `3a5c30736974de19debbc9b3600461eef1943bd8b3b8afe3a634c05124b5dd5c` |
 | `enum.py` | runtime adapter / implementation | `80ebe6d718e9601a77cc56c8a7a526b9e2938eebb0e6d308aded60ca4cabad11` | `fd23a7598fa1104ef892abcd4154d3627283e6361eb7a91cd11dc4a7b6fb3a93` |
 | `errno.py` | runtime module; no Lib counterpart | `e9dac45709d8d26e173a71b7dc5b8507848e3729cfe7e591d8083992efe38d10` | `—` |
@@ -160,7 +169,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `gc.py` | runtime module; no Lib counterpart | `a879e867e999268f591a51151fb5efe9d51a7046d9d155a6a5f58bfd76ef336f` | `—` |
 | `glob.py` | unchanged release copy | `21d290be171e3d0643a444e4b58a2c4ee9bfe2c1474bb36ead043794bb769365` | `21d290be171e3d0643a444e4b58a2c4ee9bfe2c1474bb36ead043794bb769365` |
 | `heapq.py` | unchanged release copy | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` |
-| `inspect.py` | runtime adapter / implementation | `ef2deb2563813252ddd1fcc82e9347d22c4be4a0c90930a6690d80446d1f7f31` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
+| `inspect.py` | unchanged release source | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
 | `io.py` | runtime adapter / implementation | `cf85cf25e6255e6793812652b1b2e8fce04946c90f88480c76b9ad7cb29ebba1` | `1b75584d4efcc612dc0db2ae98619408276585a106f0544879edb5e25b55430a` |
 | `itertools.py` | runtime adapter / implementation | `43134d3fce836a09f53e800b9b5499e649232527540ded6aa5289682f5957704` | `11e8e8186a779a26ffd33bb5042b286bd08750a946c1398756225450d6bee6cc` |
 | `json.py` | runtime adapter / implementation | `f5f9bf3a3ad059f0d80ac41dd60ba4fde5da461b8fc79d5f217243aa1fd324d4` | `2dd10f1bf4c9ea5478e589216805e7f279d0e4bce134a19efa297404fb87407d` |
@@ -182,6 +191,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `re.py` | runtime adapter / implementation | `a803e6a068b211d46f3188662b366dc69984ac61bda074c502e82fbadf8824af` | `741a9de729ed8207bfa19db990f8826f1bf3661f33d0970a80c08cd1338ebc35` |
 | `reprlib.py` | unchanged release copy | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` |
 | `runtime_adapters/copy.py` | runtime adapter / implementation | `c0a733b4c73e2c77f4b8b769717b771a44758ee169d27a99c755ebf2d16eacc4` | `15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69` |
+| `runtime_adapters/inspect.py` | runtime adapter / implementation | `a790b26bf64917e525f66099310e0055b66da97b06e9e273c592dedf15c50240` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
 | `runtime_adapters/copyreg.py` | runtime adapter / implementation | `bc1e513213cb47877a24e1aa3f8b34c43e85332804558618fa8680739b511ce1` | `6376eb5722806396f5842997ac18add369ea9ac3ff4fcfe1460c41a088cac425` |
 | `runtime_adapters/functools.py` | runtime adapter / implementation | `1fd5b65b99cc8a2e6217822bce27baf6a833acc2a49cfbf4c942d9e1dd6976e4` | `9db56d38172c4c9e689b21cc58c8538008b09d86b682faf4dd193b529cdd79d5` |
 | `runtime_adapters/heapq.py` | runtime adapter / implementation | `6a33f1c1a941416c31a4c9375a3a4bcb3fd3c06fab0dc3961d48ec27b9ddd8b0` | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` |
@@ -331,3 +341,27 @@ while retaining byte-for-byte v3.14.8 library files at the upstream paths.
 An existing `adapters` overlay still follows a replacement body. The ten source
 moves preserve the registered interpreter source bytes, including the single
 async-aware `test.support.subTests` binding and coroutine recognition.
+
+
+## Inspect runtime source
+
+The runtime now loads the complete, unchanged v3.14.8 `inspect.py` rather
+than the former partial native replacement. `runtime_adapters/inspect.py`
+contains the remaining adapter needs: partialmethod handles retain their
+native wrapper shape, and native disassembly currently lacks global/attribute
+reference kinds. Frame positions use retained native instruction offsets
+rather than CPython two-byte offsets. Closure cells can be inspected, but functions with named
+references raise `NotImplementedError` instead of silently losing globals.
+The kernels expose asynchronous-generator suspension state and retain the
+v3.14 docstring and method code flags, with class scopes excluded from nested
+function flags. Frames expose their retained native `f_lasti`; `dis.Positions`
+is the release named-tuple interface. `dis.py` exposes the flag constants.
+
+All nine upstream `Lib/test/test_inspect/` files are present unchanged.
+There is no `__main__.py` in that upstream directory; the runnable test file
+is `test_inspect/test_inspect.py`. Its unconditional `asyncio` import remains
+unsupported, so it fails before discovering tests; `_pickle` is also absent.
+Neither an accelerator nor an event loop is simulated to get past imports.
+Other remaining limits include native builtin text signatures and syntax-tree
+parsing for their signatures, string-format annotations, and source/frame
+operations that require information the runtime does not retain.

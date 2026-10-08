@@ -5520,6 +5520,7 @@ impl<'a> Engine<'a> {
                 .map(|(_, value)| value.clone()).unwrap_or_else(|| if name == "f_trace" { Value::Null } else { Value::Flag(true) }));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
+        if index == 27 { return Some(Value::Small(Self::frame_instruction(object))); }
         if index == 5 {
             let ready = object.fields.borrow()[1].1.clone();
             if !matches!(ready, Value::Null) { return Some(ready); }
@@ -7279,11 +7280,13 @@ impl<'a> Engine<'a> {
             if self.is_async_generator(&Value::Generator(held.clone())) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
                     if index == 2 { return Ok(Some(Value::Flag(self.async_generator_running(&Value::Generator(held.clone()))))); }
+                    if index == 4 && held.try_borrow().is_err() { return Ok(Some(Value::Flag(false))); }
                     let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                     return Ok(Some(match index {
                         0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
                         1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(state.started && !state.closed),
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     }));
                 }

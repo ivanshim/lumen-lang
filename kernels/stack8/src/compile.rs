@@ -2020,7 +2020,9 @@ impl<'a> Compiler<'a> {
         let mut local_names: Vec<String> = unit.idents.iter().filter(|word| !word.starts_with('#') && !unit.nonlocals.contains(word) && !unit.globals.iter().any(|(n, _)| n == *word) && !unit.enclosed.iter().any(|(at, _)| unit.idents.get(*at) == Some(*word))).cloned().collect();
         local_names.sort_by_key(|n| formals.iter().position(|f| f == n).map_or((3, 0), |i| (parameter_rules.as_ref().map_or(0, |r| if r[i] < 2 { 0 } else if r[i] == 2 { 1 } else { 2 }), i)));
         let mut code_flags = 3;
-        if self.pieces.iter().any(|p| !p.outermost && !p.ident.starts_with('#')) { code_flags |= 16; }
+        if doc.is_some() { code_flags |= 1 << 26; }
+        if self.in_class_body() { code_flags |= 1 << 27; }
+        if self.pieces.iter().enumerate().any(|(index, p)| !p.outermost && !p.ident.starts_with('#') && !self.class_names.iter().any(|(depth, _)| *depth == index + 1)) { code_flags |= 16; }
         if let Some(rules) = &parameter_rules {
             if rules.contains(&3) { code_flags |= 4; }
             if rules.contains(&4) { code_flags |= 8; }
@@ -6590,7 +6592,7 @@ impl<'a> Compiler<'a> {
             let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters)?;
             namespace = Some((book, cell, protocol)); unready = declined; Ok(())
         })?;
-        let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
+        let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !(3 | (1 << 27));
         self.read(&builder); self.constant(Value::Routine(Rc::new(body)));
         self.constant(Value::text(&original_name)); self.read(&header);
         self.act(Action::Builtin(Builtin::ClassTool(16), Rc::from("")), 4);

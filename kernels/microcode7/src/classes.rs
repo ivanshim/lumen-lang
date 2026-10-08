@@ -4746,7 +4746,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let defaults:Vec<Value>=if matches!(value,Value::Bound(..))||self.written_over.contains_key(&Self::written_key(&value,&self.outermost)) {self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect()} else {Vec::new()};
-                if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
+                if defaults.is_empty() && code.local_defaults.iter().any(|slot| code.formal_slots.iter().position(|s| s == slot).is_some_and(|at| code.taking.as_ref().map_or(true, |rules| rules[at] != 'n'))){return Err(self.class_unready());}
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::tuple(defaults)});
             }
             // A routine answers its own call, so reading it back and
@@ -4756,11 +4756,13 @@ impl<'a> Machine<'a> {
             if self.is_async_generator(&value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == key) {
                     if index == 2 { return Ok(Value::Flag(self.async_running(&value))); }
+                    if index == 4 && state.try_borrow().is_err() { return Ok(Value::Flag(false)); }
                     let held = state.try_borrow().map_err(|_| self.class_unready())?;
                     return Ok(match index {
                         0 => held.of.as_ref().map_or(Value::Nil, |body| self.code_handle(body)),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(held.asleep()),
                         _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }

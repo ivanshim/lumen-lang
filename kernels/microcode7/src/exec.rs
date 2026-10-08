@@ -5685,6 +5685,7 @@ impl<'a> Machine<'a> {
                 state.of.as_ref().map(|body| self.code_handle(body))
             }
             Value::Thing(item) if self.activation_kind.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &item.blueprint())) => {
+                if index == 27 { return Some(Value::Small(Self::activation_instruction(item))); }
                 if index == 5 {
                     let current = item.holds.borrow()[1].1.clone();
                     if matches!(current, Value::Nil) {
@@ -9072,11 +9073,13 @@ impl<'a> Machine<'a> {
             if self.is_async_generator(value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == name) {
                     if index == 2 { return Some(Value::Flag(self.async_running(value))); }
+                    if index == 4 && state.try_borrow().is_err() { return Some(Value::Flag(false)); }
                     let held = state.try_borrow().ok()?;
                     return Some(match index {
                         0 => held.of.as_ref().map(|body| self.code_handle(body)).unwrap_or(Value::Nil),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(held.asleep()),
                         _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }
@@ -23368,6 +23371,14 @@ impl<'a> Machine<'a> {
     /// belongs to none of them.
     fn sequence_working(&mut self, op: Prim, v: &[Value]) -> Result<Option<Value>, String> {
         let [left, right] = v else { return Ok(None) };
+        if op == Prim::Plus {
+            // Tuple slots accept subclass storage after custom operations decline.
+            let left_tuple = Self::underlying(left).filter(|worth| matches!(worth, Value::Tuple(_)));
+            let right_tuple = Self::underlying(right).filter(|worth| matches!(worth, Value::Tuple(_)));
+            if left_tuple.is_some() || right_tuple.is_some() {
+                return self.sequence_working(op, &[left_tuple.unwrap_or_else(|| left.clone()), right_tuple.unwrap_or_else(|| right.clone())]);
+            }
+        }
         let strung = |x: &Value| matches!(x, Value::Vector(_) | Value::Tuple(_));
         let inside = |x: &Value| match x { Value::Vector(row) | Value::Tuple(row) => row.as_ref().clone(), _ => Vec::new() };
         match op {

@@ -3351,11 +3351,13 @@ impl<'a> Engine<'a> {
             if self.is_async_generator(&subject) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
                     if index == 2 { return Ok(Value::Flag(self.async_generator_running(&subject))); }
+                    if index == 4 && generator.try_borrow().is_err() { return Ok(Value::Flag(false)); }
                     let state = generator.try_borrow().map_err(|_| self.class_refusal())?;
                     return Ok(match index {
                         0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
                         1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(state.started && !state.closed),
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     });
                 }
@@ -4118,7 +4120,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("module") {let home=self.routine_module(f);return Ok(self.routine_held(&subject,name,home));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
-                    if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
+                    if values.is_empty() && f.carried.iter().any(|slot| *slot < f.formals.len() && f.parameter_rules.as_ref().map_or(true, |rules| rules[*slot] < 2)) && f.within.is_some(){return Err(self.class_refusal());}
                     return Ok(if values.is_empty(){Value::Null}else{Value::tuple(values)});
                 }
                 if name==self.class_word("keywords") {
