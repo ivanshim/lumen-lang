@@ -4145,7 +4145,10 @@ impl<'a> Engine<'a> {
                                         _ => None,
                                     };
                                     if let Some(child) = child {
+                                        // A cell the child itself reaches was only
+                                        // forwarded through here, not owned.
                                         for (_, cell) in &child.enclosing {
+                                            if cell.free { continue; }
                                             for slot in &cell.near {
                                                 if let Some(name) = f.idents.get(*slot) {
                                                     if !name.starts_with('#') { names.push(Self::closure_title(name).to_owned()); }

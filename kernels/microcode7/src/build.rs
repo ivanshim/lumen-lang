@@ -2376,9 +2376,16 @@ impl<'a> Builder<'a> {
                 }
                 b.pos = at;
                 let expression = if b.annotations_as_strings {
-                    // The words are kept as written, so only their end
-                    // is needed; a lambda inside is read whole.
-                    b.put_by_annotation(&["block.intro", "stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
+                    // The grammar is read whole in the survey's way,
+                    // which makes no captures, and the words are then
+                    // kept as they were written.
+                    let outer = b.annotation_lookup;
+                    b.annotation_lookup = true;
+                    let survey = std::mem::replace(&mut b.survey, true);
+                    let outcome = b.expr_at(0, false);
+                    b.survey = survey;
+                    b.annotation_lookup = outer;
+                    outcome?;
                     constant(Value::text(&b.annotation_spelling(at, b.pos)))
                 } else {
                     let outer = b.annotation_lookup;
@@ -7687,7 +7694,13 @@ impl<'a> Builder<'a> {
         let result = self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
             let first = b.pos;
             if b.annotations_as_strings {
-                b.put_by_annotation(&["block.intro", "stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
+                let outer = b.annotation_lookup;
+                b.annotation_lookup = true;
+                let survey = std::mem::replace(&mut b.survey, true);
+                let outcome = b.expr_at(0, false);
+                b.survey = survey;
+                b.annotation_lookup = outer;
+                outcome?;
                 return Ok(constant(Value::text(&b.annotation_spelling(first, b.pos))));
             }
             let outer = b.annotation_lookup;
@@ -9948,6 +9961,18 @@ impl<'a> Builder<'a> {
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
+        // A starred name stands as an annotation only of the variadic
+        // parameter, the one written `*name`.
+        if self.annotation_lookup && table.spells("op.mul", &t.spelling()) {
+            let variadic = self.pos >= 3
+                && self.tokens[self.pos - 1].shape == Shape::Sign && table.spells("ext.stmt.annotation", &self.tokens[self.pos - 1].spelling())
+                && self.tokens[self.pos - 2].shape == Shape::Bare
+                && self.tokens[self.pos - 3].shape == Shape::Sign && table.spells("op.mul", &self.tokens[self.pos - 3].spelling());
+            if variadic {
+                self.advance();
+                return self.monadic_piece();
+            }
+        }
         if self.reading_yield && table.spells("op.mul", &t.spelling()) {
             self.advance();
             let value = self.monadic_expr()?;

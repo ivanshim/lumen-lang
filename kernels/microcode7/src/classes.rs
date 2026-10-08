@@ -4748,7 +4748,11 @@ impl<'a> Machine<'a> {
                                 let mut cells: Vec<&str> = Vec::new();
                                 for literal in &p.literals {
                                     if let Value::Routine(child) = literal {
-                                        for address in &child.reaching { cells.push(Self::capture_title(&address.ident)); }
+                                        // A name one frame up is bound here; further
+                                        // up was only forwarded through here.
+                                        for address in &child.reaching {
+                                            if address.up == 1 { cells.push(Self::capture_title(&address.ident)); }
+                                        }
                                     }
                                 }
                                 cells.sort_unstable();

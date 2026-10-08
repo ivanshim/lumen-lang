@@ -2292,14 +2292,16 @@ impl<'a> Compiler<'a> {
                 c.pos = *start;
                 let expression = c.mark();
                 if c.future_annotations {
-                    // The words are kept as written, so only their end
-                    // is needed; a lambda or a starred name within is
-                    // read whole.
-                    let mut ends = c.lang.assign_words.clone();
-                    ends.extend(c.lang.annotation_marks.iter().cloned());
-                    ends.extend(c.lang.block_intros.iter().cloned());
-                    if let Some(call) = &c.lang.calling { ends.extend(call.between.iter().cloned()); ends.push(call.close.clone()); }
-                    c.annotation_expression(&ends)?;
+                    // The grammar is read whole, but a name standing
+                    // only in kept words makes no capture: the reading
+                    // is done in the survey's way. The words are then
+                    // kept as they were written.
+                    let previous = std::mem::replace(&mut c.reading_annotation, true);
+                    let survey = std::mem::replace(&mut c.discovering, true);
+                    let outcome = c.expr_at(0, false);
+                    c.discovering = survey;
+                    c.reading_annotation = previous;
+                    outcome?;
                     let text = c.annotation_text(*start, c.pos);
                     c.piece().instrs.truncate(expression);
                     c.constant(Value::text(&text));
@@ -10318,6 +10320,18 @@ impl<'a> Compiler<'a> {
 
     fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
+        // A starred name stands as an annotation only of the variadic
+        // parameter, the one written `*name`.
+        if self.reading_annotation && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest) {
+            let variadic = self.pos >= 3
+                && self.tokens[self.pos - 1].shape == Shape::Sign && Lang::spells(&lang.annotation_marks, &self.tokens[self.pos - 1].spelling())
+                && self.tokens[self.pos - 2].shape == Shape::Instr
+                && self.tokens[self.pos - 3].shape == Shape::Sign && Lang::spells(&lang.unpack_rest, &self.tokens[self.pos - 3].spelling());
+            if variadic {
+                self.take();
+                return self.prefix_piece();
+            }
+        }
         let from = self.mark();
         let tok = self.look().clone();
         if self.yield_operand && lang.dyadic.get(tok.spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
