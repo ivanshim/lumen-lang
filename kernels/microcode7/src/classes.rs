@@ -4182,6 +4182,13 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        // A blueprint standing behind a binding's cell is altered as
+        // the blueprint itself, there being no cell in the reference's
+        // own accounts; anything else keeps the form it was handed in.
+        let subject = match &subject {
+            Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_)) => subject.settled(),
+            _ => subject,
+        };
         // Assigning or removing the abstract marker invalidates only this class.
         if self.rules.words_ext_stmt_class_detail_abstract.first().is_some_and(|name| name == key) {
             if let Value::Blueprint(class) = subject.settled() { self.unmarked_classes.borrow_mut().remove(&(Rc::as_ptr(&class) as usize)); }
@@ -4241,7 +4248,7 @@ impl<'a> Machine<'a> {
             }
         }
 
-        if !self.table.strings("ext.stmt.class.detail.name").is_empty() && !matches!(&subject, Value::Blueprint(_)) {
+        if !self.table.strings("ext.stmt.class.detail.name").is_empty() && !matches!(subject.settled(), Value::Blueprint(_)) {
             if let Some(kind) = self.kind_word_of(&subject.settled()) {
                 return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{kind}'").into());
             }

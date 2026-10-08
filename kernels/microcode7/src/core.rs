@@ -183,6 +183,9 @@ impl Value {
 
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
+            // A binding's cell is no thing of its own: what is kept in
+            // it hashes as the kept value hashes.
+            Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().hash_number(),
             Self::Complex(pair) => {
                 if pair.0.is_nan() || pair.1.is_nan() { return Some((std::rc::Rc::as_ptr(pair) as usize / 16) as i64); }
                 let real = crate::complex::decimal_value(pair.0).hash_number()?;

@@ -3965,6 +3965,13 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        // A class standing behind a name's cell is written on as the
+        // class itself, there being no cell in the reference's own
+        // accounts; anything else keeps the form it was handed in.
+        let subject = match &subject {
+            Value::Bond(_) | Value::Binding(_) | Value::Collection(_, _) if matches!(subject.contents(), Value::Class(_)) => subject.contents(),
+            _ => subject,
+        };
         // A changed abstract marker must be read again on the next construction.
         if self.lang.class_details.get("abstract").and_then(|words| words.first()).is_some_and(|word| word == name) {
             if let Value::Class(class) = subject.contents() { self.concrete_kinds.borrow_mut().remove(&(Rc::as_ptr(&class) as usize)); }
