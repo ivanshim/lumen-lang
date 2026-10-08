@@ -8455,3 +8455,18 @@
 {"t":"2026-10-08T07:57:54Z","event":"review-started","job":"stdlib-tarfile","review":"review-auto-stdlib-tarfile-0748"}
 {"t":"2026-10-08T08:01:20Z","event":"exited","job":"review-auto-stdlib-tarfile-0748","code":0}
 {"t":"2026-10-08T08:02:55Z","event":"resumed","job":"stdlib-descr","model":"gpt-6.1-sol"}
+{"t":"2026-10-08T08:14:07Z","event":"returned","job":"kimi-module","review":"review-auto-kimi-module-0738","commit":"ecaca2f25","round":2,"note":"(2nd; dict reads return the module binding cell (s8 engine.rs:9881, mc7 exec.rs:14236/:15771) -> saved m.__dict__['x'] follows m.x rebinding/del; test_module 34/39->39/39 both kept incl. cycle finalizer; clean check 1194/0; not merged with 21d main) -> kimi-queue (resume after kimi-type-comments)"}
+{"t":"2026-10-08T08:14:41Z","event":"returned","job":"stdlib-tarfile","review":"review-auto-stdlib-tarfile-0748","commit":"fddb4a8bc","round":1,"note":"(1st; only blocker: no completed official full check of the final commit (earlier COUNT=1 runs terminated on superseded commits); no code change required; integrity ok, 8 upstream copies sha256-exact; test_tarfile absent->424 pass/3 err/319 skip of 746 both kernels; io +5 both) -> coordinator runs the full check itself (LV_ALLOW_MORE, BASE_COUNT=count-batch21d, log var/wk/stdlib-tarfile/coord-fullcheck-fddb4a8-0816.log); ACCEPT on a clean result, else sol-resume"}
+{"t":"2026-10-08T08:15:46Z","event":"quota","codex_week_used":65,"codex_credits":0,"claude_week_used":7,"claude_5h_used":0,"kimi_5h_used":0,"kimi_month_used":0.9621,"kimi_code_used":0,"deepseek_usd":302.69}
+{"t":"2026-10-08T08:15:52Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":65,"expected":66.7,"gap":-1.7,"status":"ok"}
+{"t":"2026-10-08T08:16:04Z","event":"checkin","status":"done","actions":"RETURN kimi-module (2nd: dict reads leak module binding cell) -> kimi-queue resume after type-comments; RETURN stdlib-tarfile (1st: only missing a completed full check) -> coordinator started official full check on fddb4a8bc (LV_ALLOW_MORE, count-batch21d); prune-merged 0 MB; luna FINDINGS appended","notes":"all slots full: Sol 11 feature + review slot free, DS Flash 12/12, DS Pro tstring, Sonnet claude-deque, Kimi type-comments; held unchanged (pyclbr, pstats, type-annotations wait slots; colorize/code-module wait stdlib-unittest); PR #540 (21e) CI pending, merge watcher running; box load 6.4, 12.6 GB avail, disk 81% (no idle accepted target/ to delete); Mac disk 84%; Codex week 65%; Claude week 7%; luna 1 expected relay alert, gap -1.7 ok"}
+{"t":"2026-10-08T08:22:35Z","event":"exited","job":"stdlib-tempfile","code":0}
+{"t":"2026-10-08T08:24:04Z","event":"exited","job":"dsflash-bufio","code":0}
+{"t":"2026-10-08T08:24:23Z","event":"finished","job":"dsflash-bufio","exit_time":"2026-10-08T08:24:04Z"}
+{"t":"2026-10-08T08:24:23Z","event":"review-queued","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0824"}
+{"t":"2026-10-08T08:24:29Z","event":"finished","job":"stdlib-tempfile","exit_time":"2026-10-08T08:22:35Z"}
+{"t":"2026-10-08T08:24:29Z","event":"review-queued","job":"stdlib-tempfile","review":"review-auto-stdlib-tempfile-0824"}
+{"t":"2026-10-08T08:24:31Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T08:24:57Z","event":"review-started","job":"dsflash-bufio","review":"review-auto-dsflash-bufio-0824"}
+{"t":"2026-10-08T08:28:05Z","event":"exited","job":"dsflash-source-encoding","code":0}
+{"t":"2026-10-08T08:28:24Z","event":"exited","job":"review-auto-dsflash-bufio-0824","code":0}
