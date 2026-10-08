@@ -412,6 +412,8 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
         });
     }
     if wants_telling {
+        if matches!(held.ghost, Ghost::WrappedMethod(_)) {
+        }
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
         if matches!(held.ghost, Ghost::WrappedMethod(_)) { mark_work(2, true); }
@@ -604,7 +606,7 @@ impl Knot {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
-                    for parent in b.under.iter().chain(&b.ancestry).chain(&b.parents).chain(&b.answers) {
+                    for parent in b.under.iter().chain(b.ancestry.borrow().iter()).chain(&b.parents).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
                     }
                 }
