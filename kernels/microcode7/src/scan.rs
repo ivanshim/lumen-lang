@@ -585,13 +585,11 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
             row = quote.row;
             continue;
         }
-        // Use the scanner's boundary, including exponent signs, before
-        // looking for an adjacent keyword.
-        let boundary = pos == 0
-            || !(src[pos - 1].is_ascii_alphanumeric() || src[pos - 1] == '_' || src[pos - 1] == '.');
-        let opens_a_number = boundary
-            && (src[pos].is_ascii_digit()
-                || (src[pos] == '.' && src.get(pos + 1).map_or(false, |next| next.is_ascii_digit())));
+        // Names and symbols must be consumed whole before the next number.
+        let opens_a_number = src[pos].is_ascii_digit()
+            || ((table.flag("ext.lexical.number.point.open") || table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || table.flag("ext.lexical.number.point_open"))
+                && Some(src[pos]) == table.letter("lexical.number.decimal_point")
+                && src.get(pos + 1).map_or(false, char::is_ascii_digit));
         if opens_a_number {
             let end = numeral_end(&src, pos, table);
             let run: String = src[pos..end].iter().collect();
@@ -601,7 +599,14 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
             pos = end;
             continue;
         }
-        pos += 1;
+        if table.begins_name(src[pos]) {
+            pos += 1;
+            while pos < src.len() && table.extends_name(src[pos]) { pos += 1; }
+            continue;
+        }
+        let ahead: String = src[pos..src.len().min(pos + 8)].iter().collect();
+        pos += table.signs.iter().find(|sign| ahead.starts_with(sign.as_str()))
+            .map_or(1, |sign| sign.chars().count());
     }
     notices
 }
@@ -1120,6 +1125,11 @@ impl Quotation<'_> {
             self.next = where_digit;
             self.row = self.source[..where_digit].iter().filter(|&&ch| ch == '\n').count() as u32 + 1;
             return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
+        }
+        // Notices in a field belong to its source row, just like its tokens.
+        for (notice, relative_row) in escape_notices(&code, self.table) {
+            self.token(Shape::EscapeNotice, notice);
+            self.made.last_mut().unwrap().row = field_row + relative_row.saturating_sub(1);
         }
         let debugging = self.here() == Some('=');
         if debugging {
@@ -1933,6 +1943,7 @@ mod tests {
             ("1e-0or 2", "1e-0", "decimal"),
             ("1e+0or 2", "1e+0", "decimal"),
             ("1or...", "1", "decimal"),
+            ("...5and 2", "5", "decimal"),
             (".5and 2", ".5", "decimal"),
             (".5if True else 0", ".5", "decimal"),
             ("0b1and 2", "0b1", "binary"),
@@ -1944,7 +1955,12 @@ mod tests {
             let first_number = tokens.iter().find(|token| token.shape == Shape::Numeral).unwrap();
             assert_eq!(first_number.lexeme, number, "{source}");
         }
-        for source in ["'1e-0or 2'", "# 1or...", "name1or", "1e-0 or 2"] {
+        for (source, row) in [("f'{1e-0or 2}'", 1), ("f'{1or...}'", 1), ("f'''
+{1e-0or 2}
+'''", 2)] {
+            assert_eq!(escape_notices(source, &table), vec![("invalid decimal literal".to_owned(), row)], "{source}");
+        }
+        for source in ["'1e-0or 2'", "# 1or...", "name1or", "é1or = 2", "α1or = 2", "1e-0 or 2"] {
             assert!(escape_notices(source, &table).is_empty(), "{source}");
         }
     }
