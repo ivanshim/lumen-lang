@@ -8,6 +8,7 @@ typecodes = 'bBuhHiIlLqQfdw'
 _missing = object()
 _native = __struct_native
 _type_sizes = {code: _native(0, "@" + ("I" if code in "uw" else code))[0] for code in typecodes}
+_order = sys.byteorder
 def _buffer_info(buffer):
     return _native(3, '', buffer)
 
@@ -109,9 +110,12 @@ class array:
             raise
 
     def _decode(self, raw):
-        if self._typecode in 'uw':
-            return chr(_native(2, '@I', bytes(raw))[0])
-        return _native(2, '@' + self._typecode, bytes(raw))[0]
+        code = self._typecode
+        if code in 'uw':
+            return chr(int.from_bytes(raw, _order, signed=False))
+        if code in 'fd':
+            return _native(2, '@' + code, raw)[0]
+        return int.from_bytes(raw, _order, signed=code in 'bhilq')
 
     def _resize_check(self, byte_length):
         if byte_length != len(self._buffer) and _native(6, '', self._buffer):
@@ -128,22 +132,34 @@ class array:
         return _ArrayIterator(self)
 
     def __getitem__(self, key):
-        if isinstance(key, slice):
-            start, stop, step = key.indices(len(self))
-            code = 'I' if self._typecode in 'uw' else self._typecode
-            raw = _native(9, '@' + code, (self._buffer, start, stop, step))
-            result = object.__new__(array)
-            result._typecode = self._typecode
-            result._itemsize = self._itemsize
-            result._buffer = bytearray(raw)
-            return result
-        index = operator.index(key)
-        if index < 0:
-            index += len(self)
-        if index < 0 or index >= len(self):
-            raise IndexError('array index out of range')
+        if type(key) is not int:
+            if isinstance(key, slice):
+                start, stop, step = key.indices(len(self))
+                code = 'I' if self._typecode in 'uw' else self._typecode
+                raw = _native(9, '@' + code, (self._buffer, start, stop, step))
+                result = object.__new__(array)
+                result._typecode = self._typecode
+                result._itemsize = self._itemsize
+                result._buffer = bytearray(raw)
+                return result
+            index = operator.index(key)
+        else:
+            index = key
         buffer = self._buffer
-        return self._decode(buffer[index * self._itemsize:(index + 1) * self._itemsize])
+        size = self._itemsize
+        count = len(buffer) // size
+        if index < 0:
+            index += count
+        if index < 0 or index >= count:
+            raise IndexError('array index out of range')
+        start = index * size
+        raw = buffer[start:start + size]
+        code = self._typecode
+        if code in 'uw':
+            return chr(int.from_bytes(raw, _order, signed=False))
+        if code in 'fd':
+            return _native(2, '@' + code, raw)[0]
+        return int.from_bytes(raw, _order, signed=code in 'bhilq')
 
     def __setitem__(self, key, value):
         buffer = self._buffer

@@ -211,9 +211,14 @@ pub struct Generator {
     pub sent: Value,
     pub items: Vec<Value>,
     pub current: Option<Value>,
-    /// The cell of a map the walk hands the items of, with the size the
-    /// map had when the walk began, so a step may see it has changed.
+    /// The live map, its initial size and the next entry position;
+    /// pc counts yields independently of holes in the entry table.
     pub watched: Option<(Rc<RefCell<Value>>, (usize, u64))>,
+    /// A walk taken backwards over a map: the cell, how many pairs it
+    /// held when the walk began, and the place it is to read next, so a
+    /// step may read the map's places afresh and weigh the pairs now
+    /// held against the count it has left.
+    pub reversed_walk: Option<(Rc<RefCell<Value>>, usize, i64)>,
     /// The tries the suspension stands inside, innermost first, and
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
@@ -233,7 +238,7 @@ impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
-            delegate: None, sent: Value::Null, current: None, watched: None,
+            delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
@@ -268,8 +273,8 @@ pub enum CursorSource {
     /// A list walked through the cell it lives in, read as it stands at
     /// each step rather than as it stood at the first.
     Living(Rc<RefCell<Value>>, usize),
-    /// A window upon a map, with the size the map had when the walk
-    /// began; the walk stops should that size change.
+    /// A live map view, next entry slot, original size and remaining
+    /// yield count; size faults keep a sentinel original size.
     Viewed(Value, usize, (usize, u64)),
     /// A thing walked by reading its places from nought upward.
     Indexed(Value, BigInt),
@@ -559,6 +564,19 @@ enum NameLookup {
 pub struct KeyedPairs {
     rows: Vec<(Value, Value)>,
     pub revision: u64,
+    /// The next place a key written into the map will take: the size of
+    /// the entry array a walk's places are read against, kept up while
+    /// keys are added, shortened by popitem, and packed by a table rebuild.
+    pub span: usize,
+    /// How many times the map has been cleared, so a walk may see that
+    /// its places were made anew.
+    pub clear_epoch: u64,
+    /// Each row's own place in the entry array, in the order the rows
+    /// stand; a place a key was taken out of is a gap here, so a walk
+    /// backwards may skip it.
+    pub slots: Vec<usize>,
+    /// Hash-table width, unused entry budget, and whether keys are all exact strings.
+    pub entry_budget: (usize, usize, bool),
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     names: RefCell<Option<Box<NameLookup>>>,
 }
@@ -652,6 +670,125 @@ impl KeyedPairs {
         self.rows[at].1 = value;
     }
 
+    /// Rows re-laid after a filtering or a merge, keeping the width and
+    /// the clear-history the map already had, with each row's own place.
+    pub fn kept(rows: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64, entry_budget: (usize, usize, bool)) -> Self {
+        assert_eq!(rows.len(), slots.len());
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+    }
+
+    fn exact_string(key: &Value) -> bool {
+        match key { Value::Text(_) => true, Value::Hashed(pair) => matches!(pair.0, Value::Text(_)), _ => false }
+    }
+
+    /// Rebuilding packs live entries, while existing iterators keep their numeric position.
+    pub fn resize_entries(slots: &mut Vec<usize>, span: &mut usize, budget: &mut (usize, usize, bool), minimum: usize) {
+        let width = minimum.max(8).next_power_of_two();
+        *span = slots.len();
+        for (at, slot) in slots.iter_mut().enumerate() { *slot = at; }
+        budget.0 = width;
+        budget.1 = width * 2 / 3 - slots.len();
+    }
+
+    pub fn append_entry(slots: &mut Vec<usize>, span: &mut usize, budget: &mut (usize, usize, bool), key: &Value) {
+        let converts = budget.2 && !Self::exact_string(key);
+        if converts || budget.1 == 0 {
+            Self::resize_entries(slots, span, budget, slots.len().saturating_mul(3));
+        }
+        if converts { budget.2 = false; }
+        slots.push(*span);
+        *span += 1;
+        budget.1 -= 1;
+    }
+
+    /// A direct mapping merge reserves for all source keys before reading them.
+    pub fn reserve_merge(slots: &mut Vec<usize>, span: &mut usize, budget: &mut (usize, usize, bool), source: &Self) {
+        if source.is_empty() { return; }
+        if slots.is_empty() && source.span == source.len()
+            && (source.entry_budget.0 == 8 || (source.entry_budget.0 / 2) * 2 / 3 < source.len()) {
+            *span = 0;
+            *budget = (source.entry_budget.0, source.entry_budget.1 + source.len(), source.entry_budget.2);
+        } else if budget.0 * 2 / 3 < source.len() {
+            Self::resize_entries(slots, span, budget, (slots.len() + source.len()).saturating_mul(3).div_ceil(2));
+            budget.2 &= source.entry_budget.2;
+        }
+    }
+
+    pub fn copied(&self) -> Self {
+        if self.rows.is_empty() { return Vec::new().into(); }
+        if self.rows.len() >= self.span * 2 / 3 { self.clone() }
+        else {
+            let mut packed = Self::from(self.rows.clone());
+            packed.entry_budget.2 = self.entry_budget.2;
+            packed
+        }
+    }
+
+    pub fn pop_last(&mut self) -> Option<(Value, Value)> {
+        let pair = self.rows.pop()?;
+        self.span = self.slots.pop().expect("entry position");
+        self.revision = next_map_revision();
+        *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
+        Some(pair)
+    }
+
+    /// Write a key at the next open place, growing the entry array.
+    pub fn push_row(&mut self, key: Value, value: Value) {
+        self.revision = next_map_revision();
+        *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
+        self.rows.push((key, value));
+        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
+    }
+
+    pub fn push(&mut self, pair: (Value, Value)) { self.push_row(pair.0, pair.1); }
+
+    pub fn remove(&mut self, at: usize) -> (Value, Value) {
+        let removed = self.rows[at].clone();
+        self.remove_row(at);
+        removed
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(&(Value, Value)) -> bool) {
+        for at in (0..self.rows.len()).rev() {
+            if !keep(&self.rows[at]) { self.remove_row(at); }
+        }
+    }
+
+    pub fn extend(&mut self, rows: impl IntoIterator<Item = (Value, Value)>) {
+        for (key, value) in rows { self.push_row(key, value); }
+    }
+
+    /// Take a row out by its place among the rows, leaving its slot as a
+    /// gap the walk skips.
+    pub fn remove_row(&mut self, at: usize) {
+        self.revision = next_map_revision();
+        *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
+        self.rows.remove(at);
+        self.slots.remove(at);
+    }
+
+    /// Read entry positions; every structural mutation must update them atomically.
+    pub fn slots_synced(&self) -> Vec<usize> {
+        assert_eq!(self.slots.len(), self.rows.len(), "map positions must follow every row mutation");
+        self.slots.clone()
+    }
+
+    /// Empty the rows and mark the map's places as begun again: the
+    /// entry array a walk reads against is no more.
+    pub fn clear(&mut self) {
+        self.revision = next_map_revision();
+        self.clear_epoch = self.clear_epoch.wrapping_add(1);
+        self.span = 0;
+        self.entry_budget = (1, 0, true);
+        *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
+        self.rows.clear();
+        self.slots.clear();
+    }
+
     /// The rows themselves, for reading only: a class that names its
     /// slots with a mapping takes each name from a key.
     pub fn rows(&self) -> &[(Value, Value)] {
@@ -668,13 +805,18 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.names.borrow_mut() = None;
         self.rows.push((key, value));
+        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
 }
 
 impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
-        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None), names: RefCell::new(None) }
+        let span = rows.len();
+        let slots = (0..span).collect();
+        let width = if span == 0 { 1 } else { (span * 3).div_ceil(2).max(8).next_power_of_two() };
+        let entry_budget = (width, width * 2 / 3 - span, rows.iter().all(|(key, _)| Self::exact_string(key)));
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -683,7 +825,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -694,12 +836,12 @@ impl std::iter::FromIterator<(Value, Value)> for KeyedPairs {
 }
 
 impl std::ops::Deref for KeyedPairs {
-    type Target = Vec<(Value, Value)>;
-    fn deref(&self) -> &Vec<(Value, Value)> { &self.rows }
+    type Target = [(Value, Value)];
+    fn deref(&self) -> &[(Value, Value)] { &self.rows }
 }
 
 impl std::ops::DerefMut for KeyedPairs {
-    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+    fn deref_mut(&mut self) -> &mut [(Value, Value)] {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
@@ -1281,6 +1423,75 @@ impl Value {
         }
     }
 
+    /// Select the content fields of a compiled source, excluding its file
+    /// and the private markers used when its constants are replaced.
+    pub(crate) fn code_content_field(key: &str) -> bool {
+        matches!(key, "source" | "mode" | "co_flags" | "co_firstlineno" | "co_consts")
+    }
+
+    /// Describe a routine's body within its token stream and its current
+    /// constant table. Source and boundary identify the compiled instructions;
+    /// replacements change the constants, not that original stream.
+    fn routine_content(body: &crate::code::Routine) -> Value {
+        Value::tuple(vec![
+            Value::Text(body.source_tokens.clone()), Value::Small(body.source_end as i64),
+            Value::text(&body.ident), Value::Small(body.declared_on as i64),
+            Value::Small(body.code_flags), Value::Small(body.future_bits),
+            Value::Flag(body.generator), Value::Flag(body.lineless),
+            Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
+            body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
+            Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.idents.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.code_constants.clone()),
+        ])
+    }
+
+    /// Compare code constants recursively rather than comparing routine
+    /// handles or their compilation-wide source alone.
+    fn code_field_eq(one: &Value, two: &Value) -> bool {
+        if one.same_place(two) { return true; }
+        match (one, two) {
+            (Value::Adapter(p), Value::Adapter(q)) if p.0 == 7 && q.0 == 7 => match (p.1.first(), q.1.first()) {
+                (Some(Value::Routine(a)), Some(Value::Routine(b))) =>
+                    Self::code_field_eq(&Self::routine_content(a), &Self::routine_content(b)),
+                _ => Rc::ptr_eq(p, q),
+            },
+            (Value::Routine(a), Value::Routine(b)) => Self::code_field_eq(&Self::routine_content(a), &Self::routine_content(b)),
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| Self::code_field_eq(x, y)),
+            (Value::Small(_) | Value::Huge(_), Value::Small(_) | Value::Huge(_)) => one.equals(two),
+            (Value::Real(a), Value::Real(b)) => one.equals(two) && (!a.p.is_zero() || a.below == b.below),
+            // Constant types and the two float zeros are part of code content.
+            _ => std::mem::discriminant(one) == std::mem::discriminant(two) && one.equals(two),
+        }
+    }
+
+    /// Hash the same recursive content used by code comparison.
+    pub(crate) fn code_field_hash(value: &Value) -> Option<i64> {
+        match value {
+            Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
+                Some(Value::Routine(body)) => Self::code_field_hash(&Self::routine_content(body)),
+                _ => Some((Rc::as_ptr(parts) as usize >> 4) as i64),
+            },
+            Value::Routine(body) => Self::code_field_hash(&Self::routine_content(body)),
+            Value::Object(object) if object.class_now().constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
+                let fields = object.fields.borrow().iter().filter(|(key, _)| Self::code_content_field(key)).map(|(_, value)| value.contents()).collect();
+                Self::code_field_hash(&Value::tuple(fields))
+            }
+            Value::Tuple(items) => {
+                let mut h = 2870177450012600261u64;
+                for item in items.iter() {
+                    h = h.wrapping_add((Self::code_field_hash(item)? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                h = h.wrapping_add(items.len() as u64 ^ (2870177450012600261 ^ 3527539));
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
+            }
+            _ => value.core_hash(),
+        }
+    }
+
     pub fn equals(&self, other: &Value) -> bool {
         if let (Value::Object(instance), plain @ Value::Text(_)) | (plain @ Value::Text(_), Value::Object(instance)) = (self, other) {
             if let Some((_, value @ Value::Text(_))) = instance.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return value.equals(plain); }
@@ -1358,19 +1569,20 @@ impl Value {
                         _ => false,
                     };
                 }
+                // Two code values read from the same text in the same
+                // manner are the same value, the way the reference
+                // compares its code objects' bytecode; the file each
+                // names is no part of it.
+                if native(a).as_deref() == Some("code") && native(b).as_deref() == Some("code") {
+                    let held = |object: &Rc<Instance>| object.fields.borrow().iter().filter(|(key, _)| Self::code_content_field(key)).map(|(_, value)| value.contents()).collect::<Vec<_>>();
+                    let (one, two) = (held(a), held(b));
+                    return one.len() == two.len() && one.iter().zip(two.iter()).all(|(x, y)| Self::code_field_eq(x, y));
+                }
                 Rc::ptr_eq(a, b)
             },
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
-            // Two readings of code are alike where they read the very
-            // same body, however the routines they came from were
-            // written over since.
-            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 7 && b.0 == 7 => match (a.1.first(), b.1.first()) {
-                (Some(Value::Routine(x)), Some(Value::Routine(y))) => {
-                    let body = |r: &Rc<crate::code::Routine>| r.revised.borrow().as_ref().map_or_else(|| r.instrs.clone(), |now| now.instrs.clone());
-                    Rc::ptr_eq(&body(x), &body(y))
-                }
-                _ => Rc::ptr_eq(a, b),
-            },
+            // Compare routine-backed code by content, like code constants.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 7 && b.0 == 7 => Self::code_field_eq(self, other),
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 3 && b.0 == 3 => {
                 match (a.1.first(), b.1.first(), a.1.get(1), b.1.get(1)) {
                     (Some(Value::Adapter(left)), Some(Value::Adapter(right)), Some(x), Some(y)) if left.0 == 29 && right.0 == 29 =>
@@ -1708,6 +1920,9 @@ impl Value {
     /// an attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if name == "__get__" && matches!(kind, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
+            return Some(("slot wrapper", "wrapper_descriptor"));
+        }
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
         let coexist = (matches!(kind, "list" | "dict") && name == "__getitem__")
             || (matches!(kind, "dict" | "set" | "frozenset") && name == "__contains__");
@@ -1732,8 +1947,7 @@ impl Value {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
         match kind {
-            "type" if name == "__dict__" => Some(("attribute", "getset_descriptor")),
-            "type" if name == "__mro__" => Some(("member", "member_descriptor")),
+            "type" if matches!(name, "__dict__" | "__name__" | "__mro__") => Some(("attribute", "getset_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),
