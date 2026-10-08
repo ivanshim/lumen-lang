@@ -20,6 +20,8 @@
 // stop. Whatever the settings name for the run to load beside itself is
 // reached for before any of this, and what came of the reaching is said.
 
+include!("python_encodings.rs");
+
 use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -375,6 +377,13 @@ const NON_TEXT_CODECS: [&str; 7] = ["base64codec", "bz2codec", "hexcodec", "quop
 /// conflicting with the signature, or one the interpreter does not
 /// know, is told the way the reference tells it, and the run ends
 /// before it begins.
+/// Where a byte stands in its line, one past the line's start, as the
+/// reference counts it when it decodes a file line by line.
+fn fault_position(bytes: &[u8], at: usize) -> usize {
+    let start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |place| place + 1);
+    at - start + 1
+}
+
 fn python_file_source(written: Vec<u8>, given: &str) -> String {
     let signed = written.starts_with(&[0xef, 0xbb, 0xbf]);
     let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
@@ -417,7 +426,24 @@ fn python_file_source(written: Vec<u8>, given: &str) -> String {
         "cp1251" => decode_with_upper(bytes, CP1251_UPPER),
         "iso88597" => decode_with_upper(bytes, ISO88597_UPPER),
         "koi8r" => decode_with_upper(bytes, KOI8R_UPPER),
-        "cp1252" | "1252" | "windows1252" => decode_with_upper(bytes, CP1252_UPPER),
+        "cp1252" | "1252" | "windows1252" => {
+            if let Some(at) = bytes.iter().position(|byte| matches!(*byte, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                source_fault(given, 0, None, None, &format!("'charmap' codec can't decode byte 0x{:02x} in position {}: character maps to <undefined>", bytes[at], fault_position(bytes, at)));
+            }
+            decode_with_upper(bytes, CP1252_UPPER)
+        }
+        "cp949" => match decode_cp949(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'cp949' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        "cp932" => match decode_cp932(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'cp932' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        "shiftjis" | "sjis" => match decode_shift_jis(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'shift_jis' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
         _ if NON_TEXT_CODECS.contains(&stripped.as_str()) => source_fault(given, 0, None, None, &format!("'{}' is not a text encoding", named)),
         _ => source_fault(given, 0, None, None, &format!("unknown encoding: {}", named)),
     }

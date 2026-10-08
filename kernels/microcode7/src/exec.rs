@@ -1,3 +1,5 @@
+include!("../../../src/python_encodings.rs");
+
 thread_local! {
     static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -26746,6 +26748,12 @@ impl<'a> Machine<'a> {
             }).collect::<String>();
             return Ok(Rc::from(shifted));
         }
+        if ["cp1252", "1252", "windows1252"].contains(&cookie.as_str()) {
+            if let Some(at) = raw.iter().position(|b| matches!(*b, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                let why = format!("SyntaxError: 'charmap' codec can't decode byte 0x{:02x} in position {at}: character maps to <undefined>", raw[at]);
+                return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
+            }
+        }
         let alphabet = match cookie.as_str() {
             "cp1251" => Some("ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя"),
             "iso88597" => Some(" ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
@@ -26759,6 +26767,23 @@ impl<'a> Machine<'a> {
             let mut text = String::new();
             for &byte in raw { text.push(if byte >= 128 { symbols[(byte - 128) as usize] } else { byte as char }); }
             return Ok(Rc::from(text));
+        }
+        // The CJK pages the reference reads, each a lead byte and a
+        // trail the codec's own table holds.
+        let page: Option<(fn(&[u8]) -> Result<String, CodecFault>, &str)> = match cookie.as_str() {
+            "cp949" => Some((decode_cp949, "cp949")),
+            "cp932" => Some((decode_cp932, "cp932")),
+            "shiftjis" | "sjis" => Some((decode_shift_jis, "shift_jis")),
+            _ => None,
+        };
+        if let Some((reader, name)) = page {
+            return match reader(raw) {
+                Ok(text) => Ok(Rc::from(text)),
+                Err(fault) => {
+                    let why = format!("SyntaxError: '{}' codec can't decode byte 0x{:02x} in position {}: {}", name, fault.byte, fault.at, fault.reason);
+                    Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""))
+                }
+            };
         }
         if cookie != "utf8" && cookie != "utf8sig" {
             return Err(self.text_unreadable_at(0, format!("SyntaxError: unknown encoding: {written}"), file, 0, 0, None, ""));

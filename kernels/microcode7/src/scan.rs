@@ -459,8 +459,27 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
     Ok(read)
 }
 
+/// The base a number was read in when a keyword stands written straight
+/// against it, as the reference warns, else None.
+fn invalid_literal_base(run: &str, table: &Table) -> Option<&'static str> {
+    if check_numeral(run, table).is_ok() { return None; }
+    for word in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+        if let Some(prefix) = run.strip_suffix(word) {
+            if !prefix.is_empty() && check_numeral(prefix, table).is_ok()
+                && !(prefix == "0" && word == "or")
+                && !(prefix.starts_with("0x") && matches!(word, "and" | "else")) {
+                return Some(if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
+                    else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
+                    else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+                    else { "decimal" });
+            }
+        }
+    }
+    None
+}
+
 pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
-    if !source.contains('\\') || !table.has_any("ext.lexical.escape.warning") { return vec![]; }
+    if !table.has_any("ext.lexical.escape.warning") { return vec![]; }
     // A reading that stops short on a fault later in the text still
     // says what it noticed about a string already read, so the notices
     // are gathered by walking the strings in turn, keeping only those
@@ -486,6 +505,18 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
             }
             pos = quote.next;
             row = quote.row;
+            continue;
+        }
+        if src[pos].is_ascii_digit()
+            && (pos == 0 || !(src[pos - 1].is_ascii_alphanumeric() || src[pos - 1] == '_' || src[pos - 1] == '.'))
+        {
+            let mut end = pos;
+            while end < src.len() && (src[end].is_ascii_alphanumeric() || src[end] == '_' || src[end] == '.') { end += 1; }
+            let run: String = src[pos..end].iter().collect();
+            if let Some(base) = invalid_literal_base(&run, table) {
+                notices.push((format!("invalid {base} literal"), row));
+            }
+            pos = end;
             continue;
         }
         pos += 1;

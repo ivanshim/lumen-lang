@@ -1,3 +1,5 @@
+include!("../../../src/python_encodings.rs");
+
 thread_local! {
     static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -26436,9 +26438,29 @@ impl Engine<'_> {
             }
             // Windows-1252: Latin-1 with letters opened in the C1 range.
             "cp1252" | "1252" | "windows1252" => {
+                if let Some(at) = bytes.iter().position(|b| matches!(*b, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                    let words = format!("SyntaxError: 'charmap' codec can't decode byte 0x{:02x} in position {at}: character maps to <undefined>", bytes[at]);
+                    return Err(self.text_syntax(0, words, filename, 0, 0, None, ""));
+                }
                 let page: Vec<char> = "\u{20ac}\u{81}\u{201a}\u{192}\u{201e}\u{2026}\u{2020}\u{2021}\u{2c6}\u{2030}\u{160}\u{2039}\u{152}\u{8d}\u{17d}\u{8f}\u{90}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{2dc}\u{2122}\u{161}\u{203a}\u{153}\u{9d}\u{17e}\u{178}\u{a0}\u{a1}\u{a2}\u{a3}\u{a4}\u{a5}\u{a6}\u{a7}\u{a8}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{b4}\u{b5}\u{b6}\u{b7}\u{b8}\u{b9}\u{ba}\u{bb}\u{bc}\u{bd}\u{be}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}".chars().collect();
                 bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { page[*b as usize - 128] }).collect()
             }
+            // The CJK pages the reference reads: a byte below 128
+            // stands for itself, an upper byte opens a two-byte
+            // sequence, and a byte the page will not finish is the
+            // codec's own complaint, named with the page's codec.
+            "cp949" => match decode_cp949(bytes) {
+                Ok(text) => text,
+                Err(fault) => return Err(self.text_syntax(0, format!("SyntaxError: 'cp949' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault.at, fault.reason), filename, 0, 0, None, "")),
+            },
+            "cp932" => match decode_cp932(bytes) {
+                Ok(text) => text,
+                Err(fault) => return Err(self.text_syntax(0, format!("SyntaxError: 'cp932' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault.at, fault.reason), filename, 0, 0, None, "")),
+            },
+            "shiftjis" | "sjis" => match decode_shift_jis(bytes) {
+                Ok(text) => text,
+                Err(fault) => return Err(self.text_syntax(0, format!("SyntaxError: 'shift_jis' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault.at, fault.reason), filename, 0, 0, None, "")),
+            },
             _ => return Err(self.text_syntax(0, format!("SyntaxError: unknown encoding: {spelling}"), filename, 0, 0, None, "")),
         };
         Ok(Rc::from(decoded))

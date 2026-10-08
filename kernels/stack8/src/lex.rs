@@ -1269,6 +1269,14 @@ impl<'a> Cursor<'a> {
                             let kept = prefix.len();
                             self.at -= keyword.len();
                             self.column -= keyword.len();
+                            // The reference warns about a number a
+                            // keyword was written against, naming
+                            // the base it had already read.
+                            let base = if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
+                                else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
+                                else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+                                else { "decimal" };
+                            self.push(Shape::EscapeWarning, format!("invalid {base} literal"), 0, line, col);
                             s.truncate(kept);
                             break;
                         }
@@ -1502,7 +1510,7 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
 }
 
 pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
-    if lang.escape_warning.is_empty() || !source.contains('\\') { return Vec::new(); }
+    if lang.escape_warning.is_empty() { return Vec::new(); }
     // A reading that stops short on a fault later in the text still
     // says what it noticed about a string already read, so warnings are
     // gathered straight from the reader rather than only when it ends.
