@@ -17942,7 +17942,7 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::MakeTuple | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet) {
                 self.prim_values(op, name, v)?
             } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_))))) {
                 self.prim_values(op, name, v)?
@@ -18218,7 +18218,7 @@ impl<'a> Machine<'a> {
         }
         let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
-            && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
+            && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::MakeTuple | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
                 || (matches!(op, Prim::SetAssign(0)) || matches!(op, Prim::Landing(place) if matches!(self.table.landing_working(place), Prim::SetAssign(0))))
                     && v.first().is_some_and(|value| Self::dict_cell(value).is_some())) {
