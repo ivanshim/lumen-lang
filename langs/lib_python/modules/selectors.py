@@ -1,3 +1,6 @@
+# CPython v3.14.8 Lib source, unchanged below this header.
+# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
+
 """Selectors module.
 
 This module allows high-level and efficient I/O multiplexing, built upon the

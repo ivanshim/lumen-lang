@@ -79,6 +79,8 @@ pub enum Prim {
     ProgramNames,
     /// The name of the module the routine a frame runs was written in.
     FrameModule,
+    SetTrace,
+    GetTrace,
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
     BringModule,
@@ -397,6 +399,7 @@ pub enum Prim {
     TraceBridge,
     HeapNative,
     ContextStore,
+    WarningOperation(u8),
     ReduceNative,
     ProductStep,
     RebuildNative,
@@ -828,7 +831,11 @@ pub struct Routine {
     /// The compiled definition shared by independently created functions.
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
+    pub annotation_spelling: Option<String>,
     pub annotation_protocol: bool,
+    /// Whether the routine's own name reads, while annotations are being read
+    /// in the forward-reference format, may stand for a reference.
+    pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,

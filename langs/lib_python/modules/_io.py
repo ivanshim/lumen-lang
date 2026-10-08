@@ -72,6 +72,8 @@ class _IOBase:
                     dealloc_warn(self)
             finally:
                 self.close()
+    def _dealloc_warn(self, source):
+        return None
     def _checkClosed(self):
         if self.closed:
             raise ValueError('I/O operation on closed file.')
@@ -544,6 +546,11 @@ def _text_option(value, name):
     return value
 
 class TextIOWrapper(_TextIOBase):
+    def _dealloc_warn(self, source):
+        try:
+            self.buffer._dealloc_warn(source)
+        except Exception:
+            pass
     @property
     def _CHUNK_SIZE(self):
         return getattr(self, '_chunk_size', 8192)
@@ -780,6 +787,16 @@ class FileIO(_RawIOBase):
                 except OSError:
                     pass
             raise
+    def _dealloc_warn(self, source):
+        if getattr(self, '_fd', -1) >= 0 and getattr(self, '_closefd', False):
+            import warnings
+            try:
+                warnings.warn('unclosed file %r' % source, ResourceWarning,
+                              stacklevel=2, source=source)
+            except Warning as error:
+                sys._report_unraisable(error, error.__traceback__, self, 'file')
+            except Exception:
+                pass
     @property
     def closefd(self):
         return self._closefd
@@ -923,6 +940,11 @@ class _CheckedRaw:
         return count
 
 class BufferedReader(_BufferedIOBase):
+    def _dealloc_warn(self, source):
+        try:
+            self.raw._dealloc_warn(source)
+        except Exception:
+            pass
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
         self._initialize(_pyio.BufferedReader, raw, buffer_size)

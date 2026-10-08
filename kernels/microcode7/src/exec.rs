@@ -51,6 +51,12 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
+thread_local! {
+    // What tuples holding instances were given for a hash, found by the
+    // tuple's own spot and checked against a weak hold on it.
+    static ROW_HASHES: RefCell<HashMap<usize, (Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
+}
+
 use num_traits::{One, ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
@@ -209,6 +215,8 @@ enum Owed {
     /// return met it in the nesting order, or an unwinding comes by
     /// with what was raised.
     Leave(Address, bool),
+    /// Await an exit before restoring its body's result or fault.
+    ExitAwait(Box<Result<Value, Escape>>, usize, usize),
     /// Nothing more is owed: the body is over.
     Stop,
 }
@@ -232,6 +240,11 @@ enum Stepped {
 
 pub struct Suspension {
     pub(crate) titles: [String; 2],
+    pub(crate) coroutine_address: usize,
+    pub(crate) creation_trace: Value,
+    pub(crate) hooks_initialized: bool,
+    pub(crate) agen_notified: bool,
+    pub(crate) agen_finalize: Value,
     trace_state: Option<Rc<Thing>>,
     resume_extent: Option<(u32, u32, u32, u32)>,
     frame: Rc<Env>,
@@ -239,6 +252,9 @@ pub struct Suspension {
     found: Vec<Value>,
     begun: bool,
     ended: bool,
+    /// Whether the body stands on the stack right now, so that entering
+    /// it again is refused the way the reference refuses it.
+    pub(crate) running: bool,
     receiving: bool,
     result: Value,
     inner: Option<Value>,
@@ -275,13 +291,15 @@ impl Suspension {
     /// Whether the body sleeps inside a try, so that shutting it is the
     /// finalisation the language asks for when it is let go.
     pub(crate) fn asleep(&self) -> bool {
-        self.begun && !self.ended && self.of.is_some()
+        (self.begun || self.of.as_ref().is_some_and(|body| body.flags & 128 != 0)) && !self.ended && self.of.is_some()
     }
 
     /// Every knot the sleeping body holds: its frame first.
     pub(crate) fn reaches(&self, out: &mut Vec<crate::ghost::Knot>) {
         use crate::ghost::Knot;
         out.push(Knot::Frame(self.frame.clone()));
+        out.push(Knot::Held(self.creation_trace.clone()));
+        out.push(Knot::Held(self.agen_finalize.clone()));
         if let Some(body) = &self.of { out.push(Knot::Held(Value::Routine(body.clone()))); }
         if let Some(thing) = &self.trace_state { out.push(Knot::Held(Value::Thing(thing.clone()))); }
         for v in &self.found { out.push(Knot::Held(v.clone())); }
@@ -326,7 +344,7 @@ impl Suspension {
                         if let Some(otherwise) = &plan.otherwise { crate::ghost::form_holds(otherwise, out); }
                     }
                 }
-                Owed::Restore(outcome, _) => match &**outcome {
+                Owed::Restore(outcome, _) | Owed::ExitAwait(outcome, _, _) => match &**outcome {
                     Ok(v) | Err(Escape::Thrown(v)) | Err(Escape::Yield(v)) => out.push(Knot::Held(v.clone())),
                     Err(_) => {}
                 },
@@ -342,6 +360,8 @@ impl Suspension {
         self.ended = true;
         self.owed.clear();
         let mut taken: Vec<Value> = self.found.drain(..).collect();
+        taken.push(std::mem::replace(&mut self.creation_trace, Value::Nil));
+        taken.push(std::mem::replace(&mut self.agen_finalize, Value::Nil));
         taken.push(std::mem::replace(&mut self.result, Value::Nil));
         taken.extend(self.inner.take());
         if let Some(members) = self.members.take() { taken.extend(members); }
@@ -354,8 +374,8 @@ impl Suspension {
     }
 
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
-        Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, resume_extent: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
-            begun: false, ended: false, receiving: false, result: Value::Nil,
+        Self { titles: [program.ident.clone(), program.qualification.clone()], coroutine_address: 0, creation_trace: Value::Nil, hooks_initialized: false, agen_notified: false, agen_finalize: Value::Nil, trace_state: None, resume_extent: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
+            begun: false, ended: false, running: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, reversed_walk: None, of: Some(program.clone()),
             holding: Vec::new(),
             walked: match program.flags & (128 | 512) { 512 => Some("async_generator"), 128 => Some("coroutine"), _ => None },
@@ -365,11 +385,12 @@ impl Suspension {
 
 impl Drop for Suspension {
     fn drop(&mut self) {
-        if self.asleep() && crate::ghost::bidding() {
+        let never_awaited = !self.begun && !self.ended && self.of.as_ref().is_some_and(|code| code.flags & 128 != 0);
+        if !self.agen_notified && (self.asleep() || never_awaited) && crate::ghost::bidding() {
             let again = Suspension {
-                titles: self.titles.clone(), trace_state: self.trace_state.take(), resume_extent: self.resume_extent, frame: self.frame.clone(),
+                titles: self.titles.clone(), coroutine_address: self.coroutine_address, creation_trace: self.creation_trace.clone(), hooks_initialized: self.hooks_initialized, agen_notified: self.agen_notified, agen_finalize: self.agen_finalize.clone(), trace_state: self.trace_state.take(), resume_extent: self.resume_extent, frame: self.frame.clone(),
                 owed: std::mem::take(&mut self.owed), found: std::mem::take(&mut self.found),
-                begun: true, ended: false, receiving: self.receiving,
+                begun: self.begun, ended: false, running: false, receiving: self.receiving,
                 result: std::mem::replace(&mut self.result, Value::Nil),
                 inner: self.inner.take(), members: self.members.take(), ready: self.ready.take(),
                 overseen: self.overseen.take(), reversed_walk: self.reversed_walk.take(), of: self.of.clone(),
@@ -519,8 +540,17 @@ struct ExecutionRules<'a> {
 
 pub struct Machine<'a> {
     context_storage: crate::context::Bindings,
+    warning_epoch: i64,
+    warning_lock_count: usize,
+    warning_fallback: Option<Value>,
+    warning_target: Option<Value>,
+    finding_import: std::collections::HashSet<String>,
     rules: ExecutionRules<'a>,
     active_trace: Option<Rc<Thing>>,
+    origin_limit: usize,
+    symbolic_annotation: Option<(Rc<Routine>, Option<Rc<Blueprint>>, Vec<(Weak<Thing>, String)>)>,
+    agen_callbacks: (Value, Value),
+    shutting_down: bool,
     tracing_function: Value,
     tracing_busy: bool,
     omitted_trace_fault: Option<(Weak<Thing>, Weak<Thing>)>,
@@ -528,6 +558,7 @@ pub struct Machine<'a> {
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
+    coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
     code_handles: HashMap<usize, Weak<Vec<Value>>>,
@@ -549,6 +580,12 @@ pub struct Machine<'a> {
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
+    /// The file the run began from, set once the program's own world
+    /// dictionary has been written through. A name that dictionary
+    /// holds stands over a builtin of the same spelling, but only for
+    /// code written in that same file, whose globals the dictionary
+    /// is.
+    world_globals_source: Option<Rc<str>>,
     loaded_spaces: HashMap<Rc<str>, String>,
     namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
@@ -740,6 +777,10 @@ pub struct Machine<'a> {
     /// The names of the frame each call is running in, innermost last,
     /// so that text read while the run goes can be built knowing them.
     frames_named: Vec<Rc<Routine>>,
+    /// The stand-in maker an annotation routine about to run is to read by,
+    /// and which of its name reads it is for, and the frames now read so.
+    armed_names: Option<(Value, bool)>,
+    annotation_scopes: Vec<(usize, Value, bool, usize)>,
     /// The names and the frame set aside for a reading of text that
     /// stands inside a routine and was handed no dictionaries of its
     /// own. The text is read as a piece of that routine, so the
@@ -1992,6 +2033,7 @@ impl<'a> Machine<'a> {
             namespace_places: RefCell::new(None),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
+            world_globals_source: None,
             loaded_spaces: HashMap::new(),
             namespace_books: Vec::new(),
             within_spare: false,
@@ -2001,6 +2043,7 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             context_storage: crate::context::Bindings::new(),
+            warning_epoch: 0, warning_lock_count: 0, warning_fallback: None, warning_target: None, finding_import: std::collections::HashSet::new(),
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
@@ -2026,6 +2069,10 @@ impl<'a> Machine<'a> {
             class_children: RefCell::new(HashMap::new()),
             row: 0,
             active_trace: None,
+            origin_limit: 0,
+            symbolic_annotation: None,
+            agen_callbacks: (Value::Nil, Value::Nil),
+            shutting_down: false,
             tracing_function: Value::Nil,
             tracing_busy: false,
             omitted_trace_fault: None,
@@ -2033,6 +2080,7 @@ impl<'a> Machine<'a> {
             extent: None,
             activation_kind: None,
             generator_frames: HashMap::new(),
+            coroutine_bodies: HashMap::new(),
             async_generators: HashMap::new(),
             delegated_answers: std::collections::HashSet::new(),
             code_handles: HashMap::new(),
@@ -2067,6 +2115,8 @@ impl<'a> Machine<'a> {
             frames_named: Vec::new(),
             text_future_bits: std::cell::Cell::new(0),
             top_future_bits: std::cell::Cell::new(0),
+            armed_names: None,
+            annotation_scopes: Vec::new(),
             text_within: None,
             text_caller_book: None,
             hearer: RefCell::new(None),
@@ -2740,6 +2790,8 @@ impl<'a> Machine<'a> {
     /// class names for that, in the order the things were made. One made
     /// while another is being let go is let go in its own turn.
     pub fn let_things_go(&mut self) {
+        self.shutting_down = true;
+        self.tracing_function = Value::Nil;
         self.attend_to_gone();
         if let Some(named) = self.table.strings("ext.stmt.class.destructor").first().map(String::as_str).map(str::to_string).as_deref() {
             // The words a thing says as it goes: the destructor the
@@ -2851,16 +2903,71 @@ impl<'a> Machine<'a> {
             }
             for walk in walks {
                 if let Err(away) = self.shut_departed_generator(&walk) {
-                    self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
+                    let reason = if walk.borrow().coroutine_address == 0 { "generator" } else { "coroutine" };
+                    self.report_unraisable(away, &Value::Generator(walk.clone()), reason);
                 }
             }
         }
+    }
+
+    fn warn_unstarted(&mut self, walk: &Rc<RefCell<Suspension>>) -> Res<Value> {
+        let (body, title, creation, activation, address) = {
+            let sleeping = walk.borrow();
+            (sleeping.of.clone().expect("coroutine code remains available"), sleeping.titles[1].clone(),
+                sleeping.creation_trace.clone(), sleeping.trace_state.as_ref().map(Rc::downgrade), sleeping.coroutine_address)
+        };
+        self.coroutine_bodies.insert(Rc::as_ptr(walk) as usize, (Rc::downgrade(walk), body.clone(), activation, creation, address));
+        let config = self.table.strings("ext.stmt.async.coroutine.warning").to_vec();
+        let [module, method, kind, prefix, suffix, hook] = config.as_slice() else { return Ok(Value::Nil) };
+        let namespace = self.load_namespace(module)?;
+        let subject = Value::Generator(walk.clone());
+        let outcome = self.read_class_member(namespace.clone(), hook, false);
+        if let Ok(callback) = outcome {
+            match self.apply_class_member(callback, vec![subject.clone()]) {
+                Ok(_) => return Ok(Value::Nil),
+                Err(escape) => {
+                    if matches!(&escape, Escape::Thrown(Value::Thing(error)) if error.blueprint().name == *kind) { return Err(escape); }
+                    self.report_unraisable(escape, &subject, "coroutine");
+                    self.got_away.take();
+                }
+            }
+        } else if let Err(escape) = outcome {
+            let absent = matches!(&escape, Escape::Error(words) if words.starts_with("AttributeError:"))
+                || matches!(&escape, Escape::Thrown(Value::Thing(error)) if self.stands_under(&error.blueprint(), 12));
+            if !absent { self.report_unraisable(escape, &subject, "coroutine"); }
+            self.got_away.take();
+        }
+        let reporter = self.namespace_item(&namespace, module, method)?;
+        if let Some(category) = self.fault_kinds.get(kind).cloned() {
+            let file = body.written_in.as_deref().unwrap_or(&self.written_in);
+            self.apply_class_member(reporter, vec![Value::text(&format!("{prefix}{title}{suffix}")), category,
+                Value::text(file), Value::Small(body.declared_on as i64)])?;
+        }
+        Ok(Value::Nil)
     }
 
     /// The globals that made a discarded Python generator remain in
     /// force while it is shut, including one made by an exec namespace
     /// that is being collected in this round.
     fn shut_departed_generator(&mut self, walk: &Rc<RefCell<Suspension>>) -> Res<Value> {
+        let callback = {
+            let mut state = walk.borrow_mut();
+            if state.agen_notified { return Ok(Value::Nil); }
+            let callback = if !state.ended && state.of.as_ref().is_some_and(|body| body.flags & 512 != 0) { state.agen_finalize.clone() } else { Value::Nil };
+            state.agen_notified = !matches!(callback, Value::Nil);
+            callback
+        };
+        if !matches!(callback, Value::Nil) {
+            self.async_generators.insert(Rc::as_ptr(walk) as usize, (Rc::downgrade(walk), Rc::new(RefCell::new(None)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false))));
+            return self.apply_class_member(callback, vec![Value::Generator(walk.clone())]);
+        }
+        let unstarted = walk.borrow().of.clone().filter(|code| code.flags & 128 != 0)
+            .filter(|_| { let state = walk.borrow(); !state.begun && !state.ended });
+        if unstarted.is_some() {
+            let warning = self.warn_unstarted(walk);
+            self.end_generator(walk)?;
+            return warning;
+        }
         let book = if self.rules.trace_words.first().map(String::as_str).is_none() { None } else {
             walk.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| {
                 Self::explicit_globals(body)
@@ -2954,7 +3061,8 @@ impl<'a> Machine<'a> {
                 }
                 Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |state| state.asleep()) => {
                     if let Err(away) = self.shut_departed_generator(walk) {
-                        self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
+                        let reason = if walk.borrow().coroutine_address == 0 { "generator" } else { "coroutine" };
+                    self.report_unraisable(away, &Value::Generator(walk.clone()), reason);
                     }
                 }
                 _ => {}
@@ -3551,7 +3659,7 @@ impl<'a> Machine<'a> {
             (named, under)
         });
         let caller_future = self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits);
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[], caller_future) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[], caller_future, 0) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -3816,8 +3924,24 @@ impl<'a> Machine<'a> {
             key.starts_with("\0import/") && key.rsplit('/').next() == Some(slot.ident.as_ref())
         });
         let f = if imported_global { self.outermost.clone() } else { ascend(frame, slot.up).clone() };
+        // For the second format every name of the globals the annotation
+        // reads is a stand-in, whatever it is bound to.
+        if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
+            if let Some((names, true)) = self.annotation_scope(frame) {
+                let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
+                if copied {
+                    if let Some(value) = self.world_book.as_ref().and_then(|book| looked_up(book, &slot.ident)) { return Ok(value); }
+                }
+                return self.unresolved_annotation_name(&names, &slot.ident);
+            }
+        }
         if Rc::ptr_eq(&f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+                if let Err(message) = &found {
+                    if message.starts_with("Undefined variable:") {
+                        if let Some((names, _)) = self.annotation_scope(frame) { return self.unresolved_annotation_name(&names, &slot.ident); }
+                    }
+                }
                 return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
             }
         }
@@ -3827,6 +3951,23 @@ impl<'a> Machine<'a> {
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
+        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
+            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+            if let Some((names, all)) = self.annotation_scope(frame) {
+                let content = v.settled();
+                if all || matches!(content, Value::Unset) {
+                    let symbolic = self.unresolved_annotation_name(&names, &slot.ident)?;
+                    let cell = match &v {
+                        Value::Shared(binding) => Value::Wrapped(35, Rc::new(vec![Value::Shared(binding.clone())]).into()),
+                        _ => Value::Wrapped(35, Rc::new(vec![Value::Bound(self.frames_named.last().unwrap().clone(), f.clone()), Value::Small(slot.at as i64), Value::Flag(true)]).into()),
+                    };
+                    self.alter_class_member(symbolic.clone(), "__cell__", Some(cell), true).map_err(|escape| {
+                        self.got_away = Some(escape); String::new()
+                    })?;
+                    return Ok(symbolic);
+                }
+            }
+        }
         if f.capture_slots.borrow().contains(&slot.at) {
             let Value::Shared(cell) = &v else { unreachable!() };
             let captured = cell.borrow().clone();
@@ -3841,6 +3982,7 @@ impl<'a> Machine<'a> {
             v = held;
         }
         if matches!(v, Value::Unset) && self.rules.closes_over && !Rc::ptr_eq(&f, &self.outermost) {
+            if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
             let label = if slot.up == 0 { "ext.stmt.function.local.unbound" } else { "ext.stmt.function.free.unbound" };
             return Err(self.argument_fault(label, Some(&slot.ident)));
         }
@@ -3870,7 +4012,25 @@ impl<'a> Machine<'a> {
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
         if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
+        if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
         Err(format!("Undefined variable: {}", slot.ident))
+    }
+
+    /// The maker of stand-ins the annotation read in this frame is by, and
+    /// whether every name of the globals is to be one.
+    fn annotation_scope(&self, frame: &Rc<Env>) -> Option<(Value, bool)> {
+        self.annotation_scopes.last().filter(|(at, _, _, _)| *at == Rc::as_ptr(frame) as usize).map(|(_, names, all, _)| (names.clone(), *all))
+    }
+    /// The stand-in the maker gives for a name.
+    fn unresolved_annotation_name(&mut self, names: &Value, name: &str) -> Result<Value, String> {
+        let outcome = match self.read_class_member(names.clone(), "__missing__", false) {
+            Ok(maker) => self.apply_class_member(maker, vec![Value::text(name)]),
+            Err(escape) => Err(escape),
+        };
+        outcome.map_err(|escape| match escape {
+            Escape::Error(message) => message,
+            carried => { self.got_away = Some(carried); String::new() }
+        })
     }
 
     /// A language may keep a namespace whose members answer for the
@@ -3910,6 +4070,15 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        // A copied annotation namespace owns its global writes.
+        if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
+            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
+            if let Some(book) = self.world_book.clone() {
+                let content = self.collection_cell(value);
+                set_down(&book, &slot.ident, Some(content));
+                return Ok(());
+            }
+        }
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
@@ -4102,6 +4271,7 @@ impl<'a> Machine<'a> {
         if let (true, Some(walk)) = (self.rules.suspends, self.live_walk(&source)) {
             return Ok(Self::cursor_value(walk));
         }
+        if self.is_async_generator(&source) || self.native_coroutine(&source) { return Err(self.core_complaint("core.uniterable", &source.kind_word()).into()); }
         if let Value::Generator(_) = source { return Ok(source); }
         if self.table.flag("ext.op.arithmetic.python_numbers") {
             let naked = source.settled();
@@ -4116,8 +4286,15 @@ impl<'a> Machine<'a> {
     /// they stand rather than gathered, since such a walk may have no
     /// end at all and a suspension asks it for one member at a time.
     fn delegated_walk(&mut self, source: Value) -> Res {
-        if matches!(source, Value::Thing(_) | Value::Iterator(_) | Value::Cursor(_)) { return Ok(self.iterated_value(&source)?); }
-        self.make_iterator(source)
+        let walk = if matches!(source, Value::Thing(_) | Value::Iterator(_) | Value::Cursor(_)) { self.iterated_value(&source)? } else { self.make_iterator(source)? };
+        // A walk of the program's own answers send, throw and close by
+        // name, and the value its ending was made with is the value this
+        // delegation stands for, so it is kept in a wrapper that knows
+        // how to ask it for those things.
+        if let Some(thing) = Self::walked_thing(&walk) {
+            return Ok(Value::Wrapped(63, Rc::new(vec![thing, Value::Shared(Rc::new(RefCell::new(Value::Nil))), Value::Shared(Rc::new(RefCell::new(Value::Flag(false))))]).into()));
+        }
+        Ok(walk)
     }
 
     /// A step of the walk a suspension delegates to: another sleeping
@@ -4147,6 +4324,13 @@ impl<'a> Machine<'a> {
                     *returned.borrow_mut() = self.read_class_member(fault, "value", false)?;
                     *done.borrow_mut() = Value::Flag(true); Ok(None)
                 }
+                // Exhausted native slots have no exception instance or return payload.
+                Err(Escape::Error(message)) if self.rules.words_ext_stmt_class_special_stop.iter().any(|stop| {
+                    message.strip_prefix(stop).is_some_and(|tail| tail.is_empty() || tail.starts_with(':'))
+                }) => {
+                    done.replace(Value::Flag(true));
+                    Ok(None)
+                }
                 Err(away) => Err(away),
             };
         }
@@ -4164,6 +4348,13 @@ impl<'a> Machine<'a> {
                 }
             }
             return Ok(next);
+        }
+        // Only a suspended body and the wrapper above know a word for
+        // being sent into; every other walk refuses the send here, where
+        // the reference would look one up and not find it.
+        if !matches!(sent, Value::Nil) {
+            let words = format!("AttributeError: '{}' object has no attribute 'send'", walk.kind_word());
+            return Err(self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words)));
         }
         match self.next_value(walk) {
             Ok(item) => Ok(item),
@@ -4278,11 +4469,12 @@ impl<'a> Machine<'a> {
         } else { (members, None) };
         Value::Generator(Rc::new(RefCell::new(Suspension {
             titles: [String::new(), String::new()],
+            coroutine_address: 0, creation_trace: Value::Nil, hooks_initialized: false, agen_notified: false, agen_finalize: Value::Nil,
             trace_state: None,
             resume_extent: None,
             holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
-            begun: false, ended: false, receiving: false, result: Value::Nil,
+            begun: false, ended: false, running: false, receiving: false, result: Value::Nil,
             inner: None, members: Some(members.into_iter()), ready: None, overseen, reversed_walk: None, of: None,
             walked,
             stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
@@ -4560,6 +4752,8 @@ impl<'a> Machine<'a> {
             Ok(Some(_)) => {
                 let message = if self.is_async_generator(&Value::Generator(generator.clone())) {
                     self.table.strings("ext.stmt.async.generator.close.ignored").first().map(String::as_str).unwrap_or_default().to_owned()
+                } else if self.native_coroutine(&Value::Generator(generator.clone())) {
+                    self.table.strings("ext.stmt.async.coroutine.errors")[3].clone()
                 } else { self.generator_words("close.ignored") };
                 let failure = match self.as_raised(&message) {
                     Some(value) => Escape::Thrown(value),
@@ -4580,6 +4774,20 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn coroutine_delegate_throw(&mut self, owner: &Rc<RefCell<Suspension>>, callable: Value, parameters: Vec<Value>) -> Res {
+        if self.native_coroutine(&Value::Generator(owner.clone())) {
+            let sleeping = owner.try_borrow_mut().map_err(|_| self.table.strings("ext.stmt.async.coroutine.errors")[2].clone())?;
+            let frame = sleeping.trace_state.as_ref();
+            let outer = self.active_trace.take();
+            self.active_trace = frame.cloned();
+            if let Some(current) = frame { current.holds.borrow_mut()[2].1 = outer.as_ref().map_or(Value::Nil, |item| Value::Thing(item.clone())); }
+            let result = self.apply_class_member(callable, parameters);
+            if let Some(current) = frame { current.holds.borrow_mut()[2].1 = Value::Nil; }
+            self.active_trace = outer;
+            result
+        } else { self.apply_class_member(callable, parameters) }
+    }
+
     fn resume(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value) -> Res<Option<Value>> {
         self.step_into(generator, sent, None, &[])
     }
@@ -4588,7 +4796,21 @@ impl<'a> Machine<'a> {
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
     fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
-        self.step_into_mode(generator, sent, hurled, given, true)
+        // A body on the stack may not be entered again: it is marked for
+        // as long as the step lasts, so a reentrant call is refused, and
+        // the reference's reading of the running member is answered too.
+        let complaint = match self.coroutine_bodies.get(&(Rc::as_ptr(generator) as usize)) {
+            Some(_) => self.table.strings("ext.stmt.async.coroutine.errors")[2].clone(),
+            None => self.generator_words("busy"),
+        };
+        {
+            let mut state = generator.try_borrow_mut().map_err(|_| complaint.clone())?;
+            if state.running { return Err(complaint.into()); }
+            state.running = true;
+        }
+        let outcome = self.step_into_mode(generator, sent, hurled, given, true);
+        if let Ok(mut state) = generator.try_borrow_mut() { state.running = false; }
+        outcome
     }
 
     // Initial async throw/close lets a delegate handle GeneratorExit through
@@ -4611,6 +4833,9 @@ impl<'a> Machine<'a> {
             body.ended && body.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) {
             let words = "RuntimeError: cannot reuse already awaited coroutine".to_owned();
             return Err(self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words)));
+        }
+        if generator.try_borrow().is_err() && self.native_coroutine(&Value::Generator(generator.clone())) {
+            return Err(self.table.strings("ext.stmt.async.coroutine.errors")[2].clone().into());
         }
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
@@ -4654,8 +4879,15 @@ impl<'a> Machine<'a> {
                                 generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
                             }
                             Err(away) => return Err(away),
-                            Ok(member) => match self.apply_class_member(member, if given.is_empty() { vec![value] } else { given.to_vec() })
-                                .map_err(|fault| self.delegated_fault(fault)) {
+                            Ok(member) => {
+                                // The method is called with the sleeping
+                                // body's frame behind it, so the reference's
+                                // stack has the delegating generator in it.
+                                let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
+                                let saved = std::mem::replace(&mut self.active_trace, parent);
+                                let applied = self.coroutine_delegate_throw(generator, member, if given.is_empty() { vec![value] } else { given.to_vec() });
+                                self.active_trace = saved;
+                                match applied.map_err(|fault| self.delegated_fault(fault)) {
                                 Ok(item) => {
                                     if self.async_generators.contains_key(&(Rc::as_ptr(generator) as usize)) {
                                         self.delegated_answers.insert(Rc::as_ptr(generator) as usize);
@@ -4669,6 +4901,7 @@ impl<'a> Machine<'a> {
                                 }
                                 Err(Escape::Thrown(fault)) => { generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None; hurled = Some(fault); }
                                 Err(away) => return Err(away),
+                                }
                             }
                         }
                     }
@@ -4676,22 +4909,38 @@ impl<'a> Machine<'a> {
                 Some(Value::Generator(inner)) => {
                     let python = !self.rules.words_ext_stmt_async_generator_methods.is_empty();
                     let closing = python && close_on_exit && self.is_exit(&value);
+                    let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
+                    let coroutine = self.native_coroutine(&Value::Generator(generator.clone()));
                     let saved = if closing { None } else {
-                        let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
-                        Some(std::mem::replace(&mut self.active_trace, parent))
+                        let prior = std::mem::replace(&mut self.active_trace, parent.clone());
+                        if coroutine { if let Some(frame) = &parent { frame.holds.borrow_mut()[2].1 = prior.as_ref().map_or(Value::Nil, |outer| Value::Thing(outer.clone())); } }
+                        Some(prior)
                     };
+                    let running = coroutine.then(|| generator.try_borrow_mut()).transpose().map_err(|_| self.table.strings("ext.stmt.async.coroutine.errors")[2].clone())?;
                     let stepped = if closing {
                         self.shut_generator(&inner).map(|_| None)
                     } else {
                         self.step_into_mode(&inner, Value::Nil, Some(value), given, close_on_exit)
                     };
                     let stepped = if python { stepped.map_err(|fault| self.delegated_fault(fault)) } else { stepped };
-                    if let Some(previous) = saved { self.active_trace = previous; }
+                    if let Some(previous) = saved {
+                        if coroutine { if let Some(frame) = parent { frame.holds.borrow_mut()[2].1 = Value::Nil; } }
+                        self.active_trace = previous;
+                    }
+                    drop(running);
                     let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
                         Ok(None) if closing => { state.inner = None; }
-                        Ok(None) => { hurled = None; }
+                        Ok(None) => {
+                            // The body's own walk ended under the throw, so
+                            // what it gave back is what the delegation comes
+                            // to; it is kept in a wrapper, since stepping the
+                            // closed body again would clear it.
+                            let returned = inner.try_borrow().map(|held| held.result.clone()).unwrap_or(Value::Nil);
+                            state.inner = Some(Value::Wrapped(63, Rc::new(vec![Value::Generator(inner.clone()), Value::Shared(Rc::new(RefCell::new(returned))), Value::Shared(Rc::new(RefCell::new(Value::Flag(true))))]).into()));
+                            hurled = None;
+                        }
                         Err(Escape::Thrown(raised)) => { state.inner = None; hurled = Some(raised); }
                         Err(other) => { state.inner = None; return Err(other); }
                     }
@@ -4786,7 +5035,12 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if !state.begun && !matches!(sent, Value::Nil) { return Err(self.generator_words("unstarted").into()); }
+        if !state.begun && !matches!(sent, Value::Nil) {
+            let words = if state.of.as_ref().is_some_and(|code| code.flags & 128 != 0) && !self.table.strings("ext.stmt.async.coroutine.errors").is_empty() {
+                self.table.strings("ext.stmt.async.coroutine.errors")[1].clone()
+            } else { self.generator_words("unstarted") };
+            return Err(words.into());
+        }
         state.begun = true;
         if state.ready.is_some() { return Ok(state.ready.take()); }
         // A walk taken backwards over a map reads its places afresh each
@@ -4912,7 +5166,11 @@ impl<'a> Machine<'a> {
                 && !self.table.strings("ext.stmt.async.generator.escaped").is_empty()
                 && (self.is_stop_kind(&t.blueprint()) || self.table.strings("ext.stmt.async.stop").iter().any(|name| matches!(self.fault_kinds.get(name), Some(Value::Blueprint(kind)) if Self::fault_descends(&t.blueprint(), kind)))) => {
                 let index = usize::from(!self.is_stop_kind(&t.blueprint()));
-                Err(self.stop_got_out_words(Value::Thing(t), self.table.strings("ext.stmt.async.generator.escaped")[index].clone()))
+                Err(self.fault_with_cause(Value::Thing(t), self.table.strings("ext.stmt.async.generator.escaped")[index].clone()))
+            }
+            Err(Escape::Thrown(Value::Thing(t))) if named.as_ref().is_some_and(|code| code.flags & 128 != 0)
+                && !self.table.strings("ext.stmt.async.coroutine.errors").is_empty() && self.is_stop_kind(&t.blueprint()) => {
+                Err(self.fault_with_cause(Value::Thing(t), self.table.strings("ext.stmt.async.coroutine.errors")[0].clone()))
             }
             Err(Escape::Thrown(Value::Thing(t))) if self.rules.has_any_ext_stmt_yield_escaped && self.is_stop_kind(&t.blueprint()) => Err(self.stop_got_out(Value::Thing(t))),
             Err(Escape::Error(said)) if self.rules.has_any_ext_stmt_yield_escaped && self.table.strings("ext.builtin.core.exhausted").first().map(String::as_str) == Some(said.as_str()) => { let original = self.as_raised(&said).unwrap_or(Value::Nil); Err(self.stop_got_out(original)) },
@@ -4920,6 +5178,13 @@ impl<'a> Machine<'a> {
         };
         if outcome.is_err() || matches!(outcome, Ok(None)) {
             state.ended = true;
+            if named.as_ref().is_some_and(|body| body.flags & 128 != 0) {
+                let mut slots = state.frame.cells.borrow_mut();
+                for (label, slot) in named.as_ref().unwrap().idents.iter().zip(slots.iter_mut()) {
+                    if !Self::visible_name(label) { *slot = Value::Unset; }
+                }
+            }
+            state.inner = None;
             // A finished generator no longer owns its activation. A
             // frame retained by the program still owns the old environment.
             state.trace_state = None;
@@ -4940,10 +5205,10 @@ impl<'a> Machine<'a> {
 
     /// The fault a generator raises when its body raised the stop kind.
     fn stop_got_out(&mut self, original: Value) -> Escape {
-        self.stop_got_out_words(original, self.generator_words("escaped"))
+        self.fault_with_cause(original, self.generator_words("escaped"))
     }
 
-    fn stop_got_out_words(&mut self, original: Value, said: String) -> Escape {
+    fn fault_with_cause(&mut self, original: Value, said: String) -> Escape {
         match self.as_raised(&said) {
             Some(value) => {
                 if let Value::Thing(thing) = &value {
@@ -5075,10 +5340,10 @@ impl<'a> Machine<'a> {
                         // A try with no suspension anywhere inside it, and
                         // a gathered clause, are left to the plain
                         // reckoning; the rest is taken on piece by piece.
-                        let plain = clauses.iter().any(|clause| clause.grouped)
+                        let plain = !async_context && (clauses.iter().any(|clause| clause.grouped)
                             || !(suspension_within(&body) || clauses.iter().any(|clause| suspension_within(&clause.body))
                                 || last.as_deref().map_or(false, suspension_within)
-                                || otherwise.as_deref().map_or(false, suspension_within));
+                                || otherwise.as_deref().map_or(false, suspension_within)));
                         if plain {
                             let whole = Form::Attempt { context, async_context, body, clauses, last, otherwise };
                             state.found.push(self.value_of(&whole, &frame)?);
@@ -5188,16 +5453,24 @@ impl<'a> Machine<'a> {
                 Owed::From => {
                     if state.inner.is_none() {
                         let source = state.found.pop().unwrap_or(Value::Nil);
-                        state.inner = Some(self.delegated_walk(source)?);
+                        let delegate = if self.native_coroutine(&source) {
+                            if state.of.as_ref().map_or(true, |code| code.flags & 256 == 0) {
+                                return Err(String::from("TypeError: cannot 'yield from' a coroutine object in a non-coroutine generator").into());
+                            }
+                            source
+                        } else { self.delegated_walk(source)? };
+                        state.inner = Some(delegate);
                         *sent = Value::Nil;
                     }
                     let inner = state.inner.clone().expect("the delegated walk");
-                    if let Some(item) = self.delegated_step(&inner, std::mem::replace(sent, Value::Nil))? {
-                        state.owed.push(Owed::From);
-                        return Ok(Stepped::Handed(item));
+                    match self.delegated_step(&inner, std::mem::replace(sent, Value::Nil)) {
+                        Ok(Some(item)) => { state.owed.push(Owed::From); return Ok(Stepped::Handed(item)); }
+                        Ok(None) => { state.found.push(Self::delegated_result(&inner)); state.inner = None; }
+                        // A delegation the body will not go on with is let
+                        // go of, so a later throw is not handed to a walk
+                        // this step has already left.
+                        Err(away) => { state.inner = None; return Err(away); }
                     }
-                    state.found.push(Self::delegated_result(&inner));
-                    state.inner = None;
                 }
                 Owed::WalkNext(walk) => {
                     let Value::Traversal(source, present) = &walk else { return Err(self.bad_answer().into()) };
@@ -5272,15 +5545,23 @@ impl<'a> Machine<'a> {
                 Owed::Leave(address, async_context) => {
                     // A return is on its way out with nothing raised:
                     // the manager hears only that the body is done.
-                    self.leaving(&state.frame.clone(), &address, None, async_context)?;
-                    state.found.push(Value::Nil);
+                    if async_context {
+                        let floor = state.found.len();
+                        self.queue_async_exit(state, &address, Ok(Value::Nil), floor)?;
+                    } else {
+                        self.leaving(&state.frame.clone(), &address, None, false)?;
+                        state.found.push(Value::Nil);
+                    }
                 }
                 Owed::Stop => return Ok(Stepped::Over),
                 Owed::Warding(plan, floor, held) => {
                     // Nothing was raised: a manager is told the body is
                     // done with, and an else part runs in the body's place.
                     if let Some(address) = &plan.context {
-                        self.leaving(&frame, address, None, plan.async_context)?;
+                        if plan.async_context {
+                            let value = state.found.pop().unwrap_or(Value::Nil);
+                            self.queue_async_exit(state, address, Ok(value), floor)?;
+                        } else { self.leaving(&frame, address, None, false)?; }
                     } else if let Some(otherwise) = plan.otherwise.clone() {
                         state.owed.push(Owed::Find(otherwise));
                         state.owed.push(Owed::Drop);
@@ -5296,6 +5577,27 @@ impl<'a> Machine<'a> {
                             state.owed.push(Owed::Find(last));
                         }
                         None => { state.found.truncate(floor); state.found.push(value); }
+                    }
+                }
+                Owed::ExitAwait(left, floor, held) => {
+                    let inner = state.inner.clone().expect("the exit awaitable");
+                    let step = self.delegated_step(&inner, std::mem::replace(sent, Value::Nil));
+                    let step = match step {
+                        Ok(item) => item,
+                        Err(raised) => { state.inner = None; self.holding_fault.truncate(self.holding_below + held); return Err(raised); }
+                    };
+                    if let Some(token) = step {
+                        state.owed.push(Owed::ExitAwait(left, floor, held));
+                        return Ok(Stepped::Handed(token));
+                    }
+                    state.inner = None;
+                    let answer = Self::delegated_result(&inner);
+                    self.holding_fault.truncate(self.holding_below + held);
+                    state.found.truncate(floor);
+                    match *left {
+                        Ok(result) => state.found.push(result),
+                        Err(Escape::Thrown(_)) if self.object_truth(&answer)? => state.found.push(Value::Nil),
+                        Err(away) => return Err(away),
                     }
                 }
                 Owed::Restore(left, floor) => {
@@ -5330,6 +5632,10 @@ impl<'a> Machine<'a> {
                 });
             };
             match owed {
+                Owed::ExitAwait(_, _, held) => {
+                    state.inner = None;
+                    self.holding_fault.truncate(self.holding_below + held);
+                }
                 Owed::Turn(cycle, floor) if matches!(escape, Escape::Leave(_) | Escape::Resume(_)) => {
                     state.found.truncate(floor);
                     if matches!(escape, Escape::Resume(_)) { state.owed.push(Owed::Turn(cycle, floor)); }
@@ -5361,6 +5667,13 @@ impl<'a> Machine<'a> {
                     };
                     let Escape::Thrown(raised) = &escape else { continue };
                     let raised = raised.clone();
+                    if async_context {
+                        let floor = state.found.len();
+                        match self.queue_async_exit(state, &address, Err(escape), floor) {
+                            Ok(()) => return Ok(()),
+                            Err(next) => { escape = next; continue; }
+                        }
+                    }
                     match self.leaving(&frame, &address, Some(&raised), async_context) {
                         Ok(true) => { state.found.push(Value::Nil); return Ok(()); }
                         Ok(false) => continue,
@@ -5380,6 +5693,14 @@ impl<'a> Machine<'a> {
                         },
                         other => other,
                     };
+                    if plan.async_context {
+                        if let Some(address) = &plan.context {
+                            match self.queue_async_exit(state, address, Err(escape), floor) {
+                                Ok(()) => return Ok(()),
+                                Err(next) => { escape = next; continue; }
+                            }
+                        }
+                    }
                     let Escape::Thrown(raised) = &escape else { continue };
                     let raised = raised.clone();
                     self.save_traceback(&raised, false);
@@ -5409,6 +5730,33 @@ impl<'a> Machine<'a> {
                 _ => continue,
             }
         }
+    }
+
+    fn context_iterator(&mut self, value: Value, method: &str) -> Res<Value> {
+        let kind = value.kind_word();
+        self.awaited_walk(value).map_err(|away| {
+            if let Escape::Thrown(raised) = away { self.enter_fault_handler(raised); }
+            let words = self.table.strings("ext.stmt.async.coroutine.errors");
+            Escape::Error(format!("{}{}{}{}", words[8], method, words[9], kind))
+        })
+    }
+
+    fn queue_async_exit(&mut self, state: &mut Suspension, address: &Address, outcome: Result<Value, Escape>, floor: usize) -> Res<()> {
+        let method = self.fetch(address, &state.frame.clone())?;
+        let held = self.holding_fault.len().saturating_sub(self.holding_below);
+        let arguments = match &outcome {
+            Err(Escape::Thrown(value @ Value::Thing(instance))) => {
+                self.enter_fault_handler(value.clone());
+                vec![Value::Blueprint(instance.blueprint().clone()), value.clone(), self.traceback_of(value)]
+            }
+            _ => vec![Value::Nil; 3],
+        };
+        let called = self.apply_class_member(method, arguments);
+        let called = self.raised_if_error(called)?;
+        state.inner = Some(self.context_iterator(called, "__aexit__")?);
+        state.found.truncate(floor);
+        state.owed.push(Owed::ExitAwait(Box::new(outcome), floor, held));
+        Ok(())
     }
 
     /// The watched place holds the manager, whose leaving word is asked,
@@ -5666,7 +6014,7 @@ impl<'a> Machine<'a> {
         if self.activation_kind.is_none() {
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
                 parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
+                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(vec![(self.detail("module").to_string(), Value::text("builtins"))]), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;
@@ -5735,7 +6083,7 @@ impl<'a> Machine<'a> {
         match value {
             Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24) => {
                 if index == 25 && cell.try_borrow().is_err() { return Some(Value::text("GEN_RUNNING")); }
-                if index == 23 { return Some(Value::Flag(cell.try_borrow().is_err())); }
+                if index == 23 { return Some(Value::Flag(cell.try_borrow().map_or(true, |state| state.running))); }
                 if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
                 let state = cell.try_borrow().ok()?;
                 if index == 24 { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
@@ -6430,6 +6778,13 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
+                    && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
+                    if let Some(book) = &self.world_book {
+                        set_down(book, &slot.ident, None);
+                        return Ok(Value::Nil);
+                    }
+                }
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
@@ -7104,7 +7459,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if self.has_wildcard_imports()
+            Form::Apply(Callee::Prim(op, name), args) if (self.has_wildcard_imports() || self.world_shadow_applies())
                 && self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
@@ -7145,12 +7500,12 @@ impl<'a> Machine<'a> {
                 },
                 Prim::AsyncGathered => {
                     let value = self.value_of(&args[0], frame)?;
-                    Ok(Value::Wrapped(245, Rc::new(vec![value]).into()))
+                    Ok(value)
                 }
                 Prim::AsyncWalked => {
                     let held = self.value_of(&args[0], frame)?.settled();
-                    let unwrapped = if let Value::Wrapped(245, inner) = held { inner[0].clone() } else { held };
-                    self.walking(&Prim::Walked, name, &[unwrapped])
+                    let asynchronous = self.async_walk(&[held])?;
+                    self.walking(&Prim::Walked, name, &[asynchronous])
                 }
                 Prim::IteratorInput | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                     let v = self.value_list(args, frame)?;
@@ -7358,6 +7713,10 @@ impl<'a> Machine<'a> {
                     let subject = match subject.settled() { held @ (Value::Thing(_) | Value::Blueprint(_)) => held, _ => subject };
                     let called = values.remove(0).bare();
                     if let Value::Generator(generator) = subject {
+                        if self.native_coroutine(&Value::Generator(generator.clone())) && self.rules.words_ext_stmt_async_generator_methods.get(3).is_some_and(|method| method == &called) {
+                            if !values.is_empty() { return Err(self.method_fault("arguments").into()); }
+                            return Ok(Value::Wrapped(64, Rc::new(vec![Value::Generator(generator)]).into()));
+                        }
                         let (mut values, named) = self.open_arguments(values)?;
                         if !named.is_empty() { return Err(self.generator_words("unsupported").into()); }
                         if self.table.spells("ext.stmt.yield.close", &called) && values.is_empty() {
@@ -8591,6 +8950,10 @@ impl<'a> Machine<'a> {
             let extended = self.rules.words_ext_stmt_class_detail_root_members.get(12).is_some_and(|key| key == name);
             if ordinary || extended { return Some(usize::MAX - 2); }
         }
+        if self.native_coroutine(&value.settled()) { return None; }
+        if matches!(value.settled(), Value::Wrapped(64, _)) {
+            return self.rules.specials.iter().position(|word| word == name).filter(|slot| *slot == 15 || *slot == 16);
+        }
         let mark = Self::native_mark(value)?;
         if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(name) {
             if matches!(mark, 'e' | 'E' | 'd') { return Some(usize::MAX); }
@@ -8639,7 +9002,7 @@ impl<'a> Machine<'a> {
         if self.is_async_generator(receiver) && matches!(at, 83 | 84) {
             if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             return Ok(if at == 83 { receiver.clone() }
-                else { self.async_awaitable(receiver.clone(), 0, Value::Nil) });
+                else { self.async_awaitable(receiver.clone(), 0, Value::Nil).map_err(|fault| self.carried_native_fault(fault))? });
         }
         let original = receiver;
         let underlying = Self::underlying(original).filter(|_| !self.rules.words_ext_stmt_class_detail_native_protocols.is_empty());
@@ -8998,6 +9361,7 @@ impl<'a> Machine<'a> {
         if *op == Prim::UnicodeDecomposition {
             if let Some(home) = self.table.strings("ext.builtin.unicodedata.decomposition.metadata").get(1) { return Value::text(home); }
         }
+        if matches!(op, Prim::WarningOperation(_)) { return self.table.strings("ext.system.warnings").first().map_or(Value::Nil, |name| Value::text(name)); }
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
@@ -9014,6 +9378,11 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        match self.coroutine_attribute(&value.settled(), name) {
+            Ok(Some(answer)) => return Some(answer),
+            Err(away) => { self.got_away = Some(away); return None; }
+            _ => {},
+        }
         if name==self.detail("allocate") && matches!(value.settled(),Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
         if matches!(value, Value::Unpaired(_)) && crate::table::BUILTIN_LABELS.iter().any(|(label,operation)| *label==format!("ext.builtin.text.{name}") && matches!(operation,Prim::Textual(_))) {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
@@ -9056,10 +9425,15 @@ impl<'a> Machine<'a> {
                 return Some(if name == self.detail("order") { Value::Wrapped(0, Rc::new(vec![sequence]).into()) } else { sequence });
             }
         }
-        if let Value::Wrapped(62, _) = value {
+        if (self.native_coroutine(value) || matches!(value, Value::Wrapped(64, _)))
+            && self.rules.words_ext_stmt_class_detail_root_members.iter().skip(11).take(2).any(|word| word == name) {
+            let member = Value::Wrapped(36, Rc::new(vec![Value::text(name), Value::text(self.detail("root"))]).into());
+            return Some(Value::Wrapped(3, Rc::new(vec![member, value.clone()]).into()));
+        }
+        if matches!(value, Value::Wrapped(62 | 64, _)) {
             if ["send", "throw", "close"].contains(&name)
                 || [15, 16].iter().any(|at| self.rules.specials.get(*at).is_some_and(|word| word == name))
-                || self.rules.words_ext_stmt_async_generator_methods.get(3).is_some_and(|word| word == name) {
+                || matches!(value, Value::Wrapped(62, _)) && self.rules.words_ext_stmt_async_generator_methods.get(3).is_some_and(|word| word == name) {
                 return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
             }
         }
@@ -9167,7 +9541,7 @@ impl<'a> Machine<'a> {
                     return state.try_borrow().ok().map(|g| Value::text(&g.titles[index]));
                 }
             }
-            if !self.is_async_generator(value) && self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }
+            if !self.is_async_generator(value) && self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().map_or(true, |held| held.running))); }
         }
         let names = self.rules.specials;
         if name == self.detail("kind") && !name.is_empty() && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Text(_) | Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Complex(_) | Value::Octets { .. } | Value::Nil | Value::Set(_)) {
@@ -9841,6 +10215,13 @@ impl<'a> Machine<'a> {
                 _ => {}
             }
         }
+        // A word several kinds of value share is the method of only some
+        // of them: a plain kind that does not keep it has no such member.
+        let plain_kind = matches!(receiver.settled(), Value::Nil) || crate::members::lists_members(&receiver.settled());
+        if plain_kind && !crate::members::answers_to(&receiver.settled(), operation) {
+            let spelled = self.member_spelling(operation);
+            if self.attribute(&receiver, &spelled).is_none() { return Err(self.member_missing(&receiver, &spelled).into()); }
+        }
         Ok(Value::Member(Rc::new(receiver), operation.to_string()))
     }
 
@@ -10059,13 +10440,21 @@ impl<'a> Machine<'a> {
                     if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
                     if self.activation_on_walk(&item) { return Err(String::from("RuntimeError: cannot clear an executing frame").into()); }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&item) as usize)).and_then(Weak::upgrade) {
-                        // Only a body that has begun and not finished is
-                        // asleep mid-step, so only its frame is refused.
-                        // A walk still standing where it was made may be
-                        // emptied of what it holds.
-                        if let Ok(state) = walk.try_borrow() {
-                            if state.begun && !state.ended { return Err(String::from("RuntimeError: cannot clear a suspended frame").into()); }
-                        }
+                        // A body asleep in the middle of a step may not
+                        // be emptied: the reference refuses it. A
+                        // coroutine never started is warned about and its
+                        // frame emptied; any other walk still standing
+                        // where it was made is closed as closing it by
+                        // hand does, so stepping it again stops at once.
+                        if walk.borrow().begun && !walk.borrow().ended { return Err(String::from("RuntimeError: cannot clear a suspended frame").into()); }
+                        let needs_notice = { let suspended = walk.borrow(); !suspended.begun && suspended.of.as_ref().is_some_and(|code| code.flags & 128 != 0) };
+                        if needs_notice {
+                            if let Err(away) = self.warn_unstarted(&walk) { self.report_unraisable(away, &Value::Generator(walk.clone()), "coroutine"); }
+                            for place in walk.borrow().frame.cells.borrow_mut().iter_mut() {
+                                if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
+                                *place = Value::Unset;
+                            }
+                        } else { self.shut_generator(&walk)?; return Ok(Value::Nil); }
                     }
                     if let Value::Bound(_, environment) = &item.holds.borrow()[5].1 {
                         for place in environment.cells.borrow_mut().iter_mut() {
@@ -10104,13 +10493,13 @@ impl<'a> Machine<'a> {
             if let Some(operation) = self.rules.words_ext_stmt_async_generator_methods.iter().take(3).position(|word| word == name) {
                 let valid = if operation == 2 { arguments.is_empty() } else { arguments.len() == 1 };
                 if !valid { return Err(self.method_fault("arguments").into()); }
-                return Ok(self.async_awaitable(receiver.settled(), operation as i64 + 1,
-                    arguments.first().cloned().unwrap_or(Value::Nil)));
+                return self.async_awaitable(receiver.settled(), operation as i64 + 1,
+                    arguments.first().cloned().unwrap_or(Value::Nil));
             }
             if let Some(which) = self.rules.words_ext_stmt_async_generator_methods.iter().enumerate().skip(4)
                 .find(|(_, word)| *word == name).map(|(at, _)| at) {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                if which == 4 { return Ok(self.async_awaitable(receiver.settled(), 0, Value::Nil)); }
+                if which == 4 { return self.async_awaitable(receiver.settled(), 0, Value::Nil); }
                 return Ok(receiver.settled());
             }
         }
@@ -10143,6 +10532,21 @@ impl<'a> Machine<'a> {
                 self.drive_async(&parts, arguments.first().cloned().unwrap_or(Value::Nil))
             } else { return Err(self.bad_answer().into()); };
             return self.operation_answer(outcome);
+        }
+        if self.native_coroutine(&receiver.settled()) && self.rules.words_ext_stmt_async_generator_methods.get(3).is_some_and(|method| method == name) {
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            return Ok(Value::Wrapped(64, Rc::new(vec![receiver.settled()]).into()));
+        }
+        if let Value::Wrapped(64, body) = receiver.settled() {
+            let iterator = self.rules.specials.get(15).is_some_and(|method| method == name);
+            let step = self.rules.specials.get(16).is_some_and(|method| method == name);
+            if iterator || step {
+                if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                if iterator { return Ok(receiver.settled()); }
+                let method = self.table.strings("ext.stmt.yield.send")[0].clone();
+                return self.value_member(&body[0], &method, vec![Value::Nil], Vec::new());
+            }
+            return self.value_member(&body[0], name, arguments, keywords);
         }
         if matches!(receiver.settled(), Value::Generator(_)) &&
             ["ext.stmt.yield.throw", "ext.stmt.yield.close", "ext.stmt.yield.send"].iter().any(|label| self.table.spells(label, name)) {
@@ -10338,6 +10742,24 @@ impl<'a> Machine<'a> {
                 ("slice_hash", 0) => self.span_hashed(&receiver.settled()).map_err(Escape::from),
                 _ => Err(self.method_fault("arguments").into()),
             };
+        }
+        if let Value::Unpaired(numbers) = receiver.settled() {
+            use crate::text::Work;
+            let operation = match name { "lower" => Some(Work::LOWER), "upper" => Some(Work::UPPER), "casefold" => Some(Work::CASEFOLD), _ => None };
+            if let Some(operation) = operation {
+                if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
+                let mut result = Vec::with_capacity(numbers.len());
+                let mut start = 0;
+                while start < numbers.len() {
+                    if char::from_u32(numbers[start]).is_none() { result.push(numbers[start]); start += 1; continue; }
+                    let end = (start..numbers.len()).find(|index| char::from_u32(numbers[*index]).is_none()).unwrap_or(numbers.len());
+                    let segment: String = numbers[start..end].iter().filter_map(|number| char::from_u32(*number)).collect();
+                    let changed = crate::text::case_changed(&segment, operation);
+                    result.extend(changed.chars().map(u32::from));
+                    start = end;
+                }
+                return Ok(Value::Unpaired(result.into()));
+            }
         }
         let underlying = Self::underlying(receiver).filter(|_| !self.rules.words_ext_stmt_class_detail_native_protocols.is_empty());
         if let Some(at) = self.native_place(underlying.as_ref().unwrap_or(receiver), name) {
@@ -10706,6 +11128,12 @@ impl<'a> Machine<'a> {
             }
             let spec = self.mapping_format(spec, mapping, depth + 1)?;
             let names = self.wording();
+            // A thing of the program's own is written by its own methods,
+            // the way a field of `.format` is.
+            if let Some(laid) = crate::formatting::Elsewhere::field_laid(self, &value, &spec, conversion)? {
+                out.push_str(&laid);
+                continue;
+            }
             let shown = if conversion == "r" || conversion == "a" {
                 let mut shown = crate::text::expression(&value, names);
                 if conversion == "a" {
@@ -11576,7 +12004,7 @@ impl<'a> Machine<'a> {
             }
         }
         if Self::is_core_primitive(op) {
-            return self.core_primitive(op, name, positional.clone(), keywords).map(Some).map_err(Escape::Error);
+            return self.core_primitive(op, name, std::mem::take(positional), keywords).map(Some).map_err(Escape::Error);
         }
         if let Prim::Textual(work) = op {
             crate::text::fit_names(table, work, positional, keywords)?;
@@ -12347,6 +12775,7 @@ impl<'a> Machine<'a> {
         state.titles[1] = self.read_class_member(callable, &self.rules.detail_qualified.to_owned(), true)?.bare();
         state.trace_state = self.activation(program, &state.frame, None);
         let walk = Rc::new(RefCell::new(state));
+        self.remember_coroutine(&walk, program);
         if !self.rules.words_ext_stmt_async_generator_methods.is_empty() && program.flags & 512 != 0 {
             self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false))));
         }
@@ -12472,11 +12901,28 @@ impl<'a> Machine<'a> {
     }
 
     fn drive_body(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        // The frame an annotation is being read in is noted, so that only
+        // its own name reads, and none of a routine it calls, may stand for
+        // stand-ins.
+        {
+            if let Some((names, all)) = self.armed_names.take() {
+                self.annotation_scopes.push((Rc::as_ptr(&frame) as usize, names, all, Rc::as_ptr(&program) as usize));
+                let read = self.drive_body_run(program, frame);
+                self.annotation_scopes.pop();
+                return read;
+            }
+        }
+        self.drive_body_run(program, frame)
+    }
+
+    fn drive_body_run(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         if program.annotation_protocol {
             let format = frame.cells.borrow()[program.formal_slots[0]].clone();
             let format = format.settled();
-            let exceeds = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
-            if exceeds.is_true() { return Err(String::from("NotImplementedError: ").into()); }
+            let exceeds = self.prim(Prim::Gt, "", &[format.clone(), Value::Small(2)])?;
+            if exceeds.is_true() {
+                return Err(String::from("NotImplementedError: ").into());
+            }
         }
 
         if program.generator && self.rules.suspends {
@@ -12485,6 +12931,7 @@ impl<'a> Machine<'a> {
             suspension.source_reading = self.reading_now;
             suspension.trace_state = self.activation(&program, &frame, None);
             let walk = Rc::new(RefCell::new(suspension));
+            self.remember_coroutine(&walk, &program);
             if !self.rules.words_ext_stmt_async_generator_methods.is_empty() && program.flags & 512 != 0 {
                 self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false))));
             }
@@ -12573,7 +13020,10 @@ impl<'a> Machine<'a> {
         let parent_extent = self.extent;
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
-        if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        if mine {
+            self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) };
+
+        }
         let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
             caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
         } else { None });
@@ -12608,6 +13058,7 @@ impl<'a> Machine<'a> {
                         let mut suspension = Suspension::body(&p, f.clone());
                         suspension.trace_state = self.activation(&p, &f, None);
                         let walk = Rc::new(RefCell::new(suspension));
+                        self.remember_coroutine(&walk, &p);
                         if !self.rules.words_ext_stmt_async_generator_methods.is_empty() && p.flags & 512 != 0 {
                             self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false))));
                         }
@@ -12721,7 +13172,10 @@ impl<'a> Machine<'a> {
             if let Some((_, namespace)) = &mut self.body_namespace { *namespace = Some(captured); }
         }
         self.update_watched_locals();
-        if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
+        if mine {
+            self.active_trace = caller_trace;
+            self.extent = parent_extent;
+        }
         self.gathering_locals = earlier_gathering;
         self.update_watched_locals();
         if self.rules.has_any_ext_builtin_exceptions_traceback { self.row = was_on_row; }
@@ -14292,7 +14746,13 @@ impl<'a> Machine<'a> {
             return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));
         }
         if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Thing(_) | Value::Tuple(_)) {
+            // A tuple keeps the hash it was first given, so what it holds
+            // is asked once and not at every use of the tuple as a key.
+            if let Value::Tuple(row) = value {
+                if let Some(known) = Self::row_hash_kept(row) { return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(known))); }
+            }
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
+            if let Value::Tuple(row) = value { Self::row_hash_keep(row, &hash); }
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
         } else { Ok(value.clone()) }
     }
@@ -14317,6 +14777,21 @@ impl<'a> Machine<'a> {
             (Some(Room::Slot(one_frame, one_at)), Some(Room::Slot(other_frame, other_at))) => one_frame == other_frame && one_at == other_at,
             _ => false,
         }
+    }
+
+    fn row_hash_kept(row: &crate::tuples::Sequence) -> Option<Value> {
+        let spot = Rc::as_ptr(&**row) as usize;
+        ROW_HASHES.with(|kept| kept.borrow().get(&spot).and_then(|(weak, hash)| weak.upgrade().filter(|live| live.len() == row.len()).map(|_| hash.clone())))
+    }
+
+    fn row_hash_keep(row: &crate::tuples::Sequence, hash: &Value) {
+        if !row.iter().any(|part| matches!(part.settled(), Value::Thing(_) | Value::Tuple(_))) { return; }
+        let spot = Rc::as_ptr(&**row) as usize;
+        ROW_HASHES.with(|kept| {
+            let mut kept = kept.borrow_mut();
+            if kept.len() >= 4096 { kept.retain(|_, (weak, _)| weak.strong_count() > 0); }
+            kept.insert(spot, (Rc::downgrade(&**row), hash.clone()));
+        });
     }
 
     fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
@@ -14389,6 +14864,12 @@ impl<'a> Machine<'a> {
     /// `store_write`, so a key already there is kept in its first
     /// place with its value overwritten, and a new key is added last.
     fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
+        // A namespace is spread by the pairs it gives as a map, as `dict` reads it.
+        let converted;
+        let item = if expanded && matches!(item.settled(), Value::Attributes(_) | Value::Window(..)) {
+            converted = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(item))?;
+            &converted
+        } else { item };
         let incoming = match (expanded, item.settled()) {
             (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
             (true, Value::Dict(entries)) => entries.to_vec(),
@@ -15215,7 +15696,7 @@ impl<'a> Machine<'a> {
         // its cell keeps, the very value reading the attribute itself
         // would find.
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
+            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !name.ends_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| {
                 let mut value = held.clone();
                 if namespace {
@@ -15258,7 +15739,7 @@ impl<'a> Machine<'a> {
             let mut pending = entries;
             let mut slots = t.holds.borrow_mut();
             for (key, slot) in slots.iter_mut() {
-                if key.starts_with('\0') { continue; }
+                if key.starts_with('\0') || key.ends_with('\0') { continue; }
                 let position = pending.iter().position(|(label, _)| matches!(label, Value::Text(label) if label.as_ref() == key.as_str()));
                 let next = match position { Some(at) => pending.remove(at).1, None => Value::Unset };
                 if let Value::Shared(cell) = slot {
@@ -15283,7 +15764,7 @@ impl<'a> Machine<'a> {
             return;
         }
         let mut holds = t.holds.borrow_mut();
-        let former_names = holds.iter().filter_map(|entry| (!entry.0.starts_with('\0')).then_some(entry.0.clone())).collect::<Vec<_>>();
+        let former_names = holds.iter().filter_map(|entry| (!entry.0.starts_with('\0') && !entry.0.ends_with('\0')).then_some(entry.0.clone())).collect::<Vec<_>>();
         let binding_table = holds.iter().find(|entry| entry.0 == "\0bindings").map(|entry| entry.1.clone());
         let binding = |text: &str| -> Option<Value> {
             if let Some(Value::Dict(slots)) = &binding_table {
@@ -15297,7 +15778,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
+        holds.retain(|(name, _)| (name.starts_with('\0') || name.ends_with('\0')) && name != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
             match key {
@@ -15789,20 +16270,105 @@ impl<'a> Machine<'a> {
             let kind = match &subject { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
             return Err(Escape::Error(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}")));
         };
+        if !self.is_async_generator(&walker) && self.appointment(&walker, 84).is_none() {
+            let description = match &walker { Value::Thing(object) => object.blueprint().name.clone(), item => item.kind_word() };
+            let prefix = &self.table.strings("ext.stmt.async.coroutine.errors")[11];
+            return Err(Escape::Error(format!("{prefix}{description}")));
+        }
         Ok(Value::Wrapped(61, Rc::new(vec![walker]).into()))
     }
 
     /// One step of an asynchronous walk: the walk's own word for the next
     /// member is asked, and the fault that ends such a walk ends it.
+    // Record the code identity separately from the borrowable coroutine state.
+    fn coroutine_creation_trace(&self) -> Value {
+        if self.origin_limit == 0 { return Value::Nil; }
+        let mut chain = self.active_trace.clone();
+        let mut records = Vec::new();
+        for _ in 0..self.origin_limit {
+            let Some(activation) = chain.take() else { break };
+            let slots = activation.holds.borrow();
+            if let Value::Bound(body, _) = &slots[5].1 {
+                records.push(Value::tuple(vec![Value::text(body.written_in.as_deref().unwrap_or(&self.written_in)),
+                    slots[0].1.clone(), Value::text(if body.ident == "<program>" { &self.rules.trace_words[10] } else { &body.ident })]));
+            }
+            if let Value::Thing(parent) = &slots[2].1 { chain = Some(parent.clone()); }
+        }
+        Value::tuple(records)
+    }
+
+    fn remember_coroutine(&mut self, walk: &Rc<RefCell<Suspension>>, code: &Rc<Routine>) {
+        if code.flags & 128 == 0 || self.table.strings("ext.stmt.async.coroutine.fields").is_empty() { return; }
+        let trace = self.coroutine_creation_trace();
+        walk.borrow_mut().creation_trace = trace.clone();
+        walk.borrow_mut().coroutine_address = Rc::as_ptr(walk) as usize;
+        let frame = walk.borrow().trace_state.as_ref().map(Rc::downgrade);
+        self.coroutine_bodies.insert(Rc::as_ptr(walk) as usize, (Rc::downgrade(walk), code.clone(), frame, trace, Rc::as_ptr(walk) as usize));
+    }
+
+    // Recognize a live native coroutine even while its body is running.
+    pub(super) fn native_coroutine(&self, item: &Value) -> bool {
+        match item {
+            Value::Generator(walk) => self.coroutine_bodies.get(&(Rc::as_ptr(walk) as usize))
+                .and_then(|entry| entry.0.upgrade()).is_some_and(|live| Rc::ptr_eq(walk, &live)),
+            _ => false,
+        }
+    }
+
+    // Resolve the descriptors and await method belonging to a native coroutine.
+    pub(super) fn coroutine_attribute(&mut self, item: &Value, key: &str) -> Res<Option<Value>> {
+        if !self.native_coroutine(item) { return Ok(None); }
+        if self.rules.words_ext_stmt_async_generator_methods.get(3).is_some_and(|method| method == key) {
+            return Ok(Some(Value::Member(Rc::new(item.clone()), key.to_owned())));
+        }
+        let fields = self.table.strings("ext.stmt.async.coroutine.fields");
+        let Some(slot) = fields.iter().position(|field| field == key) else { return Ok(None) };
+        let Value::Generator(walk) = item else { unreachable!() };
+        let answer = match slot {
+            2 => Value::Flag(walk.try_borrow().is_err()),
+            0 => {
+                let code = self.coroutine_bodies[&(Rc::as_ptr(walk) as usize)].1.clone();
+                self.code_handle(&code)
+            }
+            1 if walk.try_borrow().is_err() => self.coroutine_bodies[&(Rc::as_ptr(walk) as usize)].2.as_ref().and_then(Weak::upgrade).map_or(Value::Nil, Value::Thing),
+            4 => self.coroutine_bodies[&(Rc::as_ptr(walk) as usize)].3.clone(),
+            3 if walk.try_borrow().is_err() => Value::Nil,
+            5 if walk.try_borrow().is_err() => Value::Flag(false),
+            _ => {
+                let held = walk.try_borrow().map_err(|_| self.table.strings("ext.stmt.async.coroutine.errors")[2].clone())?;
+                match slot {
+                    1 if !held.ended => held.trace_state.clone().map_or(Value::Nil, Value::Thing),
+                    1 => Value::Nil,
+                    3 => match held.inner.clone() { Some(Value::Wrapped(63, parts)) => parts[0].clone(), Some(target) => target, None => Value::Nil },
+                    _ => Value::Flag(held.begun && !held.ended),
+                }
+            }
+        };
+        Ok(Some(answer))
+    }
+
     fn is_async_generator(&self, value: &Value) -> bool {
         let Value::Generator(state) = value else { return false };
         self.async_generators.get(&(Rc::as_ptr(state) as usize))
             .and_then(|entry| entry.0.upgrade()).is_some_and(|known| Rc::ptr_eq(&known, state))
     }
 
-    fn async_awaitable(&self, generator: Value, operation: i64, argument: Value) -> Value {
-        Value::Wrapped(62, Rc::new(vec![generator, Value::Small(operation), argument,
-            Value::Shared(Rc::new(RefCell::new(Value::Small(0))))]).into())
+    fn async_awaitable(&mut self, generator: Value, operation: i64, argument: Value) -> Res<Value> {
+        if let Value::Generator(body) = &generator {
+            let notify = {
+                let mut state = body.borrow_mut();
+                if state.hooks_initialized { false } else {
+                    state.hooks_initialized = true;
+                    state.agen_finalize = self.agen_callbacks.1.clone();
+                    true
+                }
+            };
+            if notify && !matches!(self.agen_callbacks.0, Value::Nil) {
+                self.apply_class_member(self.agen_callbacks.0.clone(), vec![generator.clone()])?;
+            }
+        }
+        Ok(Value::Wrapped(62, Rc::new(vec![generator, Value::Small(operation), argument,
+            Value::Shared(Rc::new(RefCell::new(Value::Small(0))))]).into()))
     }
 
     fn async_fault(&mut self, name: &str, arguments: Vec<Value>) -> Escape {
@@ -15939,7 +16505,7 @@ impl<'a> Machine<'a> {
             }
             return Ok(offered);
         }
-        let native = matches!(&offered, Value::Iterator(_) | Value::Cursor(_) | Value::Wrapped(62, _));
+        let native = matches!(&offered, Value::Iterator(_) | Value::Cursor(_) | Value::Wrapped(62 | 64, _));
         if !native && self.appointment(&offered, 16).is_none() {
             return Err(format!("TypeError: __await__() returned non-iterator of type '{}'", offered.kind_word()).into());
         }
@@ -15949,30 +16515,50 @@ impl<'a> Machine<'a> {
 
     fn awaited_walk(&mut self, subject: Value) -> Res<Value> {
         match subject {
+            Value::Wrapped(63, _) => Ok(subject),
             Value::Generator(ref body) if !self.is_async_generator(&subject)
-                && body.try_borrow().is_ok_and(|held| held.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) => Ok(subject),
+                && body.try_borrow().is_ok_and(|held| held.of.as_ref().is_some_and(|program| program.flags & 0x180 != 0)) => {
+                let claimed = self.native_coroutine(&subject) && {
+                    let held = body.borrow(); held.begun && held.inner.is_some()
+                };
+                if claimed { return Err(self.table.strings("ext.stmt.async.coroutine.errors")[7].clone().into()); }
+                Ok(subject)
+            },
             Value::Wrapped(62, _) => self.await_iterator(subject),
-            Value::Thing(_) => {
-                let name = self.rules.words_ext_stmt_async_generator_methods[3].clone();
-                let member = self.read_class_member(subject.clone(), &name, false).map_err(|away| {
-                    if matches!(&away, Escape::Thrown(Value::Thing(t)) if t.blueprint().goes_by("AttributeError", false)) {
-                        Escape::Error(format!("TypeError: object {} can't be used in 'await' expression", subject.kind_word()))
-                    } else { away }
-                })?;
+            Value::Thing(instance) => {
+                let owner = instance.blueprint();
+                let key = self.rules.words_ext_stmt_async_generator_methods[3].clone();
+                let object = Value::Thing(instance);
+                let Some(entry) = self.inherited_entry(&owner, &key) else {
+                    let wording = self.table.strings("ext.stmt.async.coroutine.errors");
+                    return Err(format!("{}{}{}", wording[5], object.kind_word(), wording[6]).into());
+                };
+                let member = self.member_binding(entry, Some(object), owner)?;
                 let offered = self.apply_class_member(member, Vec::new())?;
                 self.await_iterator(offered)
             }
-            other => Err(format!("TypeError: object {} can't be used in 'await' expression", other.kind_word()).into()),
+            other => Err(format!("{}{}{}", self.table.strings("ext.stmt.async.coroutine.errors")[5], other.kind_word(), self.table.strings("ext.stmt.async.coroutine.errors")[6]).into()),
         }
     }
 
     fn next_awaited_walk(&mut self, walker: &Value) -> Res<Value> {
         if self.is_async_generator(walker) {
-            return self.await_iterator(self.async_awaitable(walker.clone(), 0, Value::Nil));
+            let token = self.async_awaitable(walker.clone(), 0, Value::Nil)?;
+            return self.await_iterator(token);
         }
-        let (body, scope) = self.appointed_within(walker, 84).ok_or_else(|| self.bad_answer())?;
-        let operation = self.invoke(body, scope, vec![walker.clone()])?;
-        self.awaited_walk(operation)
+        let called = self.ask_special(walker, 84, &[])
+            .map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))?;
+        let operation = called.ok_or_else(|| self.bad_answer())?;
+        let returned_kind = operation.kind_word();
+        self.awaited_walk(operation).map_err(|escape| {
+            let original = match escape {
+                Escape::Thrown(raised) => raised,
+                Escape::Error(message) => self.as_raised(&message).unwrap_or(Value::Nil),
+                elsewhere => return elsewhere,
+            };
+            let wording = format!("{}{}", self.table.strings("ext.stmt.async.coroutine.errors")[10], returned_kind);
+            self.fault_with_cause(original, wording)
+        })
     }
 
     fn async_exhausted(&self, away: &Escape) -> bool {
@@ -16231,6 +16817,7 @@ impl<'a> Machine<'a> {
         if self.rules.specials.is_empty() { return Ok(None); }
         if let (Prim::Hashed, [held]) = (operation, operands) {
             if let Value::Tuple(sequence) = held {
+                if let Some(cached) = Self::row_hash_kept(sequence) { return Ok(Some(cached)); }
                 let mut accumulator = 2_870_177_450_012_600_261u64;
                 for member in sequence.iter() {
                     let lane = self.prim(Prim::Hashed, "hash", &[member.clone()])?.as_big()?.to_i64().ok_or_else(|| self.bad_answer())? as u64;
@@ -16238,7 +16825,9 @@ impl<'a> Machine<'a> {
                 }
                 accumulator = accumulator.wrapping_add((sequence.len() as u64) ^ (2_870_177_450_012_600_261 ^ 3_527_539));
                 let signed = if accumulator == u64::MAX { 1_546_275_796 } else { accumulator as i64 };
-                return Ok(Some(Value::Small(signed)));
+                let answer = Value::Small(signed);
+                Self::row_hash_keep(sequence, &answer);
+                return Ok(Some(answer));
             }
             if let Some(number) = Self::constructor_hash(held) { return Ok(Some(number)); }
         }
@@ -16789,7 +17378,7 @@ impl<'a> Machine<'a> {
                     }
                 } else {
                     let value = self.ask_special(&plain, 85, &[])?.ok_or_else(|| self.bad_answer())?;
-                    match self.await_completion(value) {
+                    match self.context_iterator(value, "__aenter__") {
                         Ok(answer) => answer,
                         Err(Escape::Error(told)) => return Err(told),
                         Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
@@ -17136,7 +17725,7 @@ impl<'a> Machine<'a> {
                 if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_) | Value::Generator(_)) { result.keep(true) } else { result }
             },
             (Prim::Iterator, [one @ Value::Cursor(_)]) => one.clone(),
-            (Prim::Iterator, [one @ Value::Wrapped(62, _)]) => one.clone(),
+            (Prim::Iterator, [one @ Value::Wrapped(62 | 64, _)]) => one.clone(),
             (Prim::Iterator, [one]) => match self.ask_special(one, 15, &[])? {
                 Some(iterator) => {
                     if !matches!(iterator, Value::Iterator(_) | Value::Generator(_) | Value::Cursor(_))
@@ -17158,6 +17747,15 @@ impl<'a> Machine<'a> {
                 Some(walk) => self.iterated_value(&walk)?,
                 None => return Ok(None),
             },
+            (Prim::NextItem, [Value::Wrapped(64, parts), rest @ ..]) if rest.len() <= 1 => {
+                let Value::Generator(walk) = &parts[0] else { return Err(self.bad_answer()); };
+                return match self.resume(walk, Value::Nil) {
+                    Ok(Some(item)) => Ok(Some(item)),
+                    Ok(None) if !rest.is_empty() => Ok(Some(rest[0].clone())),
+                    Ok(None) => { self.got_away = Some(self.exhausted_of(walk)); Err(self.bad_answer()) }
+                    Err(away) => Err(self.carried_native_fault(away)),
+                };
+            }
             (Prim::NextItem, [Value::Wrapped(62, parts)]) => {
                 let stepped = self.drive_async(parts, Value::Nil);
                 return match self.operation_answer(stepped) {
@@ -17927,6 +18525,7 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::At { if let Some(subject) = v.first() { if let Some(fault) = self.symbolic_access(subject) { return Err(fault); } } }
         if op == Prim::UnicodeDecomposition { return crate::sre::decompose(v); }
         // Exact machine integers need neither index hooks nor big-integer conversion.
         // Other receivers keep the normal argument and numeric protocol checks.
@@ -18193,6 +18792,7 @@ impl<'a> Machine<'a> {
         // member would stand on a copy, and a write through it would
         // reach no other name for the holder.
         if let (Prim::Of, [subject, word]) = (op, v) {
+            if let Some(fault) = self.symbolic_access(subject) { return Err(fault); }
             let called = word.bare();
             if called == "__getformat__" && matches!(subject.settled(), Value::Frac(_)) {
                 return self.read_class_member(subject.clone(), &called, false).map_err(|fault| self.suspension_fault(fault));
@@ -19141,6 +19741,9 @@ impl<'a> Machine<'a> {
             Prim::Iterated if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(v[0].settled(), Value::Progression(_)) => {
                 self.iterated_value(&v[0].settled())?
             }
+            Prim::Iterated if self.is_async_generator(&v[0]) || self.native_coroutine(&v[0]) => {
+                return Err(self.core_complaint("core.uniterable", &v[0].kind_word()));
+            }
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
                 None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
                 None if matches!(v[0], Value::Cursor(_)) => Self::cursor_value(IteratorKind::Handed(v[0].clone())),
@@ -19180,7 +19783,12 @@ impl<'a> Machine<'a> {
                     // than the one map it grows, so paying to clone it
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
-                    let incoming = match &v[1] {
+                    let spread_dict;
+                    let v1 = if expanded && matches!(v[1].settled(), Value::Attributes(_) | Value::Window(..)) {
+                        spread_dict = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(&v[1]))?;
+                        spread_dict.settled()
+                    } else { v[1].clone() };
+                    let incoming = match &v1 {
                         Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
                         Value::Dict(entries) if expanded => entries.to_vec(),
                         _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
@@ -19480,7 +20088,7 @@ impl<'a> Machine<'a> {
             }
             Prim::LoadModule => {
                 match (v.len(), v.get(1)) {
-                    (2, Some(Value::Flag(false))) => Value::Flag(self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
+                    (2, Some(Value::Flag(false))) => Value::Flag(self.table.strings("ext.system.warnings").first().is_some_and(|word| word == &v[0].bare()) || self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
                     _ => { n(1)?; self.load_namespace(&v[0].bare())? }
                 }
@@ -19515,6 +20123,7 @@ impl<'a> Machine<'a> {
             Prim::UnicodeDecomposition => return crate::sre::decompose(v),
             Prim::CopyWorth => {
                 n(2)?;
+                self.reduction_permitted(&v[0])?;
                 if let Value::Generator(_) = &v[0] {
                     return Err("TypeError: cannot pickle 'generator' object".to_string());
                 }
@@ -19594,6 +20203,16 @@ impl<'a> Machine<'a> {
                     Some(Value::Bound(code, _)) => self.routine_module(&code),
                     _ => return Err(String::from("ValueError: call stack is not deep enough")),
                 }
+            }
+            Prim::SetTrace => {
+                n(1)?;
+                let wanted = v[0].settled();
+                self.tracing_function = wanted;
+                Value::Nil
+            }
+            Prim::GetTrace => {
+                n(0)?;
+                self.tracing_function.clone()
             }
             Prim::ClassSeal => {
                 n(1)?;
@@ -20400,10 +21019,13 @@ impl<'a> Machine<'a> {
             }
             Prim::LoaderSource => {
                 n(1)?;
-                let content = match std::fs::read(self.entry_file.as_ref()) {
-                    Ok(content) => content,
-                    Err(_) => return Err(String::from("ImportError: source not available through get_data()")),
-                };
+                let name = match v[0].settled() { Value::Text(word) => word.to_string(), _ => return Err(String::from("TypeError: module name must be a string")) };
+                let content = match name.as_str() {
+                    "__main__" => std::fs::read(self.entry_file.as_ref()).ok(),
+                    _ => self.sys_path_source(&name).map(|pair| pair.1)
+                        .or_else(|| self.library_module_file(&name).and_then(|filename| std::fs::read(filename).ok()))
+                        .or_else(|| self.library_sources.get(&name).map(|text| text.as_bytes().to_vec())),
+                }.ok_or_else(|| String::from("ImportError: source not available through get_data()"))?;
                 let adapter = self.load_namespace("_tokenize")?;
                 let Some(decode) = self.attribute(&adapter, "_decode_source") else {
                     return Err(String::from("ImportError: source decoder is unavailable"));
@@ -22551,7 +23173,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::WarningOperation(_) | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -24264,6 +24886,12 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
+        if matches!(source, Value::Wrapped(64, _)) {
+            let mut items = Vec::new();
+            while let Some(item) = self.next_value(source)? { items.push(item); }
+            return Ok(items);
+        }
+        if self.is_async_generator(source) || self.native_coroutine(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
         if let Value::Attributes(owner) = source {
             return Ok(self.attribute_entries(owner).into_iter().map(|(key, _)| match key {
                 Value::Keyed(value, _) => value.as_ref().clone(), other => other,
@@ -25147,7 +25775,26 @@ impl Machine<'_> {
         if fits(&value.settled()) {Ok(value)} else {Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", candidate.kind_word(), value.kind_word()))}
     }
 
+    /// Whether the code now running is the main program's own, whose
+    /// globals the world dictionary is, after that dictionary was
+    /// written through.
+    fn world_shadow_applies(&self) -> bool {
+        self.world_globals_source.as_deref() == Some(self.written_in.as_ref())
+    }
+
     fn spread_value(&self, word: &str) -> Option<Value> {
+        // A name written into the world dictionary after globals() handed
+        // it out stands over a builtin of that spelling for the code of
+        // the source that wrote it, as a name the text had bound would.
+        if self.world_shadow_applies() {
+            if let Some(book) = &self.world_book {
+                let found = match book.try_borrow().ok().as_deref() {
+                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
+                    _ => None,
+                };
+                if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
+            }
+        }
         if self.revised_namespaces.contains(&self.written_in) {
             let namespace = self.loaded_spaces.get(&self.written_in).and_then(|id| self.imported.get(id));
             if let Some(Value::Thing(module)) = namespace {
@@ -25236,6 +25883,10 @@ impl Machine<'_> {
             let absolute = self.qualified_import(path)?;
             return self.load_namespace(&absolute);
         }
+        if self.table.has_any("ext.system.module.path") && !self.finding_import.contains(path) {
+            if let Some(found) = self.import_from_finders(path)? { return Ok(found); }
+        }
+        if self.table.strings("ext.system.warnings").first().is_some_and(|word| word == path) { return self.warning_namespace(); }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let split = path.rsplit_once('.');
@@ -25296,7 +25947,10 @@ impl Machine<'_> {
         }
         let beginning = self.idents.len();
         let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
-        let filename = own_file.as_deref().unwrap_or(path);
+        let namespace_portions = own_file.as_deref().filter(|location| location.starts_with('\0'))
+            .map(|location| location[1..].split('\0').collect::<Vec<_>>());
+        let empty_origin = format!("<namespace {path}>");
+        let filename = if namespace_portions.is_some() { empty_origin.as_str() } else { own_file.as_deref().unwrap_or(path) };
         let ready = match self.text_tokens(&text, 0) {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
@@ -25325,11 +25979,14 @@ impl Machine<'_> {
         // to, carried here for a module read in besides it.
         let file_word = self.table.strings("ext.system.source.file").first().map(String::as_str);
         let path_word = self.table.strings("ext.system.module.path").first().map(String::as_str);
-        let search = own_file.as_deref().and_then(|file| {
+        let search = namespace_portions.as_ref().map(|locations| {
+            let entries = locations.iter().map(|location| Value::text(location)).collect();
+            Value::Mutable(Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(entries)))), false)
+        }).or_else(|| own_file.as_deref().and_then(|file| {
             let location = std::path::Path::new(file);
             if location.file_name()?.to_str()? != "__init__.py" { return None; }
             Some(Value::Mutable(Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(&location.parent()?.to_string_lossy())])))), false))
-        });
+        }));
         let package_word = self.table.strings("ext.system.module.package").first().map(String::as_str);
         let package_name = if search.is_some() { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
         let mut members = Vec::with_capacity(exported.len());
@@ -25362,7 +26019,7 @@ impl Machine<'_> {
         // the same unconditional way, whether or not the module's own
         // text ever names it: a module that never spells `__file__`
         // still answers one to a caller that asks by attribute.
-        if let Some(word) = file_word {
+        if let Some(word) = file_word.filter(|_| namespace_portions.is_none()) {
             if !members.iter().any(|(name, _)| name == word) {
                 members.push((word.to_string(), own_file.as_deref().map_or(Value::Nil, Value::text)));
             }
@@ -25404,6 +26061,7 @@ impl Machine<'_> {
         // reads all meet in one place.
         *namespace.borrow_mut() = Value::Attributes(match &value { Value::Thing(t) => t.clone(), _ => unreachable!() });
         self.imported.insert(path.into(), value.clone());
+        self.source_namespace_metadata(path, &value)?;
         self.namespace_places.borrow_mut().take();
         let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
@@ -25526,6 +26184,7 @@ impl Machine<'_> {
                 }
             }
         }
+        let mut portions: Vec<String> = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() { continue; }
@@ -25545,8 +26204,15 @@ impl Machine<'_> {
                     return Some((made_absolute(&location.to_string_lossy()), text));
                 }
             }
+            let portion = folder.join(filename);
+            if self.table.strings("ext.system.module.path").first().is_some()
+                && (portion.is_dir() || virtual_dirs.contains(&portion)) {
+                portions.push(made_absolute(&portion.to_string_lossy()));
+            }
         }
-        None
+        // Defer namespace creation until no concrete module has matched.
+        // The private location marker carries all namespace search portions.
+        (!portions.is_empty()).then(|| (String::from("\0") + &portions.join("\0"), Vec::new()))
     }
 
     /// Manifest locations describe the embedded library even when its files
@@ -25593,7 +26259,7 @@ impl Machine<'_> {
             }
         }
         let fallback = match value {
-            Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()),
+            Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()).filter(|method| !matches!(method, Value::Unset)),
             _ => None,
         };
         if let Some(f) = fallback {
@@ -25731,6 +26397,10 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
+        let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
+            self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
+        });
+        if scoped && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {
@@ -25787,6 +26457,7 @@ impl<'a> Machine<'a> {
                     // looked for among the builtins, as the world book
                     // looks, before it is called missing.
                     if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
+                    if let Some(result) = self.symbolic_lookup(name) { return Some(result); }
                     Some(Err(format!("Undefined variable: {name}")))
                 }
             }
@@ -25799,6 +26470,7 @@ impl<'a> Machine<'a> {
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
                 if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
+                if let Some(result) = self.symbolic_lookup(name) { return Some(result); }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Held::Reading(which) => {
@@ -25858,6 +26530,9 @@ impl<'a> Machine<'a> {
                         None => self.spare_name(name),
                     },
                 };
+                if let None = found {
+                    if let Some(answer) = self.symbolic_lookup(name) { return Some(answer); }
+                }
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }
         }
@@ -26249,7 +26924,12 @@ impl<'a> Machine<'a> {
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
     fn space_book_of(&mut self) -> Option<Rc<RefCell<Value>>> {
-        let program = self.frames_named.last()?;
+        let body = self.frames_named.last()?.clone();
+        self.space_book_for(&body)
+    }
+
+    // Return the live module dictionary of a particular saved program.
+    fn space_book_for(&mut self, program: &Routine) -> Option<Rc<RefCell<Value>>> {
         let path = program.written_in.as_ref().and_then(|file| self.loaded_spaces.get(file.as_ref()))?.to_owned();
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return None };
         if let Some(book) = self.space_books.get(&path).cloned() {
@@ -26284,8 +26964,19 @@ impl<'a> Machine<'a> {
     }
     // Shared namespace cells are writable through their dictionary too.
     fn space_callable_changed(&mut self, cell: &Rc<RefCell<Value>>) {
-        let Some(owner) = self.book_space_of(cell) else { return };
         if !self.rules.names_shadow_builtins { return; }
+        // The program's own world dictionary is not filed as any loaded
+        // space's, but a write into it can still stand a name over a
+        // builtin; reading a name consults it while this stands.
+        if self.world_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
+            // The world dictionary is the main program's own, however
+            // far from it the write is made; its reader is the code
+            // written in the file the run began from.
+            self.world_globals_source = Some(self.entry_file.clone());
+            self.wildcard_source.borrow_mut().take();
+            return;
+        }
+        let Some(owner) = self.book_space_of(cell) else { return };
         if self.rules.words_ext_system_names_module.first().is_some_and(|word| word == &owner) {
             self.displaced_primitives.extend(self.table.prims.keys().cloned());
         }
@@ -27066,9 +27757,9 @@ impl<'a> Machine<'a> {
         let category = self.fault_kinds.get(&names[2]).cloned().ok_or_else(|| self.source_refused())?;
         // The module the notice belongs to is the one the text runs
         // under where that is named, else the one its file spells.
-        let spoken_as = match module_hint { Some(named) => Value::text(named), None => Value::Nil };
         for (words, row) in notices {
-            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row)), spoken_as.clone()];
+            let arguments = [Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row))].into_iter()
+                .chain(module_hint.map(Value::text)).collect();
             match self.core_run(&report, arguments) {
                 Ok(_) => {}
                 Err(failure) => {
@@ -27372,7 +28063,7 @@ impl<'a> Machine<'a> {
                 piece.row = last_row; piece.column = last_col; piece.end_row = last_row; piece.end_column = last_col;
             }
         }
-        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0);
+        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0, 0);
         let (said, row, cols) = match built {
             Ok(_) => return Some(Self::spent_place(source)),
             Err(fault) => fault,
@@ -27425,10 +28116,16 @@ impl<'a> Machine<'a> {
                 }
                 match carried {
                     Some(Value::Text(s)) => s,
-                    _ => return Err(self.source_refused()),
+                    // Failing that it may be some other bearer of a
+                    // buffer whose bytes the reference would read as
+                    // the source just the same.
+                    _ => match self.numeric_octets(&v[0])? {
+                        Some(row) => self.decode_program(&row, &file)?,
+                        None => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
+                    },
                 }
             }
-            _ => return Err(self.source_refused()),
+            _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
         let flags = match v.get(3).map(Value::settled) {
@@ -27439,6 +28136,24 @@ impl<'a> Machine<'a> {
         if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        let settling = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
+        // PyCF_ONLY_AST: the value handed back is the syntax tree the
+        // library's reader builds, not a code value; PyCF_OPTIMIZED_AST
+        // asks that tree with the names the optimiser settles already
+        // folded in.
+        if flags & 1024 != 0 {
+            let namespace = self.load_namespace("ast")?;
+            let reader = self.namespace_item(&namespace, "ast", "_tree_for_compile")?;
+            let comments = if flags & 4096 != 0 { 1 } else { 0 };
+            let settling = if flags & 32768 != 0 {
+                match v.get(5).map(Value::settled) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
+            } else { -1 };
+            return match self.apply_class_member(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
+                Ok(tree) => Ok(tree),
+                Err(Escape::Error(told)) => Err(told),
+                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+            };
         }
         let top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
@@ -27474,7 +28189,7 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
             }
         };
-        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits) {
+        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits, settling) {
             Ok(built) => built,
             Err((said, row, cols)) => {
                 if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
@@ -27525,7 +28240,7 @@ impl<'a> Machine<'a> {
         let constants = Value::tuple(built.program.literals.iter().map(|v| match v {
             Value::Routine(body) => self.code_handle(body), other => other.clone(),
         }).collect());
-        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1)), ("co_optimize".to_owned(), Value::Small(settling))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
         self.made += 1;
@@ -27549,7 +28264,7 @@ impl<'a> Machine<'a> {
             Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
         };
         let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
-        handed.push(match module_hint { Some(named) => Value::text(named), None => Value::Nil });
+        match module_hint { Some(owner) => handed.push(Value::text(owner)), None => {} }
         match self.apply_class_member(teller, handed) {
             Ok(_) => Ok(()),
             Err(Escape::Thrown(Value::Thing(raised))) if raised.blueprint().goes_by(&kind_name, false) => {
@@ -27702,14 +28417,15 @@ impl<'a> Machine<'a> {
             _ => caller_future,
         };
         self.text_future_bits.set(held_future);
-        let (source, file, mode, top_await) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
-            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+        let (source, file, mode, top_await, settling) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, 0),
+            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, 0),
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
                 let async_code = holds.iter().any(|(name, worth)| name == "co_flags" && matches!(worth, Value::Small(flags) if flags & 128 != 0));
-                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code)
+                let level = holds.iter().find(|(name, _)| name == "co_optimize").and_then(|(_, worth)| match worth { Value::Small(n) => Some(*n), _ => None }).unwrap_or(0);
+                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code, level)
             }
             _ => return Err(self.core_complaint("core.arity", name)),
         };
@@ -27742,8 +28458,8 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals),
-                None => self.perform_here(&source, file, mode, top_await, literals),
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, settling),
+                None => self.perform_here(&source, file, mode, top_await, literals, settling),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -27783,17 +28499,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near, top_await, literals)
+        self.perform_booked(&source, file, mode, outer, near, top_await, literals, settling)
     }
 
     /// Text run where the call stands: within the reading under way, in
     /// its dictionaries; else among the outermost names.
-    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, literals: Option<Vec<Value>>, settling: i64) -> Result<Value, String> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals),
-                None => self.perform_booked(source, file, mode, near, None, top_await, literals),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals, settling),
+                None => self.perform_booked(source, file, mode, near, None, top_await, literals, settling),
             };
         }
         let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| self.imported.get(module)).cloned();
@@ -27806,7 +28522,7 @@ impl<'a> Machine<'a> {
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }
-            return self.perform_booked(source, file, mode, book, None, top_await, None);
+            return self.perform_booked(source, file, mode, book, None, top_await, literals, settling);
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -27814,7 +28530,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None)?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None, settling)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
@@ -27832,7 +28548,7 @@ impl<'a> Machine<'a> {
     /// writes to a frame of its own, standing apart from the routine's,
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>, settling: i64) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -27871,7 +28587,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get()) {
+        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get(), settling) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -27905,7 +28621,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, settling: i64) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -27929,7 +28645,7 @@ impl<'a> Machine<'a> {
             Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
             None => Value::Mutable(self.natives_kept(), true),
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;
+        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone(), settling)?;
         // What the build noted about how the text is written is said
         // under the name the handed globals give the text, each warning
         // through the warnings module.
@@ -27958,9 +28674,9 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, settle: i64) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get())
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get(), settle)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
@@ -28019,7 +28735,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, WarningOperation(_) | Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -28089,6 +28805,8 @@ impl Machine<'_> {
     /// Refuse suspended execution in the native fallback as well as in
     /// explicit reductions; an iterator backed by stored members is distinct.
     pub(super) fn reduction_permitted(&self, subject: &Value) -> Result<(), String> {
+        if self.native_coroutine(subject) { return Err(String::from("TypeError: cannot pickle 'coroutine' object")); }
+        if let Value::Wrapped(64, _) = subject { return Err(String::from("TypeError: cannot pickle 'coroutine_wrapper' object")); }
         let Value::Generator(handle) = subject else { return Ok(()); };
         let frame = handle.borrow();
         if frame.of.is_some() || frame.walked.is_none() {
@@ -28395,8 +29113,8 @@ impl Machine<'_> {
         if self.rules.suspends {
             if let Some(kind) = self.live_walk(source) { return Ok(Self::cursor_value(kind)); }
         }
-        if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
-        if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
+        if matches!(source, Value::Wrapped(62 | 64, _)) { return Ok(source.clone()); }
+        if self.native_coroutine(source) || self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
         // Native Python bases supply their iterator before the sequence
         // fallback. An explicit iteration slot on the subclass still wins.
         if !self.rules.words_ext_stmt_class_detail_native_protocols.is_empty() {
@@ -28482,6 +29200,11 @@ impl Machine<'_> {
     }
 
     fn next_value(&mut self, iterator: &Value) -> Result<Option<Value>, String> {
+        if let Value::Wrapped(64, body) = iterator {
+            let Value::Generator(walk) = &body[0] else { return Err(self.bad_answer()); };
+            return self.resume(walk, Value::Nil).map_err(|away| self.carried_native_fault(away));
+        }
+        if self.native_coroutine(iterator) { return Err(self.core_complaint("core.not_iterator", &iterator.kind_word())); }
         if let Value::Cursor(queue) = iterator { return Ok(queue.borrow_mut().pop_front()); }
         if self.is_async_generator(iterator) { return Err(self.core_complaint("core.not_iterator", &iterator.kind_word())); }
         if let Value::Generator(frame) = iterator {
@@ -28979,6 +29702,7 @@ impl Machine<'_> {
     }
 
     pub(super) fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        if let Prim::WarningOperation(task) = op { return self.warning_operation(task, input, keywords); }
         // A value's identity is the cell it is kept in, so that one
         // primitive alone is handed the cell as it stands.
         // A list or a dictionary's window is walked as it stands, so what
@@ -29143,6 +29867,11 @@ impl Machine<'_> {
                 // the quoting does not advance it; so is a walk this
                 // kernel made of its own, such as a map walked
                 // backwards, which the reference words the same way.
+                if let Value::Generator(suspended) = &input[0] {
+                    if suspended.try_borrow().is_ok_and(|frame| frame.coroutine_address != 0) {
+                        return Ok(Value::text(&input[0].render(self.wording())));
+                    }
+                }
                 let walk_named = matches!(&input[0], Value::Generator(state) if state.try_borrow().map_or(false, |g| g.walked.is_some()));
                 if matches!(input[0], Value::Iterator(_)) || walk_named {
                     let Value::Small(mark) = self.core_primitive(Prim::IdentityOf, name, vec![input[0].clone()], Vec::new())? else { return Err(self.core_complaint("core.unready", name)) };
@@ -29274,6 +30003,19 @@ impl Machine<'_> {
                         program.body.instruction_listing(&mut 0, (program.declared_on, u32::MAX, u32::MAX, u32::MAX), &mut rows);
                         Ok(Value::tuple(rows))
                     }
+                    [Value::Small(3)] => Ok(Value::Small(self.origin_limit as i64)),
+                    [Value::Small(4), Value::Small(depth)] if (0..=i32::MAX as i64).contains(depth) => {
+                        self.origin_limit = *depth as usize;
+                        Ok(Value::Nil)
+                    }
+                    [Value::Small(4), Value::Small(depth)] if *depth < 0 => Err("ValueError: depth must be >= 0".into()),
+                    [Value::Small(4), _] => Err("OverflowError: Python int too large to convert to C int".into()),
+                    [Value::Small(6)] => Ok(Value::tuple(vec![self.agen_callbacks.0.clone(), self.agen_callbacks.1.clone()])),
+                    [Value::Small(7), callback] => { self.agen_callbacks.0 = callback.clone(); Ok(Value::Nil) }
+                    [Value::Small(8), callback] => { self.agen_callbacks.1 = callback.clone(); Ok(Value::Nil) }
+                    [Value::Small(9)] => Ok(Value::Flag(self.shutting_down)),
+                    [Value::Small(5), subject] => subject.ownership_count().map(|state| Value::Small(state.as_python()))
+                        .ok_or_else(|| "NotImplementedError: this value has no ownership identity".into()),
                     _ => Err("TypeError: invalid tracing operation".into()),
                 }
             }
@@ -29335,7 +30077,10 @@ impl Machine<'_> {
                     Value::Span(bounds) => Rc::as_ptr(bounds) as usize as u64,
                     Value::Progression(range) => Rc::as_ptr(range) as usize as u64,
                     Value::Iterator(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Generator(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Generator(p) => match self.coroutine_bodies.get(&(Rc::as_ptr(p) as usize)) {
+                        Some(record) if record.0.upgrade().is_some() => record.4 as u64,
+                        _ => Rc::as_ptr(p) as usize as u64,
+                    },
                     // A routine bound where it was defined is that
                     // definition reached that time: two reachings of the
                     // one definition are two routines.
@@ -30093,3 +30838,5 @@ mod heap;
 
 #[path = "binascii.rs"]
 mod binascii;
+
+include!("warnings.rs");

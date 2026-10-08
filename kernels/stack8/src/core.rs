@@ -100,6 +100,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 16 => if w.1.first().is_some_and(|name| matches!(name.plain().as_str(), "__dict__" | "__weakref__")) { "getset_descriptor" } else { "member_descriptor" },
             Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
+            // A slot's own descriptor is a member; the two layout names
+            // it never is, __weakref__ and __dict__, read as attributes.
+            Value::Adapter(w) if w.0 == 16 => if w.1.len() == 2 && matches!(w.1.first(), Some(Value::Text(name)) if &**name != "__weakref__") { "member_descriptor" } else { "getset_descriptor" },
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 235 | 236) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
@@ -108,6 +111,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",
+            Value::Adapter(w) if w.0 == 34 => "coroutine_wrapper",
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Adapter(w) if w.0 == 143 => "function",

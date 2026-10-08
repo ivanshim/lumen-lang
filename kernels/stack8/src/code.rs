@@ -516,6 +516,8 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
+    SetTrace,
+    GetTrace,
     ProductStep,
     FrameModule,
     ClassSeal,
@@ -778,6 +780,7 @@ pub enum Builtin {
     TraceNative,
     HeapNative,
     ContextNative,
+    WarningBackend(u8),
     ReduceNative,
     RebuildNative,
     CharAtIndex,
@@ -926,7 +929,11 @@ impl Builtin {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub postponed_annotation: bool,
+    pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
+    /// Whether the routine is one whose own name reads, while annotations are
+    /// being read in the forward-reference format, may stand for a reference.
+    pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,

@@ -24,6 +24,8 @@ use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance,
 #[derive(Debug, Clone)]
 pub enum Hold {
     Native(crate::code::Builtin, Rc<str>),
+    /// A bytes kind: a value of its own, never collected.
+    Octets(bool, Rc<str>),
     Object(Weak<Instance>),
     Container(Weak<RefCell<Value>>),
     Class(Weak<Class>),
@@ -39,6 +41,7 @@ impl Hold {
     pub fn revive(&self) -> Option<Value> {
         Some(match self {
             Hold::Native(operation, spelling) => Value::Native(*operation, spelling.clone()),
+            Hold::Octets(changeable, word) => Value::ByteKind(*changeable, word.clone()),
             Hold::Object(w) => Value::Object(w.upgrade()?),
             Hold::Container(w) => Value::Bond(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
@@ -52,7 +55,7 @@ impl Hold {
 
     pub fn gone(&self) -> bool {
         match self {
-            Hold::Native(..) => false,
+            Hold::Native(..) | Hold::Octets(..) => false,
             Hold::Object(w) => w.strong_count() == 0,
             Hold::Container(w) => w.strong_count() == 0,
             Hold::Class(w) => w.strong_count() == 0,
@@ -124,7 +127,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
     let places: HashSet<usize> = group.iter().filter_map(place_of).collect();
     let lost = |hold: &Hold| match hold {
         Hold::Container(target) => places.contains(&(target.as_ptr() as usize)),
-        Hold::Native(..) => false,
+        Hold::Native(..) | Hold::Octets(..) => false,
         Hold::Object(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Class(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),
@@ -261,18 +264,19 @@ pub fn departing(dying: &mut Instance) {
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let asleep = dying.started && !dying.closed && !dying.finalized && dying.program.is_some();
+    let unawaited = !dying.started && dying.program.as_ref().is_some_and(|body| body.code_flags & 128 != 0);
+    let asleep = (dying.started || unawaited) && !dying.closed && !dying.finalized && dying.program.is_some();
     if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
         // Build only while the queue is alive. A rejected try_with must
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
+                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
                 pc: dying.pc,
-                started: true,
+                started: dying.started,
                 closed: false,
                 finalized: false,
                 waiting: dying.waiting,
@@ -286,6 +290,7 @@ pub fn walk_departing(dying: &mut Generator) {
                 reversed_walk: dying.reversed_walk.take(),
                 resume: std::mem::take(&mut dying.resume),
                 resuming: dying.resuming,
+                running: false,
                 held: std::mem::take(&mut dying.held),
                 hurled: dying.hurled.take(),
                 walked: dying.walked.take(),
@@ -355,6 +360,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
         Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => hold_of(&cell.borrow()),
         Value::Object(o) => Some(Hold::Object(Rc::downgrade(o))),
         Value::Native(op, word) if op.names_kind() => Some(Hold::Native(*op, word.clone())),
+        Value::ByteKind(changeable, word) => Some(Hold::Octets(*changeable, word.clone())),
         Value::Class(c) => Some(Hold::Class(Rc::downgrade(c))),
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),
@@ -498,6 +504,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
+                out.push(g.coroutine_origin.clone());
+                out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
                 out.extend(g.frame.iter().cloned());
@@ -514,6 +522,10 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                     match &step.phase {
                         Phase::Arm(_, v) => out.push(v.clone()),
                         Phase::Last(Ending::Thrown(v), _) => out.push(v.clone()),
+                        Phase::ContextExit(left, walk, _) => {
+                            out.push(walk.clone());
+                            if let Ending::Thrown(value) = left { out.push(value.clone()); }
+                        }
                         _ => {}
                     }
                 }
@@ -774,6 +786,8 @@ impl Graph {
                 Value::Generator(g) => {
                     if let Ok(mut g) = g.try_borrow_mut() {
                         g.closed = true;
+                        grave.push(std::mem::replace(&mut g.coroutine_origin, Value::Null));
+                        grave.push(std::mem::replace(&mut g.async_finalizer, Value::Null));
                         grave.extend(g.frame.drain(..));
                         grave.extend(g.stack.drain(..));
                         grave.extend(g.items.drain(..));
@@ -809,7 +823,7 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| g.started && !g.closed && !g.finalized && g.program.is_some())
+    walk.try_borrow().map_or(false, |g| (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some())
 }
 
 /// References in CPython list order: the shared plain reference first,

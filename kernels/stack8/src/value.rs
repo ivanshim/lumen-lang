@@ -164,6 +164,8 @@ pub enum Phase {
     /// The last part, with what the try had already come to and how deep
     /// the stack stood before the part began.
     Last(Ending, usize),
+    /// An asynchronous exit keeps the outcome while its awaitable yields.
+    ContextExit(Ending, Value, usize),
 }
 
 /// What a try had come to before its last part ran, kept apart from the
@@ -194,6 +196,10 @@ pub struct Step {
 pub struct Generator {
     pub name: String,
     pub qualified: String,
+    pub coroutine_identity: usize,
+    pub coroutine_origin: Value,
+    pub async_hooks_initialized: bool,
+    pub async_finalizer: Value,
     pub trace_frame: Option<Rc<Instance>>,
     pub suspended_position: Option<(u32, u32, u32, u32)>,
     pub program: Option<Rc<Routine>>,
@@ -223,6 +229,9 @@ pub struct Generator {
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
     pub resuming: bool,
+    /// Whether the body stands on the stack right now, so that entering
+    /// it again is refused the way the reference refuses it.
+    pub running: bool,
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     pub held: Vec<Value>,
@@ -236,10 +245,10 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), coroutine_identity: 0, coroutine_origin: Value::Null, async_hooks_initialized: false, async_finalizer: Value::Null, trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
-            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
+            resume: Vec::new(), resuming: false, running: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
 
@@ -889,7 +898,73 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
     match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+/// Inline identities have no allocation to release. They remain canonical
+/// for the whole runtime lifetime; heap identities instead count their owners.
+pub(super) enum Retention {
+    Immortal,
+    Owners(usize),
+}
+
+impl Retention {
+    pub(super) fn python_count(self) -> i64 {
+        match self {
+            Self::Owners(count) => count as i64,
+            // CPython's immortal header marker is a lifetime state, not a
+            // number of references to an allocation.
+            Self::Immortal => (3_u32 << 30) as i64,
+        }
+    }
+}
+
 impl Value {
+    pub(super) fn retained_count(&self) -> Option<Retention> {
+        match self {
+            Value::Small(_) | Value::Flag(_) | Value::Null | Value::Ellipsis
+                | Value::Native(..) | Value::ByteKind(..) | Value::Stream(_)
+                | Value::Declined(_) => Some(Retention::Immortal),
+            Value::Binding(cell) => cell.borrow().retained_count(),
+            Value::Bond(cell) => {
+                let held = cell.borrow();
+                if matches!(&*held, Value::Array(_) | Value::Map(_)) { Some(Retention::Owners(Rc::strong_count(cell))) }
+                else { held.retained_count() }
+            }
+            Value::Collection(p, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Codepoints(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::ValueMethod(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::View(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Cursor(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Trace(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Hashed(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Fields(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Walking(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Walk(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Bytes(p, _, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Export(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Adapter(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Counted(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Huge(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Frac(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Real(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Complex(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Text(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Words(p, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Array(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Tuple(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Generator(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Set(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Slice(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Map(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Class(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Object(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Tie(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Routine(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Method(_, _, p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Descriptor(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Faint(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            _ => None,
+        }
+    }
+
     pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
@@ -1864,7 +1939,10 @@ impl Value {
             }),
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Generator(cell) => match cell.try_borrow() {
-                Ok(g) if !g.qualified.is_empty() => format!("<generator object {} at 0x1>", g.qualified),
+                Ok(g) if !g.qualified.is_empty() => {
+                    if g.walked.as_deref() == Some("coroutine") { format!("<coroutine object {} at 0x{:x}>", g.qualified, if g.coroutine_identity == 0 { Rc::as_ptr(cell) as usize } else { g.coroutine_identity }) }
+                    else { format!("<generator object {} at 0x1>", g.qualified) }
+                },
                 _ => "<generator>".to_string(),
             },
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
@@ -1905,6 +1983,7 @@ impl Value {
             // writes it.
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
+            Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
                 .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),
