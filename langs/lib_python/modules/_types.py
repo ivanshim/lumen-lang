@@ -30,13 +30,24 @@ import sys
 ModuleType = type(sys)
 
 
-# A reading of a mapping that cannot be written through.
+# A reading of a mapping that cannot be written through. A reading is
+# only made over a mapping; a list, a tuple or a bare value is refused
+# by kind, as the reference refuses it.
 class MappingProxyType:
     def __init__(self, mapping):
+        if isinstance(mapping, (list, tuple)) or not hasattr(mapping, '__getitem__'):
+            raise TypeError('mappingproxy() argument must be a mapping, not '
+                            + type(mapping).__name__)
         self._mapping = mapping
 
     def __getitem__(self, key):
         return self._mapping[key]
+
+    def __setitem__(self, key, value):
+        raise TypeError("'mappingproxy' object does not support item assignment")
+
+    def __delitem__(self, key):
+        raise TypeError("'mappingproxy' object does not support item deletion")
 
     def __len__(self):
         return len(self._mapping)
