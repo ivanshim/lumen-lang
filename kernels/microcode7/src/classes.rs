@@ -984,7 +984,19 @@ impl<'a> Machine<'a> {
             let entries_now=class.shared.borrow().clone();
             for (key,held) in entries_now {
                 if let Some(hook)=self.protocol_entry(&held,"descriptor.name") {
-                    self.through_descriptor(&held,hook,vec![Value::Blueprint(class.clone()),Value::text(&key)])?;
+                    if let Err(raised)=self.through_descriptor(&held,hook,vec![Value::Blueprint(class.clone()),Value::text(&key)]) {
+                        let note=format!("Error calling __set_name__ on '{}' instance '{}' in '{}'",Self::type_argument_kind(&held),key,class.name);
+                        let escape=match self.got_away.take().unwrap_or(raised) {
+                            Escape::Thrown(value)=>{self.attach_note(&value,&note);Escape::Thrown(value)}
+                            Escape::Error(words)=>match self.as_raised(&words) {
+                                Some(value)=>{self.attach_note(&value,&note);Escape::Thrown(value)}
+                                None=>Escape::Error(words),
+                            },
+                            other=>other,
+                        };
+                        self.got_away=Some(escape);
+                        return Err(self.bad_answer().into());
+                    }
                 }
             }
         }
