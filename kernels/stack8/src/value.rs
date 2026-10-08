@@ -195,6 +195,7 @@ pub struct Generator {
     pub name: String,
     pub qualified: String,
     pub trace_frame: Option<Rc<Instance>>,
+    pub suspended_position: Option<(u32, u32, u32, u32)>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
     pub stack: Vec<Value>,
@@ -230,7 +231,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -1251,6 +1252,11 @@ impl Value {
     /// pointer.
     pub fn same_value(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+            (Value::Native(x, a), Value::Native(y, b)) => x == y && a == b,
+            (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
+            (Value::ByteKind(flag, _), Value::Native(crate::code::Builtin::Bytes(n @ 0..=1), _))
+            | (Value::Native(crate::code::Builtin::Bytes(n @ 0..=1), _), Value::ByteKind(flag, _)) => *flag == (*n == 1),
             (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
             (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
             (Value::Collection(x, _), Value::Collection(y, _)) => Rc::ptr_eq(x, y),
@@ -1262,6 +1268,12 @@ impl Value {
             (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
             (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            // A cell asked after twice is the one cell: the wrappers
+            // differ, the storage they look into is one.
+            (Value::Adapter(x), Value::Adapter(y)) if x.0 == 31 && y.0 == 31 => match (x.1.first(), y.1.first()) {
+                (Some(Value::Bond(a) | Value::Binding(a)), Some(Value::Bond(b) | Value::Binding(b))) => Rc::ptr_eq(a, b),
+                _ => Rc::ptr_eq(x, y),
+            },
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Flag(x), Value::Flag(y)) => x == y,
             (Value::Null, Value::Null) => true,
@@ -1304,6 +1316,8 @@ impl Value {
             }
             (Value::Bytes(a, ..), Value::Bytes(b, ..)) => *a.borrow() == *b.borrow(),
             (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
+            (Value::ByteKind(changeable, _), Value::Native(crate::code::Builtin::Bytes(kind), _))
+            | (Value::Native(crate::code::Builtin::Bytes(kind), _), Value::ByteKind(changeable, _)) => *kind == u8::from(*changeable),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -1357,8 +1371,23 @@ impl Value {
                 }
                 _ => Rc::ptr_eq(a, b),
             },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 3 && b.0 == 3 => {
+                match (a.1.first(), b.1.first(), a.1.get(1), b.1.get(1)) {
+                    (Some(Value::Adapter(left)), Some(Value::Adapter(right)), Some(x), Some(y)) if left.0 == 29 && right.0 == 29 =>
+                        left.1.len() == right.1.len() && left.1.iter().zip(&right.1).all(|(p,q)| p.equals(q)) && (x.same_value(y) || x.same_place(y)),
+                    (Some(left @ Value::Native(..)), Some(right @ Value::Native(..)), Some(x), Some(y)) => left.equals(right) && (x.same_value(y) || x.same_place(y)),
+                    (Some(f), Some(g), Some(x), Some(y)) => a.1.len() == b.1.len() && f.equals(g) && (x.same_value(y) || x.same_place(y)),
+                    _ => Rc::ptr_eq(a,b),
+                }
+            },
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
                 a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
+            },
+            // A cell asked after twice is the one cell: the wrappers
+            // differ, the storage they look into is one.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 31 && b.0 == 31 => match (a.1.first(), b.1.first()) {
+                (Some(Value::Bond(x) | Value::Binding(x)), Some(Value::Bond(y) | Value::Binding(y))) => Rc::ptr_eq(x, y),
+                _ => Rc::ptr_eq(a, b),
             },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
@@ -1375,6 +1404,7 @@ impl Value {
     /// worth alone. Nothing for kinds that have no place of their own.
     pub fn same_place(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Adapter(first),Value::Adapter(second))=>Rc::ptr_eq(first,second),
             (Value::Bond(x), _) => x.borrow().same_place(other),
             (_, Value::Bond(y)) => self.same_place(&y.borrow()),
             (Value::Collection(x, _), _) => x.borrow().same_place(other),
@@ -1564,7 +1594,7 @@ impl Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
             let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.lineage.borrow().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
@@ -1647,6 +1677,10 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
+                let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
+                format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1675,8 +1709,26 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
-        if matches!(kind, "bytes" | "bytearray") && name == "__buffer__"
-            || kind == "bytearray" && name == "__release_buffer__" {
+        let coexist = (matches!(kind, "list" | "dict") && name == "__getitem__")
+            || (matches!(kind, "dict" | "set" | "frozenset") && name == "__contains__");
+        if coexist { return Some(("method", "method_descriptor")); }
+        const WRAPPER_NAMES: &[&str] = &[
+            "__abs__", "__add__", "__aiter__", "__and__", "__anext__", "__await__",
+            "__bool__", "__buffer__", "__call__", "__contains__", "__del__", "__delattr__",
+            "__delete__", "__delitem__", "__divmod__", "__eq__", "__float__", "__floordiv__",
+            "__ge__", "__get__", "__getattribute__", "__getitem__", "__gt__", "__hash__",
+            "__iadd__", "__iand__", "__ifloordiv__", "__ilshift__", "__imatmul__", "__imod__",
+            "__imul__", "__index__", "__init__", "__int__", "__invert__", "__ior__",
+            "__ipow__", "__irshift__", "__isub__", "__iter__", "__itruediv__", "__ixor__",
+            "__le__", "__len__", "__lshift__", "__lt__", "__matmul__", "__mod__",
+            "__mul__", "__ne__", "__neg__", "__next__", "__or__", "__pos__",
+            "__pow__", "__radd__", "__rand__", "__rdivmod__", "__release_buffer__", "__repr__",
+            "__rfloordiv__", "__rlshift__", "__rmatmul__", "__rmod__", "__rmul__", "__ror__",
+            "__rpow__", "__rrshift__", "__rshift__", "__rsub__", "__rtruediv__", "__rxor__",
+            "__set__", "__setattr__", "__setitem__", "__str__", "__sub__", "__truediv__",
+            "__xor__",
+        ];
+        if name.starts_with("__") && WRAPPER_NAMES.binary_search(&name).is_ok() {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
         match kind {
@@ -1832,7 +1884,7 @@ pub struct Class {
     /// Python heap-type names, the module label, and the original
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
-    pub lineage: Vec<Rc<Class>>,
+    pub lineage: RefCell<Vec<Rc<Class>>>,
     pub direct: Vec<Rc<Class>>,
     pub outline: Option<String>,
     pub name: String,
@@ -1855,6 +1907,13 @@ pub struct Class {
     pub sealed: std::cell::Cell<bool>,
     /// Instance slot storage established when the class was constructed.
     pub declares_slots: bool,
+    /// Whether a metaclass's own mro supplied the order the class
+    /// keeps: the order is then complete, and no allocation link may
+    /// add a forebear it left out.
+    pub mro_adopted: std::cell::Cell<bool>,
+    // The complete supplied order uses weak links for the owner; lineage
+    // retains its other entries without introducing an owner cycle.
+    pub adopted_order: RefCell<Vec<std::rc::Weak<Class>>>,
 }
 
 impl Class {
@@ -2391,20 +2450,21 @@ fn expanded_real(number: f64, places: usize) -> String {
 }
 
 fn byte_repr(row: &[u8], mutable: bool, opening: &str) -> String {
-    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { '"' } else { '\'' };
-    let mut out = format!("{}{}", opening, quote);
+    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { b'"' } else { b'\'' };
+    let mut out = format!("{}{}", opening, quote as char);
     for &byte in row {
         match byte {
             b'\\' => out.push_str("\\\\"),
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
-            b if b == quote as u8 => { out.push('\\'); out.push(quote); }
+            b'\'' if mutable || quote == b'\'' => out.push_str("\\'"),
+            b'"' if quote == b'"' => out.push_str("\\\""),
             32..=126 => out.push(byte as char),
             _ => { let _ = write!(out, "\\x{:02x}", byte); }
         }
     }
-    out.push(quote);
+    out.push(quote as char);
     if mutable { out.push(')'); }
     out
 }

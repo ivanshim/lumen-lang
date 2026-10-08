@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/tempfile.py; PSF License.
 """Temporary files.
 
 This module provides generic, low- and high-level interfaces for

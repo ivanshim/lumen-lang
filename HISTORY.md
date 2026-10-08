@@ -2587,3 +2587,35 @@ test_ordered_dict 291/299, test_property 28/31, test_raise 37/37, test_richcmp 1
 on microcode7 30 → 42. The full check of the final commit agrees on 1194 scratch programs with no mismatch, passes every
 gate, and shows no regression or kernel disagreement; kernel independence reports no problem. Still timing out in
 parts: calendar's CommandLineTestCase, tokenize's TestRoundtrip and two decimal classes.
+
+### 1bg. Batch 21c merged as #538; batch 21d: context, paths, pattern matching, ntpath, bytes, super, pickle, uuid
+
+Eight branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, DeepSeek V4 Pro, Kimi K3 and GPT-6.1 Sol workers, most finished by GPT-6.1 Sol
+after reviews.
+
+- fix/dspro-context (contextvars refusals; missing _testinternalcapi names raise AttributeError),
+  fix/dsflash-paths (posixpath, urlparse; NFKC in unicodedata; surrogate-safe split and rsplit),
+  fix/dsflash-patma (pattern matching; generator tracing), fix/dsflash-ntpath (ntpath, buffer validation in the
+  digest and operator adapters; its own tempfile dropped for the canonical CPython one), fix/dspro-bytes (bytes and
+  bytearray), fix/stdlib-super (zero-argument super frames, adopted metaclass orders, rebound super subclasses),
+  fix/stdlib-pickle (pickle, copyreg, pickletools), fix/dspro-uuid (uuid; unittest.mock patch.multiple; the pickle
+  STRING escape decoder, one pickle adapter keeping both branches' behaviour).
+
+The full checks of the merged tree showed a test_str loss and general slowdowns. test_str was restored (128/139 on
+both kernels). Timing each merge found two sources: the full Unicode scan brought by the paths merge, now taken lazily
+only when a non-ASCII code point is present, and per-iteration costs brought by the pickle merge (module-owner and
+native-slot lookups, classification, rosters, descriptors, the tuple pool, function attributes kept apart from live
+globals), now cached or moved off the hot path. A general microcode7 run-time overhead of about +20-40 % on unchanged
+test files remains; it is a separate follow-up subject. Because of it microcode7 test_datetime runs past the
+870-second Lambda limit whole (499/553 on both kernels by class groups), and microcode7 calendar's CommandLineTestCase
+and io's PyTextIOWrapperTest time out as whole classes while every method completes with the same result as on stack8.
+
+Measured: 10994 (stack8) of 12200 and 10417 (microcode7) of 11557, over 140 files, from 10093 on both kernels of 11042
+over 132. New files: test_bytes 170/227, test_context 31/57, test_copyreg 6/6, test_io 495/585 (microcode7 429/510 in
+class parts), test_ntpath 82/108, test_super 39/40, test_uuid 47/120; test_patma 328/328, test_pickle 413/462 and
+test_pickletools 149/164 on both kernels by method groups (whole files exceed the Lambda limit). test_calendar stack8
+61 → 72 of 79, test_dataclasses 235 → 244, test_datetime stack8 498 → 499, test_enum 1063 → 1066, test_functools
+174 → 176, test_posixpath 84 → 87, test_str 127 → 128, test_urlparse 73 → 74. The full check of the final commit
+agrees on 1195 scratch programs with no mismatch, passes every gate, and shows no regression or kernel disagreement;
+kernel independence reports no problem; provenance exact 540, adapter 20, no mismatch.
