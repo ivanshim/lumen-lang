@@ -1677,3 +1677,22 @@ def requires_zstd(reason='requires zstd'):
     except ImportError:
         zstd = None
     return unittest.skipUnless(zstd, reason)
+
+
+import stat
+
+# Retry filesystem operations after restoring owner permissions.
+def _force_run(path, func, *args):
+    try:
+        return func(*args)
+    except FileNotFoundError as err:
+        # chmod() won't fix a missing file.
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+        raise
+    except OSError as err:
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+            print('re-run %s%r' % (func.__name__, args))
+        os.chmod(path, stat.S_IRWXU)
+        return func(*args)
