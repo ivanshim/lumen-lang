@@ -1955,6 +1955,7 @@ impl<'a> Engine<'a> {
                 // thing of and what the kind's builtin takes.
                 233 if args.len() == 1 => self.calendar_repr(&args[0]),
                 234 if args.len() == 1 => self.calendar_reduce(&args[0]),
+                237 => self.calendar_replace(args),
                 14 if !args.is_empty() => {
                     let kind = args.remove(0);
                     let word = w.1[0].plain();
@@ -2998,7 +2999,7 @@ impl<'a> Engine<'a> {
                 29 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 | 30 | 79..=80 | 200..=203 | 233..=235 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                20..=27 | 30 | 79..=80 | 200..=203 | 233..=235 | 237 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => self.property_reading(&o, &w.1[0].plain()), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -3022,7 +3023,7 @@ impl<'a> Engine<'a> {
         if let Some((_, found)) = self.kind_classes.iter().find(|(word, _)| word == "struct_time") { return found.clone(); }
         let tuple = self.kind_class("tuple");
         let mut lineage = vec![tuple.clone()]; lineage.extend(tuple.lineage.borrow().iter().cloned());
-        let fields = vec![("__module__".into(), Value::text("time")), ("__new__".into(), self.native_allocator("struct_time")), ("__repr__".into(), Self::adapter(233, vec![])), ("__str__".into(), Self::adapter(233, vec![])), ("__reduce__".into(), Self::adapter(234, vec![])), ("n_sequence_fields".into(), Value::Small(9)), ("n_fields".into(), Value::Small(11)), ("n_unnamed_fields".into(), Value::Small(0))];
+        let fields = vec![("__module__".into(), Value::text("time")), ("__new__".into(), self.native_allocator("struct_time")), ("__repr__".into(), Self::adapter(233, vec![])), ("__str__".into(), Self::adapter(233, vec![])), ("__reduce__".into(), Self::adapter(234, vec![])), ("__replace__".into(), Self::adapter(237, vec![])), ("__match_args__".into(), Value::tuple(["tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst"].into_iter().map(Value::text).collect())), ("n_sequence_fields".into(), Value::Small(9)), ("n_fields".into(), Value::Small(11)), ("n_unnamed_fields".into(), Value::Small(0))];
         let kind = Rc::new(Class { name: "struct_time".into(), outline: Some("<class 'time.struct_time'>".into()), base: Some(tuple.clone()), direct: vec![tuple], lineage: RefCell::new(lineage), answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![("\0kind".into(), Value::text("struct_time"))], shared: RefCell::new(fields), weak_storage: std::cell::Cell::new(None), declares_slots: true, sealed: std::cell::Cell::new(true), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: RefCell::new(None) });
         self.kind_classes.push(("struct_time".into(), kind.clone()));
         kind
@@ -3043,6 +3044,8 @@ impl<'a> Engine<'a> {
         let metadata = Self::worth_of(&parts[1]).unwrap_or_else(|| parts[1].contents()).contents();
         let Value::Map(dictionary) = metadata else { return Err("TypeError: time.struct_time() takes a dict as second arg, if any".into()); };
         const NAMES: [&str; 11] = ["tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst", "tm_zone", "tm_gmtoff"];
+        let used = NAMES[size..].iter().filter(|name| dictionary.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == **name))).count();
+        if dictionary.len() != used { return Err("TypeError: time.struct_time() got duplicate or unexpected field name(s)".into()); }
         while sequence.len() < 11 {
             let name = NAMES[sequence.len()];
             sequence.push(dictionary.iter().find(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == name)).map_or(Value::Null, |(_, value)| value.clone()));
@@ -3059,6 +3062,21 @@ impl<'a> Engine<'a> {
             fields.push(format!("{name}={}",self.special_text(&member,true).map_err(Fault::Note)?));
         }
         Ok(Value::text(&format!("time.struct_time({})",fields.join(", "))))
+    }
+    // Replace named fields while retaining the native struct_time type and extras.
+    fn calendar_replace(&mut self, args: Vec<Value>) -> Flow<Value> {
+        let entries = self.call_items(args)?;
+        let positional: Vec<Value> = entries.iter().filter(|(name, _)| name.is_none()).map(|(_, value)| value.clone()).collect();
+        if positional.len() != 1 { return Err("TypeError: __replace__() takes one positional argument".into()); }
+        let subject = &positional[0];
+        let names = ["tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst", "tm_zone", "tm_gmtoff"];
+        if entries.iter().any(|(name, _)| name.as_deref().is_some_and(|name| !names.contains(&name))) { return Err("TypeError: Got unexpected field name(s)".into()); }
+        let mut row = Vec::new();
+        for name in names {
+            row.push(match entries.iter().find(|(key, _)| key.as_deref() == Some(name)) { Some((_, value)) => value.clone(), None => self.class_get(subject.clone(), name, false)? });
+        }
+        let kind = Value::Class(self.calendar_kind());
+        self.calendar_sequence(kind, vec![Value::tuple(row)])
     }
     fn calendar_reduce(&mut self, value: &Value) -> Flow<Value> {
         let payload=Self::worth_of(value).ok_or_else(|| Fault::Note("TypeError: invalid struct_time receiver".into()))?;

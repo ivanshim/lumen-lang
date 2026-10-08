@@ -43,6 +43,7 @@ def monotonic_ns():
 def perf_counter_ns():
     return __clock(True, False)
 
+_STRUCT_TM_ITEMS = 11
 struct_time = _host_clock('struct_time')
 
 def localtime(seconds=None):
