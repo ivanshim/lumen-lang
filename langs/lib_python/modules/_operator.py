@@ -74,4 +74,11 @@ class _Addition:
             raise TypeError('add expected 2 arguments, got ' + str(len(args)))
         return args[0] + args[1]
 
+    # Native functions pickle by their module-global name in every protocol.
+    def __reduce__(self):
+        return 'add'
+
+    def __reduce_ex__(self, protocol):
+        return 'add'
+
 add = _Addition()
