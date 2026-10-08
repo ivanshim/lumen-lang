@@ -1,1 +1,1 @@
-NotImplementedError: this class operation is not supported
+RuntimeError: super(): no arguments

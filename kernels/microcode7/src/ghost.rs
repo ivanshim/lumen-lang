@@ -14,7 +14,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::data::{Adornment, Blueprint, Env, IteratorKind, SetStore, Thing, Value};
@@ -84,31 +83,15 @@ thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static LISTENING: Cell<usize> = const { Cell::new(0) };
     static LISTENERS: RefCell<Vec<Rc<Dim>>> = const { RefCell::new(Vec::new()) };
-    // Wrapped methods have no drop notification; only their listeners
-    // need polling. Class and instance listeners are notified on departure.
-    // One byte stands for three things the machine would otherwise ask
-    // after separately at every step: see ALERT_* below.
-    static ALERT: Cell<u8> = const { Cell::new(0) };
+    // Queued work, anchored finalizers, and polled method listeners.
+    static STIRRED: Cell<u8> = const { Cell::new(0) };
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
-    // The length the list of holds may reach before it is swept again.
-    static SWEEP_AT: Cell<usize> = const { Cell::new(32) };
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
-}
-
-/// Something has been stirred and waits for the machine.
-const ALERT_STIR: u8 = 1;
-/// A listener on a wrapped method must be polled, for it has no drop notice.
-const ALERT_POLL: u8 = 2;
-/// Some object with a farewell to say is being kept alive by the machine.
-const ALERT_ANCHOR: u8 = 4;
-
-fn alert_set(bit: u8, on: bool) {
-    let _ = ALERT.try_with(|alert| alert.set(if on { alert.get() | bit } else { alert.get() & !bit }));
 }
 
 /// Mark every reference to a lost knot before handing any callback to
@@ -152,7 +135,6 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             false
         });
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
-        alert_set(ALERT_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
         notices.into_iter().rev().collect()
     }).unwrap_or_default()
 }
@@ -161,7 +143,7 @@ pub fn anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         if !all.iter().any(|item| Rc::ptr_eq(item, thing)) { all.push(thing.clone()); }
-        alert_set(ALERT_ANCHOR, true);
+        let _ = STIRRED.try_with(|state| state.set(state.get() | 2));
     });
 }
 
@@ -173,13 +155,13 @@ pub fn release_anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         all.retain(|item| !Rc::ptr_eq(item, thing));
-        alert_set(ALERT_ANCHOR, !all.is_empty());
+        if all.is_empty() { let _ = STIRRED.try_with(|state| state.set(state.get() & !2)); }
     });
 }
 
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
-    alert_set(ALERT_ANCHOR, false);
+    let _ = STIRRED.try_with(|state| state.set(state.get() & !2));
 }
 
 fn anchor_ready() -> bool {
@@ -198,17 +180,17 @@ pub fn bidding() -> bool {
 }
 
 /// Whether the machine has anything to attend to before its next step.
+#[inline(always)]
 pub fn stirred() -> bool {
-    let alert = ALERT.try_with(|alert| alert.get()).unwrap_or(0);
-    if alert == 0 { return false; }
-    let gone_method = alert & ALERT_POLL != 0
-        && LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
+    let status = STIRRED.try_with(Cell::get).unwrap_or(0);
+    if status == 0 { return false; }
+    let gone_method = status & 4 != 0 && LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
     if gone_method { anything_departing(); }
-    ALERT.try_with(|alert| alert.get() & ALERT_STIR != 0).unwrap_or(false) || (alert & ALERT_ANCHOR != 0 && anchor_ready())
+    status & 1 != 0 || gone_method || (status & 2 != 0 && anchor_ready())
 }
 
 fn stir() {
-    alert_set(ALERT_STIR, true);
+    let _ = STIRRED.try_with(|s| s.set(s.get() | 1));
 }
 
 /// Something a listener might be listening for has gone.
@@ -269,12 +251,12 @@ pub fn walk_departing(again: Rc<RefCell<Suspension>>) {
 /// is cleared; more may gather while the machine works, so it asks
 /// again until nothing comes back.
 pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
-    alert_set(ALERT_STIR, false);
+    let _ = STIRRED.try_with(|s| s.set(s.get() & !1));
     let mut farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
-        alert_set(ALERT_ANCHOR, !kept.is_empty());
+        let _ = STIRRED.try_with(|state| state.set(if kept.is_empty() { state.get() & !2 } else { state.get() | 2 }));
         *all = kept;
         ready
     }).unwrap_or_default();
@@ -299,8 +281,9 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
-            alert_set(ALERT_POLL, still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
             still.reverse();
+            let methods = still.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)));
+            let _ = STIRRED.try_with(|state| state.set(if methods { state.get() | 4 } else { state.get() & !4 }));
             *all = still;
         });
     }
@@ -335,20 +318,15 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None), detached: Cell::new(false) });
     REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
-        // Dead holds are only swept out once the list has grown to twice
-        // what it kept last time, so making many holds does not rescan
-        // every earlier one each time.
-        if refs.len() >= SWEEP_AT.with(|at| at.get()) {
-            refs.retain(|weak| weak.strong_count() != 0);
-            let kept = refs.len();
-            SWEEP_AT.with(|at| at.set((kept * 2).max(32)));
-        }
+        refs.retain(|weak| weak.strong_count() != 0);
         refs.push(Rc::downgrade(&held));
     });
     if wants_telling {
+        if matches!(held.ghost, Ghost::WrappedMethod(_)) {
+            let _ = STIRRED.try_with(|state| state.set(state.get() | 4));
+        }
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
-        if matches!(held.ghost, Ghost::WrappedMethod(_)) { alert_set(ALERT_POLL, true); }
     }
     Value::Dim(held)
 }
@@ -535,7 +513,7 @@ impl Knot {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
-                    for parent in b.under.iter().chain(&b.ancestry).chain(&b.parents).chain(&b.answers) {
+                    for parent in b.under.iter().chain(b.ancestry.borrow().iter()).chain(&b.parents).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
                     }
                 }
@@ -613,17 +591,6 @@ impl Knot {
     /// A knot with no place of its own stands for the places it holds:
     /// a bound routine for its frame (the routine itself holds nothing),
     /// a bound method for its thing, a keyed pair for its two values.
-    /// The same split as `parts`, for the common case of one or two
-    /// places, without making a list of them.
-    fn pair(self) -> (Knot, Option<Knot>) {
-        match self {
-            Knot::Held(Value::Bound(body, env)) => (Knot::Held(Value::Routine(body)), Some(Knot::Frame(env))),
-            Knot::Held(Value::Method(body, thing, _)) => (Knot::Held(Value::Routine(body)), Some(Knot::Held(Value::Thing(thing)))),
-            Knot::Held(Value::Keyed(k, v)) => (Knot::Held((*k).clone()), Some(Knot::Held((*v).clone()))),
-            other => (other, None),
-        }
-    }
-
     fn parts(self) -> Vec<Knot> {
         match self {
             Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
@@ -647,27 +614,9 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
-    strands: Addressed<Strand>,
-    bookkeeping: Addressed<usize>,
+    strands: HashMap<usize, Strand>,
+    bookkeeping: HashMap<usize, usize>,
 }
-
-/// Maps keyed by where a thing lives. An address needs no more than one
-/// multiplication and a fold to be spread over the buckets, and the web
-/// looks one up for every hold it counts.
-#[derive(Default)]
-pub struct AddressMix(u64);
-
-impl Hasher for AddressMix {
-    fn finish(&self) -> u64 { self.0 ^ (self.0 >> 31) }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes { self.0 = (self.0 ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3); }
-    }
-    fn write_usize(&mut self, at: usize) {
-        self.0 = ((at as u64) >> 3).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    }
-}
-
-type Addressed<V> = HashMap<usize, V, BuildHasherDefault<AddressMix>>;
 
 /// An inline value is an engine root even though it has no shared
 /// pointer of its own. Follow its parts to the first shared owners.
@@ -685,7 +634,7 @@ fn external_knots(knot: Knot, out: &mut Vec<Knot>) {
 impl Web {
     /// Woven from the notable things still about.
     pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
-        let mut bookkeeping = Addressed::default();
+        let mut bookkeeping = HashMap::new();
         for knot in &extra {
             let parts = match knot {
                 Knot::Held(value) => Knot::Held(value.clone()).parts(),
@@ -713,8 +662,8 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: Addressed<usize>) -> Web {
-        let mut strands: Addressed<Strand> = Addressed::default();
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize>) -> Web {
+        let mut strands: HashMap<usize, Strand> = HashMap::new();
         let mut frontier: Vec<usize> = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
             if let Some(place) = root.place() {
@@ -729,7 +678,7 @@ impl Web {
             next.clear();
             strands[&place].knot.onward(&mut next);
             let mut onward = Vec::with_capacity(next.len());
-            for knot in next.drain(..).flat_map(|knot| { let (first, second) = knot.pair(); std::iter::once(first).chain(second) }) {
+            for knot in next.drain(..).flat_map(Knot::parts) {
                 let Some(at) = knot.place() else { continue };
                 if let Some(strand) = strands.get_mut(&at) {
                     strand.inward += 1;

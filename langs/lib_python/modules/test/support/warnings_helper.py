@@ -83,3 +83,10 @@ def check_no_warnings(testcase, message='', category=Warning, force_gc=False):
 def check_no_resource_warning(testcase):
     with check_no_warnings(testcase, category=ResourceWarning, force_gc=True):
         yield
+@contextlib.contextmanager
+def save_restore_warnings_filters():
+    old_filters = warnings.filters[:]
+    try:
+        yield
+    finally:
+        warnings.filters[:] = old_filters

@@ -1774,3 +1774,30 @@ def make_encoding_map(decoding_map):
         else:
             m[v] = None
     return m
+def escape_decode(*args, **kwargs):
+    if kwargs:
+        raise TypeError('_codecs.escape_decode() takes no keyword arguments')
+    if not args:
+        raise TypeError('escape_decode expected at least 1 argument, got 0')
+    if len(args) > 2:
+        raise TypeError('escape_decode expected at most 2 arguments, got ' + str(len(args)))
+    errors = args[1] if len(args) == 2 else None
+    decoded, consumed, warning = __escape_decode_native__(args[0], errors)
+    if warning is not None:
+        import warnings
+        warnings.warn(warning, DeprecationWarning, stacklevel=2)
+    return decoded, consumed
+
+
+def _escape_buffer(source):
+    import builtins
+    try:
+        with builtins._buffer_view(source, 0) as view:
+            if not view.c_contiguous:
+                raise BufferError('memoryview: underlying buffer is not C-contiguous')
+            return view.tobytes()
+    except TypeError as exc:
+        message = str(exc)
+        if message.startswith('memoryview: '):
+            message = message[12:]
+        raise TypeError(message) from None
