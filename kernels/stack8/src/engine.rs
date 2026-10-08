@@ -5898,7 +5898,18 @@ impl<'a> Engine<'a> {
         let class = self.locals_class();
         self.made += 1;
         let worth = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))));
-        let extra = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))));
+        // The names put aside belong to the frame, not to one proxy:
+        // a later reading of the frame, `locals()` among the readings,
+        // must find them, so the store is made once and shared.
+        let kept = frame.fields.borrow().iter().find(|(name, _)| name == "\0extra").map(|(_, value)| value.clone());
+        let extra = match kept {
+            Some(held @ Value::Bond(_)) => held,
+            _ => {
+                let cell = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))));
+                frame.fields.borrow_mut().push(("\0extra".to_string(), cell.clone()));
+                cell
+            }
+        };
         let proxy = Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
             ("\0frame".to_string(), Value::Object(frame.clone())),
             ("\0worth".to_string(), worth),
@@ -5964,8 +5975,16 @@ impl<'a> Engine<'a> {
 
     /// The living namespace a class body builds, where the frame is such
     /// a body: its own name slot holds the book the class is filled from.
-    fn locals_class_book(frame: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+    fn locals_class_book(&self, frame: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
         let body = match frame.fields.borrow().get(6).map(|(_, value)| value.clone()) { Some(Value::Routine(body)) => body, _ => return None };
+        // Where this frame is the class body now running, the book it
+        // fills is already in hand and is the one every name of the
+        // body reaches.
+        if let Some((owner, Some(book))) = &self.class_body_capture {
+            if Rc::ptr_eq(owner, &body) {
+                return Some(match book { Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => cell.clone(), other => Rc::new(RefCell::new(other.clone())) });
+            }
+        }
         let (book_name, _, _) = body.class_namespace.clone()?;
         let at = body.idents.iter().position(|name| name == &book_name)?;
         let held = match &frame.fields.borrow()[5].1 { Value::Tuple(items) => items.get(at).cloned(), _ => None }?;
@@ -5975,7 +5994,7 @@ impl<'a> Engine<'a> {
     fn locals_assign(&mut self, proxy: &Rc<Instance>, key: &Value, value: Value) -> Res<()> {
         if let Some(told) = self.unkeyable(key) { return Err(told); }
         let Some(frame) = Self::locals_proxy_frame(proxy) else { return Ok(()) };
-        if let Some(book) = Self::locals_class_book(&frame) {
+        if let Some(book) = self.locals_class_book(&frame) {
             let name = key.plain();
             if let Err(fault) = self.book_put(&book, &name, Some(value)) { self.carried = Some(fault); return Err(self.special_fault()); }
             self.locals_rebuild(proxy);
@@ -27276,6 +27295,20 @@ impl Engine<'_> {
                 let value = match held { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
                 if matches!(value, Value::Blank | Value::Gap) { continue; }
                 pairs.push((Value::text(name), value));
+            }
+            if let Some(trace) = &self.trace_frame {
+                let mine = matches!(trace.fields.borrow().get(6).map(|(_, value)| value.clone()), Some(Value::Routine(body)) if Rc::ptr_eq(&body, program));
+                if mine {
+                    if let Some(Value::Bond(cell)) = trace.fields.borrow().iter().find(|(name, _)| name == "\0extra").map(|(_, value)| value.clone()) {
+                        if let Value::Map(extra) = cell.borrow().clone() {
+                            for (key, value) in extra.iter() {
+                                let shown = key.plain();
+                                if pairs.iter().any(|(word, _)| word.plain() == shown) { continue; }
+                                pairs.push((key.clone(), value.clone()));
+                            }
+                        }
+                    }
+                }
             }
             Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))))
         };
