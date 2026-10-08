@@ -38,6 +38,15 @@ The native-module models _thread, itertools, sys, and io likewise have no
 corresponding pure-Python implementation of their C facilities. Their existing
 behavior and the newer integrated suite inventory are retained.
 
+`types.py` is the unchanged CPython v3.14.8 `Lib/types.py` (sha256
+8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2); it star-imports
+`_types`, the runtime's stand-in for `Modules/_typesmodule.c`, whose names are
+the runtime's own kinds (the pure fallback in `types.py` reads the same values)
+except `MappingProxyType`, `CapsuleType` and the helper functions the kernels
+call for unions and subscripted kinds. `_datetime` has no C accelerator behind
+it: it re-exports the classes of `_pydatetime`, the very objects `datetime`
+exposes, and has no `datetime_CAPI` capsule.
+
 Frame, C-API, dataclass, and pickle limitations remain visible as failures or
 honest skips in the reference suite. No reference test is rewritten to conceal
 a runtime limitation.
