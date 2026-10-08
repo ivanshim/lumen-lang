@@ -19,12 +19,19 @@ def category(c):
     return _categories[n] if n < 256 else __sre_native(6, n)
 
 def name(c, default=None):
-    answer = _names[_index(c)]
+    if not isinstance(c, str) or len(c) != 1:
+        raise TypeError('name() argument 1 must be a unicode character')
+    number = ord(c)
+    if number < 256:
+        answer = _names[number]
+    else:
+        import _codec_names
+        answer = _codec_names.name(number) or ''
     if answer != '':
         return answer
     if default is not None:
         return default
-    raise 'ValueError: no such name'
+    raise ValueError('no such name')
 
 def lookup(name):
     folded = ''

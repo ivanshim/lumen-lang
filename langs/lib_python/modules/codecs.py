@@ -41,18 +41,55 @@ def register_error(name, handler):
         raise TypeError('handler must be callable')
     _errors[name] = handler
 
+def _callback_kind(exc):
+    # What a handler knows a value by is the class the value really is,
+    # not the one an instance may pretend through __class__.
+    cls = type(exc)
+    if issubclass(cls, UnicodeEncodeError):
+        return 0
+    if issubclass(cls, UnicodeDecodeError):
+        return 1
+    if issubclass(cls, UnicodeTranslateError):
+        return 2
+    raise TypeError("don't know how to handle %s in error callback" % getattr(cls, '__name__', cls))
+
+def _error_bounds(exc, decoding):
+    # A fault carries its own account as members; a handler reads those,
+    # and one that has been tampered with is refused.
+    try:
+        obj = exc.object
+        start = exc.start
+        end = exc.end
+    except AttributeError:
+        raise TypeError("UnicodeError attribute is not set")
+    if decoding:
+        if not (isinstance(obj, bytes) or isinstance(obj, bytearray)):
+            raise TypeError("UnicodeError 'object' attribute must be bytes")
+    else:
+        if not isinstance(obj, str):
+            raise TypeError("UnicodeError 'object' attribute must be a string")
+    if not isinstance(start, int) or not isinstance(end, int):
+        raise TypeError("UnicodeError 'start' or 'end' attribute must be an integer")
+    return obj, start, end
+
 def strict_errors(exc):
     if not isinstance(exc, BaseException):
         raise TypeError('codec must pass exception instance')
     raise exc
 
 def ignore_errors(exc):
-    return ('', exc.end)
+    kind = _callback_kind(exc)
+    _, start, end = _error_bounds(exc, kind == 1)
+    return ('', end)
 
 def replace_errors(exc):
-    if isinstance(exc, UnicodeDecodeError):
-        return ('\ufffd', exc.end)
-    return ('?' * (exc.end - exc.start), exc.end)
+    kind = _callback_kind(exc)
+    obj, start, end = _error_bounds(exc, kind == 1)
+    if kind == 1:
+        return ('\ufffd', end)
+    if kind == 2:
+        return ('\ufffd' * (end - start), end)
+    return ('?' * (end - start), end)
 
 def _escape(c):
     n = ord(c)
@@ -63,58 +100,129 @@ def _escape(c):
     return '\\U%08x' % n
 
 def backslashreplace_errors(exc):
-    if isinstance(exc, UnicodeDecodeError):
-        return (''.join('\\x%02x' % n for n in exc.object[exc.start:exc.end]), exc.end)
-    return (''.join(_escape(c) for c in exc.object[exc.start:exc.end]), exc.end)
+    kind = _callback_kind(exc)
+    obj, start, end = _error_bounds(exc, kind == 1)
+    if kind == 1:
+        return (''.join('\\x%02x' % n for n in obj[start:end]), end)
+    return (''.join(_escape(c) for c in obj[start:end]), end)
 
 def xmlcharrefreplace_errors(exc):
-    if not isinstance(exc, UnicodeEncodeError):
-        raise TypeError("don't know how to handle UnicodeDecodeError in error callback")
-    return (''.join('&#%d;' % ord(c) for c in exc.object[exc.start:exc.end]), exc.end)
+    kind = _callback_kind(exc)
+    if kind != 0:
+        raise TypeError("don't know how to handle %s in error callback" % type(exc).__name__)
+    obj, start, end = _error_bounds(exc, False)
+    return (''.join('&#%d;' % ord(c) for c in obj[start:end]), end)
 
 def namereplace_errors(exc):
     import _codec_names
-    if not isinstance(exc, UnicodeEncodeError):
-        raise TypeError("don't know how to handle UnicodeDecodeError in error callback")
+    kind = _callback_kind(exc)
+    if kind != 0:
+        raise TypeError("don't know how to handle %s in error callback" % type(exc).__name__)
+    obj, start, end = _error_bounds(exc, False)
     result = ''
-    for c in exc.object[exc.start:exc.end]:
+    for c in obj[start:end]:
         name = _codec_names.name(ord(c))
         result += '\\N{' + name + '}' if name else _escape(c)
-    return (result, exc.end)
+    return (result, end)
 
 def _surrogateescape(exc):
-    if isinstance(exc, UnicodeDecodeError):
+    kind = _callback_kind(exc)
+    if kind == 2:
+        raise TypeError("don't know how to handle %s in error callback" % type(exc).__name__)
+    obj, start, end = _error_bounds(exc, kind == 1)
+    if kind == 1:
         chars = ''
-        for n in exc.object[exc.start:exc.end]:
+        limit = end - start
+        while len(chars) < 4 and len(chars) < limit:
+            n = obj[start + len(chars)]
             if n < 128:
                 break
             chars += chr(0xdc00 + n)
-        if chars:
-            return (chars, exc.start + len(chars))
-    else:
-        row = []
-        for c in exc.object[exc.start:exc.end]:
-            n = ord(c)
-            if n < 0xdc80 or n > 0xdcff:
-                raise exc
-            row.append(n - 0xdc00)
-        return (bytes(row), exc.end)
-    raise exc
+        if not chars:
+            raise exc
+        return (chars, start + len(chars))
+    row = []
+    for c in obj[start:end]:
+        n = ord(c)
+        if n < 0xdc80 or n > 0xdcff:
+            raise exc
+        row.append(n - 0xdc00)
+    return (bytes(row), end)
+
+def _standard_encoding(name):
+    # The UTF codecs a surrogate handler is willing to work for, and how
+    # many bytes one code unit takes in each.
+    n = name.lower().replace('_', '-')
+    if n == 'cp65001':
+        return ('utf-8', 3)
+    if n.startswith('utf'):
+        rest = n[3:]
+        if rest.startswith('-'):
+            rest = rest[1:]
+        if rest == '8':
+            return ('utf-8', 3)
+        if rest.startswith('16'):
+            rest = rest[2:]
+            if rest == '':
+                return ('utf-16le', 2)
+            if rest.startswith('-'):
+                rest = rest[1:]
+            if rest == 'le':
+                return ('utf-16le', 2)
+            if rest == 'be':
+                return ('utf-16be', 2)
+        elif rest.startswith('32'):
+            rest = rest[2:]
+            if rest == '':
+                return ('utf-32le', 4)
+            if rest.startswith('-'):
+                rest = rest[1:]
+            if rest == 'le':
+                return ('utf-32le', 4)
+            if rest == 'be':
+                return ('utf-32be', 4)
+    return (None, 0)
 
 def _surrogatepass(exc):
-    if exc.encoding in ('utf-8', 'utf8'):
-        if isinstance(exc, UnicodeEncodeError):
-            row = []
-            for c in exc.object[exc.start:exc.end]:
-                n = ord(c)
-                if not 0xd800 <= n <= 0xdfff:
-                    raise exc
+    kind = _callback_kind(exc)
+    if kind == 2:
+        raise TypeError("don't know how to handle %s in error callback" % type(exc).__name__)
+    code, width = _standard_encoding(getattr(exc, 'encoding', ''))
+    if code is None:
+        raise exc
+    obj, start, end = _error_bounds(exc, kind == 1)
+    if kind == 0:
+        row = []
+        for c in obj[start:end]:
+            n = ord(c)
+            if not 0xd800 <= n <= 0xdfff:
+                raise exc
+            if width == 3:
                 row.extend([0xe0 | (n >> 12), 0x80 | ((n >> 6) & 63), 0x80 | (n & 63)])
-            return (bytes(row), exc.end)
-        row = exc.object[exc.start:exc.start + 3]
-        if len(row) == 3 and row[0] == 0xed and 0xa0 <= row[1] <= 0xbf and 0x80 <= row[2] <= 0xbf:
-            return (chr(((row[0] & 15) << 12) | ((row[1] & 63) << 6) | (row[2] & 63)), exc.start + 3)
-    raise exc
+            elif width == 2:
+                row.extend([n & 0xff, (n >> 8) & 0xff] if code == 'utf-16le' else [(n >> 8) & 0xff, n & 0xff])
+            elif code == 'utf-32le':
+                row.extend([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff])
+            else:
+                row.extend([(n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff])
+        return (bytes(row), end)
+    raw = obj[start:start + width]
+    n = 0
+    if len(raw) >= width:
+        if code == 'utf-8':
+            if (raw[0] & 0xf0) == 0xe0 and (raw[1] & 0xc0) == 0x80 and (raw[2] & 0xc0) == 0x80:
+                n = ((raw[0] & 0x0f) << 12) | ((raw[1] & 0x3f) << 6) | (raw[2] & 0x3f)
+        elif code == 'utf-16le':
+            n = raw[1] << 8 | raw[0]
+        elif code == 'utf-16be':
+            n = raw[0] << 8 | raw[1]
+        elif code == 'utf-32le':
+            n = (raw[3] << 24) | (raw[2] << 16) | (raw[1] << 8) | raw[0]
+        else:
+            n = (raw[0] << 24) | (raw[1] << 16) | (raw[2] << 8) | raw[3]
+    if not 0xd800 <= n <= 0xdfff:
+        raise exc
+    return (chr(n), start + width)
 
 _errors = {'strict': strict_errors, 'ignore': ignore_errors,
            'replace': replace_errors, 'backslashreplace': backslashreplace_errors,
@@ -144,8 +252,40 @@ def _handle(exc, errors, decoding):
 def _decode_error(encoding, obj, start, end, reason, errors):
     return _handle(UnicodeDecodeError(encoding, obj, start, end, reason), errors, True)
 
+def _decode_error_full(encoding, obj, start, end, reason, errors):
+    # A decoding handler may set the fault's own object to a new row of
+    # bytes; the reader takes that row back up, and the place it names
+    # is measured against the new row, as the reference's reader does.
+    exc = UnicodeDecodeError(encoding, obj, start, end, reason)
+    answer = lookup_error(errors)(exc)
+    if not isinstance(answer, tuple) or len(answer) != 2:
+        raise TypeError('decoding error handler must return (str, int) tuple')
+    replacement, position = answer
+    if not isinstance(replacement, str):
+        raise TypeError('decoding error handler must return (str, int) tuple')
+    if not isinstance(position, int):
+        raise TypeError('position from error handler must be an integer')
+    source = exc.object
+    if not isinstance(source, bytes):
+        raise TypeError("UnicodeError 'object' attribute must be bytes")
+    if position < 0:
+        position += len(source)
+    if position < 0 or position > len(source):
+        raise IndexError('position %d from error handler out of bounds' % position)
+    return (replacement, position, source)
+
 def _encode_error(encoding, obj, start, end, reason, errors):
     return _handle(UnicodeEncodeError(encoding, obj, start, end, reason), errors, False)
+
+def _apply_encode_replacement(encoding, text, start, end, reason, replacement, limit):
+    # A replacement a handler returns is put through the codec again; a
+    # row of bytes goes in as it stands, while text must hold nothing
+    # the codec cannot write, and one that does is the original fault.
+    if isinstance(replacement, bytes):
+        return replacement
+    if any(ord(ch) >= limit for ch in replacement):
+        raise UnicodeEncodeError(encoding, text, start, end, reason)
+    return bytes(ord(ch) for ch in replacement)
 
 def _normalize(encoding):
     if not isinstance(encoding, str):
@@ -241,8 +381,20 @@ def _wide_encode(text, name, errors):
     while i < len(text):
         n = ord(text[i])
         if 0xd800 <= n <= 0xdfff and errors != 'surrogatepass':
-            repl, i = _encode_error(name.replace('_', '-'), text, i, i + 1, 'surrogates not allowed', errors)
-            row.extend(list(repl if isinstance(repl, bytes) else _wide_encode(repl, name + ('_le' if name in ('utf_16', 'utf_32') else ''), errors)))
+            shown = name.replace('_', '-')
+            at = i
+            repl, i = _encode_error(shown, text, at, at + 1, 'surrogates not allowed', errors)
+            if isinstance(repl, bytes):
+                if len(repl) % width:
+                    raise UnicodeEncodeError(shown, text, at, at + 1, 'surrogates not allowed')
+                row.extend(list(repl))
+            else:
+                if not all(ord(ch) < 128 for ch in repl):
+                    raise UnicodeEncodeError(shown, text, at, at + 1, 'surrogates not allowed')
+                for ch in repl:
+                    unit = ord(ch)
+                    shifts = range(0, width * 8, 8) if little else range(width * 8 - 8, -1, -8)
+                    row.extend([(unit >> shift) & 255 for shift in shifts])
             continue
         units = [n]
         if width == 2 and n >= 0x10000:
@@ -295,7 +447,7 @@ def _wide_decode(data, name, errors):
             elif width == 2 and 0xdc00 <= n <= 0xdfff and errors != 'surrogatepass':
                 reason = 'illegal encoding'
         if reason:
-            repl, i = _decode_error(encoding, data, start, end, reason, errors)
+            repl, i, data = _decode_error_full(encoding, data, start, end, reason, errors)
             result += repl
         else:
             result += chr(n)
@@ -372,7 +524,7 @@ def _utf7_decode(data, errors):
             elif bits:
                 reason = 'non-zero padding bits in shift sequence'
             if reason:
-                repl, i = _decode_error('utf7', data, start, min(i + 1, len(data)), reason, errors)
+                repl, i, data = _decode_error_full('utf7', data, start, min(i + 1, len(data)), reason, errors)
                 result += repl
                 continue
             j = 0
@@ -389,7 +541,7 @@ def _utf7_decode(data, errors):
             result += chr(n)
             i += 1
         else:
-            repl, i = _decode_error('utf7', data, i, i + 1, 'unexpected special character', errors)
+            repl, i, data = _decode_error_full('utf7', data, i, i + 1, 'unexpected special character', errors)
             result += repl
     return result
 
@@ -411,6 +563,7 @@ def _escaped_decode(data, raw, errors):
     text = data.decode('latin-1')
     out = ''
     i = 0
+    deprecated = None
     encoding = 'rawunicodeescape' if raw else 'unicodeescape'
     while i < len(text):
         start = i
@@ -423,8 +576,9 @@ def _escaped_decode(data, raw, errors):
             if raw:
                 out += '\\'
                 continue
-            repl, i = _decode_error(encoding, data, start, i, '\\ at end of string', errors)
+            repl, i, data = _decode_error_full(encoding, data, start, i, '\\ at end of string', errors)
             out += repl
+            text = data.decode('latin-1')
             continue
         c = text[i]
         if raw and c not in 'uU':
@@ -447,8 +601,9 @@ def _escaped_decode(data, raw, errors):
                 if n > 0x10ffff:
                     reason = '\\Uxxxxxxxx out of range' if raw else 'illegal Unicode character'
             if reason:
-                repl, i = _decode_error(encoding, data, start, end, reason, errors)
+                repl, i, data = _decode_error_full(encoding, data, start, end, reason, errors)
                 out += repl
+                text = data.decode('latin-1')
             else:
                 out += chr(n)
                 i = end
@@ -466,8 +621,9 @@ def _escaped_decode(data, raw, errors):
                 end += 1
             else:
                 end = i
-            repl, i = _decode_error(encoding, data, start, end, reason, errors)
+            repl, i, data = _decode_error_full(encoding, data, start, end, reason, errors)
             out += repl
+            text = data.decode('latin-1')
         elif c in _escape_decode:
             out += _escape_decode[c]
         elif c == '\n':
@@ -476,11 +632,28 @@ def _escaped_decode(data, raw, errors):
             end = i
             while end < len(text) and end - i < 2 and text[end] in '01234567':
                 end += 1
-            out += chr(int(text[i - 1:end], 8))
+            value = int(text[i - 1:end], 8)
+            if not raw and value > 0xff and deprecated is None:
+                deprecated = ('octal', value)
+            out += chr(value)
             i = end
         else:
+            if not raw and deprecated is None:
+                deprecated = ('escape', c)
             out += '\\' + c
+    if deprecated is not None:
+        import warnings
+        if deprecated[0] == 'octal':
+            warnings.warn('"\\%o" is an invalid octal escape sequence. Such sequences will not work in the future. ' % deprecated[1], DeprecationWarning)
+        else:
+            warnings.warn('"\\%c" is an invalid escape sequence. Such sequences will not work in the future. ' % deprecated[1], DeprecationWarning)
     return out
+
+def unicode_escape_decode(data, errors='strict'):
+    return (_escaped_decode(bytes(data), False, errors), len(data))
+
+def raw_unicode_escape_decode(data, errors='strict'):
+    return (_escaped_decode(bytes(data), True, errors), len(data))
 
 def charmap_decode(data, errors='strict', mapping=None):
     if mapping is None:
@@ -490,12 +663,19 @@ def charmap_decode(data, errors='strict', mapping=None):
     while i < len(data):
         try:
             c = mapping[data[i]]
-        except (KeyError, IndexError):
+        except LookupError:
             c = None
         if isinstance(c, int):
-            c = chr(c)
+            if c == 0xfffe:
+                c = None
+            elif c < 0 or c > 0x10ffff:
+                raise TypeError('character mapping must be in range(0x110000)')
+            else:
+                c = chr(c)
+        elif c is not None and not isinstance(c, str):
+            raise TypeError('character mapping must return integer, None or str')
         if c is None or c == '\ufffe':
-            repl, i = _decode_error('charmap', data, i, i + 1, 'character maps to <undefined>', errors)
+            repl, i, data = _decode_error_full('charmap', data, i, i + 1, 'character maps to <undefined>', errors)
             result += repl
         else:
             result += c
@@ -508,24 +688,47 @@ def charmap_build(mapping):
 def charmap_encode(text, errors='strict', mapping=None):
     if mapping is None:
         return (text.encode('latin-1', errors), len(text))
+    def piece(letter):
+        try:
+            value = mapping[ord(letter)]
+        except LookupError:
+            return None
+        if value is None:
+            return None
+        if isinstance(value, int):
+            if value < 0 or value > 255:
+                raise TypeError('character mapping must be in range(256)')
+            return bytes([value])
+        if isinstance(value, bytes):
+            return value
+        raise TypeError('character mapping must return integer, bytes or None, not %s' % type(value).__name__)
     row = []
     i = 0
     while i < len(text):
-        c = mapping.get(ord(text[i]))
-        if c is None:
-            end = i + 1
-            while end < len(text) and mapping.get(ord(text[end])) is None:
-                end += 1
-            repl, i = _encode_error('charmap', text, i, end, 'character maps to <undefined>', errors)
-            row.extend(list(repl if isinstance(repl, bytes) else charmap_encode(repl, 'strict', mapping)[0]))
-        else:
-            row.extend([c] if isinstance(c, int) else list(c))
+        found = piece(text[i])
+        if found is not None:
+            row.extend(list(found))
             i += 1
+            continue
+        at = i
+        end = i + 1
+        while end < len(text) and piece(text[end]) is None:
+            end += 1
+        repl, i = _encode_error('charmap', text, at, end, 'character maps to <undefined>', errors)
+        if isinstance(repl, bytes):
+            row.extend(list(repl))
+            continue
+        for letter in repl:
+            found = piece(letter)
+            if found is None:
+                raise UnicodeEncodeError('charmap', text, at, end, 'character maps to <undefined>')
+            row.extend(list(found))
     return (bytes(row), len(text))
 
 def _encode_surrogates(text, encoding='utf-8', errors='strict'):
     name = _normalize(encoding)
     limit = 128 if name == 'ascii' else 256
+    shown = name.replace('_', '-')
     row = []
     i = 0
     while i < len(text):
@@ -535,6 +738,7 @@ def _encode_surrogates(text, encoding='utf-8', errors='strict'):
             row.extend(list(chr(n).encode(name, errors)))
             i += 1
             continue
+        at = i
         end = i + 1
         while end < len(text):
             n = ord(text[end])
@@ -542,8 +746,14 @@ def _encode_surrogates(text, encoding='utf-8', errors='strict'):
                 break
             end += 1
         reason = 'surrogates not allowed' if name == 'utf_8' else 'ordinal not in range(%d)' % limit
-        repl, i = _encode_error(name.replace('_', '-'), text, i, end, reason, errors)
-        row.extend(list(repl if isinstance(repl, bytes) else repl.encode(name, errors)))
+        repl, i = _encode_error(shown, text, at, end, reason, errors)
+        if isinstance(repl, bytes):
+            row.extend(list(repl))
+            continue
+        bound = 128 if (name == 'utf_8' or name == 'ascii') else 256
+        if not all(ord(ch) < bound for ch in repl):
+            raise UnicodeEncodeError(shown, text, at, end, reason)
+        row.extend([ord(ch) for ch in repl])
     return bytes(row)
 
 def _encode(obj, encoding='utf-8', errors='strict'):
