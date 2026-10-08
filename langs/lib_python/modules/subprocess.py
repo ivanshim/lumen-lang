@@ -94,14 +94,18 @@ class _Writable:
     def write(self, data):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+        written = None
         if self._text and isinstance(data, str):
             # A text stream counts the characters handed to it, not the
             # bytes they were written as; the caller advances by that.
             written = len(data)
             data = data.encode(self._encoding, self._errors or 'strict')
-            _subprocess(1, self._handle, data)
-            return written
-        return _subprocess(1, self._handle, data)
+        result = _subprocess(1, self._handle, data)
+        if isinstance(result, tuple):
+            error, message = result
+            kind = BrokenPipeError if error == 32 else OSError
+            raise kind(error, message)
+        return result if written is None else written
 
     def close(self):
         if not self.closed:
@@ -187,7 +191,10 @@ class Popen:
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
         if input is not None:
-            self.stdin.write(input)
+            try:
+                self.stdin.write(input)
+            except BrokenPipeError:
+                pass
         if self.stdin is not None:
             self.stdin.close()
             self.stdin = None

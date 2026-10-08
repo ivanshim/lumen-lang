@@ -20199,9 +20199,12 @@ impl<'a> Engine<'a> {
                         match kept.get_mut(&which) {
                             Some(Beside { in_pipe: Some(pipe), .. }) => match pipe.write_all(&data).and_then(|_| pipe.flush()) {
                                 Ok(()) => Value::Small(data.len() as i64),
-                                Err(_) => Value::Flag(false),
+                                Err(fault) => Value::tuple(vec![
+                                    Value::Small(fault.raw_os_error().unwrap_or(5) as i64),
+                                    Value::text(fault.to_string().split(" (os error").next().unwrap_or("I/O error")),
+                                ]),
                             },
-                            _ => Value::Flag(false),
+                            _ => Value::tuple(vec![Value::Small(9), Value::text("Bad file descriptor")]),
                         }
                     }
                     2 => {
