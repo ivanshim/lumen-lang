@@ -3526,11 +3526,15 @@ impl<'a> Engine<'a> {
     }
 
     /// The name a keyword goes by in a complaint: its own text, or for a
-    /// key of another kind what the plain printer writes of it.
-    fn key_label(&self, key: &Value) -> String {
+    /// key of another kind what the reference's `repr` writes of it, and
+    /// only where that cannot be had the plain printer.
+    fn key_label(&mut self, key: &Value) -> String {
         match key {
             Value::Text(text) => text.to_string(),
-            other => self.told(other, &self.wording()),
+            other => match self.builtin(Builtin::Repr, "repr", &mut vec![other.clone()]) {
+                Ok(shown) => shown.plain(),
+                Err(_) => self.told(other, &self.wording()),
+            },
         }
     }
 
@@ -3675,20 +3679,19 @@ impl<'a> Engine<'a> {
         let spoken: Vec<String> = if rules.contains(&1) {
             items.iter().filter_map(|(name, _)| match name { Some(Value::Text(text)) => Some(text.to_string()), _ => None }).collect()
         } else { Vec::new() };
-        // A name handed twice is spoken of before any name is put in a
-        // place, and before a name of another kind is refused: the
-        // reference merges every `**` mapping first and only then asks
-        // that every key be text.
+        // The reference folds every `**` mapping into one dictionary as
+        // it goes: each name is put in by the dictionary's own road, so
+        // a name of the program's own is hashed and compared by its
+        // `__hash__` and `__eq__`, and a name met twice is refused while
+        // the folding still runs -- before any name is asked to be text.
         {
-            let mut seen: Vec<&Value> = Vec::new();
+            let mut gathered: Vec<(Value, Value)> = Vec::new();
             for (name, _) in items.iter() {
                 let Some(key) = name else { continue };
-                for earlier in seen.iter() {
-                    if self.special_keys_equal(earlier, key)? {
-                        return Err(self.keyword_twice(program, &self.key_label(key)).into());
-                    }
+                if !self.map_enter(&mut gathered, key.clone(), Value::Null)? {
+                    let label = self.key_label(key);
+                    return Err(self.keyword_twice(program, &label).into());
                 }
-                seen.push(key);
             }
         }
         let mut keywords = Vec::new();
@@ -16438,18 +16441,19 @@ impl<'a> Engine<'a> {
     /// is answered by its reader; nothing where the thing has no such
     /// member.
     fn member_of(&mut self, owner: Value, member: &str) -> Res<Option<Value>> {
-        let mut asked = vec![owner.clone(), Value::text(member)];
-        let has = self.builtin(Builtin::HasAttr, "hasattr", &mut asked)?;
-        if !self.truth(&has) { return Ok(None); }
+        // One read of the name: a member made of a reader is answered by
+        // that reader once. Only the name simply not being there means
+        // nothing; every other complaint travels on as it stands.
         let floor = self.data.len();
         self.data.push(owner);
         let read = match self.perform(&Action::Grab(Rc::from(member)), 1) {
-            Ok(()) => self.drop_top(),
+            Ok(()) => self.drop_top().map(Some),
+            Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; Ok(None) }
             Err(Fault::Note(words)) => Err(words),
             Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
         };
         self.data.truncate(floor);
-        read.map(Some)
+        read
     }
 
     /// Call a value the program could call, with these arguments, and

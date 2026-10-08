@@ -11849,11 +11849,15 @@ impl<'a> Machine<'a> {
     }
 
     /// The name a keyword goes by in a complaint: its own text, or for a
-    /// key of another kind what the plain printer writes of it.
-    fn key_label(&self, key: &Value) -> String {
+    /// key of another kind what the reference's `repr` writes of it, and
+    /// only where that cannot be had the plain printer.
+    fn key_label(&mut self, key: &Value) -> String {
         match key {
             Value::Text(text) => text.to_string(),
-            other => self.told(other, self.wording()),
+            other => match self.prim(Prim::Quoted, "repr", &[other.clone()]) {
+                Ok(shown) => shown.bare(),
+                Err(_) => self.told(other, self.wording()),
+            },
         }
     }
 
@@ -11997,19 +12001,18 @@ impl<'a> Machine<'a> {
             false => Vec::new(),
         };
         let mut spare_names = Vec::new();
-        // A name handed twice is spoken of before any name is put in a
-        // place, and before a name of another kind is refused: the
-        // reference merges every `**` mapping first and only then asks
-        // that every key be text.
+        // The reference merges every `**` mapping into a single
+        // dictionary as it walks them: a name of the program's own is
+        // hashed and weighed by its `__hash__` and `__eq__`, and a name
+        // met twice is refused then and there, before any name is asked
+        // to be text.
         {
-            let mut seen: Vec<&Value> = Vec::new();
+            let mut folded: Vec<(Value, Value)> = Vec::new();
             for (key, _) in named.iter() {
-                for earlier in seen.iter() {
-                    if self.keys_agree(earlier, key)? {
-                        return Err(self.keyword_twice(program, &self.key_label(key)).into());
-                    }
+                if !self.map_enter(&mut folded, key.clone(), Value::Unset)? {
+                    let label = self.key_label(key);
+                    return Err(self.keyword_twice(program, &label).into());
                 }
-                seen.push(key);
             }
         }
         for (key, worth) in named {
