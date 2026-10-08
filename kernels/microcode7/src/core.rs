@@ -95,6 +95,7 @@ impl Value {
             Self::Wrapped(14, _) => "builtin_function_or_method",
             // A slot's own descriptor is a member; the two layout names
             // it never is, __weakref__ and __dict__, read as attributes.
+            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(32, parts) => if parts.len() == 2 && matches!(parts.first(), Some(Value::Text(name)) if &**name != "__weakref__") { "member_descriptor" } else { "getset_descriptor" },
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
@@ -113,7 +114,6 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
-            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(60, held) if held.len() > 2 => "classmethod_descriptor",
             Self::Wrapped(60, parts) => return match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),

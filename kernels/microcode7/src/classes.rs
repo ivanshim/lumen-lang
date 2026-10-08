@@ -76,6 +76,8 @@ impl<'a> Machine<'a> {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
             protocols.extend(names.iter().enumerate().map(|(i, n)| (n.to_string(), Self::wrap(125, vec![Value::Small(i as i64)]))));
+            protocols.push(("__or__".to_owned(), Self::wrap(125, vec![Value::Small(6)])));
+            protocols.push(("__ror__".to_owned(), Self::wrap(125, vec![Value::Small(7)])));
         }
         if word == "super" {
             let init = self.table.single("ext.stmt.class.constructor").unwrap_or_default();
@@ -1685,10 +1687,20 @@ impl<'a> Machine<'a> {
                         }
                     }
                     74 if values.len() == 3 => {
+                        let scope = self.annotation_scopes.last().filter(|(_, _, _, routine)| {
+                            self.frames_named.last().is_some_and(|running| Rc::as_ptr(running) as usize == *routine)
+                        }).map(|(_, names, all, _)| (names.clone(), *all));
+                        if let Some((names, true)) = &scope {
+                            let symbolic = self.unresolved_annotation_name(names, &values[1].bare());
+                            return symbolic.map_err(Escape::Error);
+                        }
                         if let Value::Blueprint(class) = values[0].settled() {
                             if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
                         }
-                        self.apply_class_member(values[2].clone(), Vec::new())
+                        let before = std::mem::replace(&mut self.armed_names, scope);
+                        let result = self.apply_class_member(values[2].clone(), Vec::new());
+                        self.armed_names = before;
+                        result
                     }
                     77 => match values.as_slice() {
                         [owner @ Value::Blueprint(_), _] if !self.table.strings("ext.stmt.type_params.open").is_empty() => Ok(owner.clone()),
@@ -1769,6 +1781,7 @@ impl<'a> Machine<'a> {
                         let symbolic = matches!(format, Value::Small(3));
                         let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(3)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
+                        // Carry the isolated scope into each class evaluator.
                         match &kept[0] {
                             Value::Blueprint(owner) => self.blueprint_annotation_values(owner, symbolic),
                             Value::Vector(rows) => {
@@ -2020,6 +2033,7 @@ impl<'a> Machine<'a> {
                     }
                     204 => {
                         let Value::Blueprint(c)=&kept[0] else{return Err(self.class_unready())};
+                        if !values.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", c.name, values.len()).into()); }
                         let mut standing=Vec::new();
                         let mut children=self.class_children.borrow_mut();
                         if let Some(list)=children.get_mut(&(Rc::as_ptr(c) as usize)) {
@@ -4394,7 +4408,8 @@ impl<'a> Machine<'a> {
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
             // The classes built beneath this one, the live ones, as the
             // reference's own type.__subclasses__ tells them.
-            if key==self.detail("subclasses") && !self.detail("subclasses").is_empty() { return Ok(Self::wrap(204, vec![value.clone()])); }
+            if key==self.detail("subclasses") && !self.detail("subclasses").is_empty()
+                && !Self::builder_over(b).is_some_and(|builder| self.inherited_entry(&builder,key).is_some() || builder.program(key).is_some()) { return Ok(Self::wrap(204, vec![value.clone()])); }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
             // A blueprint standing on a native kind reads that kind's
             // own class method too, bound to the blueprint, so that
@@ -4817,7 +4832,8 @@ impl<'a> Machine<'a> {
                     };
                 }
                 let carried=key==self.detail("module")||key==self.detail("qualified")||key==self.detail("name")||key==self.detail("doc")
-                    || self.rules.words_ext_stmt_class_annotations.first().map_or(false,|word|word==key);
+                    || self.rules.words_ext_stmt_class_annotations.first().map_or(false,|word|word==key)
+                    || self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word|word==key);
                 if carried { return self.read_class_member(items[0].clone(),key,true); }
             }
             // A method bound to its thing answers for the thing and the
@@ -4902,6 +4918,9 @@ impl<'a> Machine<'a> {
     }
     /// Whether the blueprint, or one it stands on, names the entries its
     /// things may hold. Such a thing keeps no namespace of its own.
+    /// Two blueprints that declare the very same slots, and stand on
+    /// nothing else that declares any, lay their things out alike.
+
     fn slots_named(&self,b:&Blueprint)->bool {
         if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
@@ -5704,12 +5723,12 @@ impl<'a> Machine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool{
         matches!(value,Value::Nil)
             ||self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(), Some("Union"|"GenericAlias")))
     }
     /// A kind or union supplies the operator; Nil by itself does not.
     pub(super) fn union_anchor(&self,value:&Value)->bool{
         self.stands_for_a_kind(value)
-            ||matches!(value,Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"))
+            ||matches!(value,Value::Thing(t) if matches!(Self::native_word(&t.blueprint()).as_deref(), Some("Union"|"GenericAlias")))
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
@@ -6110,6 +6129,55 @@ impl<'a> Machine<'a> {
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if op == 27 && self.table.has_any("ext.builtin.partial_repr") {
+            if values.len() != 2 { return Err(self.class_unready()); }
+            let receiver = values[0].clone();
+            let Value::Blueprint(root) = &values[1] else { return Err(self.class_unready()); };
+            let read_slot = |key: &str| -> Res {
+                match self.inherited_entry(root, key) {
+                    Some(Value::Wrapped(32, layout)) => self.slot_value(&receiver, &layout),
+                    _ => Err(self.class_unready()),
+                }
+            };
+            let callable = read_slot("func")?;
+            let arguments = read_slot("args")?;
+            let keywords = read_slot("keywords")?;
+            // Keyword iteration follows the retained dictionary, while state replacement
+            // cannot change either of the containers this representation is using.
+            let Value::Tuple(row) = arguments.settled() else { return Err(self.class_unready()); };
+            let mut pieces = Vec::new();
+            for item in row.iter() { pieces.push(self.object_words(item, true)?); }
+            let mut cursor = 0;
+            while let Value::Dict(entries) = keywords.settled() {
+                match entries.get(cursor).cloned() {
+                    None => break,
+                    Some((key, held)) => {
+                        cursor += 1;
+                        let word = self.object_words(&key, false)?;
+                        pieces.push(format!("{}={}", word, self.object_words(&held, true)?));
+                    }
+                }
+            }
+            let Value::Thing(instance) = receiver else { return Err(self.class_unready()); };
+            let kind = Value::Blueprint(instance.blueprint().clone());
+            let module = self.read_class_member(kind.clone(), "__module__", false)?;
+            let qualified = self.read_class_member(kind, "__qualname__", false)?;
+            let title = self.object_words(&module, false)? + "." + &self.object_words(&qualified, false)?;
+            let head = self.object_words(&callable, true)?;
+            let extra = if pieces.is_empty() { String::new() } else { format!(", {}", pieces.join(", ")) };
+            return Ok(Value::text(&format!("{title}({head}{extra})")));
+        }
+        if op == 26 && self.table.has_any("ext.builtin.annotation_call") {
+            let [function, names, symbolic] = values.as_slice() else {
+                return Err(String::from("TypeError: annotation adapter requires three arguments").into());
+            };
+            let saved = self.armed_names.take();
+            self.armed_names = Some((names.clone(), symbolic.is_true()));
+            let outcome = self.apply_class_member(function.settled(), vec![Value::Small(2)]);
+            self.armed_names = saved;
+            return outcome;
+        }
+        if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op == 13 { return self.class_from_function(values); }
         if op == 14 { return self.check_class_builtin(); }
@@ -6543,10 +6611,19 @@ impl<'a> Machine<'a> {
                 let mut names = Vec::new();
                 for parameter in self.gathered_members(&tuple)? {
                     let name = if matches!(parameter, Value::Nil) { String::from("None") }
+                        else if matches!(parameter.settled(), Value::Blueprint(_)) {
+                            let namespace = self.read_class_member(parameter.clone(), "__module__", false)?.bare();
+                            let qualified = self.read_class_member(parameter.clone(), "__qualname__", false)?.bare();
+                            if namespace == "builtins" { qualified } else { namespace + "." + &qualified }
+                        }
                         else { match parameter.kind_it_names() { Some(name) => name, None => self.prim(Prim::Quoted, "repr", &[parameter])?.bare() } };
                     names.push(name);
                 }
-                let prefix = parent.kind_it_names().unwrap_or_else(|| parent.bare());
+                let prefix = if matches!(parent.settled(), Value::Blueprint(_)) {
+                    let namespace = self.read_class_member(parent.clone(), "__module__", false)?.bare();
+                    let qualified = self.read_class_member(parent.clone(), "__qualname__", false)?.bare();
+                    if namespace == "builtins" { qualified } else { namespace + "." + &qualified }
+                } else { parent.kind_it_names().unwrap_or_else(|| parent.bare()) };
                 let unpacked = self.read_class_member(subject, "__unpacked__", true)?;
                 let prefix = if matches!(unpacked, Value::Flag(true)) { String::from("*") + &prefix } else { prefix };
                 Ok(Value::text(&(prefix + "[" + &names.join(", ") + "]")))
@@ -6560,6 +6637,11 @@ impl<'a> Machine<'a> {
                 let same = self.prim_values(Prim::Eq, "", &[parent, other_parent])?;
                 if !self.object_truth(&same)? { return Ok(Value::Flag(false)); }
                 self.prim_values(Prim::Eq, "", &[a, b]).map_err(Escape::from)
+            }
+            6 | 7 if rest.len() == 1 => {
+                let other = rest.remove(0).settled();
+                if !self.union_member(&other) { return Ok(Value::Refusal(Rc::from("NotImplemented"))); }
+                Ok(if action == 6 { self.combined_types(&[subject, other]) } else { self.combined_types(&[other, subject]) })
             }
             _ => Err(self.class_unready()),
         }
