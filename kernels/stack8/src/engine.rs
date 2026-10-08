@@ -24920,6 +24920,17 @@ impl Engine<'_> {
         // CPython returns that replacement after the module body completes.
         let module = self.module_cache_value(path).unwrap_or(module);
         self.modules.insert(path.to_string(), module.clone());
+        if self.lang.names_module.first().is_some_and(|word| word == path) {
+            if let Value::Object(namespace) = &module {
+                let entries = namespace.fields.borrow().clone();
+                let dictionary = self.natives_book();
+                for (word, held) in entries {
+                    if Self::public_name(&word) && !matches!(held.contents(), Value::Blank) {
+                        book_write(&dictionary, &word, Some(held));
+                    }
+                }
+            }
+        }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -25592,7 +25603,7 @@ impl Engine<'_> {
             let entries = module.fields.borrow().clone();
             for (name, value) in entries {
                 if Self::public_name(&name) && !matches!(value.contents(), Value::Blank) {
-                    book_write(&book, &name, Some(value.contents()));
+                    book_write(&book, &name, Some(value));
                 }
             }
         }
@@ -25915,6 +25926,9 @@ impl Engine<'_> {
         }
         let Some(path) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(space) if Rc::ptr_eq(space, module))).map(|(path, _)| path.clone()) else { return };
         let Some(book) = self.module_globals.get(&path).cloned() else { return };
+        if self.lang.names_module.first().is_some_and(|word| word == &path) {
+            if let Some(dictionary) = &self.natives { book_write(dictionary, name, value.clone()); }
+        }
         match value {
             None => {
                 let fields = module.fields.borrow_mut();
@@ -27312,6 +27326,12 @@ impl Engine<'_> {
                 let kept = held.contents();
                 if held.core_kind() != "mappingproxy" && !matches!(kept, Value::Map(_) | Value::Object(_) | Value::Fields(_)) {
                     return Err(format!("TypeError: '{}' object is not subscriptable", kept.core_kind()));
+                }
+            }
+            if existing.as_ref().is_none_or(|held| self.our_native_dict(held)) && !self.lang.names_module.is_empty() {
+                if let Err(fault) = self.builtins_view() {
+                    self.carried = Some(fault);
+                    return Err(self.special_fault());
                 }
             }
             if existing.is_none() {

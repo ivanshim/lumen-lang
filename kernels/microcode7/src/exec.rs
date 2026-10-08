@@ -25356,6 +25356,15 @@ impl Machine<'_> {
             None => value,
         };
         self.imported.insert(path.to_owned(), value.clone());
+        if self.rules.words_ext_system_names_module.first().map(String::as_str) == Some(path) {
+            let exported = match &value { Value::Thing(space) => space.holds.borrow().clone(), _ => Vec::new() };
+            let natives = self.natives_kept();
+            for (name, definition) in exported {
+                if Self::visible_name(&name) && !matches!(definition.settled(), Value::Unset) {
+                    set_down(&natives, &name, Some(definition));
+                }
+            }
+        }
         if let Some((owner, name)) = split {
             if let Some(Value::Thing(parent)) = self.imported.get(owner) {
                 let mut holdings = parent.holds.borrow_mut();
@@ -25837,7 +25846,7 @@ impl<'a> Machine<'a> {
                 let fields = namespace.holds.borrow().clone();
                 for (word, value) in fields {
                     if Self::visible_name(&word) && !matches!(value.settled(), Value::Unset) {
-                        set_down(&dictionary, &word, Some(value.settled()));
+                        set_down(&dictionary, &word, Some(value));
                     }
                 }
             }
@@ -26276,6 +26285,9 @@ impl<'a> Machine<'a> {
         }
         let Some(path) = self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, module))).map(|(path, _)| path.clone()) else { return };
         let Some(book) = self.space_books.get(&path).cloned() else { return };
+        if self.rules.words_ext_system_names_module.iter().any(|word| word == &path) {
+            if let Some(natives) = self.natives_book.as_ref() { set_down(natives, name, replacement.clone()); }
+        }
         match replacement {
             None => {
                 let holds = module.holds.borrow();
@@ -27684,6 +27696,10 @@ impl<'a> Machine<'a> {
                 if value.kind_word() != "mappingproxy" && !matches!(kept, Value::Dict(_) | Value::Thing(_) | Value::Attributes(_)) {
                     return Err(format!("TypeError: '{}' object is not subscriptable", kept.kind_word()));
                 }
+            }
+            let uses_default_words = match &already { None => true, Some(held) => self.is_our_natives(held) };
+            if uses_default_words && !self.rules.words_ext_system_names_module.is_empty() {
+                self.builtins_stand_in()?;
             }
             if already.is_none() {
                 let natives = self.natives_kept();
