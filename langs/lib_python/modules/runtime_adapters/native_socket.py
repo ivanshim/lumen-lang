@@ -7,6 +7,9 @@ AF_INET6 = 10
 SOCK_STREAM = 1
 SOCK_DGRAM = 2
 
+# Distinguish an omitted timeout from an explicit None, as in Lib/socket.py.
+_GLOBAL_DEFAULT_TIMEOUT = object()
+
 class _Socket:
     def __init__(self, family=AF_INET, type=SOCK_STREAM, proto=0, fileno=None):
         self.family = family
