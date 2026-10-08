@@ -5972,11 +5972,11 @@ impl<'a> Machine<'a> {
     }
 
     fn has_wildcard_imports(&self) -> bool {
-        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() { return false; }
+        if self.world_globals_source.is_none() && self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() { return false; }
         if let Some((source, answer)) = self.wildcard_source.borrow().as_ref() {
             if Rc::ptr_eq(source, &self.written_in) { return *answer; }
         }
-        let answer = self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
+        let answer = self.world_shadow_applies() || self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
         *self.wildcard_source.borrow_mut() = Some((self.written_in.clone(), answer));
         answer
     }
@@ -25375,7 +25375,11 @@ impl Machine<'_> {
         if self.world_shadow_applies() {
             if let Some(book) = &self.world_book {
                 let found = match book.try_borrow().ok().as_deref() {
-                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
+                    Some(Value::Dict(rows)) => {
+                        let at = rows.namespace_position(word).unwrap_or_else(|()|
+                            rows.iter().position(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)));
+                        at.map(|index| rows[index].1.settled())
+                    },
                     _ => None,
                 };
                 if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
