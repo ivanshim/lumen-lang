@@ -13525,7 +13525,7 @@ impl<'a> Machine<'a> {
         let attempt = (|| -> Res {
             let namespace = self.load_namespace("builtins")?;
             let factory = self.read_class_member(namespace, "_buffer_view", false)?;
-            let window = self.apply_class_member(factory, vec![source.clone(), Value::Small(284), Value::text("")])?;
+            let window = self.apply_class_member(factory, vec![source.clone(), Value::Small(0), Value::text("")])?;
             let conversion = (|| -> Res {
                 let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
                 if !contiguous.is_true() { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()); }
@@ -13560,7 +13560,7 @@ impl<'a> Machine<'a> {
                     _ => {
                         let builtins = self.load_namespace("builtins")?;
                         let factory = self.read_class_member(builtins, "_buffer_view", false)?;
-                        let window = self.apply_class_member(factory, vec![supplied.clone(), Value::Small(284), Value::text("")])?;
+                        let window = self.apply_class_member(factory, vec![supplied.clone(), Value::Small(0), Value::text("")])?;
                         windows.push(window.clone());
                         let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
                         if !contiguous.is_true() { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()); }

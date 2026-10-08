@@ -18477,7 +18477,7 @@ impl<'a> Engine<'a> {
         let copied = (|| -> Flow<Value> {
             let module = self.import_module("builtins")?;
             let acquire = self.class_get(module, "_buffer_view", false)?;
-            let view = self.class_apply(acquire, vec![value.clone(), Value::Small(284), Value::text("")])?;
+            let view = self.class_apply(acquire, vec![value.clone(), Value::Small(0), Value::text("")])?;
             let result = (|| -> Flow<Value> {
                 if !self.class_get(view.clone(), "c_contiguous", false)?.is_true() {
                     return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into());
@@ -18512,7 +18512,7 @@ impl<'a> Engine<'a> {
                 } else {
                     let module = self.import_module("builtins")?;
                     let acquire = self.class_get(module, "_buffer_view", false)?;
-                    let view = self.class_apply(acquire, vec![item.clone(), Value::Small(284), Value::text("")])?;
+                    let view = self.class_apply(acquire, vec![item.clone(), Value::Small(0), Value::text("")])?;
                     views.push(view.clone());
                     if !self.class_get(view.clone(), "c_contiguous", false)?.is_true() {
                         return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into());
