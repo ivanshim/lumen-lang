@@ -836,12 +836,12 @@ impl std::iter::FromIterator<(Value, Value)> for KeyedPairs {
 }
 
 impl std::ops::Deref for KeyedPairs {
-    type Target = Vec<(Value, Value)>;
-    fn deref(&self) -> &Vec<(Value, Value)> { &self.rows }
+    type Target = [(Value, Value)];
+    fn deref(&self) -> &[(Value, Value)] { &self.rows }
 }
 
 impl std::ops::DerefMut for KeyedPairs {
-    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+    fn deref_mut(&mut self) -> &mut [(Value, Value)] {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
