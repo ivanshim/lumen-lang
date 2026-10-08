@@ -19631,7 +19631,12 @@ impl<'a> Engine<'a> {
                     let Value::Bytes(bytes, _, _) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
                     let bytes = bytes.borrow();
                     let mut output: Box<dyn std::io::Write> = if self.truth(&args[1]) { Box::new(std::io::stderr()) } else { self.written_out.set(true); Box::new(std::io::stdout()) };
-                    output.write_all(&bytes).and_then(|_| output.flush()).map_err(|_| self.lang.stream_failed[0].clone())?;
+                    if let Err(fault) = output.write_all(&bytes).and_then(|_| output.flush()) {
+                        let number = fault.raw_os_error().unwrap_or(5);
+                        let description = fault.to_string();
+                        let description = description.split(" (os error").next().unwrap_or(&description);
+                        return Ok(Value::tuple(vec![Value::Small(number as i64), Value::text(description)]));
+                    }
                     return Ok(Value::Small(bytes.len() as i64));
                 }
                 let (Some(Value::Text(text)), Some(to_error), None) = (args.first(), args.get(1), args.get(2)) else {

@@ -22269,7 +22269,13 @@ impl<'a> Machine<'a> {
                     let Value::Octets { cell: data, .. } = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
                     let bytes = data.borrow();
                     let mut output: Box<dyn std::io::Write> = if self.stands_true(&v[1]) { Box::new(std::io::stderr()) } else { self.written_out.set(true); Box::new(std::io::stdout()) };
-                    output.write_all(&bytes).and_then(|_| output.flush()).map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                    let written = output.write_all(&bytes).and_then(|_| output.flush());
+                    if let Err(error) = written {
+                        let errno = i64::from(error.raw_os_error().unwrap_or(5));
+                        let wording = error.to_string();
+                        let readable = wording.split(" (os error").next().unwrap_or(&wording);
+                        return Ok(Value::tuple(vec![Value::Small(errno), Value::text(readable)]));
+                    }
                     return Ok(Value::Small(bytes.len() as i64));
                 }
                 let (Some(Value::Text(content)), true) = (v.first(), v.len() == 2) else {

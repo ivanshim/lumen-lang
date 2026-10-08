@@ -2,6 +2,12 @@
 _host_stream_read = __stream_read
 _host_stream_write = __stream_write
 
+def _write_standard(*args):
+    result = _host_stream_write(*args)
+    if isinstance(result, tuple):
+        raise OSError(*result)
+    return result
+
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
@@ -177,7 +183,7 @@ class _BinaryOutput(_StandardStream):
         self.error = error
     def write(self, data):
         self._ensure_open()
-        return _host_stream_write(data, self.error, True)
+        return _write_standard(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
@@ -190,7 +196,7 @@ class _Output(_StandardStream):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
         self._ensure_open()
-        return _host_stream_write(*args, False)
+        return _write_standard(*args, False)
 
     def flush(self):
         self._ensure_open()
@@ -205,7 +211,7 @@ class _Error(_StandardStream):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
         self._ensure_open()
-        return _host_stream_write(*args, True)
+        return _write_standard(*args, True)
 
     def flush(self):
         self._ensure_open()
