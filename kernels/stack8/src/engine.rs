@@ -165,6 +165,7 @@ pub struct Engine<'a> {
     /// value's own where one is run, else the running text's, as the
     /// reference reads them from the calling frame.
     text_future_bits: std::cell::Cell<i64>,
+    text_optimization: std::cell::Cell<u8>,
     native_names: RefCell<std::collections::BTreeMap<String, Vec<String>>>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
@@ -1579,6 +1580,7 @@ impl<'a> Engine<'a> {
             trace_fault_outside: None,
             running_routine: None,
             text_future_bits: std::cell::Cell::new(0),
+            text_optimization: std::cell::Cell::new(0),
             inline_comp: None,
             location: None,
             frame_class: None,
@@ -26399,6 +26401,10 @@ impl Engine<'_> {
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
     fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
+            std::borrow::Cow::Owned(format!("{source}\n"))
+        } else { std::borrow::Cow::Borrowed(source) };
+        let source = terminated.as_ref();
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let word = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -26410,8 +26416,22 @@ impl Engine<'_> {
             }
         }
 
-        crate::lex::lex_position(source, self.lang)
-            .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))
+        let limit = match self.modules.get("sys") {
+            Some(Value::Object(module)) => module.fields.borrow().iter().find(|(key, _)| key == "_int_max_str_digits").and_then(|(_, value)| match value.contents() { Value::Small(n) => Some(n as usize), _ => None }).unwrap_or(4300),
+            _ => 4300,
+        };
+        let tokens = crate::lex::lex_position(source, self.lang)?;
+        if limit != 0 {
+            for token in &tokens {
+                if token.shape == crate::lex::Shape::Numeral && token.lexeme.bytes().all(|b| b.is_ascii_digit() || b == b'_') {
+                    let digits = token.lexeme.bytes().filter(u8::is_ascii_digit).count();
+                    if digits > limit {
+                        return Err((format!("SyntaxError: Exceeds the limit ({limit} digits) for integer string conversion: value has {digits} digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."), token.row as usize, token.column));
+                    }
+                }
+            }
+        }
+        crate::layout::layout_position(tokens, self.lang, 0)
     }
 
     /// The builtins that read text, hand out names, or fetch a module.
@@ -26435,7 +26455,11 @@ impl Engine<'_> {
             if args.len() <= at { args.resize(at + 1, Value::Gap); }
             args[at] = value;
         }
-        for value in &mut args { if matches!(value, Value::Gap) { *value = Value::Null; } }
+        for (at, value) in args.iter_mut().enumerate() {
+            if matches!(value, Value::Gap) {
+                *value = if builtin == Builtin::ReadyText && at >= 3 { Value::Small(if at == 5 { -1 } else { 0 }) } else { Value::Null };
+            }
+        }
         match builtin {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
@@ -26949,6 +26973,14 @@ impl Engine<'_> {
     /// Whether the text ended with block boundaries still open: the
     /// closes the shaping pass laid at the very end stand for indented
     /// blocks the text never left.
+    fn inline_suite_needs_newline(tokens: &[crate::lex::Token]) -> bool {
+        use crate::lex::Shape;
+        let Some(last) = tokens.iter().rposition(|token| !matches!(token.shape, Shape::Lead | Shape::Open | Shape::Close | Shape::LineEnd | Shape::Finish)) else { return false; };
+        let begin = tokens[..last].iter().rposition(|token| matches!(token.shape, Shape::Open | Shape::Close | Shape::LineEnd)).map_or(0, |at| at + 1);
+        let head = tokens[begin..=last].iter().find(|token| token.shape != Shape::Lead);
+        head.is_some_and(|token| token.shape == Shape::Instr && ["def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "async"].contains(&token.spelling()))
+    }
+
     fn blocks_open_at_end(tokens: &[crate::lex::Token]) -> bool {
         use crate::lex::Shape;
         let Some(finish) = tokens.iter().find(|token| token.shape == Shape::Finish) else { return false };
@@ -26965,42 +26997,72 @@ impl Engine<'_> {
         open
     }
 
+    /// Convert an index argument using compile's C-int range.
+    fn compile_integer(&mut self, supplied: &Value) -> Res<i64> {
+        let value = supplied.contents();
+        let number = match &value {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.clone(),
+            _ => self.special_index(&value)?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", Self::shown_kind(&value)))?,
+        };
+        let wide = match number { Value::Small(n) => Some(n), Value::Flag(b) => Some(i64::from(b)), Value::Huge(n) => n.to_i64(), _ => None };
+        wide.filter(|n| i32::try_from(*n).is_ok()).ok_or_else(|| "OverflowError: Python int too large to convert to C int".into())
+    }
+
+    /// Read contiguous source buffers through the existing buffer protocol.
+    fn source_buffer(&mut self, value: Value, file: &str) -> Res<Rc<str>> {
+        let namespace = self.route_module("builtins")?;
+        let copier = self.member_of(namespace, "_buffer_bytes")?.ok_or_else(|| self.source_unready())?;
+        let copied = self.call_held(copier, vec![value])?;
+        match copied.contents() {
+            Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), file),
+            _ => Err(self.source_unready()),
+        }
+    }
+
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
-        let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
-        let source = match args[0].contents() {
+        let filename = self.filesystem_path(args[1].clone())?;
+        let filename = Self::worth_of(&filename).unwrap_or_else(|| filename.contents());
+        let file = match filename {
+            Value::Text(file) => file,
+            bytes @ Value::Bytes(..) => match self.codec_library("_decode", vec![bytes, Value::text("utf-8"), Value::text("surrogateescape")])? {
+                Value::Text(file) => file, _ => return Err(self.source_unready()),
+            },
+            _ => return Err(self.source_unready()),
+        };
+        if file.contains('\0') { return Err("ValueError: embedded null character".into()); }
+        let mode_value = Self::worth_of(&args[2]).unwrap_or_else(|| args[2].contents());
+        let Value::Text(manner) = mode_value else { return Err(format!("TypeError: compile() argument 'mode' must be str, not {}", Self::shown_kind(&mode_value))); };
+        let source = match Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()) {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
             Value::Object(tree) => {
                 // A tree from the library's ast reader keeps the text it
                 // was read from; compiling the tree compiles that text.
                 let fields = tree.fields.borrow();
-                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source");
+                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source").cloned();
+                drop(fields);
                 match held {
                     Some((_, value)) => match value.contents() {
                         Value::Text(source) => source,
                         _ => return Err(self.source_unready()),
                     },
-                    None => return Err(self.source_unready()),
+                    None => self.source_buffer(Value::Object(tree.clone()), &file)?,
                 }
             }
             _ => return Err(self.source_unready()),
         };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
-        let flags = match args.get(3).map(Value::contents) {
-            None | Some(Value::Null) => 0,
-            Some(Value::Small(bits)) => bits,
-            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
-        };
-        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
-        if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
-            return Err("ValueError: compile(): invalid optimize value".into());
-        }
+        let flags = match args.get(3) { Some(value) => self.compile_integer(value)?, None => 0 };
+        if flags & !0x1FEF610 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        let optimize = match args.get(5) { Some(value) => self.compile_integer(value)?, None => -1 };
+        if !(-1..=2).contains(&optimize) { return Err("ValueError: compile(): invalid optimize value".into()); }
+        let dont_inherit = match args.get(4) { Some(value) => self.special_truth(value)?, None => false };
         let allow_top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
         // it says not to inherit — those of the text now running, the
         // way the reference reads them from the calling frame's code.
-        let caller_future = if args.get(4).map_or(false, |value| value.contents().is_true()) { 0 } else { self.running_routine.as_ref().map_or(0, |body| body.future_bits) };
+        let caller_future = if dont_inherit { 0 } else { self.running_routine.as_ref().map_or(0, |body| body.future_bits) };
         let future_bits = flags & 0x1FE0010 | caller_future;
         // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
         // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
@@ -27034,6 +27096,7 @@ impl Engine<'_> {
         trial.interactive = mode == 2;
         trial.allow_top_level_await = allow_top_await;
         trial.future_bits = future_bits;
+        trial.optimization = optimize.max(0) as u8;
         let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => {
@@ -27059,6 +27122,12 @@ impl Engine<'_> {
             }
             return Err(self.text_ends_inside_block(&file, &source));
         }
+        if mode == 2 && !source.ends_with('\n') && (Self::inline_suite_needs_newline(&tokens) || source.rsplit('\n').next().is_some_and(|line| line.trim_start().starts_with('#')) && Self::blocks_open_at_end(&tokens)) {
+            if allow_incomplete {
+                if let Some(told) = self.text_incomplete(&file, Self::ran_out_place(counted), counted) { return Err(told); }
+            }
+            return Err(self.text_ends_inside_block(&file, &source));
+        }
         for (message, row, column) in std::mem::take(&mut trial.warnings) {
             self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
         }
@@ -27077,7 +27146,7 @@ impl Engine<'_> {
             };
             let manner = self.lang.compile_modes[mode].clone();
             let type_comments = i64::from(flags & 0x1000 != 0);
-            let optimize = match args.get(5).map(Value::contents) { Some(Value::Small(n)) => n, _ => -1 };
+            
             return match self.class_apply(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize)]) {
                 Ok(tree) => Ok(tree),
                 Err(Fault::Note(told)) => Err(told),
@@ -27090,7 +27159,7 @@ impl Engine<'_> {
         let constants = Value::tuple(checked.code_constants.iter().map(|v| match v {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
-        let fields = vec![("co_consts".to_string(), constants)];
+        let fields = vec![("co_consts".to_string(), constants), ("\0optimization".into(), Value::Small(optimize.max(0)))];
         let mut fields = fields;
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1))];
         fields.splice(0..0, source_fields);
@@ -27251,10 +27320,16 @@ impl Engine<'_> {
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => code.fields.borrow().iter().find_map(|(name, value)| if name == "co_flags" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
+        let optimization = match &first {
+            Value::Object(code) => code.fields.borrow().iter().find_map(|(name, value)| if name == "\0optimization" { match value.contents() { Value::Small(n) => Some(n as u8), _ => None } } else { None }).unwrap_or(0),
+            _ => 0,
+        };
+        self.text_optimization.set(optimization);
         self.text_future_bits.set(held_future);
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
             Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+            buffer @ Value::Object(_) if !matches!(&buffer, Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str())) => (self.source_buffer(buffer, "<string>")?.to_string(), None, usize::from(weighing), false),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -27391,6 +27466,7 @@ impl Engine<'_> {
         self.registry.value_only = mode == 1;
         self.registry.allow_top_level_await = top_await;
         self.registry.future_bits = self.text_future_bits.get();
+        self.registry.optimization = self.text_optimization.get();
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
@@ -27482,6 +27558,7 @@ impl Engine<'_> {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
             registry.allow_top_level_await = top_await;
             registry.future_bits = self.text_future_bits.get();
+            registry.optimization = self.text_optimization.get();
             if compiled.is_none() {
                 registry.value_only = mode == 1;
                 registry.interactive = mode == 2;

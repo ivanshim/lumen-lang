@@ -42,6 +42,7 @@ thread_local! {
 /// The global names, each with a slot.
 #[derive(Default)]
 pub struct Registry {
+    pub optimization: u8,
     index: HashMap<String, usize>,
     module_index: HashMap<String, HashMap<String, usize>>,
     wildcard_index: HashMap<usize, (usize, HashMap<String, usize>)>,
@@ -197,6 +198,7 @@ struct Cycle {
 /// `uncertain` keeps the names of those, whose places are read at the
 /// end without complaint.
 struct ClassBody {
+    static_attributes: std::collections::BTreeSet<String>,
     bindings: HashSet<String>,
     class_cell: String,
     needs_class_cell: bool,
@@ -242,6 +244,7 @@ struct BindingPlan {
 }
 
 struct Piece {
+    boolean_exits: HashMap<usize, Vec<(usize, bool)>>,
     python_fallthrough: bool,
     asynchronous: bool,
     asynchronous_walk: bool,
@@ -282,6 +285,7 @@ struct Piece {
 }
 
 pub struct Compiler<'a> {
+    omitted_docs: HashSet<usize>,
     source_tokens: Rc<str>,
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
@@ -308,6 +312,7 @@ pub struct Compiler<'a> {
     module_annotations: Vec<(String, usize)>,
     syntax_try_nesting: usize,
     syntax_finally_nesting: usize,
+    finally_loops: Vec<usize>,
     in_lazy_from: bool,
     lang: &'a Lang,
     tokens: &'a [Token],
@@ -691,7 +696,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
+    let mut top = Piece { boolean_exits: HashMap::new(), python_fallthrough: false, asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -736,7 +741,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { omitted_docs: HashSet::new(), source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loops: Vec::new(), in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -785,7 +790,20 @@ fn compile_pass(
         let mut lifted: Vec<Instr> = Vec::new();
         a.skip_seps();
         let mut opening = true;
+        let mut prior_statement: Option<(usize, usize)> = None;
         while !a.exhausted() {
+            if interactive {
+                if let Some((row, column)) = prior_statement {
+                    if a.look().row > row {
+                        a.registry.stopped_at = row;
+                        a.registry.stopped_column = column;
+                        a.registry.stopped_end_row = row;
+                        a.registry.stopped_end = column + 1;
+                        return Err("SyntaxError: multiple statements found while compiling a single statement".into());
+                    }
+                }
+            }
+            let statement_begin = a.pos;
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let own_line = a.look().row as u32 > before;
             if opening && own_line && before > 0 && alone && !read_in && !discovering && lang.shadow_builtins {
@@ -818,15 +836,19 @@ fn compile_pass(
                     _ => None,
                 };
                 if let Some(words) = words {
-                    for name in &lang.module_doc {
+                    if a.registry.optimization == 2 { a.piece().instrs.truncate(from); }
+                    else { for name in &lang.module_doc {
                         a.constant(Value::text(&words));
                         a.write(name);
-                    }
+                    } }
                 }
             }
             if own_line { opening = false; }
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
+            }
+            if let Some(end) = a.tokens[statement_begin..a.pos].iter().rev().find(|token| !matches!(token.shape, Shape::Lead | Shape::Open | Shape::Close | Shape::LineEnd | Shape::Finish)) {
+                prior_statement = Some((end.end_row.max(end.row), end.end_column.max(end.column + end.lexeme.chars().count())));
             }
             a.skip_seps();
         }
@@ -1042,6 +1064,13 @@ impl<'a> Compiler<'a> {
         let unit = self.piece();
         unit.instrs.push(word);
         unit.instrs.len() - 1
+    }
+
+    fn take_boolean_exits(&mut self, beginning: usize) -> Vec<(usize, bool)> {
+        let unit = self.piece();
+        let unchanged = matches!(unit.instrs.iter().rev().find(|word| !matches!(word, Instr::Line(_) | Instr::Location(..))), Some(Instr::Read(cell)) if cell.ident.as_ref() == TEMP_CELL);
+        let exits = unit.boolean_exits.remove(&beginning).unwrap_or_default();
+        if unchanged { exits } else { Vec::new() }
     }
 
     fn mark(&mut self) -> usize {
@@ -1330,6 +1359,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        if name == "__debug__" && !self.lang.compile_modes.is_empty() {
+            self.constant(Value::Flag(self.registry.optimization == 0));
+            return;
+        }
         if let Some((owner, members)) = &self.annotation_namespace {
             if self.reading_annotation && members.contains(name) {
                 let owner = owner.clone();
@@ -1903,7 +1936,10 @@ impl<'a> Compiler<'a> {
             quoted = true;
             literal.push_str(&leading.next().unwrap().lexeme);
         }
-        let doc = (!expression && quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
+        let documentation_at = self.tokens.len() - self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).count();
+        let is_doc = !expression && quoted && leading.peek().is_some_and(|t| matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.lang.ends_stmt(&t.lexeme));
+        if is_doc && self.registry.optimization == 2 { self.omitted_docs.insert(documentation_at); }
+        let doc = (is_doc && self.registry.optimization < 2).then_some(literal);
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -1922,7 +1958,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
-        self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
+        self.pieces.push(Piece { boolean_exits: HashMap::new(), python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -1964,8 +2000,10 @@ impl<'a> Compiler<'a> {
             self.write(RESULT_CELL);
         }
         let finally_around = std::mem::replace(&mut self.syntax_finally_nesting, 0);
+        let loops_around = std::mem::take(&mut self.finally_loops);
         let body_result = body(self);
         self.syntax_finally_nesting = finally_around;
+        self.finally_loops = loops_around;
         body_result?;
         self.comprehension_names = surrounding_names;
         self.comprehension_targets = surrounding_targets;
@@ -2447,6 +2485,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn stmt(&mut self) -> Res<()> {
+        if self.omitted_docs.remove(&self.pos) {
+            while self.look().shape == Shape::Quote { self.take(); }
+            return Ok(());
+        }
         if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let began = self.pos;
         self.note_syntax_warnings(began);
@@ -3189,6 +3231,7 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             if Lang::spells(&lang.assert_words, &w) {
+                let assertion_start = self.mark();
                 self.take();
                 if !lang.syntax_members.is_empty() {
                     let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
@@ -3220,6 +3263,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
+                if self.registry.optimization != 0 { self.piece().instrs.truncate(assertion_start); }
                 return Ok(());
             }
             if Lang::spells(&lang.foreach_words, &w) {
@@ -5449,6 +5493,7 @@ impl<'a> Compiler<'a> {
     /// text. Each such word is noted once where it stands.
     fn warn_in_finally(&mut self, word: &str) {
         if self.syntax_finally_nesting == 0 { return; }
+        if word != "return" && self.finally_loops.last().is_some_and(|depth| self.pieces.last().unwrap().cycles.len() > *depth) { return; }
         let at = self.look();
         let warning = (format!("'{word}' in a 'finally' block"), at.row, at.column);
         if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
@@ -5457,7 +5502,7 @@ impl<'a> Compiler<'a> {
     fn return_stmt(&mut self) -> Res<()> {
         let return_at = self.pos;
         self.take();
-        let has_value = !(self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes));
+        let has_value = !(self.on_sep() || self.exhausted() || self.look().shape == Shape::Close || self.on_any(&self.lang.block_closes));
         if has_value && !self.lang.syntax_members.is_empty() {
             self.piece().return_value_at.get_or_insert(return_at);
         }
@@ -5708,9 +5753,12 @@ impl<'a> Compiler<'a> {
         self.skip_seps();
         let last = if self.on_keyword(&lang.finally_words) {
             self.take();
+            let loop_depth = self.piece().cycles.len();
+            self.finally_loops.push(loop_depth);
             self.syntax_finally_nesting += 1;
             let body = self.guarded_attempt_body()?;
             self.syntax_finally_nesting -= 1;
+            self.finally_loops.pop();
             Some(body)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
@@ -6266,7 +6314,7 @@ impl<'a> Compiler<'a> {
             // Text alone at the head of the body is what the class
             // says about itself; text anywhere else is discarded.
             let words = self.take().lexeme;
-            if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
+            if let (true, Some(slot)) = (heads_the_body && self.registry.optimization < 2, self.gathering().documentation.clone()) {
                 self.constant(Value::text(&words));
                 self.write(&slot);
                 if !lang.class_builder.is_empty() {
@@ -6645,7 +6693,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { static_attributes: std::collections::BTreeSet::new(), bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // Prepare the live mapping before ordered metadata stores and body statements.
         let metadata = std::mem::take(&mut self.gathering().shared);
@@ -6669,6 +6717,11 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
         }
+        let attributes = Value::tuple(self.gathering().static_attributes.iter().map(|name| Value::text(name)).collect());
+        self.constant(attributes);
+        let static_slot = self.gensym("static_attributes");
+        self.write(&static_slot);
+        self.mirror_member("__static_attributes__", &static_slot)?;
         if self.discovering {
             let names = self.gathering().bindings.iter().cloned().collect();
             self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
@@ -6858,7 +6911,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { static_attributes: std::collections::BTreeSet::new(), bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // The module a class statement is written in is the module's
         // own `__name__`, read where the class is defined, as the
@@ -8965,6 +9018,14 @@ impl<'a> Compiler<'a> {
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         // The target came out as a load; turn it into a store.
         let mut target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+        if compound.is_none() && !self.in_class_body() && !self.gathered.is_empty() {
+            let semantic: Vec<&Instr> = target.iter().filter(|word| !matches!(word, Instr::Line(_) | Instr::Location(..))).collect();
+            if semantic.len() == 2 {
+                if let (Instr::Read(receiver), Instr::Act(Action::Grab(member), 1)) = (semantic[0], semantic[1]) {
+                    if receiver.ident.as_ref() == "self" { self.gathering().static_attributes.insert(member.to_string()); }
+                }
+            }
+        }
         // A target kept quiet is a store kept quiet: the marks come off
         // the load and go round the store instead.
         let hushed = matches!(target.first(), Some(Instr::Hush(true))) && matches!(target.last(), Some(Instr::Hush(false)));
@@ -9605,6 +9666,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let begins = self.pos;
         let from = self.mark();
+        self.piece().boolean_exits.remove(&from);
         let blocked = std::mem::take(&mut self.bare_named_blocked);
         if floor == 0 && !lang.syntax_members.is_empty() && ["(", "[", "{"].contains(&self.look().lexeme.as_str())
             && self.display_assignment(begins) {
@@ -9726,6 +9788,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.expr(0)?;
                 self.land(done);
+                self.piece().boolean_exits.remove(&from);
                 continue;
             }
             if lang.chained_comparisons {
@@ -9788,6 +9851,7 @@ impl<'a> Compiler<'a> {
             }) else {
                 if floor == 0 && lang.ternary.as_ref().map_or(false, |(q, _)| self.at_symbol(q)) {
                     self.ternary()?;
+                    self.piece().boolean_exits.remove(&from);
                     continue;
                 }
                 break;
@@ -9803,16 +9867,32 @@ impl<'a> Compiler<'a> {
             let right_floor = if infix.right_assoc { infix.level } else { infix.level + 1 };
             match infix.action {
                 Action::And | Action::Or => {
-                    // The right side runs only when the left leaves it open.
+                    // An earlier short circuit already established the operand's truth.
+                    let key = from;
+                    let earlier = self.take_boolean_exits(key);
+                    let disjunction = matches!(infix.action, Action::Or);
                     self.write(TEMP_CELL);
                     self.read(TEMP_CELL);
                     if matches!(infix.action, Action::Or) {
                         self.act(Action::Not, 1);
                     }
                     let skip = self.skip();
+                    let right_begin = self.mark();
                     self.expr(right_floor)?;
+                    let right_exits = self.take_boolean_exits(right_begin);
                     self.write(TEMP_CELL);
+                    let join = self.mark();
                     self.land(skip);
+                    let mut settled = vec![(skip, disjunction)];
+                    for (edge, truth) in earlier {
+                        self.patch_jump(edge, if truth == disjunction { join } else { right_begin });
+                        if truth == disjunction { settled.push((edge, truth)); }
+                    }
+                    for (edge, truth) in right_exits {
+                        self.patch_jump(edge, join);
+                        settled.push((edge, truth));
+                    }
+                    if lang.logical_operand { self.piece().boolean_exits.insert(key, settled); }
                     self.read(TEMP_CELL);
                     // Where the language asks for it, what the pair comes
                     // to is the side that settled the matter, kept whole.
@@ -9822,6 +9902,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 op => {
+                    self.piece().boolean_exits.remove(&from);
                     // A lone name is read where the operator falls and
                     // not where it stands, so a write on the other side
                     // is seen by it. Only a name is fetched that late: a
@@ -10289,8 +10370,15 @@ impl<'a> Compiler<'a> {
         if matches!(tok.shape, Shape::Sign | Shape::Instr) {
             if let Some(infix) = lang.monadic.get(tok.spelling()).cloned() {
                 self.take();
+                let start = self.mark();
                 self.expr(infix.level)?;
-                self.act(infix.action, 1);
+                let operands: Vec<&Instr> = self.piece().instrs[start..].iter().filter(|w| !matches!(w, Instr::Line(_) | Instr::Location(..))).collect();
+                let folded = match operands.as_slice() {
+                    [Instr::Const(value)] if !lang.compile_modes.is_empty() => folded_sign(lang, &infix.action, value),
+                    _ => None,
+                };
+                if let Some(value) = folded { self.piece().instrs.truncate(start); self.constant(value); }
+                else { self.act(infix.action, 1); }
                 return Ok(());
             }
             if Lang::spells(&lang.naming_words, &tok.spelling()) {
@@ -13382,8 +13470,37 @@ fn digits_in(digits: &str, base: u32) -> Res<BigInt> {
     })
 }
 
+/// Fold numeric unary signs without merging the two floating zeroes.
+fn folded_sign(lang: &Lang, op: &Action, value: &Value) -> Option<Value> {
+    if !matches!(op, Action::Positive | Action::Negate) { return None; }
+    match value {
+        Value::Flag(b) => Some(Value::Small(if matches!(op, Action::Negate) { -i64::from(*b) } else { i64::from(*b) })),
+        Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Complex(_) if matches!(op, Action::Positive) => Some(value.clone()),
+        Value::Complex(z) => Some(crate::complex::made(lang, -z.real, -z.imag)),
+        Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) => {
+            let mut answer = arith::calculate(arith::Operation::Minus, &Value::Small(0), value)?.ok()?;
+            if let (Value::Real(was), Value::Real(now)) = (value, &mut answer) {
+                if num_traits::Zero::is_zero(&now.p) { Rc::make_mut(now).below = !was.below; }
+                Rc::make_mut(now).point = was.point;
+            }
+            Some(answer)
+        }
+        _ => None,
+    }
+}
+
+/// Compare constant keys by type and preserve signed zero recursively.
+fn same_constant(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Real(a), Value::Real(b)) => a.below == b.below && left.equals(right),
+        (Value::Complex(a), Value::Complex(b)) => a.real.to_bits() == b.real.to_bits() && a.imag.to_bits() == b.imag.to_bits(),
+        (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| same_constant(x, y)),
+        _ => std::mem::discriminant(left) == std::mem::discriminant(right) && left.equals(right),
+    }
+}
+
 fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (Vec<Value>, Vec<String>) {
-    let mut constants = vec![doc.as_ref().map_or(Value::Null, |text| Value::text(text))];
+    let mut constants: Vec<Value> = doc.as_ref().map(|text| Value::text(text)).into_iter().collect();
     let mut names = Vec::new();
     for (at, word) in words.iter().enumerate() {
         if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
@@ -13392,7 +13509,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
                 if let Value::Routine(r) = value {
                     if let Some(a) = &r.annotation { constants.push(Value::Routine(a.clone())); }
                 }
-                if !constants.iter().any(|old| std::mem::discriminant(old) == std::mem::discriminant(value) && old.equals(value)) { constants.push(value.clone()); }
+                if !constants.iter().any(|old| same_constant(old, value)) { constants.push(value.clone()); }
             }
             Instr::Read(cell) | Instr::Write(cell) if cell.near.is_empty() && !cell.free => {
                 let name = cell.ident.to_string();

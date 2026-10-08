@@ -157,10 +157,10 @@ def warn_explicit(message, category, filename, lineno, module=None, registry=Non
         category = type(message)
     else:
         message = category(message)
-    _warn(message, category, filename, lineno, module, source)
+    _warn(message, category, filename, lineno, module, source, explicit=True)
 
 
-def _warn(message, category, filename, lineno, module, source):
+def _warn(message, category, filename, lineno, module, source, explicit=False):
     action = 'default'
     for rule in filters:
         if isinstance(message, rule[2]) and _matches(rule[1], str(message), True) and _matches(rule[3], module) and (rule[4] == 0 or rule[4] == lineno):
@@ -170,7 +170,7 @@ def _warn(message, category, filename, lineno, module, source):
         return None
     if action == 'error':
         raise message
-    if action != 'always':
+    if action != 'always' and (not explicit or action == 'once'):
         key = [str(message)]
         if action != 'once':
             key = [*key, module]

@@ -734,6 +734,7 @@ pub struct Machine<'a> {
     /// value's own where one is run, else the running text's, as the
     /// reference reads them from the calling frame.
     text_future_bits: std::cell::Cell<i64>,
+    program_optimization: std::cell::Cell<u8>,
     /// The future flags the entry text was built with: its run stands
     /// in no call's frame, so they are kept aside here.
     top_future_bits: std::cell::Cell<i64>,
@@ -2066,6 +2067,7 @@ impl<'a> Machine<'a> {
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             text_future_bits: std::cell::Cell::new(0),
+            program_optimization: std::cell::Cell::new(0),
             top_future_bits: std::cell::Cell::new(0),
             text_within: None,
             text_caller_book: None,
@@ -5902,6 +5904,21 @@ impl<'a> Machine<'a> {
         answer
     }
 
+    // Carry a short circuit's established truth through enclosing boolean pairs.
+    fn logical_operand(&mut self, node: &Form, frame: &Rc<Env>) -> Result<(Value, Option<bool>), Escape> {
+        if let Form::Apply(Callee::Prim(operation @ (Prim::Both | Prim::Either), _), inputs) = node {
+            let (first, known) = self.logical_operand(&inputs[0], frame)?;
+            let truth = match known { Some(flag) => flag, None => self.object_truth(&first)? };
+            if truth == (*operation == Prim::Either) { return Ok((first, Some(truth))); }
+            return self.logical_operand(&inputs[1], frame);
+        }
+        let value = match self.value_of(node, frame)? {
+            Value::Bound(program, scope) if program.frameless => self.invoke(program, scope, Vec::new())?,
+            value => value,
+        };
+        Ok((value, None))
+    }
+
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         if self.active_trace.is_none() {
             if let Some(body) = self.frames_named.last().cloned() { self.active_trace = self.activation(&body, frame, None); }
@@ -7114,6 +7131,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Prim::Both | Prim::Either => {
+                    if self.rules.logical_value { return self.logical_operand(node, frame).map(|(value, _)| value); }
                     // A language may want the side that settled the pair
                     // handed back whole instead of a flag for its truth.
                     let whole = self.rules.logical_value;
@@ -11335,7 +11353,11 @@ impl<'a> Machine<'a> {
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
                 positional[place] = worth;
             }
-            for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
+            for (slot, held) in positional.iter_mut().enumerate() {
+                if matches!(held, Value::Unset) {
+                    *held = match (op, slot) { (Prim::Prepare, 3 | 4) => Value::Small(0), (Prim::Prepare, 5) => Value::Small(-1), _ => Value::Nil };
+                }
+            }
             return Ok(None);
         }
         if matches!(op, Prim::Octets(0 | 1)) && self.rules.names_shadow_builtins && !keywords.is_empty() {
@@ -26782,6 +26804,10 @@ impl<'a> Machine<'a> {
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_unreadable_at`.
     fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+        let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
+            std::borrow::Cow::Owned(format!("{source}\n"))
+        } else { std::borrow::Cow::Borrowed(source) };
+        let source = terminated.as_ref();
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let head = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -26793,8 +26819,23 @@ impl<'a> Machine<'a> {
             }
         }
 
-        crate::scan::scan_position(source, self.table)
-            .and_then(|read| crate::indent::indent_position(read, self.table, 0))
+        let maximum = self.imported.get("sys").and_then(|space| {
+            if let Value::Thing(space) = space {
+                space.holds.borrow().iter().find(|entry| entry.0 == "_int_max_str_digits").and_then(|entry| match entry.1.settled() { Value::Small(n) => Some(n as usize), _ => None })
+            } else { None }
+        }).unwrap_or(4300);
+        let read = crate::scan::scan_position(source, self.table)?;
+        for part in &read {
+            if maximum == 0 || part.shape != crate::scan::Shape::Numeral { continue; }
+            if part.lexeme.chars().all(|c| c.is_ascii_digit() || c == '_') {
+                let count = part.lexeme.chars().filter(char::is_ascii_digit).count();
+                if count > maximum {
+                    let complaint = format!("SyntaxError: Exceeds the limit ({maximum} digits) for integer string conversion: value has {count} digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.");
+                    return Err((complaint, part.row, part.column));
+                }
+            }
+        }
+        crate::indent::indent_position(read, self.table, 0)
     }
 
     /// The readers of text, the handing out of names, and the fetching
@@ -27313,6 +27354,20 @@ impl<'a> Machine<'a> {
     /// Whether the text ended with block boundaries still open: the
     /// closes the indenting pass laid at the very end stand for
     /// indented blocks the text never left.
+    fn unfinished_inline_suite(words: &[crate::scan::Token]) -> bool {
+        use crate::scan::Shape;
+        let substantive = |word: &&crate::scan::Token| !matches!(word.shape, Shape::Lead | Shape::Open | Shape::Close | Shape::LineEnd | Shape::Finish);
+        let Some(tail) = words.iter().rposition(|word| substantive(&word)) else { return false; };
+        let mut first = 0;
+        for (at, word) in words[..tail].iter().enumerate() {
+            if matches!(word.shape, Shape::Open | Shape::Close | Shape::LineEnd) { first = at + 1; }
+        }
+        match words[first..=tail].iter().find(substantive).filter(|word| word.shape == Shape::Bare).map(|word| word.spelling()) {
+            Some("def" | "class" | "if" | "elif" | "else" | "for" | "while" | "try" | "except" | "finally" | "with" | "async") => true,
+            _ => false,
+        }
+    }
+
     fn left_open_at_end(tokens: &[crate::scan::Token]) -> bool {
         use crate::scan::Shape;
         let Some(finish) = tokens.iter().find(|piece| piece.shape == Shape::Finish) else { return false };
@@ -27325,11 +27380,38 @@ impl<'a> Machine<'a> {
         open
     }
 
+    /// Accept integer indices for compiler options, rejecting C-int overflow.
+    fn compiler_option(&mut self, argument: &Value) -> Result<i64, String> {
+        let ordinary = argument.settled();
+        let indexed = if matches!(ordinary, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { ordinary.clone() }
+            else { self.stood_for_whole(&ordinary)?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", ordinary.kind_word()))? };
+        let integral = match indexed { Value::Flag(b) => Some(i64::from(b)), Value::Small(n) => Some(n), Value::Huge(n) => n.to_i64(), _ => None };
+        match integral { Some(n) if n >= i32::MIN as i64 && n <= i32::MAX as i64 => Ok(n), _ => Err("OverflowError: Python int too large to convert to C int".to_owned()) }
+    }
+
+    /// Decode a contiguous buffer with the shared library buffer reader.
+    fn program_from_buffer(&mut self, argument: Value, filename: &str) -> Result<Rc<str>, String> {
+        let builtins = self.namespace_for("builtins")?;
+        let reader = self.attribute(&builtins, "_buffer_bytes").ok_or_else(|| self.source_refused())?;
+        let decoded = self.apply_within(reader, vec![argument])?;
+        if let Value::Octets { cell, .. } = decoded.settled() { self.decode_program(&cell.borrow(), filename) }
+        else { Err(self.source_refused()) }
+    }
+
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
-        let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
-        let source = match v[0].settled() {
+        let path = self.path_from_protocol(v[1].clone())?;
+        let path = Self::underlying(&path).unwrap_or_else(|| path.settled());
+        let file = if let Value::Text(file) = path { file }
+            else if matches!(path, Value::Octets { .. }) {
+                let decoded = self.codec_function("_decode", vec![path, Value::text("utf-8"), Value::text("surrogateescape")])?;
+                match decoded { Value::Text(file) => file, _ => return Err(self.source_refused()) }
+            } else { return Err(self.source_refused()); };
+        if file.chars().any(|c| c == '\0') { return Err("ValueError: embedded null character".to_owned()); }
+        let manner_value = Self::underlying(&v[2]).unwrap_or_else(|| v[2].settled());
+        let manner = match manner_value { Value::Text(word) => word, other => return Err(format!("TypeError: compile() argument 'mode' must be str, not {}", other.kind_word())) };
+        let source = match Self::underlying(&v[0]).unwrap_or_else(|| v[0].settled()) {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
             Value::Thing(tree) => {
@@ -27344,26 +27426,22 @@ impl<'a> Machine<'a> {
                 }
                 match carried {
                     Some(Value::Text(s)) => s,
-                    _ => return Err(self.source_refused()),
+                    _ => self.program_from_buffer(Value::Thing(tree.clone()), &file)?,
                 }
             }
             _ => return Err(self.source_refused()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
-        let flags = match v.get(3).map(Value::settled) {
-            None | Some(Value::Nil) => 0,
-            Some(Value::Small(bits)) => bits,
-            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
-        };
-        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
-        if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
-            return Err("ValueError: compile(): invalid optimize value".into());
-        }
+        let flags = if let Some(value) = v.get(3) { self.compiler_option(value)? } else { 0 };
+        if flags & !0x1FEF610 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        let optimize = if let Some(value) = v.get(5) { self.compiler_option(value)? } else { -1 };
+        if optimize < -1 || optimize > 2 { return Err("ValueError: compile(): invalid optimize value".into()); }
+        let suppress_inheritance = if let Some(value) = v.get(4) { self.object_truth(value)? } else { false };
         let top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
         // it says not to inherit — those of the text now running, the
         // way the reference reads them from the calling frame's code.
-        let caller_future = if v.get(4).map_or(false, |value| value.settled().is_true()) { 0 } else { self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits) };
+        let caller_future = if suppress_inheritance { 0 } else { self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits) };
         let future_bits = flags & 0x1FE0010 | caller_future;
         // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
         // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
@@ -27393,7 +27471,7 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
             }
         };
-        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits) {
+        let built = match crate::build::build_text_optimized(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits, optimize.max(0) as u8) {
             Ok(built) => built,
             Err((said, row, cols)) => {
                 if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
@@ -27418,6 +27496,12 @@ impl<'a> Machine<'a> {
             }
             return Err(self.text_left_inside_block(&file, &source));
         }
+        if mode == 2 && !source.ends_with('\n') && (Self::unfinished_inline_suite(&tokens) || source.lines().last().map_or(false, |line| line.trim_start().starts_with('#')) && Self::left_open_at_end(&tokens)) {
+            if incomplete_ok {
+                if let Some(told) = self.text_incomplete(&file, Self::spent_place(counted), counted) { return Err(told); }
+            }
+            return Err(self.text_left_inside_block(&file, &source));
+        }
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source, None)?;
         }
@@ -27432,7 +27516,7 @@ impl<'a> Machine<'a> {
             };
             let manner = self.table.strings("ext.builtin.compile.modes")[mode].clone();
             let type_comments = i64::from(flags & 0x1000 != 0);
-            let optimize = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
+            
             return match self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize)]) {
                 Ok(tree) => Ok(tree),
                 Err(Escape::Error(told)) => Err(told),
@@ -27447,6 +27531,7 @@ impl<'a> Machine<'a> {
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
+        holds.push(("\0optimization".to_owned(), Value::Small(optimize.max(0))));
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -27620,10 +27705,16 @@ impl<'a> Machine<'a> {
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => code.holds.borrow().iter().find_map(|(word, worth)| if word == "co_flags" { match worth.settled() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
+        let optimization = match &first {
+            Value::Thing(code) => code.holds.borrow().iter().find_map(|(name, value)| if name == "\0optimization" { match value.settled() { Value::Small(n) => Some(n as u8), _ => None } } else { None }).unwrap_or(0),
+            _ => 0,
+        };
+        self.program_optimization.set(optimization);
         self.text_future_bits.set(held_future);
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
             Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
+            buffer @ Value::Thing(_) if !matches!(&buffer, Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.blueprint().name.as_str())) => (self.program_from_buffer(buffer, "<string>")?.to_string(), None, usize::from(weighing), false),
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -27790,7 +27881,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get()) {
+        let mut built = match crate::build::build_within_optimized(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get(), self.program_optimization.get()) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -27879,7 +27970,7 @@ impl<'a> Machine<'a> {
     /// text leaves is to be written out.
     fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get())
+        crate::build::build_text_optimized(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get(), self.program_optimization.get())
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
