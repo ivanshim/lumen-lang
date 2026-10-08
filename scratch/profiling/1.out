@@ -32,6 +32,24 @@ method_kw_duplicate ('error', 'TypeError')
 []
 kw_nonmapping ('error', 'TypeError')
 []
+kw_invalid_direct ('error', 'TypeError')
+[('c_call', 'max'), ('c_exception', 'max')]
+kw_invalid_alias ('error', 'TypeError')
+[('c_call', 'max'), ('c_exception', 'max')]
+kw_invalid_tail ('error', 'TypeError')
+[('c_call', 'max'), ('c_exception', 'max')]
+kw_invalid_method ('error', 'TypeError')
+[('c_call', 'append'), ('c_exception', 'append')]
+kw_invalid_bound ('error', 'TypeError')
+[('c_call', 'append'), ('c_exception', 'append')]
+kw_invalid_text ('error', 'TypeError')
+[('c_call', 'split'), ('c_exception', 'split')]
+kw_invalid_bool ('error', 'TypeError')
+[('c_call', 'max'), ('c_exception', 'max')]
+kw_invalid_tuple ('error', 'TypeError')
+[('c_call', 'max'), ('c_exception', 'max')]
+kw_invalid_duplicate ('error', 'TypeError')
+[]
 __iter__ 1 [('run', 1)]
 run 1 []
 <built-in method builtins.max> 1 [('run', 1)]

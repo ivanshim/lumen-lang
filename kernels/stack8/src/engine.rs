@@ -3395,10 +3395,10 @@ impl<'a> Engine<'a> {
 
     /// Untie call arguments only at the call boundary. A literal's ties
     /// have already become a map by then and remain ordinary values.
-    pub(super) fn call_items_named(&mut self, called: &str, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+    pub(super) fn call_items_named(&mut self, called: &str, args: Vec<Value>) -> Flow<Vec<(Option<Value>, Value)>> {
         let direct = !self.lang.class_builder.is_empty() && args.iter().filter(|value| matches!(value, Value::Tie(pair) if matches!(pair.0, Value::Flag(false)))).count() == 1
             && args.iter().all(|value| matches!(value, Value::Tie(_)));
-        match self.call_items(args) {
+        match self.expanded_call_items(args) {
             Err(Fault::Note(message)) if direct && message.starts_with("TypeError: Value after * must be an iterable, not ") => {
                 let kind = message.trim_start_matches("TypeError: Value after * must be an iterable, not ");
                 Err(format!("TypeError: {called}() argument after * must be an iterable, not {kind}").into())
@@ -3407,11 +3407,24 @@ impl<'a> Engine<'a> {
         }
     }
     fn call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+        let expanded = self.expanded_call_items(args)?;
+        Ok(self.keyword_items(expanded)?)
+    }
+
+    fn keyword_items(&self, items: Vec<(Option<Value>, Value)>) -> Res<Vec<(Option<String>, Value)>> {
+        items.into_iter().map(|(key, value)| match key {
+            None => Ok((None, value)),
+            Some(Value::Text(word)) => Ok((Some(word.to_string()), value)),
+            Some(_) => Err(self.lang.spread_pairs_amiss[0].clone()),
+        }).collect()
+    }
+
+    fn expanded_call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<Value>, Value)>> {
         let mut items = Vec::new();
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
-                    Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
+                    Value::Text(_) => items.push((Some(pair.0.clone()), pair.1.clone())),
                     Value::Flag(false) => match &pair.1.contents() {
                         // Spreading a walk over the arguments asks it for
                         // every member it has, and that asking may run
@@ -3460,8 +3473,7 @@ impl<'a> Engine<'a> {
                         };
                         let Value::Map(m) = source else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                         for (key, held) in m.iter() {
-                            let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
-                            items.push((Some(name.to_string()), held.clone()));
+                            items.push((Some(key.clone()), held.clone()));
                         }
                     }
                     _ => return Err(self.lang.call_amiss[0].clone().into()),
@@ -11233,22 +11245,25 @@ impl<'a> Engine<'a> {
                 return match callee {
                     Value::ValueMethod(method) => {
                         let raw = self.drop_many(argc - 1)?;
-                        let items = self.call_items(raw)?;
-                        let mut positional = Vec::new();
-                        let mut named = Vec::new();
-                        for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
+                        let items = self.expanded_call_items(raw)?;
                         self.call_site.set(true);
-                        let result = self.value_method(&method.0, &method.1, positional, named);
+                        let callable = Value::ValueMethod(method.clone());
+                        let result = self.native_call_items(callable, items, |this, items| {
+                            let mut positional = Vec::new();
+                            let mut named = Vec::new();
+                            for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
+                            this.value_method_inner(&method.0, &method.1, positional, named)
+                        });
                         if let Some(fled) = self.carried.take() { return Err(fled); }
                         self.data.push(result?);
                         return Ok(());
                     }
                     Value::ByteKind(mutable, _) => {
                         let args = self.drop_many(argc - 1)?;
-                        let items = self.call_items(args)?;
+                        let items = self.expanded_call_items(args)?;
                         let word = self.byte_kind_word(mutable).to_string();
                         self.call_site.set(true);
-                        let answer = self.builtin_call(Builtin::Bytes(u8::from(mutable)), &word, items)?;
+                        let answer = self.builtin_call_expanded(Builtin::Bytes(u8::from(mutable)), &word, items)?;
                         self.data.push(answer);
                         Ok(())
                     }
@@ -11256,7 +11271,7 @@ impl<'a> Engine<'a> {
                         let args = self.drop_many(argc - 1)?;
                         let items = self.call_items_named(&word, args)?;
                         self.call_site.set(true);
-                        let answer = self.builtin_call(b, &word, items);
+                        let answer = self.builtin_call_expanded(b, &word, items);
                         // A builtin reached as a value runs the same
                         // work as one named where it is called, and
                         // that work may run the program's own code. A
@@ -11287,9 +11302,9 @@ impl<'a> Engine<'a> {
                     Value::TextMethod(subject, op, called) => {
                         let mut args = self.drop_many(argc - 1)?;
                         if op != crate::strings::TextOp::Maketrans { args.insert(0, Value::Text(subject)); }
-                        let opened = self.call_items(args)?;
+                        let opened = self.expanded_call_items(args)?;
                         self.call_site.set(true);
-                        let answer = self.builtin_call(Builtin::Text(op), &called, opened)?;
+                        let answer = self.builtin_call_expanded(Builtin::Text(op), &called, opened)?;
                         self.data.push(answer);
                         Ok(())
                     }
@@ -13331,7 +13346,7 @@ impl<'a> Engine<'a> {
                 let result = if self.lang.bind_names {
                     let items = self.call_items_named(name, std::mem::take(&mut args))?;
                     self.call_site.set(true);
-                    self.builtin_call(*builtin, name, items)
+                    self.builtin_call_expanded(*builtin, name, items)
                 } else { self.builtin(*builtin, name, &mut args) };
                 // What the builtin was given is let go now, not when the
                 // next builtin is called: a value's last holder may be here.
@@ -16530,6 +16545,27 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(())
+    }
+
+    fn native_call_items<F>(&mut self, callable: Value, items: Vec<(Option<Value>, Value)>, invoke: F) -> Res<Value>
+    where F: FnOnce(&mut Self, Vec<(Option<String>, Value)>) -> Res<Value> {
+        for (at, (key, _)) in items.iter().enumerate() {
+            if let Some(key) = key {
+                if items[..at].iter().any(|(earlier, _)| earlier.as_ref().is_some_and(|earlier| earlier.equals(key))) {
+                    return Err(Self::named_fault(&self.lang.call_duplicate, &key.plain()));
+                }
+            }
+        }
+        let report = self.call_site.replace(false) && self.profiler.borrow().is_some()
+            && !self.profiling.get() && !self.native_open.get();
+        // Expansion precedes c_call; keyword key types belong to the native invocation.
+        let work = |this: &mut Self| { let named = this.keyword_items(items)?; invoke(this, named) };
+        if report { self.around_native(callable, work) } else { work(self) }
+    }
+
+    fn builtin_call_expanded(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<Value>, Value)>) -> Res<Value> {
+        self.native_call_items(Value::Native(builtin, Rc::from(name)), items,
+            |this, named| this.builtin_call_inner(builtin, name, named))
     }
 
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {

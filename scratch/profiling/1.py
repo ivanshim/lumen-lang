@@ -54,6 +54,26 @@ def kw_alias():
     return alias((), **keywords())
 def kw_bad():
     return max(**bad_keywords())
+def kw_invalid_direct():
+    return max(**{1: 2})
+def kw_invalid_alias():
+    return alias(**{1: 2})
+def kw_invalid_tail():
+    f = max
+    return f(**{1: 2})
+def kw_invalid_method():
+    return [].append(**{1: 2})
+def kw_invalid_bound():
+    f = [].append
+    return f(**{1: 2})
+def kw_invalid_text():
+    return ''.split(**{1: 2})
+def kw_invalid_bool():
+    return max(**{True: 2})
+def kw_invalid_tuple():
+    return max(**{(1,): 2})
+def kw_invalid_duplicate():
+    return max(**{1: 2}, **{1: 3})
 def kw_duplicate():
     return max((), default=3, **{'default': 4})
 def method_kw_duplicate():
@@ -70,7 +90,9 @@ def hook(frame, event, arg):
 for case in (direct_good, alias_good, method_good, method_spread, method_one, alias_method_one,
              direct_bad, alias_bad, method_bad, tail_good, tail_bad,
              kw_good, kw_alias, kw_bad, kw_duplicate,
-             method_kw_duplicate, kw_nonmapping):
+             method_kw_duplicate, kw_nonmapping, kw_invalid_direct, kw_invalid_alias,
+             kw_invalid_tail, kw_invalid_method, kw_invalid_bound, kw_invalid_text,
+             kw_invalid_bool, kw_invalid_tuple, kw_invalid_duplicate):
     events = []
     sys.setprofile(hook)
     try:

@@ -6162,7 +6162,7 @@ impl<'a> Machine<'a> {
         let standing = self.active_trace.clone();
         self.natives_told.set(true);
         let answer = match self.tell_watcher("c_call", &standing, stands.clone()) {
-            Ok(()) => self.call_stands(stands.clone(), target, &given, frame),
+            Ok(()) => self.native_keyword_check(&given).and_then(|()| self.call_stands(stands.clone(), target, &given, frame)),
             Err(away) => Err(away),
         };
         self.natives_told.set(false);
@@ -7152,7 +7152,7 @@ impl<'a> Machine<'a> {
                 let standing = self.active_trace.clone();
                 self.natives_told.set(true);
                 let answer = match self.tell_watcher("c_call", &standing, callable.clone()) {
-                    Ok(()) => self.value_of(&Form::Apply(Callee::Prim(*op, name.clone()), forms), frame),
+                    Ok(()) => self.native_keyword_check(&forms).and_then(|()| self.value_of(&Form::Apply(Callee::Prim(*op, name.clone()), forms), frame)),
                     Err(away) => Err(away),
                 };
                 self.natives_told.set(false);
@@ -8201,18 +8201,30 @@ impl<'a> Machine<'a> {
         Ok(given)
     }
 
-    /// Open spreads before builtin events; retain only ordinary keyword markers.
+    /// Expand once before builtin events, keeping keyword keys for invocation validation.
     fn native_arguments(&mut self, values: Vec<Value>) -> Res<Vec<Form>> {
-        let (positions, names) = self.open_arguments(values)?;
-        let mut used = std::collections::HashSet::new();
+        let (positions, names) = self.expanded_arguments(values)?;
+        let mut used: Vec<Value> = Vec::new();
         let mut ready: Vec<Form> = positions.into_iter().map(Form::Const).collect();
         for (key, value) in names {
-            if !used.insert(key.clone()) {
-                return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into());
+            if used.iter().any(|earlier| earlier.equals(&key)) {
+                return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key.bare())).into());
             }
-            ready.push(Form::Const(Value::Couple(Rc::new((Value::text(&key), value)))));
+            used.push(key.clone());
+            ready.push(Form::Const(Value::Couple(Rc::new((key, value)))));
         }
         Ok(ready)
+    }
+
+    fn native_keyword_check(&self, prepared: &[Form]) -> Res<()> {
+        for form in prepared {
+            if let Form::Const(Value::Couple(pair)) = form {
+                if !matches!(pair.0, Value::Text(_)) {
+                    return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None).into());
+                }
+            }
+        }
+        Ok(())
     }
 
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
@@ -11880,12 +11892,24 @@ impl<'a> Machine<'a> {
         opened
     }
     pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let (positions, supplied) = self.expanded_arguments(values)?;
+        let mut named = Vec::with_capacity(supplied.len());
+        for (key, value) in supplied {
+            let Value::Text(word) = key else {
+                return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None).into());
+            };
+            named.push((word.to_string(), value));
+        }
+        Ok((positions, named))
+    }
+
+    fn expanded_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
+                Value::Text(_) => names.push((pair.0.clone(), pair.1.clone())),
                 Value::Flag(true) => {
                     let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
                     let spread = match pair.1.settled() {
@@ -11894,10 +11918,7 @@ impl<'a> Machine<'a> {
                     };
                     if let Value::Dict(entries) = spread {
                         for (k, v) in entries.iter() {
-                            match k {
-                                Value::Text(text) => names.push((text.to_string(), v.clone())),
-                                _ => return Err(fault().into()),
-                            }
+                            names.push((k.clone(), v.clone()));
                         }
                     } else { return Err(fault().into()); }
                 }

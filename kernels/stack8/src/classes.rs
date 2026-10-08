@@ -1489,7 +1489,7 @@ impl<'a> Engine<'a> {
                     return Ok(crate::sre::decompose(&args)?);
                 }
                 let items = self.call_items_named(&name, args)?;
-                let answer = self.builtin_call(operation, &name, items);
+                let answer = self.builtin_call_expanded(operation, &name, items);
                 if let Some(raised) = self.carried.take() { return Err(raised); }
                 Ok(answer?)
             }
