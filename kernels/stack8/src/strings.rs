@@ -326,7 +326,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
 
     use TextOp::*;
     // Native descriptors use the same code-point operations as bound methods.
-    let unit_operation = match op { Find => "find", Rfind => "rfind", Index => "index", Rindex => "rindex", Count => "count", Replace => "replace", Lower => "lower", Upper => "upper", _ => "" };
+    let unit_operation = match op { Find => "find", Rfind => "rfind", Index => "index", Rindex => "rindex", Replace => "replace", Lower => "lower", Upper => "upper", _ => "" };
     if !unit_operation.is_empty() && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
         && args.iter().take(3).any(|v| matches!(v, Value::Codepoints(_))) {
         return crate::methods::codepoint_operation(&args[0].text_codes().unwrap(), unit_operation, &args[1..], &|key| fault(lang, key));

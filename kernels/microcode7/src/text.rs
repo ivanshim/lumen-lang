@@ -264,7 +264,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
 
     use Work::*;
     // A descriptor search keeps the original Python character sequence.
-    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", COUNT => "count", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
+    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
     if code_work != "" && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
         && input.iter().take(3).any(|v| matches!(v, Value::Unpaired(_))) {
         let failure = |reason: &str| complaint(table, reason);
