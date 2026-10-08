@@ -1,0 +1,14 @@
+empty list -> (1, 2, [2], [1])
+empty tuple -> (1, 2, [2], [1])
+empty range -> (1, 2, [2], [1])
+empty str -> (1, 2, [2], [1])
+empty bytes -> (1, 2, [2], [1])
+empty deque -> (1, 2, [2], [1])
+bounded extend fwd !! RuntimeError deque mutated during iteration
+bounded extend rev !! RuntimeError deque mutated during iteration
+bounded extendleft fwd !! RuntimeError deque mutated during iteration
+bounded extendleft rev !! RuntimeError deque mutated during iteration
+grown !! RuntimeError deque mutated during iteration
+start mutates -> 1
+stop mutates -> 1
+plain -> (0, 0, 0)

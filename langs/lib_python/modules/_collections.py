@@ -325,7 +325,8 @@ class deque:
             iterable = list(data)
         limit = _maxlen_of(self)
         if type(iterable) in _BULK_KINDS or type(iterable) is deque:
-            if limit != 0:
+            # an empty source adds nothing, so live iterators stay valid
+            if limit != 0 and len(iterable):
                 data.extend(_data_of(iterable) if type(iterable) is deque else iterable)
                 if limit is not None and len(data) > limit:
                     del data[:len(data) - limit]
@@ -348,7 +349,7 @@ class deque:
             iterable = list(data)
         limit = _maxlen_of(self)
         if type(iterable) in _BULK_KINDS or type(iterable) is deque:
-            if limit != 0:
+            if limit != 0 and len(iterable):
                 items = list(_data_of(iterable) if type(iterable) is deque else iterable)
                 items.reverse()
                 data[:0] = items
@@ -422,13 +423,13 @@ class deque:
         except Exception:
             _deque_check('index', 1, 3, given, keywords)
             raise
-        size = len(data)
         start = given[2] if count > 2 else 0
-        stop = given[3] if count > 3 else size
+        stop = given[3] if count > 3 else _sys.maxsize
         if type(start) is not int:
             start = _deque_slice_index(start)
         if type(stop) is not int:
             stop = _deque_slice_index(stop)
+        size = len(data)
         if start < 0:
             start = max(0, start + size)
         if stop < 0:
