@@ -8782,6 +8782,10 @@ impl<'a> Builder<'a> {
         let compound = compound.map(|op| self.table.landing_place(op).map_or(op, Prim::Landing));
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
+        if let Form::Located(bounds, word, inner) = expr {
+            let stored = self.write_into(*inner, gives_back, compound, assign)?;
+            return Ok(Form::Located(bounds, word, Box::new(stored)));
+        }
         if let Form::Silenced(inner) = expr {
             let written = self.write_into(*inner, gives_back, compound, assign)?;
             return Ok(Form::Silenced(Box::new(written)));
@@ -9609,6 +9613,7 @@ impl<'a> Builder<'a> {
                     }
                 }
             };
+            left = self.located(self.span_since(origin), left);
         }
         Ok(left)
     }
@@ -9703,7 +9708,20 @@ impl<'a> Builder<'a> {
             let target = self.monadic_expr()?;
             return self.step_of(target, by, true);
         }
-        let piece = self.monadic_piece()?;
+        let first_token = self.pos;
+        let mut piece = self.monadic_piece()?;
+        let evaluating_call = match &piece {
+            Form::Apply(Callee::Code(_), _) => true,
+            Form::Apply(Callee::Prim(operation, name), _) => *operation == Prim::At || !name.is_empty(),
+            _ => false,
+        };
+        if evaluating_call && !self.on_writing() && !self.on_any("ext.stmt.annotation")
+            && self.table.has_any("ext.builtin.exceptions.traceback") && self.pos > first_token {
+            let ending = self.tokens[self.pos - 1].lexeme.as_str();
+            if ["syntax.call.close", "op.index.close"].iter().any(|label| self.table.single(label) == Some(ending)) {
+                piece = self.located(self.span_since(first_token), piece);
+            }
+        }
         if let Some(by) = self.step_by(&self.look().clone()) {
             self.advance();
             return self.step_of(piece, by, false);

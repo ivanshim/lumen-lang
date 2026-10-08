@@ -386,6 +386,7 @@ pub struct Compiler<'a> {
     declared_at: u32,
     decoration_line: Option<u32>,
     attribute_spelling: HashMap<usize, (Rc<str>, String)>,
+    prefix_sources: Vec<usize>,
     /// The slots the routine being put together fills from what it
     /// carried away, while its parameters are being read.
     carrying: Vec<usize>,
@@ -739,7 +740,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decoration_line: None, attribute_spelling: HashMap::new(), carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decoration_line: None, attribute_spelling: HashMap::new(), prefix_sources: Vec::new(), carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1056,6 +1057,16 @@ impl<'a> Compiler<'a> {
     }
 
     fn act(&mut self, op: Action, argc: usize) {
+        if !self.lang.trace_fields.is_empty() && self.pos > 0 {
+            let last = &self.tokens[self.pos - 1].lexeme;
+            let invocation = matches!(&op, Action::Invoke(_) | Action::Send(_) | Action::Summon(_))
+                || matches!(&op, Action::Builtin(_, word) if !word.is_empty());
+            let closed_call = invocation && self.lang.calling.as_ref().is_some_and(|pair| &pair.close == last);
+            let indexed = matches!(&op, Action::At) && self.lang.index_brackets.as_ref().is_some_and(|pair| &pair.close == last);
+            if closed_call || indexed {
+                if let Some(start) = self.prefix_sources.last().copied() { self.put(self.expression_location(start)); }
+            }
+        }
         self.put(Instr::Act(op, argc));
     }
 
@@ -9914,6 +9925,7 @@ impl<'a> Compiler<'a> {
                         }
                         None => {}
                     }
+                    if !lang.trace_fields.is_empty() { self.put(self.expression_location(begins)); }
                     self.act(op, 2);
                 }
             }
@@ -10098,7 +10110,10 @@ impl<'a> Compiler<'a> {
             self.prefix()?;
             return self.bumped(from, op, true);
         }
-        self.prefix_piece()?;
+        self.prefix_sources.push(self.pos);
+        let piece = self.prefix_piece();
+        self.prefix_sources.pop();
+        piece?;
         if let Some(op) = self.bump_of(&self.look().clone()) {
             self.take();
             return self.bumped(from, op, false);
