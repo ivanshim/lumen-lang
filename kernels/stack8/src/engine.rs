@@ -4623,13 +4623,7 @@ impl<'a> Engine<'a> {
                 Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class_now().clone()), value.clone(), self.trace_of(value)],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
-            let (method, receiver) = match &object {
-                Value::Method(o, p, _) => (p.clone(), Value::Object(o.clone())),
-                _ => (self.special_method(&object, 34).ok_or_else(|| self.special_fault())?, object.clone()),
-            };
             let kept = self.data.len();
-            let mut given = vec![receiver];
-            given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
             if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
@@ -4640,14 +4634,22 @@ impl<'a> Engine<'a> {
                 self.location = context_location;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
-            let left = self.invoke(&method, given).and_then(|()| {
-                if leaving_bound {
+            let left = if let Value::Method(receiver, method, _) = &object {
+                let mut given = vec![Value::Object(receiver.clone())];
+                given.extend(args);
+                self.invoke(method, given).and_then(|()| {
                     let value = self.drop_top()?;
                     let answer = self.await_value(value)?;
                     self.data.push(answer);
+                    Ok(())
+                })
+            } else {
+                match self.special_call(&object, 34, args) {
+                    Ok(Some(answer)) => { self.data.push(answer); Ok(()) }
+                    Ok(None) => Err(self.special_fault().into()),
+                    Err(words) => Err(self.carried.take().unwrap_or(Fault::Note(words))),
                 }
-                Ok(())
-            });
+            };
             let left = self.raised_of_note(left);
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;

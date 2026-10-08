@@ -350,8 +350,8 @@ class TestCase:
         with context:
             args[0](*args[1:], **kwargs)
 
-    def assertWarnsRegex(self, expected, pattern, *args, **kwargs):
-        context = _Warns(expected, pattern)
+    def assertWarnsRegex(self, expected_warning, expected_regex, *args, **kwargs):
+        context = _Warns(expected_warning, expected_regex)
         if len(args) == 0:
             return context
         with context:
@@ -935,7 +935,6 @@ class _Warns:
                 if first_matching is None:
                     first_matching = record.message
                 if self.pattern is not None and self.pattern.search(_message(record.message)) is None:
-                    non_matching = [*non_matching, record]
                     continue
                 if not matched:
                     matched = True
@@ -944,9 +943,7 @@ class _Warns:
                     self.lineno = record.lineno
             else:
                 non_matching = [*non_matching, record]
-        # A nested assertWarns records into the innermost list only, so a
-        # warning claimed by no pattern here is handed back to the enclosing
-        # context instead of being dropped.
+        # Preserve other warning categories for an enclosing recorder.
         for record in non_matching:
             warnings.warn_explicit(record.message, record.category, record.filename, record.lineno)
         if matched:
