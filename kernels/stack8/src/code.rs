@@ -439,6 +439,11 @@ pub enum Action {
     /// Whether a thing is of the class a value stands for, where the
     /// class to test against is only known as the run reaches it.
     KindredTo,
+    /// A parent call with no argument written: the callable the parent
+    /// word read, then the class cell and the first argument, both read
+    /// without complaint. The parent class itself is made of the two;
+    /// any other callable is called with no arguments at all.
+    Superless,
     /// A routine written where a value stands, carrying away the values
     /// under it: the routine is on top, and each value below it fills
     /// one of the slots the routine names as carried.
@@ -506,6 +511,7 @@ pub enum Builtin {
     CallOutcome,
     CopyValue,
     Sre,
+    UnicodeDecomposition,
     ModuleLoad,
     MemberSet,
     MemberGet,
@@ -768,6 +774,8 @@ pub enum Builtin {
     ZlibNative,
     StructNative,
     BinAscii,
+    StaticNamespace,
+    TraceNative,
     HeapNative,
     ContextNative,
     ReduceNative,
