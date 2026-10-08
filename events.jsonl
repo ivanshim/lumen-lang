@@ -9101,3 +9101,17 @@
 {"t":"2026-10-08T19:13:52Z","event":"quota","codex_week_used":88,"codex_credits":0,"claude_week_used":13,"claude_5h_used":3,"kimi_5h_used":0,"kimi_month_used":0.9896,"kimi_code_used":0,"deepseek_usd":287.02}
 {"t":"2026-10-08T19:13:59Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":88,"expected":89.4,"gap":-1.4,"status":"ok"}
 {"t":"2026-10-08T19:14:12Z","event":"checkin","status":"done","actions":"accepted stdlib-zipfile (21g); prune-merged freed 0MB; held DS resumes kept (DS Flash 12/12, DS Pro 1/1 full); slots full (Sol 11+review, Kimi kimi-module, Sonnet claude-urllib)","notes":"Codex weekly 88% (90% alert near); box disk 79%, Mac 86%; integrate-21f still running, no open PR; zipfile conflicts with 21f in 14 files"}
+{"t":"2026-10-08T19:24:04Z","event":"exited","job":"dsflash-contextlib-async","code":0}
+{"t":"2026-10-08T19:28:24Z","event":"finished","job":"dsflash-contextlib-async","exit_time":"2026-10-08T19:24:04Z"}
+{"t":"2026-10-08T19:28:24Z","event":"review-queued","job":"dsflash-contextlib-async","review":"review-auto-dsflash-contextlib-async-1928"}
+{"t":"2026-10-08T19:28:30Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T19:29:14Z","event":"review-started","job":"dsflash-contextlib-async","review":"review-auto-dsflash-contextlib-async-1928"}
+{"t":"2026-10-08T19:33:12Z","event":"exited","job":"stdlib-ast","code":0}
+{"t":"2026-10-08T19:33:32Z","event":"queued","job":"dsflash-codeccallbacks","model":"deepseek-flash","line":"or-resume dsflash-codeccallbacks deepseek-flash session-c4fc2b7c-01d2-47ef-b850-a766dc51928f","from":"held-resumes"}
+{"t":"2026-10-08T19:33:36Z","event":"finished","job":"stdlib-ast","exit_time":"2026-10-08T19:33:12Z"}
+{"t":"2026-10-08T19:33:36Z","event":"review-queued","job":"stdlib-ast","review":"review-auto-stdlib-ast-1933"}
+{"t":"2026-10-08T19:33:41Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-08T19:34:07Z","event":"quota","codex_week_used":89,"codex_credits":0,"claude_week_used":13,"claude_5h_used":4,"kimi_5h_used":0,"kimi_month_used":0.99,"kimi_code_used":0,"deepseek_usd":286.52}
+{"t":"2026-10-08T19:34:12Z","event":"exited","job":"review-auto-dsflash-contextlib-async-1928","code":0}
+{"t":"2026-10-08T19:34:14Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":89,"expected":90.2,"gap":-1.2,"status":"ok"}
+{"t":"2026-10-08T19:34:15Z","event":"resumed","job":"dsflash-codeccallbacks","model":"deepseek-flash","session":"session-c4fc2b7c-01d2-47ef-b850-a766dc51928f"}
