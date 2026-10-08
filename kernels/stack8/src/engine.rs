@@ -7612,7 +7612,7 @@ impl<'a> Engine<'a> {
         };
         let same = match (left, right) {
             (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
-            _ => false,
+            _ => return Ok(Some(Value::Declined(Rc::from("NotImplemented")))),
         };
         Ok(Some(Value::Flag(same != (word == "__ne__"))))
     }

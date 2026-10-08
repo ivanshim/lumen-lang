@@ -9475,7 +9475,7 @@ impl<'a> Machine<'a> {
         };
         let same = match (left, right) {
             (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
-            _ => false,
+            _ => return Ok(Some(Value::Refusal(Rc::from("NotImplemented")))),
         };
         Ok(Some(Value::Flag(same != (name == "__ne__"))))
     }

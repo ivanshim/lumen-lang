@@ -2454,8 +2454,16 @@ impl<'a> Engine<'a> {
         let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
         let other = args.get(1).cloned();
         Ok(match place {
-            // Alike only with itself; unlike wherever it is not alike.
-            0 => match other { Some(v) if Self::member_matches(&subject,&v) => Value::Flag(true), _ => declined() },
+            // A thing whose own class answers equality keeps that
+            // answer; anything else is alike only with itself.
+            0 => match other {
+                Some(v) => match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {
+                    Some(told @ Value::Declined(_)) => told,
+                    Some(told) => Value::Flag(self.special_truth(&told).map_err(Fault::Note)?),
+                    None => if Self::member_matches(&subject,&v) { Value::Flag(true) } else { declined() },
+                },
+                _ => declined(),
+            },
             1 => {
                 let Some(v) = other else { return Err(self.class_refusal()); };
                 match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {

@@ -2961,7 +2961,14 @@ impl<'a> Machine<'a> {
         let second=values.get(1).cloned();
         let same=|a:&Value,b:&Value|match (a,b){(Value::Thing(x),Value::Thing(y))=>Rc::ptr_eq(x,y),_=>contained_equal(a,b)};
         Ok(match which {
-            Some(0)=>match &second{Some(other) if same(&first,other)=>Value::Flag(true),_=>not_mine},
+            Some(0)=>match &second{
+                Some(other)=>match self.ask_special(&first, 2, std::slice::from_ref(other))? {
+                    Some(said@Value::Refusal(_))=>said,
+                    Some(said)=>Value::Flag(self.object_truth(&said)?),
+                    None=>if same(&first,other){Value::Flag(true)}else{not_mine},
+                },
+                None=>not_mine,
+            },
             Some(1)=>{
                 let Some(other)=second else{return Err(self.class_unready())};
                 match self.ask_special(&first,2,&[other.clone()])? {
