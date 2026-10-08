@@ -842,8 +842,11 @@ class FileIO(_RawIOBase):
         return size
 
 class _CheckedRaw:
-    # Buffered C streams use raw.readinto(), even when raw also has read().
-    # Keep validation here so all refill paths share the same contract.
+    # Buffered streams refill through readinto() so that every raw object's
+    # length contract is checked in one place.  A plain file descriptor is
+    # the exception: read() there is a single bounded system call, so the
+    # file road below reaches it directly and the readinto road still
+    # validates every other raw.
     def __init__(self, raw):
         self.raw = raw
         self._owned = True
@@ -874,6 +877,15 @@ class _CheckedRaw:
             if chunk is not None and not isinstance(chunk, bytes):
                 raise TypeError('read() should return bytes')
             return chunk
+        if isinstance(self.raw, FileIO):
+            data = self.raw.read(size)
+            if data is None:
+                return None
+            if not isinstance(data, bytes):
+                raise TypeError('read() should return bytes')
+            if len(data) > size:
+                raise OSError('read() should return at most %d bytes' % size)
+            return data
         data = bytearray(size)
         count = self.readinto(data)
         return None if count is None else bytes(data[:count])
