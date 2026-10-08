@@ -507,9 +507,15 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
             row = quote.row;
             continue;
         }
-        if src[pos].is_ascii_digit()
-            && (pos == 0 || !(src[pos - 1].is_ascii_alphanumeric() || src[pos - 1] == '_' || src[pos - 1] == '.'))
-        {
+        // A number may open at a digit, or at a point before one (a
+        // leading-dot float); either way the run of name characters and
+        // points that follows is the candidate the reference reads.
+        let boundary = pos == 0
+            || !(src[pos - 1].is_ascii_alphanumeric() || src[pos - 1] == '_' || src[pos - 1] == '.');
+        let opens_a_number = boundary
+            && (src[pos].is_ascii_digit()
+                || (src[pos] == '.' && src.get(pos + 1).map_or(false, |next| next.is_ascii_digit())));
+        if opens_a_number {
             let mut end = pos;
             while end < src.len() && (src[end].is_ascii_alphanumeric() || src[end] == '_' || src[end] == '.') { end += 1; }
             let run: String = src[pos..end].iter().collect();
