@@ -70,6 +70,19 @@ def _error_bounds(exc, decoding):
             raise TypeError("UnicodeError 'object' attribute must be a string")
     if not isinstance(start, int) or not isinstance(end, int):
         raise TypeError("UnicodeError 'start' or 'end' attribute must be an integer")
+    # The reference trims a reported span to the object before a handler
+    # reads it: a start past the last place backs onto that last place of
+    # a non-empty object, and the end stays within it (Objects/exceptions.c
+    # _PyUnicodeError_GetParams).
+    size = len(obj)
+    if start < 0:
+        start = 0
+    if start >= size:
+        start = size - 1 if size else 0
+    if end < 1:
+        end = 1
+    if end > size:
+        end = size
     return obj, start, end
 
 def strict_errors(exc):
