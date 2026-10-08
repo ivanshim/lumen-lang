@@ -833,7 +833,7 @@ pub struct Routine {
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
-    pub lexical_origin: Rc<str>,
+    pub lexical_origin: Rc<Vec<crate::scan::Token>>,
     pub body_boundary: usize,
     pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,

@@ -700,6 +700,7 @@ fn mapping_format(s: &str, mapping: &Value, lang: &Lang, words: &Wording, depth:
 
 /// Immutable text keeps the same code-point extent throughout its life.
 pub(crate) fn character_length(text: &Rc<str>) -> usize {
+    if text.len() <= 64 { return text.chars().count(); }
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::rc::Weak;
@@ -715,4 +716,19 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         entries.insert(address, (Rc::downgrade(text), count));
         count
     })
+}
+
+// Equal byte and scalar extents identify ASCII without rescanning a cached text.
+// A boundary at the end is useful for slices; an element still requires a char.
+pub(crate) fn character_byte(text: &Rc<str>, index: usize) -> Option<usize> {
+    let length = character_length(text);
+    if index > length { return None; }
+    if length == text.len() { return Some(index); }
+    if index == length { return Some(text.len()); }
+    text.char_indices().nth(index).map(|(byte, _)| byte)
+}
+
+pub(crate) fn character_at(text: &Rc<str>, index: usize) -> Option<char> {
+    if text.len() <= 64 && text.is_ascii() { return text.as_bytes().get(index).map(|byte| char::from(*byte)); }
+    text.get(character_byte(text, index)?..)?.chars().next()
 }

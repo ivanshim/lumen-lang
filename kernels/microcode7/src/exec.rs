@@ -531,6 +531,7 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
+    library_index: RefCell<Option<LibraryIndex>>,
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value>,
@@ -798,10 +799,46 @@ fn made_absolute(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
+#[derive(PartialEq, Eq)]
+struct DirectoryMark {
+    identity: (u64, u64),
+    times: (i64, i64, i64, i64),
+    access: u32,
+}
+
+fn directory_mark(folder: &std::path::Path) -> Result<DirectoryMark, std::io::ErrorKind> {
+    use std::os::unix::fs::MetadataExt as _;
+    match std::fs::metadata(folder) {
+        Ok(stat) => Ok(DirectoryMark { identity: (stat.ino(), stat.dev()), times: (stat.ctime(), stat.ctime_nsec(), stat.mtime(), stat.mtime_nsec()), access: stat.mode() }),
+        Err(error) => Err(error.kind()),
+    }
+}
+
+struct LibraryIndex {
+    origin: std::path::PathBuf,
+    sources: HashMap<std::path::PathBuf, String>,
+    virtual_dirs: std::collections::HashSet<std::path::PathBuf>,
+    folder_marks: std::collections::BTreeMap<std::path::PathBuf, Result<DirectoryMark, std::io::ErrorKind>>,
+    file_links: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+}
+
+impl LibraryIndex {
+    fn matches_disk(&self, root: &std::path::Path) -> bool {
+        if self.origin != root { return false; }
+        for (folder, saved) in &self.folder_marks { if directory_mark(folder) != *saved { return false; } }
+        for (link, expected) in &self.file_links { if library_location(link, None) != *expected { return false; } }
+        true
+    }
+}
+
 /// Virtual library directories remain usable when host sources are absent.
 /// Resolve existing links before parent components, and admit missing traversal
 /// directories only when the manifest declares that logical directory.
 fn library_location(input: &std::path::Path, virtual_dirs: Option<&std::collections::HashSet<std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    match std::fs::canonicalize(input) {
+        Ok(found) => return Some(found),
+        Err(_) => (), // The declared virtual directories may still resolve it.
+    }
     use std::path::{Component, Path, PathBuf};
     let starting = if input.is_absolute() { input.to_owned() } else { std::env::current_dir().ok()?.join(input) };
     let mut remaining: Vec<_> = starting.components().rev().map(|component| component.as_os_str().to_os_string()).collect();
@@ -1973,6 +2010,7 @@ impl<'a> Machine<'a> {
             library_sources: HashMap::new(),
             library_directory: None,
             library_files: HashMap::new(),
+            library_index: RefCell::new(None),
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
@@ -20498,12 +20536,15 @@ impl<'a> Machine<'a> {
                 let Value::Text(alphabet) = accepted else { return Err("TypeError: scan alphabet must be a string".to_owned()); };
                 let input = v[0].settled();
                 let letters: Box<dyn Iterator<Item=u32>> = match &input {
-                    Value::Text(contents) => Box::new(contents.chars().map(|letter| letter as u32)),
-                    Value::Unpaired(points) => Box::new(points.iter().cloned()),
+                    Value::Text(contents) => {
+                        let at = crate::text::string_boundary(contents, offset).unwrap_or(contents.len());
+                        Box::new(contents[at..].chars().map(|letter| letter as u32))
+                    }
+                    Value::Unpaired(points) => Box::new(points.iter().cloned().skip(offset)),
                     _ => return Err("TypeError: scan subject must be text".to_owned()),
                 };
                 let mut end = offset;
-                for point in letters.skip(offset).take(room) {
+                for point in letters.take(room) {
                     if point > 127 || !alphabet.bytes().any(|member| u32::from(member) == point) { break; }
                     end += 1;
                 }
@@ -20534,7 +20575,7 @@ impl<'a> Machine<'a> {
                 }
                 n(2)?;
                 if let (Value::Text(input), Some(position)) = (v[0].settled(), v[1].as_big().ok().and_then(|number| number.to_usize())) {
-                    if let Some((begin, _)) = input.char_indices().nth(position) {
+                    if let Some(begin) = crate::text::string_boundary(&input, position) {
                         let mut shielded = false;
                         for (walked, (byte_offset, codepoint)) in input[begin..].char_indices().enumerate() {
                             match (shielded, codepoint) {
@@ -23650,8 +23691,8 @@ impl<'a> Machine<'a> {
                     Value::Huge(i) => i.to_i64().ok_or_else(||crate::text::complaint(self.table,"index"))?,
                     _ => return Err(crate::text::complaint(self.table,"integer")),
                 };
-                let place = if number < 0 {(word.chars().count() as i64).saturating_add(number)} else {number};
-                return word.chars().nth(place as usize).map(|c|Value::text(&String::from(c))).ok_or_else(||crate::text::complaint(self.table,"index"));
+                let place = if number < 0 {(crate::text::extent_of_string(word) as i64).saturating_add(number)} else {number};
+                return crate::text::scalar_at(word, place as usize).map(|c|Value::text(&String::from(c))).ok_or_else(||crate::text::complaint(self.table,"index"));
             }
         }
         if let Value::TextRow(row, closed) = target {
@@ -23683,8 +23724,8 @@ impl<'a> Machine<'a> {
         if let Value::Span(bounds) = at {
             if let Value::Text(text) = target {
                 if self.rules.indexed_text {
-                    let width_is_one = text.is_ascii();
-                    let size = if width_is_one { text.len() } else { text.chars().count() };
+                    let size = crate::text::extent_of_string(text);
+                    let width_is_one = size == text.len();
                     let (limits, _, contiguous) = self.span_edges(bounds, size)?;
                     if contiguous {
                         if limits[1] <= limits[0] { return Ok(Value::text("")); }
@@ -23693,9 +23734,9 @@ impl<'a> Machine<'a> {
                             let window = limits[0] as usize..limits[1] as usize;
                             return Ok(Value::text(&text[window]));
                         }
-                        let selected: String = text.chars().skip(limits[0] as usize)
-                            .take((limits[1] - limits[0]) as usize).collect();
-                        return Ok(Value::text(&selected));
+                        let left = crate::text::string_boundary(text, limits[0] as usize).unwrap_or(text.len());
+                        let right = crate::text::string_boundary(text, limits[1] as usize).unwrap_or(text.len());
+                        return Ok(Value::text(&text[left..right]));
                     }
                     let characters: Vec<char> = text.chars().collect();
                     let (_, offsets, _) = self.span_selection(bounds, size)?;
@@ -25351,6 +25392,46 @@ impl Machine<'_> {
 
     /// A dotted name uses its owner's current search directories. Ordinary
     /// names use sys.path; regular packages precede files in each directory.
+    fn index_library_paths(&self, library: &std::path::Path) -> LibraryIndex {
+        let mut sources = HashMap::new();
+        let mut virtual_dirs = std::collections::HashSet::new();
+        let mut file_links = Vec::new();
+            let mut folders: std::collections::HashMap<std::path::PathBuf, Option<std::path::PathBuf>> = std::collections::HashMap::new();
+            // This memo belongs to one search, never to the running program:
+            // links and directory replacements are read again on the next import.
+            for (module, relative) in self.library_files.iter() {
+                let spelling = library.join(relative);
+                let (Some(directory), Some(filename)) = (spelling.parent(), spelling.file_name()) else { continue };
+                if !folders.contains_key(directory) { folders.insert(directory.to_owned(), library_location(directory, None)); }
+                let Some(Some(directory)) = folders.get(directory) else { continue };
+                let candidate = directory.join(filename);
+                let resolved = match std::fs::symlink_metadata(&candidate) {
+                    Ok(stat) => if stat.file_type().is_symlink() {
+                        let destination = library_location(&candidate, None);
+                        file_links.push((candidate, destination.clone()));
+                        destination
+                    } else { Some(candidate) },
+                    Err(error) => if error.kind() == std::io::ErrorKind::NotFound { Some(candidate) } else { None },
+                };
+                if let Some(resolved) = resolved { sources.insert(resolved, module.clone()); }
+            }
+            for folder in folders.values().filter_map(Option::as_ref) {
+                let mut ancestor = Some(folder.as_path());
+                while let Some(directory) = ancestor { virtual_dirs.insert(directory.to_owned()); ancestor = directory.parent(); }
+            }
+            for file in sources.keys() {
+                let mut parent = file.parent();
+                while let Some(directory) = parent {
+                    if !virtual_dirs.insert(directory.to_owned()) { break; }
+                    parent = directory.parent();
+                }
+            }
+            let mut watched = virtual_dirs.clone();
+            for spelling in folders.keys() { watched.extend(spelling.ancestors().map(std::path::Path::to_owned)); }
+            let folder_marks = watched.into_iter().map(|folder| { let mark = directory_mark(&folder); (folder, mark) }).collect();
+            LibraryIndex { origin: library.to_owned(), sources, virtual_dirs, folder_marks, file_links }
+    }
+
     fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
         let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
             (head, self.table.strings("ext.system.module.path").first().map(String::as_str)?, tail)
@@ -25366,21 +25447,15 @@ impl Machine<'_> {
             Value::Tuple(items) if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() => items,
             _ => return None,
         };
-        let mut sources = std::collections::HashMap::new();
-        let mut virtual_dirs = std::collections::HashSet::new();
-        if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
-            for name in self.library_files.keys() {
-                if let Some(file) = self.library_module_file(name) {
-                    let location = std::path::PathBuf::from(file);
-                    let mut parent = location.parent();
-                    while let Some(directory) = parent {
-                        virtual_dirs.insert(directory.to_path_buf());
-                        parent = directory.parent();
-                    }
-                    sources.insert(location, name);
-                }
-            }
+        let library = self.library_directory.as_deref().unwrap_or_else(|| std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules")));
+        let mut index = self.library_index.borrow_mut();
+        if self.table.has_any("ext.system.module.path") && index.as_ref().is_none_or(|saved| !saved.matches_disk(library)) {
+            index.replace(self.index_library_paths(library));
         }
+        let empty_sources = HashMap::new();
+        let empty_dirs = std::collections::HashSet::new();
+        let sources = index.as_ref().map_or(&empty_sources, |saved| &saved.sources);
+        let virtual_dirs = index.as_ref().map_or(&empty_dirs, |saved| &saved.virtual_dirs);
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() { continue; }
@@ -25391,7 +25466,7 @@ impl Machine<'_> {
             for location in choices {
                 if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
                     if let Some(resolved) = library_location(&location, Some(&virtual_dirs)) {
-                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(*name)) {
+                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(name)) {
                             return Some((resolved.to_string_lossy().into_owned(), text.as_bytes().to_vec()));
                         }
                     }
@@ -26472,7 +26547,13 @@ impl<'a> Machine<'a> {
     fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
         match held {
             Value::Mutable(cell, _) | Value::Shared(cell) => { let value = cell.borrow().clone(); self.mapping_read(&value, name) },
-            Value::Dict(entries) => Ok(entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, v)| v.clone())),
+            Value::Dict(entries) => {
+                let located = match entries.namespace_position(name) {
+                    Ok(found) => found,
+                    Err(()) => entries.iter().position(|(key, _)| spells_key(key, name)),
+                };
+                Ok(located.map(|position| entries[position].1.clone()))
+            },
             Value::Attributes(space) => {
                 let members = space.holds.borrow();
                 if members.iter().any(|entry| entry.0 == "\0loaded-module")
@@ -26729,6 +26810,9 @@ impl<'a> Machine<'a> {
             }
         }
 
+        if mode == 0 {
+            match crate::build::library_tokens(source, self.table) { Some(tokens) => return Ok(tokens), None => {} }
+        }
         crate::scan::scan_position(source, self.table)
             .and_then(|read| crate::indent::indent_position(read, self.table, 0))
     }

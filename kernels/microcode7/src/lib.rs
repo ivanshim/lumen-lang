@@ -66,6 +66,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     brief_settled(&mut table, request);
     markup_settled(&mut table, request);
+    if let Some((rows, sources)) = build::library_rows(definition) { table.library_surveys = Some(rows); table.library_token_sources = Some(sources); }
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
         if table.has_any("ext.builtin.exceptions") && e.starts_with('\0') { return e[1..].to_string(); }

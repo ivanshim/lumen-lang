@@ -5850,6 +5850,16 @@ by lexical cancellation. This lookup does not change the path wrapper's
 inherited `realpath` implementation or provide namespace-package/importlib
 protocols.
 
+The debug build prepares lexical tokens and name-only scope surveys for
+bundled Python sources with each full kernel's own lexer and compiler.
+Imports reuse them only for the matching language definition and exact
+source or complete token sequence. Runtime slots, instructions, module
+objects, and values are still built normally. Changed sources, grammar
+settings, compilation contexts, or unsupported preparations use the
+ordinary parsing and scope-discovery paths. Filesystem import lookup
+indexes are invalidated when watched directories or symlink targets change;
+source files are read afresh.
+
 `ext.builtin.heap_native` exposes the Python-only heap accelerator. It operates
 on list storage directly, retaining aliases and catching size changes across
 user comparisons; the four reference kernels ignore this label.

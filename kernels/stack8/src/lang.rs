@@ -40,6 +40,10 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub(crate) prepared_scopes: Option<crate::compile::PreparedEntries>,
+    pub(crate) prepared_source_tokens: Option<crate::compile::PreparedSources>,
+    pub definition_words: HashSet<String>,
+    pub string_starters: [bool; 128],
     pub complex_words: HashMap<String, Vec<String>>,
     pub method_keywords: HashMap<String, String>,
     pub value_methods: HashMap<String, String>,
@@ -445,6 +449,7 @@ pub struct Lang {
     pub quote_close: Vec<String>,
 
     pub builtins: HashMap<String, Builtin>,
+    pub builtin_tails: std::rc::Rc<HashMap<String, Vec<String>>>,
     /// The one word each builtin answers by, in the order the labels
     /// name them: a map by word cannot say which of several came first.
     pub builtin_words: Vec<(Builtin, String)>,
@@ -2209,6 +2214,9 @@ impl Lang {
 
         let core_words = ["core.ord", "core.chr.range", "core.translate.table", "core.bytes.like", "core.abs.type", "core.bool.declined", "core.integer", "core.not_iterator", "core.power.integer", "core.dict.sequence", "core.unindexable", "core.immutable", "core.power.zero", "core.power.overflow", "core.arity.one", "core.arity.exact", "key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.issubclass.amiss", "core.issubclass.subject", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair", "core.unsized", "core.dict.changed", "zip.strict", "zip.short", "zip.long", "iterable", "enumerate.missing", "enumerate.too_many", "enumerate.keyword", "core.unreversible", "map.short", "map.long", "source.builtins_immutable"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
         let mut lang = Lang {
+            prepared_scopes: None, prepared_source_tokens: None,
+            definition_words: HashSet::new(),
+            string_starters: [false; 128],
             core_words,
             ident: name,
             extensions: r.strings("extensions")?,
@@ -2510,6 +2518,7 @@ impl Lang {
             text_repeat: r.flag("ext.builtin.text.repeat")?,
             text_words: ["ext.builtin.text.getnewargs","ext.builtin.text.fault.protocol","ext.builtin.text.fault.index","ext.builtin.text.splitlines","ext.builtin.text.partition","ext.builtin.text.rpartition","ext.builtin.text.expandtabs","ext.builtin.text.swapcase","ext.builtin.text.casefold","ext.builtin.text.capitalize","ext.builtin.text.title","ext.builtin.text.istitle","ext.builtin.text.isidentifier","ext.builtin.text.isprintable","ext.builtin.text.isdecimal","ext.builtin.text.isnumeric","ext.builtin.text.isascii","ext.builtin.text.removeprefix","ext.builtin.text.removesuffix","ext.builtin.text.format_map","ext.builtin.text.maketrans","ext.builtin.text.translate","ext.builtin.text.encode","ext.builtin.text.join","ext.builtin.text.split","ext.builtin.text.rsplit","ext.builtin.text.strip","ext.builtin.text.lstrip","ext.builtin.text.rstrip","ext.builtin.text.center","ext.builtin.text.ljust","ext.builtin.text.rjust","ext.builtin.text.zfill","ext.builtin.text.count","ext.builtin.text.find","ext.builtin.text.rfind","ext.builtin.text.index","ext.builtin.text.rindex","ext.builtin.text.startswith","ext.builtin.text.endswith","ext.builtin.text.replace","ext.builtin.text.upper","ext.builtin.text.lower","ext.builtin.text.length","ext.builtin.text.repr","ext.builtin.text.keyword.count","ext.builtin.text.keyword.keepends","ext.builtin.text.keyword.tabsize","ext.builtin.text.keyword.maxsplit","ext.builtin.text.keyword.sep","ext.builtin.text.keyword.encoding","ext.builtin.text.keyword.errors","ext.builtin.text.fault.arguments","ext.builtin.text.fault.arguments.many","ext.builtin.text.fault.receiver","ext.builtin.text.fault.string","ext.builtin.text.fault.integer","ext.builtin.text.fault.separator","ext.builtin.text.fault.fill","ext.builtin.text.fault.missing","ext.builtin.text.fault.encode","ext.builtin.text.fault.mapping","ext.builtin.text.fault.translation","ext.builtin.text.fault.codepoint","ext.builtin.text.fault.surrogate","ext.builtin.text.fault.maketrans.length","ext.builtin.text.fault.maketrans.key","ext.builtin.text.fault.maketrans.type","ext.builtin.text.fault.format","ext.builtin.text.fault.format.positional","ext.builtin.text.fault.format.brace","ext.builtin.text.fault.join","ext.builtin.text.fault.walk","ext.builtin.text.fault.room","ext.builtin.text.fault.key","ext.builtin.text.complaint"].into_iter().map(|k| Ok((k.to_string(), r.strings(k)?))).collect::<Result<_, String>>()?,
             builtins: natives,
+            builtin_tails: std::rc::Rc::new(HashMap::new()),
             builtin_words: first_words,
             holes: r.strings("builtin.print.placeholder")?,
             args_binding: args_name,
@@ -3114,6 +3123,20 @@ impl Lang {
             return Err("ext.syntax.call.bare needs syntax.call".to_string());
         }
         lang.order_lexemes()?;
+        for &letter in lang.quotes.iter().chain(&lang.raw_prefixes).chain(&lang.byte_prefixes)
+            .chain(&lang.plain_prefixes).chain(&lang.format_prefixes).chain(&lang.template_prefixes) {
+            if letter.is_ascii() { lang.string_starters[letter as usize] = true; }
+        }
+        for vocabulary in [&lang.assign_words, &lang.await_words, &lang.ellipsis_words, &lang.false_words, &lang.function_words, &lang.globals_words, &lang.hush_words, &lang.lambda_words, &lang.naming_words, &lang.new_words, &lang.null_words, &lang.parent_words, &lang.plus_words, &lang.print_file_error, &lang.print_file_output, &lang.self_words, &lang.special_declined, &lang.special_stop, &lang.true_words, &lang.unimplemented_words, &lang.unpack_words, &lang.yield_from_words, &lang.yield_words] {
+            lang.definition_words.extend(vocabulary.iter().cloned());
+        }
+        let mut tails: HashMap<String, Vec<String>> = HashMap::new();
+        for word in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
+            let stop = word.char_indices().skip(1).find(|(_, letter)| !lang.extends_name(*letter))
+                .map(|(offset, _)| offset).unwrap_or(word.len());
+            if stop < word.len() { tails.entry(word[..stop].to_owned()).or_default().push(word.clone()); }
+        }
+        lang.builtin_tails = std::rc::Rc::new(tails);
         Ok(lang)
     }
 
@@ -3200,7 +3223,11 @@ impl Lang {
     }
 
     pub fn spells(list: &[String], word: &str) -> bool {
-        list.iter().any(|w| w == word)
+        match list {
+            [] => false,
+            [single] => single == word,
+            rest => rest.iter().any(|w| w == word),
+        }
     }
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
@@ -3263,6 +3290,7 @@ impl Lang {
     }
 
     pub fn begins_name(&self, c: char) -> bool {
+        if c.is_ascii() { return c == '_' || c.is_ascii_alphabetic(); }
         if !self.syntax_members.is_empty() { return c == '_' || crate::unicode::bits(c) & 4 != 0; }
         if self.text_is_bytes {
             // Where text is bytes, a name is spelled in bytes too, and
@@ -3273,6 +3301,7 @@ impl Lang {
     }
 
     pub fn extends_name(&self, c: char) -> bool {
+        if c.is_ascii() { return c == '_' || c.is_ascii_alphanumeric(); }
         if !self.syntax_members.is_empty() { return crate::unicode::bits(c) & 8 != 0; }
         if self.text_is_bytes {
             return c == '_' || c.is_ascii_alphanumeric() || (self.unicode_names && c >= '\u{80}');
