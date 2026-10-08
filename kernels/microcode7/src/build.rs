@@ -767,15 +767,17 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         let mut ahead = Vec::new();
         let mut opening = true;
         let mut preceding: Option<(u32, usize)> = None;
+        let mut after_compound = false;
         r.skip_line_ends();
         while !r.exhausted() {
-            if interactive && preceding.map_or(false, |(row, _)| r.look().row > row) {
-                if let (Some((row, end)), Some((line, _, bounds))) = (preceding, mark) {
-                    line.set(row);
-                    bounds.set((end, end + 1, row));
+            let extra_statement = preceding.filter(|(row, _)| interactive && r.look().row > *row);
+            if !after_compound {
+                if let Some((row, end)) = extra_statement {
+                    if let Some((line, _, bounds)) = mark { line.set(row); bounds.set((end, end + 1, row)); }
+                    return Err(String::from("SyntaxError: multiple statements found while compiling a single statement"));
                 }
-                return Err(String::from("SyntaxError: multiple statements found while compiling a single statement"));
             }
+            after_compound = ["if", "for", "while", "try", "with", "def", "class", "async", "@"].contains(&r.look().lexeme.as_str());
             let start_of_statement = r.pos;
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
             let own_line = r.look().row > before;
@@ -802,6 +804,13 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                     return Err(said);
                 }
             };
+            if let Some((row, end)) = extra_statement {
+                if let Some((line, _, bounds)) = mark {
+                    line.set(row);
+                    bounds.set((end, end + 1, row));
+                }
+                return Err(String::from("SyntaxError: multiple statements found while compiling a single statement"));
+            }
             // Text standing alone as the first statement of a program
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).

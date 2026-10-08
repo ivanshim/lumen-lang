@@ -791,18 +791,17 @@ fn compile_pass(
         a.skip_seps();
         let mut opening = true;
         let mut prior_statement: Option<(usize, usize)> = None;
+        let mut follows_suite = false;
         while !a.exhausted() {
-            if interactive {
-                if let Some((row, column)) = prior_statement {
-                    if a.look().row > row {
-                        a.registry.stopped_at = row;
-                        a.registry.stopped_column = column;
-                        a.registry.stopped_end_row = row;
-                        a.registry.stopped_end = column + 1;
-                        return Err("SyntaxError: multiple statements found while compiling a single statement".into());
-                    }
-                }
+            let extra_statement = prior_statement.filter(|(row, _)| interactive && a.look().row > *row);
+            if let Some((row, column)) = extra_statement.filter(|_| !follows_suite) {
+                a.registry.stopped_at = row;
+                a.registry.stopped_column = column;
+                a.registry.stopped_end_row = row;
+                a.registry.stopped_end = column + 1;
+                return Err("SyntaxError: multiple statements found while compiling a single statement".into());
             }
+            follows_suite = matches!(a.look().lexeme.as_str(), "if" | "for" | "while" | "try" | "with" | "def" | "class" | "async" | "@");
             let statement_begin = a.pos;
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let own_line = a.look().row as u32 > before;
@@ -825,6 +824,13 @@ fn compile_pass(
             if let Err(said) = a.stmt() {
                 a.record_stop();
                 return Err(said);
+            }
+            if let Some((row, column)) = extra_statement {
+                a.registry.stopped_at = row;
+                a.registry.stopped_column = column;
+                a.registry.stopped_end_row = row;
+                a.registry.stopped_end = column + 1;
+                return Err("SyntaxError: multiple statements found while compiling a single statement".into());
             }
             // Text alone as the first statement of a program is the
             // program's own documentation, kept under the name the

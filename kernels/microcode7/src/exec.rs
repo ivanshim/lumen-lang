@@ -26687,7 +26687,7 @@ impl<'a> Machine<'a> {
         let held = book.borrow().clone();
         match &held {
             Value::Dict(_) => { set_down(book, name, value); Ok(()) }
-            Value::Attributes(_) | Value::Thing(_) => self.mapping_write(&held, name, value),
+            Value::Attributes(_) | Value::Thing(_) | Value::Vector(_) => self.mapping_write(&held, name, value),
             _ => Ok(()),
         }
     }
@@ -27737,17 +27737,41 @@ impl<'a> Machine<'a> {
         }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
+        if self.table.has_any("ext.builtin.compile.kind") {
+            if let Some(global) = v.get(1).map(Value::settled).filter(|held| !matches!(held, Value::Nil)) {
+                let is_dict = match &global {
+                    Value::Dict(_) | Value::Attributes(_) => true,
+                    other => Self::underlying(other).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_))),
+                };
+                if !is_dict {
+                    if !weighing { return Err(format!("TypeError: exec() globals must be a dict, not {}", global.kind_word())); }
+                    let mapping = match &global {
+                        Value::Thing(t) => self.inherited_entry(&t.blueprint(), "__getitem__").is_some(),
+                        Value::Vector(_) | Value::Tuple(_) => true,
+                        _ => false,
+                    };
+                    return Err(if mapping { "TypeError: globals must be a real dict; try eval(expr, {}, mapping)" } else { "TypeError: globals must be a dict" }.to_owned());
+                }
+            }
+            if let Some(Value::Thing(local)) = v.get(2).map(Value::settled) {
+                let maps = self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
+                if !maps {
+                    return Err(if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", local.blueprint().name) });
+                }
+            }
+        }
         let mut books = Vec::new();
         for place in 1..3 {
             books.push(match v.get(place) {
                 None | Some(Value::Nil) => None,
                 Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Attributes(_) | Value::Dict(_)) => Some(cell.clone()),
+                Some(Value::Shared(cell) | Value::Mutable(cell, _)) if place == 2 && self.table.has_any("ext.builtin.compile.kind") && matches!(&*cell.borrow(), Value::Vector(_)) => Some(cell.clone()),
                 // A program's own value, standing in for a dictionary of
                 // its own through the blueprint it answers to: kept in
                 // a cell of its own so the rest of a reading works with
                 // it exactly as it works with a plain dictionary's cell.
                 Some(thing @ (Value::Attributes(_) | Value::Thing(_))) => Some(Rc::new(RefCell::new(thing.clone()))),
-                Some(_) => return Err(self.core_complaint("core.arity", name)),
+                Some(other) => return Err(if !self.table.has_any("ext.builtin.compile.kind") { self.core_complaint("core.arity", name) } else if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", other.kind_word()) }),
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {

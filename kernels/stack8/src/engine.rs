@@ -26291,7 +26291,7 @@ impl Engine<'_> {
         let held = book.borrow().clone();
         match &held {
             Value::Map(_) => { book_write(book, name, value); Ok(()) }
-            Value::Object(_) | Value::Fields(_) => self.dyn_write(&held, name, value),
+            Value::Object(_) | Value::Fields(_) | Value::Array(_) => self.dyn_write(&held, name, value),
             _ => Ok(()),
         }
     }
@@ -27351,16 +27351,34 @@ impl Engine<'_> {
         }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
+        if self.lang.compile_kind.is_some() {
+            if let Some(given) = args.get(1).filter(|v| !matches!(v.contents(), Value::Null)) {
+                let value = given.contents();
+                let dictionary = matches!(value, Value::Map(_) | Value::Fields(_)) || Self::worth_of(&value).is_some_and(|v| matches!(v.contents(), Value::Map(_)));
+                if !dictionary {
+                    let subscripts = matches!(&value, Value::Object(o) if self.class_value(&o.class_now(), "__getitem__").is_some()) || matches!(value, Value::Array(_) | Value::Tuple(_));
+                    return Err(if weighing {
+                        if subscripts { "TypeError: globals must be a real dict; try eval(expr, {}, mapping)".into() } else { "TypeError: globals must be a dict".into() }
+                    } else { format!("TypeError: exec() globals must be a dict, not {}", value.core_kind()) });
+                }
+            }
+            if let Some(Value::Object(object)) = args.get(2).map(Value::contents) {
+                if self.class_value(&object.class_now(), "__getitem__").is_none() && !Self::worth_of(&Value::Object(object.clone())).is_some_and(|v| matches!(v.contents(), Value::Map(_))) {
+                    return Err(if weighing { "TypeError: locals must be a mapping".into() } else { format!("TypeError: locals must be a mapping or None, not {}", object.class_now().name) });
+                }
+            }
+        }
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
             match value {
                 None | Some(Value::Null) => Ok(None),
                 Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_) | Value::Fields(_)) => Ok(Some(cell.clone())),
+                Some(Value::Bond(cell) | Value::Collection(cell, _)) if self.lang.compile_kind.is_some() && matches!(&*cell.borrow(), Value::Array(_)) => Ok(Some(cell.clone())),
                 // A program's own value, standing in for a dictionary of
                 // its own through the class it answers to: kept in a
                 // cell of its own so the rest of a reading works with it
                 // exactly as it works with a plain dictionary's cell.
                 Some(v @ (Value::Object(_) | Value::Fields(_))) => Ok(Some(Rc::new(RefCell::new(v.clone())))),
-                Some(_) => Err(self.source_unready()),
+                Some(other) => Err(if self.lang.compile_kind.is_none() { self.source_unready() } else if weighing { "TypeError: locals must be a mapping".into() } else { format!("TypeError: locals must be a mapping or None, not {}", other.core_kind()) }),
             }
         };
         let outer = as_book(args.get(1))?;
