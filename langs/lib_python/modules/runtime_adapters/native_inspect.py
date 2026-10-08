@@ -40,6 +40,10 @@ def isclass(object):
     return isinstance(object, type)
 
 
+def ismodule(object):
+    return isinstance(object, types.ModuleType)
+
+
 def getmro(cls):
     return cls.__mro__
 

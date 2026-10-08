@@ -344,7 +344,12 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if lang.args_list.is_some() || lang.args_count.is_some() {
-        let file = ["argv0", "file"].iter().find_map(|key| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone()));
+        let directory_run = lang.python_numbers
+            && std::env::var("LUMEN_RUN_MODULE").is_ok_and(|module| module == "__main__");
+        let fallback = if directory_run { "given" } else { "file" };
+        let file = ["argv0", fallback, "file"].iter().find_map(|key|
+            request.iter().find(|(scope, name, ..)| scope == "SELF" && name == key)
+                .map(|(_, _, value, _)| value.clone()));
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(name) = &lang.args_count {

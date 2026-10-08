@@ -32,8 +32,13 @@ class _Raises:
         if not isinstance(value, self.expected):
             return False
         self.exception = value
-        if self.phrase is not None and self.phrase.search(_message(value)) is None:
-            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + _message(value) + '"')
+        # An exception's string is its own message, the way CPython's
+        # assertRaisesRegex reads it; a `message` attribute on the
+        # exception is not the same thing (argparse's ArgumentError
+        # carries the raw text there and the argument name only in
+        # __str__), so the pattern is matched against str(value).
+        if self.phrase is not None and self.phrase.search(str(value)) is None:
+            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + str(value) + '"')
         return True
 
 class TestResult:
