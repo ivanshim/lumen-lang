@@ -72,6 +72,22 @@ def _option_env(args):
         elif option == 'warn_default_encoding':
             env['PYTHONWARNDEFAULTENCODING'] = '1'
     return env
+def _interpreter_options(args):
+    options = []
+    position = 0
+    while position < len(args):
+        argument = args[position]
+        if argument in ('-c', '-m') or not argument.startswith('-'):
+            break
+        if argument in ('-X', '-W', '-Q') and position + 1 < len(args):
+            if argument == '-X' and args[position + 1] == 'dev':
+                options.extend(('-X', 'dev'))
+            position += 2
+        else:
+            if argument == '-Xdev':
+                options.append(argument)
+            position += 1
+    return options
 
 
 def make_script(script_dir, script_basename, source, omit_suffix=False):
@@ -130,7 +146,7 @@ class _PythonRunResult:
 
 def _assert_python(expected_success, *args, **env_vars):
     file, rest = _to_file_args(args)
-    cmd_line = [sys.executable, file] + rest
+    cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
     env = os.environ.copy()
     env.update(_option_env(args))
     env.update(env_vars)
@@ -169,7 +185,7 @@ def assert_python_failure(*args, **env_vars):
 
 def spawn_python(*args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw):
     file, rest = _to_file_args(args)
-    cmd_line = [sys.executable, file] + rest
+    cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
     env = os.environ.copy()
     env.update(_option_env(args))
     env['PYTHONPATH'] = os.pathsep.join(filter(None, sys.path))
@@ -182,7 +198,7 @@ def spawn_python(*args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw):
 
 def run_python_until_end(*args, **env_vars):
     file, rest = _to_file_args(args)
-    cmd_line = [sys.executable, file] + rest
+    cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
     env = os.environ.copy()
     env.update(_option_env(args))
     env.update(env_vars)

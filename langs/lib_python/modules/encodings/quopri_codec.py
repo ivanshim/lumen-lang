@@ -1,3 +1,4 @@
+# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/quopri_codec.py; PSF License.
 """Codec for quoted-printable encoding.
 
 This codec de/encodes from bytes to bytes.

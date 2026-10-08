@@ -1144,6 +1144,29 @@ impl Value {
         }
     }
 
+    /// Keep a small recency list of exact scalar-text properties.
+    /// Discarding dead weak owners also discards their stored flags.
+    pub fn ascii_letters(word: &Rc<str>) -> bool {
+        if word.len() < 256 { return word.is_ascii(); }
+        thread_local! {
+            static TEXT_PROPERTIES: RefCell<Vec<(std::rc::Weak<str>, bool)>> = RefCell::new(Vec::new());
+        }
+        TEXT_PROPERTIES.with(|cell| {
+            let mut notes = cell.borrow_mut();
+            notes.retain(|note| note.0.upgrade().is_some());
+            let found = notes.iter().position(|note| note.0.upgrade().is_some_and(|owner| Rc::ptr_eq(&owner, word)));
+            let note = if let Some(index) = found {
+                notes.remove(index)
+            } else {
+                (Rc::downgrade(word), word.is_ascii())
+            };
+            let flag = note.1;
+            if notes.len() == 16 { notes.remove(0); }
+            notes.push(note);
+            flag
+        })
+    }
+
     pub fn character_numbers(&self) -> Option<Vec<u32>> {
         match self {
             Value::Unpaired(numbers) => Some(numbers.to_vec()),
@@ -2164,7 +2187,7 @@ impl Thing {
     pub fn entries_shown(&self) -> Value {
         let holds = self.holds.borrow();
         let mut pairs: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0'))
+            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0') && !name.ends_with('\0'))
             .map(|(name, v)| (Value::text(name), v.clone())).collect();
         // Keys of any other kind are kept beside the names under the
         // hidden name `\0keys` and shown with them.

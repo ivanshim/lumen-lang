@@ -1,227 +1,313 @@
-# The machinery of the reference's multibyte codecs, written in Python: a
-# codec object that encodes and decodes whole strings, and the incremental
-# and stream classes the encodings package builds on it. A codec supplies
-# the character tables; this module runs them and answers errors with
-# the handlers codecs registers.
-
+# Multibyte codec state and stream contracts: CPython v3.14.8 Modules/cjkcodecs.
 import codecs
+_mapping = __multibyte_native
 
-
-class _Illegal(Exception):
-    pass
-
-
-def _handler(errors):
-    if errors is None:
-        errors = 'strict'
-    if not isinstance(errors, str):
-        raise TypeError('errors must be a string')
-    return codecs.lookup_error(errors), errors
-
-
-def _encode_run(spec, text, errors, pending, final):
-    # Encodes pending + text. A character that may begin a pair is held
-    # back at the end of the text unless this is the last of it.
-    handler, errors = _handler(errors)
-    queue = pending + text
-    out = bytearray()
-    i = 0
-    size = len(queue)
-    while i < size:
-        c = queue[i]
-        if c in spec.pair_first:
-            if i + 1 < size:
-                code = spec.pairs.get((c, queue[i + 1]))
-                if code is not None:
-                    out += code
-                    i += 2
-                    continue
-            elif not final:
-                return bytes(out), c
-        code = spec.encode_char(c)
-        if code is not None:
-            out += code
-            i += 1
-            continue
-        end = i + 1
-        exc = UnicodeEncodeError(spec.name, queue, i, end, 'illegal multibyte sequence')
-        replacement, resume = handler(exc)
-        if isinstance(replacement, str):
-            replaced = bytearray()
-            for letter in replacement:
-                code = spec.encode_char(letter)
-                if code is None:
-                    raise UnicodeEncodeError(spec.name, queue, i, end, 'illegal multibyte sequence')
-                replaced += code
-            out += replaced
-        elif isinstance(replacement, bytes):
-            out += replacement
-        else:
-            raise TypeError("encoding error handler must return (str/bytes, int) tuple")
-        if resume < 0:
-            resume += size
-        if not 0 <= resume <= size:
-            raise IndexError('position %d from error handler out of bounds' % resume)
-        i = resume
-    return bytes(out), ''
-
-
-def _decode_run(spec, data, errors, final):
-    # Decodes data as far as it is whole; returns the text and how many
-    # bytes were used. An unfinished sequence at the end is an error only
-    # when this is the last of the data.
-    handler, errors = _handler(errors)
-    data = bytes(data)
-    out = []
-    i = 0
-    size = len(data)
-    while i < size:
-        first = data[i]
-        if first < 0x80:
-            out.append(chr(first))
-            i += 1
-            continue
-        try:
-            text, used = spec.decode_at(data, i)
-        except _Illegal as bad:
-            length, reason = bad.args
-        else:
-            if text is not None:
-                out.append(text)
-                i += used
-                continue
-            if not final:
-                break
-            length, reason = size - i, 'incomplete multibyte sequence'
-        exc = UnicodeDecodeError(spec.name, data, i, i + length, reason)
-        replacement, resume = handler(exc)
-        if not isinstance(replacement, str):
-            raise TypeError("decoding error handler must return (str, int) tuple")
-        out.append(replacement)
-        if resume < 0:
-            resume += size
-        if not 0 <= resume <= size:
-            raise IndexError('position %d from error handler out of bounds' % resume)
-        i = resume
-    return ''.join(out), i
-
+class _CodecCall:
+    def __init__(self, codec, encoding):
+        self.codec = codec
+        self.encoding = encoding
+    def __call__(self, input, errors='strict'):
+        if self.encoding:
+            instance = MultibyteIncrementalEncoder(errors, self.codec)
+            return instance.encode(input, True), len(input)
+        instance = MultibyteIncrementalDecoder(errors, self.codec)
+        return instance.decode(input, True), len(input)
 
 class MultibyteCodec:
-    def __init__(self, spec):
-        self._spec = spec
-        self.name = spec.name
+    def __init__(self, name):
+        self.name = name
+        self.encode = _CodecCall(self, True)
+        self.decode = _CodecCall(self, False)
 
-    def encode(self, input, errors=None):
-        if not isinstance(input, str):
-            raise TypeError("argument 1 must be str, not %s" % type(input).__name__)
-        data, _ = _encode_run(self._spec, input, errors, '', True)
-        return data, len(input)
+def _handler(name, error, length):
+    value, position = codecs.lookup_error(name)(error)
+    if position < 0:
+        position += length
+    if position < 0 or position > length:
+        raise IndexError('position from error handler out of bounds')
+    return value, position
 
-    def decode(self, input, errors=None):
-        data = bytes(memoryview(input)) if not isinstance(input, bytes) else input
-        text, _ = _decode_run(self._spec, data, errors, True)
-        return text, len(data)
+class _State:
+    def _initialize(self, decoder):
+        self._state = [0] * 8
+        if self.codec.name.startswith('iso2022_'):
+            self._state[0] = 66
+            self._state[1] = 66
+            if decoder:
+                self._state[2] = 66
+        self._pending = b'' if decoder else ''
 
+    def _packed(self):
+        return int.from_bytes(bytes(self._state), 'little')
 
-class MultibyteIncrementalEncoder:
-    def __init__(self, errors='strict'):
+    def _designation(self):
+        group = 1 if self.codec.name == 'iso2022_kr' and self._state[4] & 1 else 0
+        mark = self._state[group]
+        if mark == 66:
+            return b''
+        if group == 1:
+            return b'\x1b$)C\x0e'
+        if mark & 128:
+            return (b'\x1b$' if mark in (192,193,194) else b'\x1b$(') + bytes([mark & 127])
+        return b'\x1b(' + bytes([mark])
+
+class MultibyteIncrementalEncoder(_State):
+    def __init__(self, errors='strict', codec=None):
+        if codec is not None:
+            self.codec = codec
+        if not isinstance(errors, str):
+            raise TypeError('errors must be str')
         self.errors = errors
-        self._pending = ''
+        self._initialize(False)
+
+    def _emit(self, wire):
+        name = self.codec.name
+        if name == 'hz':
+            if wire.startswith(b'~{'):
+                prefix = b'' if self._state[0] else b'~{'
+                self._state[0] = 1
+                return prefix + wire[2:]
+            prefix = b'~}' if self._state[0] else b''
+            self._state[0] = 0
+            return prefix + wire
+        if not name.startswith('iso2022_'):
+            return wire
+        if name == 'iso2022_kr':
+            if wire.startswith(b'\x1b$)C'):
+                prefix = b''
+                if self._state[1] != 195:
+                    prefix += b'\x1b$)C'
+                    self._state[1] = 195
+                if not self._state[4] & 1:
+                    prefix += b'\x0e'
+                    self._state[4] |= 1
+                return prefix + wire[5:]
+            prefix = b'\x0f' if self._state[4] & 1 else b''
+            self._state[4] &= ~1
+            return prefix + wire
+        if wire.startswith(b'\x1b.'):
+            mark = wire[2]
+            prefix = b'' if self._state[2] == mark else wire[:3]
+            self._state[2] = mark
+            return prefix + wire[3:]
+        if wire.startswith(b'\x1b') and len(wire) >= 3:
+            length = 4 if wire[1:3] == b'$(' else 3
+            mark = wire[length-1] | (128 if wire[1] == 36 else 0)
+            prefix = b'' if self._state[0] == mark else wire[:length]
+            self._state[0] = mark
+            return prefix + wire[length:]
+        prefix = b'\x1b(B' if self._state[0] != 66 else b''
+        self._state[0] = 66
+        return prefix + wire
 
     def encode(self, input, final=False):
-        data, self._pending = _encode_run(self.codec._spec, input, self.errors, self._pending, final)
-        return data
-
-    def reset(self):
+        if not isinstance(input, str):
+            raise TypeError('encoding with ' + self.codec.name + ' requires str')
+        text = self._pending + input
         self._pending = ''
+        result = b''
+        pos = 0
+        while pos < len(text):
+            first = ord(text[pos])
+            if pos+1 == len(text) and not final and _mapping(3, self.codec.name, first, 0):
+                self._pending = text[pos:]
+                break
+            wire = _mapping(0, self.codec.name, first, ord(text[pos+1])) if pos+1 < len(text) else None
+            consumed = 2
+            if wire is None:
+                wire = _mapping(0, self.codec.name, first, 0)
+                consumed = 1
+            if wire is None:
+                error = UnicodeEncodeError(self.codec.name, text, pos, pos+1, 'illegal multibyte sequence')
+                replacement, pos = _handler(self.errors, error, len(text))
+                result += replacement if isinstance(replacement, bytes) else self.encode(replacement, False)
+            else:
+                result += self._emit(wire)
+                pos += consumed
+        if final:
+            if self.codec.name == 'hz' and self._state[0]:
+                result += b'~}'
+                self._state[0] = 0
+            elif self.codec.name.startswith('iso2022_'):
+                if self._state[4] & 1:
+                    result += b'\x0f'
+                    self._state[4] &= ~1
+                if self._state[0] != 66:
+                    result += b'\x1b(B'
+                    self._state[0] = 66
+        return result
 
     def getstate(self):
-        return int.from_bytes(self._pending.encode('utf-32-le'), 'little') if self._pending else 0
+        pending = self._pending.encode('utf-8')
+        return int.from_bytes(bytes([len(pending)]) + pending + bytes(self._state), 'little')
 
     def setstate(self, state):
         if not isinstance(state, int):
-            raise TypeError('an integer is required')
-        if state < 0 or state.bit_length() > 32:
-            raise UnicodeError('pending buffer overflow')
-        self._pending = state.to_bytes(4, 'little').decode('utf-32-le') if state else ''
-
-
-class MultibyteIncrementalDecoder:
-    def __init__(self, errors='strict'):
-        self.errors = errors
-        self._pending = b''
-
-    def decode(self, input, final=False):
-        data = self._pending + bytes(memoryview(input))
-        text, used = _decode_run(self.codec._spec, data, self.errors, final)
-        self._pending = data[used:]
-        return text
+            raise TypeError('state must be an integer')
+        raw = state.to_bytes(17, 'little')
+        count = raw[0]
+        if count > 8:
+            raise UnicodeError('pending buffer too large')
+        self._pending = raw[1:1+count].decode('utf-8')
+        self._state = list(raw[1+count:9+count])
 
     def reset(self):
+        self._initialize(False)
+
+class MultibyteIncrementalDecoder(_State):
+    def __init__(self, errors='strict', codec=None):
+        if codec is not None:
+            self.codec = codec
+        if not isinstance(errors, str):
+            raise TypeError('errors must be str')
+        self.errors = errors
+        self._initialize(True)
+
+    def decode(self, input, final=False):
+        if isinstance(input, str) or isinstance(input, int):
+            raise TypeError('a bytes-like object is required, not ' + type(input).__name__)
+        data = self._pending + bytes(input)
         self._pending = b''
+        pos = 0
+        result = ''
+        name = self.codec.name
+        while pos < len(data):
+            begin = pos
+            prefix = b''
+            width = 1
+            if name == 'hz':
+                if data[pos] == 126:
+                    if pos+1 == len(data):
+                        if not final:
+                            break
+                    else:
+                        following = data[pos+1]
+                        if following in (123,125):
+                            self._state[0] = int(following == 123)
+                            pos += 2
+                            continue
+                        if following == 10:
+                            pos += 2
+                            continue
+                        if following == 126:
+                            result += '~'
+                            pos += 2
+                            continue
+                if self._state[0]:
+                    prefix = b'~{'
+                    width = 2
+            elif name.startswith('iso2022_'):
+                byte = data[pos]
+                if byte == 27:
+                    end = pos+1
+                    while end < len(data) and not (64 <= data[end] <= 90):
+                        end += 1
+                    if end == len(data):
+                        if not final:
+                            break
+                    else:
+                        escape = data[pos:end+1]
+                        mark = data[end]
+                        if escape[:2] in (b'\x1b(', b'\x1b$'):
+                            group = 1 if escape.startswith(b'\x1b$)') else 0
+                            self._state[group] = mark | (128 if escape[1] == 36 else 0)
+                            pos = end+1
+                            continue
+                        if escape.startswith(b'\x1b.'):
+                            self._state[2] = mark
+                            pos = end+1
+                            continue
+                        if escape == b'\x1bN':
+                            prefix = b'\x1b.' + bytes([self._state[2]]) + b'\x1bN'
+                            pos = end+1
+                            width = 1
+                elif name == 'iso2022_kr' and byte in (14,15):
+                    if byte == 14:
+                        self._state[4] |= 1
+                    else:
+                        self._state[4] &= ~1
+                    pos += 1
+                    continue
+                if not prefix:
+                    prefix = self._designation()
+                    group = 1 if name == 'iso2022_kr' and self._state[4] & 1 else 0
+                    width = 2 if self._state[group] & 128 else 1
+            else:
+                # Search an atomic unit, keeping a valid unfinished prefix buffered.
+                width = 1
+                while width <= 8 and pos+width <= len(data):
+                    unit = data[pos:pos+width]
+                    if _mapping(1, name, unit, 0) is not None:
+                        break
+                    if not _mapping(2, name, unit, 0):
+                        break
+                    width += 1
+                if width == 1 and data[pos] >= 128 and _mapping(1, name, data[pos:pos+1], 0) is None and name not in ('cp932', 'shift_jis', 'shift_jis_2004', 'shift_jisx0213'):
+                    width = 3 if name.startswith('euc_j') and data[pos] == 143 else 2
+            if pos+width > len(data):
+                if not final:
+                    pos = begin
+                    break
+                decoded = None
+                reason = 'incomplete multibyte sequence'
+                end = len(data)
+            else:
+                unit = prefix + data[pos:pos+width]
+                decoded = _mapping(1, name, unit, 0)
+                reason = 'illegal multibyte sequence'
+                end = begin+1
+            if decoded is None:
+                error = UnicodeDecodeError(name, data, begin, end, reason)
+                replacement, pos = _handler(self.errors, error, len(data))
+                if not isinstance(replacement, str):
+                    raise TypeError('decoding error handler must return (str, int) tuple')
+                result += replacement
+            else:
+                result += decoded
+                pos += width
+        self._pending = data[pos:]
+        return result
 
     def getstate(self):
-        return self._pending, 0
+        return self._pending, self._packed()
 
     def setstate(self, state):
-        buffer, flag = state
-        if not isinstance(buffer, bytes):
-            raise TypeError('state[0] must be bytes')
-        self._pending = buffer
+        if not isinstance(state, tuple) or len(state) != 2 or not isinstance(state[0], bytes) or not isinstance(state[1], int):
+            raise TypeError('setstate(): illegal state argument')
+        self._pending = state[0]
+        self._state = list(state[1].to_bytes(8, 'little'))
 
+    def reset(self):
+        self._initialize(True)
 
 class MultibyteStreamReader:
     def __init__(self, stream, errors='strict'):
-        self.stream = stream
-        self.errors = errors
-        self._pending = b''
+        codecs.StreamReader.__init__(self, stream, errors)
+        self._decoder = MultibyteIncrementalDecoder(errors, self.codec)
+        self.decode = self._decode
 
-    def _iread(self, method, size):
-        if size is not None and size < 0:
-            size = None
-        while True:
-            call = getattr(self.stream, method)
-            data = call() if size is None else call(size)
-            final = size is None or not data
-            data = self._pending + data
-            text, used = _decode_run(self.codec._spec, data, self.errors, final)
-            self._pending = data[used:]
-            if text or final:
-                return text
-
-    def read(self, size=None):
-        return self._iread('read', size)
-
-    def readline(self, size=None):
-        return self._iread('readline', size)
-
-    def readlines(self, sizehint=None):
-        return self._iread('read', sizehint).splitlines(True)
+    def _decode(self, data, errors='strict'):
+        self._decoder.errors = errors
+        return self._decoder.decode(data, False), len(data)
 
     def reset(self):
-        self._pending = b''
-
+        codecs.StreamReader.reset(self)
+        self._decoder.reset()
 
 class MultibyteStreamWriter:
     def __init__(self, stream, errors='strict'):
-        self.stream = stream
-        self.errors = errors
-        self._pending = ''
+        codecs.StreamWriter.__init__(self, stream, errors)
+        self._encoder = MultibyteIncrementalEncoder(errors, self.codec)
+        self.encode = self._encode
 
-    def write(self, strobj):
-        data, self._pending = _encode_run(self.codec._spec, strobj, self.errors, self._pending, False)
-        if data:
-            self.stream.write(data)
-
-    def writelines(self, lines):
-        for line in lines:
-            self.write(line)
+    def _encode(self, text, errors='strict'):
+        self._encoder.errors = errors
+        return self._encoder.encode(text, False), len(text)
 
     def reset(self):
-        data, self._pending = _encode_run(self.codec._spec, '', self.errors, self._pending, True)
-        if data:
-            self.stream.write(data)
-
-
-def __create_codec(spec):
-    return MultibyteCodec(spec)
+        if not self._encoder._pending:
+            return
+        ending = self._encoder.encode('', True)
+        if ending:
+            self.stream.write(ending)
+        self._encoder.reset()

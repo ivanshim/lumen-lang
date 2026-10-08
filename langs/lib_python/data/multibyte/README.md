@@ -1,0 +1,10 @@
+CJK character mappings generated from CPython 3.12 codecs (PSF license), which use the same published mapping data as CPython v3.14.8 Modules/cjkcodecs. Each file contains little-endian encode/decode counts, 20-byte sorted encode records (two u32 Unicode points, u32 byte length, u64 byte value), 20-byte decode records (u32 length, u64 bytes, two u32 Unicode points), then a count and 16-byte GB18030 ranges. Stateful HZ and ISO-2022 use these underlying mappings. The runtime does not invoke another interpreter.
+
+The six upstream mapping headers are byte-identical between v3.12.0 and v3.14.8:
+
+mappings_cn.h 5c75da57e7fcbb06106a64b03a7fc1f6e76fd9668306c66f71a6485e8eb550aa 5c75da57e7fcbb06106a64b03a7fc1f6e76fd9668306c66f71a6485e8eb550aa
+mappings_hk.h 80259d8dababbbacbc214158aebb1f17a53bbbfa2cac30da3ce0fe43435f344e 80259d8dababbbacbc214158aebb1f17a53bbbfa2cac30da3ce0fe43435f344e
+mappings_jisx0213_pair.h b01e43c69e8edd8274ba9d6756357bea80a11507b125378927b37c7b443170e4 b01e43c69e8edd8274ba9d6756357bea80a11507b125378927b37c7b443170e4
+mappings_jp.h 09012ff9eb963073d42a8bce375c05484219537caa0cc2aa74baa63d5f3f1658 09012ff9eb963073d42a8bce375c05484219537caa0cc2aa74baa63d5f3f1658
+mappings_kr.h 334c6ed883d62725094114b1abd10c306d0810bbba8a055ea443bfef13147276 334c6ed883d62725094114b1abd10c306d0810bbba8a055ea443bfef13147276
+mappings_tw.h 5055cd95f8d4a80014d6f3b6650d578eb424d2f9dcc86c5e4f4252fd93cf991c 5055cd95f8d4a80014d6f3b6650d578eb424d2f9dcc86c5e4f4252fd93cf991c

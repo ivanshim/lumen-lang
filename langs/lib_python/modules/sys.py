@@ -1,6 +1,7 @@
 # Host primitives used by class bodies need non-private module bindings.
 _host_stream_read = __stream_read
 _host_stream_write = __stream_write
+_host_environment = __posix
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
@@ -61,7 +62,7 @@ class _Flags:
     # interpreter hand over as those) turn on or off, read when asked.
     @property
     def dev_mode(self):
-        return bool(_environment('PYTHONDEVMODE'))
+        return bool(_environment('PYTHONDEVMODE')) or _environment('LUMEN_PYTHON_DEV_MODE') == '1'
     @property
     def utf8_mode(self):
         return 0 if _environment('PYTHONUTF8') == '0' else 1
