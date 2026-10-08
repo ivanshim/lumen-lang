@@ -5,6 +5,7 @@
 # suite reads and its methods run, each failing on its own where the
 # warning it looks for never comes.
 import contextlib
+import importlib
 import warnings
 from warnings import catch_warnings
 
@@ -22,6 +23,13 @@ def _identity(function):
 # one itself.
 def ignore_fork_in_thread_deprecation_warnings():
     return _identity
+
+
+def import_deprecated(name):
+    """Import *name* while suppressing DeprecationWarning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', category=DeprecationWarning)
+        return importlib.import_module(name)
 
 
 def check_syntax_warning(testcase, statement, errtext='',
