@@ -727,8 +727,16 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
-  "ext.builtin.unicodedata.decomposition": ["__unicode_decomposition"],
-  "ext.builtin.unicodedata.decomposition.metadata": ["decomposition", "unicodedata"],
+  "ext.builtin.unicodedata.decomposition": [
+    "__unicode_decomposition"
+  ],
+  "ext.builtin.unicodedata.decomposition.metadata": [
+    "decomposition",
+    "unicodedata"
+  ],
+  "ext.builtin.multibyte": [
+    "__multibyte_native"
+  ],
   "ext.builtin.sre": [
     "__sre_native"
   ],
@@ -915,8 +923,12 @@
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
-  "ext.builtin.static_namespace": ["__static_namespace__"],
-  "ext.builtin.trace_native": ["__trace_native__"],
+  "ext.builtin.static_namespace": [
+    "__static_namespace__"
+  ],
+  "ext.builtin.trace_native": [
+    "__trace_native__"
+  ],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],
@@ -4121,9 +4133,6 @@
   ],
   "ext.builtin.iter.stop_value": [],
   "ext.builtin.iter.stop_exception": [],
-  "ext.builtin.multibyte": [
-    "__multibyte_native"
-  ],
   "ext.builtin.code.cache": [
     "_code_pack",
     "_code_unpack",
@@ -4132,9 +4141,6 @@
   ],
   "ext.builtin.bytes.escape_decode": [
     "__escape_decode_native__"
-  ],
-  "ext.builtin.struct_native": [
-    "__struct_native"
   ],
   "ext.builtin.pickle_buffer": [
     "__pickle_buffer_native__"

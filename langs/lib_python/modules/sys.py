@@ -27,6 +27,10 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # alter the loader's stored namespaces.
 modules = {}
 pycache_prefix = None
+from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
+meta_path = [_SourceFinder()]
+path_hooks = []
+path_importer_cache = {}
 _recursion_limit = 1000
 
 # Startup flags describe the library environment and requested development mode.
