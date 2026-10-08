@@ -10048,7 +10048,12 @@ impl<'a> Machine<'a> {
             let spelling = match &arguments[0] {
                 Value::Text(text) => text.to_string(),
                 Value::Octets { cell, .. } => cell.borrow().iter().copied().map(char::from).collect(),
-                other => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word()).into()),
+                other => {
+                    let supported = matches!(other.settled(), Value::Thing(t) if self.inherited_entry(&t.blueprint(), "__buffer__").is_some())
+                        || matches!(Self::underlying(other), Some(Value::Octets { .. }));
+                    if !supported { return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word()).into()); }
+                    self.octet_exported(other).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))?.into_iter().map(char::from).collect()
+                },
             };
             let row = self.octets_from_hex(&spelling).map_err(Escape::from)?;
             let made = self.octets(row, name == "bytearray_fromhex");
@@ -12902,7 +12907,7 @@ impl<'a> Machine<'a> {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
                 items.iter().map(|item| self.octet_index(item, false)).collect(),
-            Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
+            Value::Text(_) => Err(String::from("TypeError: expected iterable of integers; got: 'str'")),
             other => {
                 let source = self.iterated_value(other)?;
                 let mut collected = Vec::new();
@@ -13117,7 +13122,7 @@ impl<'a> Machine<'a> {
     /// only the seven-bit letters to be letters, as CPython does. The
     /// content has been taken out of its cell already, and `changeable`
     /// settles which of the two kinds comes back out.
-    fn octets_textual(&self, operation: u8, content: &[u8], changeable: bool, arguments: &[Value]) -> Result<Value, String> {
+    fn octets_textual(&mut self, operation: u8, content: &[u8], changeable: bool, arguments: &[Value]) -> Result<Value, String> {
         let wrong = || self.octet_error("arguments");
         let refusal = || self.octet_error("unready");
         let built = |made: Vec<u8>| self.octets(made, changeable);
@@ -13132,17 +13137,22 @@ impl<'a> Machine<'a> {
                 other => Err(format!("TypeError: argument should be integer or bytes-like object, not '{}'", other.kind_word())),
             }
         };
-        let counted = |value: &Value| -> Result<i64, String> { Ok(self.octet_whole(value)?.to_i64().unwrap_or(i64::MAX)) };
+        let counted = |value: &Value| -> Result<i64, String> {
+            let whole = self.octet_whole(value)?;
+            Ok(whole.to_i64().unwrap_or(if whole < BigInt::zero() { i64::MIN } else { i64::MAX }))
+        };
         // Where a search opens and where it closes: a place below
         // nought counts back from the end, and both are held inside.
         let inside = |number: i64| -> usize {
             let offset = if number < 0 { number.saturating_add(content.len() as i64) } else { number };
             offset.clamp(0, content.len() as i64) as usize
         };
-        let bounds = |first: Option<&Value>, second: Option<&Value>| -> Result<(usize, usize), String> {
-            let opens = match first { Some(v) => inside(counted(v)?), None => 0 };
-            let closes = match second { Some(v) => inside(counted(v)?), None => content.len() };
-            Ok((opens, closes.max(opens)))
+        let bounds = |first: Option<&Value>, second: Option<&Value>| -> Result<(usize, usize, bool), String> {
+            let asked = first.map(counted).transpose()?.unwrap_or(0);
+            let finish = second.map(counted).transpose()?.unwrap_or(content.len() as i64);
+            let (opens, closes) = (inside(asked), inside(finish));
+            let possible = asked <= content.len() as i64 && closes >= opens;
+            Ok((opens, closes.max(opens), possible))
         };
         let scan = |haystack: &[u8], part: &[u8], backward: bool| -> Option<usize> {
             let last = haystack.len().checked_sub(part.len())?;
@@ -13156,7 +13166,7 @@ impl<'a> Machine<'a> {
             // Whether the row opens with, or closes with, any of the
             // parts named, between the bounds handed over.
             10 | 22 if (1..=3).contains(&arguments.len()) => {
-                let (opens, closes) = bounds(given(1), given(2))?;
+                let (opens, closes, possible) = bounds(given(1), given(2))?;
                 let middle = &content[opens..closes];
                 let each = match &arguments[0] {
                     Value::Tuple(row) => row.as_ref().clone(),
@@ -13164,8 +13174,8 @@ impl<'a> Machine<'a> {
                     other => return Err(format!("TypeError: {} first arg must be bytes or a tuple of bytes, not {}", if operation == 10 { "startswith" } else { "endswith" }, other.kind_word())),
                 };
                 for one in each {
-                    let end = match &one { Value::Octets { cell, .. } => cell.borrow().clone(), other => return Err(self.core_complaint("core.bytes.like", &other.kind_word())) };
-                    let held = if operation == 10 { middle.starts_with(&end) } else { middle.ends_with(&end) };
+                    let end = self.octet_exported(&one)?;
+                    let held = possible && if operation == 10 { middle.starts_with(&end) } else { middle.ends_with(&end) };
                     if held { return Ok(Value::Flag(true)); }
                 }
                 Ok(Value::Flag(false))
@@ -13295,7 +13305,23 @@ impl<'a> Machine<'a> {
                     return Ok(built(filled));
                 }
                 let padding = match arguments.get(1) {
-                    Some(v) => { let asked = self.octet_contents(v, false)?; if asked.len() != 1 { return Err(wrong()); } asked[0] }
+                    Some(argument) => {
+                        let method = ["center", "ljust", "rjust"][usize::from(operation - 29)];
+                        match argument {
+                            Value::Octets { cell, changeable, .. } => {
+                                let held = cell.borrow();
+                                if held.len() != 1 {
+                                    let family = if *changeable { "bytearray" } else { "bytes" };
+                                    return Err(format!("TypeError: {method}(): argument 2 must be a byte string of length 1, not a {family} object of length {}", held.len()));
+                                }
+                                held[0]
+                            }
+                            other => {
+                                let family = if matches!(other, Value::Nil) { String::from("None") } else { other.kind_word() };
+                                return Err(format!("TypeError: {method}() argument 2 must be a byte string of length 1, not {family}"));
+                            }
+                        }
+                    }
                     None => b' ',
                 };
                 let ahead = match operation { 31 => spare, 29 => spare / 2 + (spare % 2) * (width % 2), _ => 0 };
@@ -13491,8 +13517,95 @@ impl<'a> Machine<'a> {
         Ok(Value::characters(result))
     }
 
+    // Acquire and release the existing buffer adapter around a contiguous copy.
+    fn octet_exported(&mut self, source: &Value) -> Result<Vec<u8>, String> {
+        if let Value::Octets { cell, .. } = Self::underlying(source).unwrap_or_else(|| source.settled()) {
+            return Ok(cell.borrow().to_vec());
+        }
+        let attempt = (|| -> Res {
+            let namespace = self.load_namespace("builtins")?;
+            let factory = self.read_class_member(namespace, "_buffer_view", false)?;
+            let window = self.apply_class_member(factory, vec![source.clone(), Value::Small(284), Value::text("")])?;
+            let conversion = (|| -> Res {
+                let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
+                if !contiguous.is_true() { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()); }
+                let method = self.read_class_member(window.clone(), "tobytes", false)?;
+                self.apply_class_member(method, vec![])
+            })();
+            let close = self.read_class_member(window, "release", false)?;
+            self.apply_class_member(close, vec![])?;
+            conversion
+        })();
+        let value = attempt.map_err(|escape| self.carried_native_fault(escape))?;
+        match value.settled() {
+            Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
+            _ => Err(self.octet_error("arguments")),
+        }
+    }
+
+    // Acquire every buffer first so later callbacks can still change equal-sized contents.
+    fn join_octets(&mut self, between: &Rc<RefCell<Vec<u8>>>, sequence: &Value) -> Result<Vec<u8>, String> {
+        let mut windows = Vec::new();
+        let mut native_exports = Vec::new();
+        let mut outcome = (|| -> Res {
+            let items = self.core_collect(sequence)?;
+            let mut acquired = Vec::with_capacity(items.len());
+            for supplied in &items {
+                let plain = Self::underlying(supplied).unwrap_or_else(|| supplied.settled());
+                let buffer = match plain {
+                    Value::Octets { ref cell, changeable, .. } => {
+                        if changeable { native_exports.push(OctetLease::new(cell)); }
+                        plain
+                    }
+                    _ => {
+                        let builtins = self.load_namespace("builtins")?;
+                        let factory = self.read_class_member(builtins, "_buffer_view", false)?;
+                        let window = self.apply_class_member(factory, vec![supplied.clone(), Value::Small(284), Value::text("")])?;
+                        windows.push(window.clone());
+                        let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
+                        if !contiguous.is_true() { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()); }
+                        window
+                    }
+                };
+                acquired.push(buffer);
+                if let Value::Vector(current) = sequence.settled() {
+                    if current.len() != items.len() { return Err(String::from("RuntimeError: sequence changed size during iteration").into()); }
+                }
+            }
+            let mut output = Vec::new();
+            for (position, fragment) in acquired.into_iter().enumerate() {
+                let bytes = match fragment {
+                    Value::Octets { .. } => fragment,
+                    other => {
+                        let conversion = self.read_class_member(other, "tobytes", false)?;
+                        self.apply_class_member(conversion, vec![])?
+                    }
+                };
+                if position > 0 { output.extend_from_slice(&between.borrow()); }
+                let Value::Octets { cell, .. } = bytes.settled() else { return Err(self.octet_error("arguments").into()); };
+                output.extend_from_slice(&cell.borrow());
+            }
+            Ok(self.octets(output, false))
+        })();
+        for window in windows {
+            let release = self.read_class_member(window, "release", false).and_then(|f| self.apply_class_member(f, vec![]));
+            if let Err(escape) = release { if outcome.is_ok() { outcome = Err(escape); } }
+        }
+        let value = outcome.map_err(|escape| self.carried_native_fault(escape))?;
+        self.octet_contents(&value, false)
+    }
+
     fn octet_routine(&mut self, operation: u8, values: &[Value]) -> Result<Value, String> {
-        let normalized: Vec<Value> = values.iter().map(Value::settled).collect();
+        if operation < 2 && values.len() == 1 && matches!(values[0].settled(), Value::Vector(_)) {
+            let iterator = self.iterated_value(&values[0])?;
+            let mut collected = Vec::new();
+            loop {
+                let Some(member) = self.next_value(&iterator)? else { break; };
+                collected.push(self.octet_index(&member, operation == 0)?);
+            }
+            return Ok(self.octets(collected, operation != 0));
+        }
+        let normalized: Vec<Value> = values.iter().enumerate().map(|(at, value)| if operation == 9 && at == 1 { value.clone() } else { value.settled() }).collect();
         let values = normalized.as_slice();
         self.octet_work(operation, values, false)
     }
@@ -13709,9 +13822,6 @@ impl<'a> Machine<'a> {
         }
         let refusal = || self.octet_error("unready");
         let wrong = || self.octet_error("arguments");
-        let amount = |value: Option<&Value>| -> Result<usize, String> {
-            match value { None => Ok(usize::MAX), Some(v) => { let n = self.octet_whole(v)?; Ok(n.to_usize().unwrap_or(usize::MAX)) } }
-        };
         let seek = |hay: &[u8], part: &[u8]| (0..=hay.len()).find(|&i| hay[i..].starts_with(part));
         match operation {
             0 | 1 => {
@@ -13751,7 +13861,12 @@ impl<'a> Machine<'a> {
                 let source = match values {
                     [Value::Text(text)] => text.to_string(),
                     [Value::Octets { cell, .. }] => cell.borrow().iter().copied().map(char::from).collect(),
-                    [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word())),
+                    [other] => {
+                        let supports_buffer = matches!(other.settled(), Value::Thing(instance) if self.inherited_entry(&instance.blueprint(), "__buffer__").is_some())
+                            || matches!(Self::underlying(other), Some(Value::Octets { .. }));
+                        if !supports_buffer { return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word())); }
+                        self.octet_exported(other)?.into_iter().map(char::from).collect()
+                    },
                     _ => return Err(wrong()),
                 };
                 return Ok(self.octets(self.octets_from_hex(&source)?, operation == 49));
@@ -13909,8 +14024,39 @@ impl<'a> Machine<'a> {
             _ => {}
         }
         let Some(Value::Octets { cell, changeable, .. }) = values.first() else { return Err(refusal()); };
+        let _lease = (*changeable && matches!(operation, 8 | 13 | 18..=23)).then(|| OctetLease::new(cell));
+        let mut converted = values.to_vec();
+        let buffer_indices = match operation {
+            11 | 39 => vec![1, 2], 8 | 12 | 23..=27 | 37 | 38 => vec![1], _ => vec![],
+        };
+        for index in buffer_indices {
+            if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                let data = self.octet_exported(&converted[index])?;
+                converted[index] = self.octets(data, false);
+            }
+        }
+        if matches!(operation, 13 | 18..=21) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
+            let argument = &converted[1];
+            converted[1] = if let Some(integer) = self.stood_for_whole(argument)? { integer }
+                else { let row = self.octet_exported(argument)?; self.octets(row, false) };
+        }
+        let integer_indices = match operation {
+            8 | 23 => vec![2], 11 => vec![3], 29..=33 => vec![1], 10 | 13 | 18..=22 => vec![2, 3], _ => vec![],
+        };
+        for index in integer_indices {
+            if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                converted[index] = Value::from_big(self.span_whole(&converted[index])?);
+            }
+        }
+        if matches!(operation, 10 | 22) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
+            let row = self.octet_exported(&converted[1])?;
+            converted[1] = self.octets(row, false);
+        }
+        let amount = |value: Option<&Value>| -> Result<usize, String> {
+            match value { None => Ok(usize::MAX), Some(v) => { let n = self.octet_whole(v)?; Ok(n.to_usize().unwrap_or(usize::MAX)) } }
+        };
         let content = cell.borrow().to_vec();
-        let args = &values[1..];
+        let args = &converted[1..];
         let result;
         match operation {
             3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
@@ -13946,17 +14092,7 @@ impl<'a> Machine<'a> {
             }
             9 if args.len() == 1 => {
                 let _lease = if *changeable { Some(OctetLease::new(cell)) } else { None };
-                let items = self.core_collect(&args[0])?;
-                let mut pieces = Vec::with_capacity(items.len());
-                for item in &items {
-                    let piece = match item {
-                        Value::Thing(thing) if thing.blueprint().name == "memoryview" =>
-                            self.octet_argument(item)?.ok_or_else(|| self.octet_error("arguments"))?,
-                        _ => self.octet_contents(item, false)?,
-                    };
-                    pieces.push(piece);
-                }
-                result = pieces.join(cell.borrow().as_slice());
+                result = self.join_octets(cell, &args[0])?;
             }
             11 if (2..=3).contains(&args.len()) => {
                 let old = self.octet_contents(&args[0], false)?;
@@ -13987,7 +14123,20 @@ impl<'a> Machine<'a> {
             }
             // Whatever else a row of bytes answers to it shares with
             // text, and every one of those is worked over the bytes.
-            _ => return self.octets_textual(operation, &content, *changeable, args),
+            _ => {
+                let produced = self.octets_textual(operation, &content, *changeable, args)?;
+                if matches!(operation, 26 | 27) && !changeable {
+                    if let Value::Tuple(triple) = &produced {
+                        let found = matches!(&triple[1], Value::Octets { cell, .. } if !cell.borrow().is_empty());
+                        if found {
+                            let mut pieces = triple.to_vec();
+                            pieces[1] = values[1].settled();
+                            return Ok(Value::tuple(pieces));
+                        }
+                    }
+                }
+                return Ok(produced);
+            },
         }
         Ok(self.octets(result, *changeable))
     }
@@ -16066,6 +16215,7 @@ impl<'a> Machine<'a> {
             let over_bytes = matches!(Self::underlying(right).map(|worth| worth.settled()), Some(Value::Octets { .. }));
             if !(over_bytes && self.appointed(right, 31).is_some()) {
                 let pattern = cell.borrow().iter().copied().map(char::from).collect::<String>();
+                let _lease = (*changeable).then(|| OctetLease::new(cell));
                 let filled = self.octet_filled(&pattern, right)?;
                 return Ok(Some(self.octets(filled, *changeable)));
             }
@@ -17942,7 +18092,7 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet | Prim::Octets(0 | 1 | 9)) {
                 self.prim_values(op, name, v)?
             } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_))))) {
                 self.prim_values(op, name, v)?
@@ -18392,6 +18542,7 @@ impl<'a> Machine<'a> {
             // text is read back into a row of the pattern's own kind.
             if op == Prim::Mod && self.rules.text_remainder {
                 if let Value::Octets { cell, changeable, .. } = &v[0] {
+                    let _lease = (*changeable).then(|| OctetLease::new(cell));
                     let (pattern, changeable) = (cell.borrow().iter().copied().map(char::from).collect::<String>(), *changeable);
                     let filled = self.octet_filled(&pattern, &v[1])?;
                     return Ok(self.octets(filled, changeable));
@@ -21755,12 +21906,16 @@ impl<'a> Machine<'a> {
                         } else { self.hash_for_set(item)? };
                         hay.borrow().keys.contains(&address)
                     }
-                    (item, Value::Octets { cell, .. }) => {
+                    (item, Value::Octets { cell, changeable, .. }) => {
+                        let _lease = (*changeable).then(|| OctetLease::new(cell));
+                        let part = if let Value::Octets { cell: bytes, .. } = item { bytes.borrow().to_vec() }
+                            else if matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { vec![self.octet_index(item, false)?] }
+                            else { match Self::underlying(item) {
+                                Some(integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => vec![self.octet_item(&integer, false)?],
+                                _ => self.octet_exported(item)?,
+                            } };
                         let numbers = cell.borrow();
-                        if let Value::Octets { cell: needle, .. } = item {
-                            let needle = needle.borrow();
-                            (0..=numbers.len()).any(|i| numbers[i..].starts_with(&needle))
-                        } else { numbers.contains(&self.octet_item(item, false)?) }
+                        (0..=numbers.len()).any(|offset| numbers[offset..].starts_with(&part))
                     }
                     (needle, Value::TextRow(words, _)) => words.iter().any(|s| needle.equals(&Value::text(s))),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -28245,7 +28400,7 @@ impl Machine<'_> {
                 }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
-                let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };
+                let lazy_input = match op { Prim::Octets(0 | 1) => position == 0, Prim::Octets(9) => position == 1, Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };
                 if !lazy_input { *item = item.settled(); }
             }
         }
@@ -29192,9 +29347,20 @@ impl crate::formatting::Elsewhere for OctetMarks<'_, '_> {
         Ok(None)
     }
 
+    // Use the numeric conversion road already used for text percent fields.
+    fn value_numbered(&mut self, item: &Value, code: char) -> Result<crate::formatting::NumberAnswer, String> {
+        crate::formatting::Elsewhere::value_numbered(self.machine, item, code)
+    }
+
     fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String> {
         let held = item.settled();
-        if quoted { return self.layout.quote(&held, true).map(Some); }
+        if quoted {
+            if self.machine.speaks_for(&held) {
+                let representation = self.machine.object_words(&held, true)?;
+                return Ok(Some(crate::text::ascii_escaped(&representation)));
+            }
+            return self.layout.quote(&held, true).map(Some);
+        }
         match &held {
             Value::Octets { cell, .. } => Ok(Some(cell.borrow().iter().copied().map(char::from).collect())),
             Value::Thing(_) => self.machine.octet_argument(&held).map(|row| row.map(|bytes| bytes.iter().copied().map(char::from).collect())),
