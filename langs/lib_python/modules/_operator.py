@@ -13,13 +13,13 @@ def index(a):
         if isinstance(answer, int):
             if type(answer) is not int:
                 import warnings
-                warnings.warn('__index__ returned non-int (type ' + type(answer).__name__ +
+                warnings.warn('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') +
                               ').  The ability to return an instance of a strict subclass of int '
                               'is deprecated, and may be removed in a future version of Python.',
                               DeprecationWarning, stacklevel=2)
             return int.__index__(answer)
-        raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
-    raise 'TypeError: value cannot be interpreted as an integer'
+        raise TypeError('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + ')')
+    raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
 
 
 
@@ -49,6 +49,7 @@ class _DigestComparison:
                     converted.append(bytes(operand))
                     continue
                 view = memoryview(operand)
+                view._check()
                 if not view.c_contiguous:
                     raise BufferError('memoryview: underlying buffer is not C-contiguous')
                 converted.append(view.tobytes())

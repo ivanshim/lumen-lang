@@ -723,6 +723,8 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
+  "ext.builtin.unicodedata.decomposition": ["__unicode_decomposition"],
+  "ext.builtin.unicodedata.decomposition.metadata": ["decomposition", "unicodedata"],
   "ext.builtin.sre": [
     "__sre_native"
   ],
@@ -909,6 +911,8 @@
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
+  "ext.builtin.static_namespace": ["__static_namespace__"],
+  "ext.builtin.trace_native": ["__trace_native__"],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],
@@ -994,6 +998,9 @@
     "FileExistsError",
     "NotADirectoryError",
     "BrokenPipeError",
+    "FloatingPointError",
+    "EnvironmentError",
+    "IOError",
     "ChildProcessError",
     "ConnectionError",
     "ConnectionAbortedError",
@@ -1001,7 +1008,9 @@
     "ConnectionResetError",
     "InterruptedError",
     "ProcessLookupError",
-    "TimeoutError"
+    "TimeoutError",
+    "PythonFinalizationError",
+    "_IncompleteInputError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -4110,5 +4119,17 @@
     "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."
   ],
   "ext.builtin.iter.stop_value": [],
-  "ext.builtin.iter.stop_exception": []
+  "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.bytes.escape_decode": [
+    "__escape_decode_native__"
+  ],
+  "ext.builtin.struct_native": [
+    "__struct_native"
+  ],
+  "ext.builtin.pickle_buffer": [
+    "__pickle_buffer_native__"
+  ],
+  "ext.builtin.text.intern": [
+    "__intern_native__"
+  ]
 }

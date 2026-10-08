@@ -1,12 +1,12 @@
 # The profiler behind cProfile, kept in lumen Python on top of
 # sys.setprofile. CPython writes it in C (Modules/_lsprof.c) and counts
-# every call and return the interpreter makes, builtin functions
-# included; this one is told of the calls and returns of the routines
-# written in Python and nothing else, so the built-in functions a
-# program calls are not entries of their own (their time stays with the
-# caller). The sums are kept as the C module keeps them: a call counts
-# once when it returns, a call inside itself adds to the recursive
-# count, and the total time is taken only by the outermost of them.
+# every call and return the interpreter makes; this one is told of the
+# calls and returns of routines written in Python and, with the builtins
+# option, of builtin functions and methods (the c_call and c_return
+# events), which become entries named as the C module names them. The
+# sums are kept as the C module keeps them: a call counts once when it
+# returns, a call inside itself adds to the recursive count, and the
+# total time is taken only by the outermost of them.
 import sys
 from time import perf_counter
 
@@ -75,10 +75,14 @@ class _Tally:
 
 
 class _Context:
-    def __init__(self, tally, before, began):
+    # A call under way. `frame` is the frame of a routine written in
+    # Python, nothing for a builtin; `tally` is dropped by clear().
+    def __init__(self, tally, key, before, began, frame):
         self.tally = tally
+        self.key = key
         self.before = before
         self.began = began
+        self.frame = frame
         self.beneath = 0
 
 
@@ -86,7 +90,28 @@ def _key_of(code):
     return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
-_HERE = None
+def _builtin_label(function):
+    # The name the C module gives a builtin function or method.
+    # Classes called are not builtin functions to the C module, nor is
+    # a callable that has no name to give.
+    if isinstance(function, type):
+        return None
+    name = getattr(function, '__name__', None)
+    if not name:
+        return None
+    holder = getattr(function, '__self__', None)
+    if holder is None or type(holder).__name__ == 'module':
+        module = getattr(function, '__module__', None)
+        if module is None:
+            qualified = getattr(function, '__qualname__', '')
+            if '.' in qualified:
+                return "<method '" + name + "' of '" + qualified.rsplit('.', 1)[0] + "' objects>"
+            return '<built-in method ' + name + '>'
+        return '<built-in method ' + module + '.' + name + '>'
+    return "<method '" + name + "' of '" + type(holder).__name__ + "' objects>"
+
+
+_METHODS = {}
 
 
 class Profiler:
@@ -111,30 +136,47 @@ class Profiler:
         self._tallies = {}
         self._top = None
         self._watch = self._follow
+        self._muted = 0
 
     def _follow(self, frame, event, argument):
+        if self._muted:
+            return
         if event == 'call':
             code = frame.f_code
             if code.co_filename == _HERE:
+                # The methods of this class stand for the C module's own
+                # methods; anything else of this file is not a call.
+                label = _METHODS.get(code.co_name)
+                if label is not None and self._builtins:
+                    self._enter(('builtin', label), label, frame)
                 return
-            self._enter(code)
+            self._enter(_key_of(code), code, frame)
         elif event == 'return':
-            if self._top is not None and frame.f_code.co_filename != _HERE:
+            top = self._top
+            if top is not None and top.frame is frame:
+                self._leave()
+        elif event == 'c_call':
+            if self._builtins:
+                label = _builtin_label(argument)
+                if label is not None:
+                    self._enter(('builtin', label), label, None)
+        elif event == 'c_return' or event == 'c_exception':
+            top = self._top
+            if top is not None and top.frame is None and top.key == ('builtin', _builtin_label(argument)):
                 self._leave()
 
-    def _enter(self, code):
-        key = _key_of(code)
+    def _enter(self, key, code, frame):
         tally = self._tallies.get(key)
         if tally is None:
             tally = self._tallies[key] = _Tally(code)
         tally.open += 1
         before = self._top
-        if self._subcalls and before is not None:
+        if self._subcalls and before is not None and before.tally is not None:
             sub = before.tally.subs.get(key)
             if sub is None:
                 sub = before.tally.subs[key] = _Tally(code)
             sub.open += 1
-        self._top = _Context(tally, before, self._timer())
+        self._top = _Context(tally, key, before, self._timer(), frame)
 
     def _leave(self):
         context = self._top
@@ -145,6 +187,8 @@ class Profiler:
             before.beneath += spent
         self._top = before
         tally = context.tally
+        if tally is None:
+            return
         tally.open -= 1
         if tally.open == 0:
             tally.total += spent
@@ -152,15 +196,16 @@ class Profiler:
             tally.recursive += 1
         tally.inline += inline
         tally.calls += 1
-        if self._subcalls and before is not None:
-            sub = before.tally.subs[_key_of(tally.code)]
-            sub.open -= 1
-            if sub.open == 0:
-                sub.total += spent
-            else:
-                sub.recursive += 1
-            sub.inline += inline
-            sub.calls += 1
+        if self._subcalls and before is not None and before.tally is not None:
+            sub = before.tally.subs.get(context.key)
+            if sub is not None:
+                sub.open -= 1
+                if sub.open == 0:
+                    sub.total += spent
+                else:
+                    sub.recursive += 1
+                sub.inline += inline
+                sub.calls += 1
 
     def _flush(self):
         while self._top is not None:
@@ -176,22 +221,34 @@ class Profiler:
           If True, records the time spent in
           built-in functions separately from their caller.
         """
-        self._subcalls = bool(subcalls)
-        self._builtins = bool(builtins)
-        self._enabled = True
-        sys.setprofile(self._watch)
+        self._muted += 1
+        try:
+            self._subcalls = bool(subcalls)
+            self._builtins = bool(builtins)
+            self._enabled = True
+            sys.setprofile(self._watch)
+        finally:
+            self._muted -= 1
 
     def disable(self):
         """Stop collecting profiling information."""
-        if self._enabled:
-            if sys.getprofile() == self._watch:
-                sys.setprofile(None)
-            self._enabled = False
-        self._flush()
+        self._muted += 1
+        try:
+            if self._enabled:
+                if sys.getprofile() == self._watch:
+                    sys.setprofile(None)
+                self._enabled = False
+            self._flush()
+        finally:
+            self._muted -= 1
 
     def clear(self):
         """Clear all profiling information collected so far."""
-        self._flush()
+        # Calls still under way are left to finish without being counted.
+        context = self._top
+        while context is not None:
+            context.tally = None
+            context = context.before
         self._tallies = {}
 
     def getstats(self):
@@ -219,20 +276,29 @@ class Profiler:
             totaltime     total time spent in this call
             inlinetime    inline time (not in further subcalls)
         """
-        self._flush()
-        scale = self._scale
-        found = []
-        for tally in self._tallies.values():
-            if tally.calls == 0:
-                continue
-            subs = None
-            if tally.subs:
-                subs = [profiler_subentry((sub.code, sub.calls, sub.recursive,
-                                           sub.total * scale, sub.inline * scale))
-                        for sub in tally.subs.values() if sub.calls]
-            found.append(profiler_entry((tally.code, tally.calls, tally.recursive,
-                                         tally.total * scale, tally.inline * scale, subs)))
+        self._muted += 1
+        try:
+            scale = self._scale
+            found = []
+            for tally in list(self._tallies.values()):
+                if tally.calls == 0:
+                    continue
+                subs = None
+                if tally.subs:
+                    subs = [profiler_subentry((sub.code, sub.calls, sub.recursive,
+                                               sub.total * scale, sub.inline * scale))
+                            for sub in tally.subs.values() if sub.calls]
+                found.append(profiler_entry((tally.code, tally.calls, tally.recursive,
+                                             tally.total * scale, tally.inline * scale, subs)))
+        finally:
+            self._muted -= 1
         return found
 
 
 _HERE = Profiler.enable.__code__.co_filename
+_METHODS.update({
+    'enable': "<method 'enable' of '_lsprof.Profiler' objects>",
+    'disable': "<method 'disable' of '_lsprof.Profiler' objects>",
+    'clear': "<method 'clear' of '_lsprof.Profiler' objects>",
+    'getstats': "<method 'getstats' of '_lsprof.Profiler' objects>",
+})
