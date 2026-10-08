@@ -6343,7 +6343,13 @@ impl<'a> Engine<'a> {
             1 => {
                 let mut parts = Vec::new();
                 for arg in self.comprehension_items(&args)? {
-                    parts.push(self.type_shown(&arg)?);
+                    if matches!(arg.contents(), Value::Array(_)) {
+                        let mut items = Vec::new();
+                        for item in self.comprehension_items(&arg)? { items.push(self.type_shown(&item)?); }
+                        parts.push(format!("[{}]", items.join(", ")));
+                    } else {
+                        parts.push(self.type_shown(&arg)?);
+                    }
                 }
                 let star = self.class_get(receiver.clone(), "__unpacked__", true)?;
                 Ok(Value::text(&format!("{}{}[{}]", if matches!(star, Value::Flag(true)) { "*" } else { "" }, origin.kind_it_names().unwrap_or_else(|| origin.plain()), parts.join(", "))))
@@ -6372,18 +6378,11 @@ impl<'a> Engine<'a> {
 }
 
 impl<'a> Engine<'a> {
-    /// How a type argument is written in a generic alias's repr: a kind
-    /// by its bare name, a list of arguments in brackets with each of
-    /// them written the same way, and anything else by its own repr.
+    /// Type names are unquoted; other arguments use their ordinary repr.
     fn type_shown(&mut self, value: &Value) -> Res<String> {
         let raw = value.contents();
         if matches!(raw, Value::Null) { return Ok("None".to_string()); }
         if let Some(word) = raw.kind_it_names() { return Ok(word); }
-        if matches!(raw, Value::Array(_)) {
-            let mut parts = Vec::new();
-            for item in self.comprehension_items(&raw)? { parts.push(self.type_shown(&item)?); }
-            return Ok(format!("[{}]", parts.join(", ")));
-        }
         Ok(self.builtin(Builtin::Repr, "repr", &mut vec![raw])?.plain())
     }
 

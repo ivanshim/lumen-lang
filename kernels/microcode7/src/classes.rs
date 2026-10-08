@@ -2682,22 +2682,14 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
-    /// The making itself, as the kind primitive does it: the class
-    /// How a type argument is written in a generic alias's repr: a kind
-    /// by its bare name, a list of arguments in brackets with each of
-    /// them written the same way, and anything else by its own repr.
+    /// Nested containers keep the regular repr, including its cycle guard.
     fn type_shown(&mut self, value: &Value) -> Res<String> {
         let raw = value.settled();
         if matches!(raw, Value::Nil) { return Ok(String::from("None")); }
         if let Some(word) = raw.kind_it_names() { return Ok(word); }
-        if matches!(raw, Value::Vector(_)) {
-            let mut names = Vec::new();
-            for item in self.object_members(&raw)? { names.push(self.type_shown(&item)?); }
-            return Ok(format!("[{}]", names.join(", ")));
-        }
         Ok(self.prim(Prim::Quoted, "repr", &[raw])?.bare())
     }
-    /// allocates a thing and constructs it.
+    /// The kind primitive allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         self.abstract_turned_away(&class)?;
         let native = match Self::native_beneath(&class) {
@@ -6525,7 +6517,15 @@ impl<'a> Machine<'a> {
                 let tuple = self.read_class_member(subject.clone(), "__args__", true)?;
                 let mut names = Vec::new();
                 for parameter in self.gathered_members(&tuple)? {
-                    names.push(self.type_shown(&parameter)?);
+                    let spelling = match parameter.settled() {
+                        Value::Vector(entries) => {
+                            let mut words = Vec::new();
+                            for entry in entries.iter() { words.push(self.type_shown(entry)?); }
+                            String::from("[") + &words.join(", ") + "]"
+                        }
+                        _ => self.type_shown(&parameter)?,
+                    };
+                    names.push(spelling);
                 }
                 let prefix = parent.kind_it_names().unwrap_or_else(|| parent.bare());
                 let unpacked = self.read_class_member(subject, "__unpacked__", true)?;
