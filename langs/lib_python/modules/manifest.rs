@@ -279,6 +279,10 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("warnings", include_str!("runtime_adapters/native_warnings.py"), "warnings.py"),
     ("wave", include_str!("wave.py"), "wave.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),
+    ("xml", include_str!("xml/__init__.py"), "xml/__init__.py"),
+    ("xml.etree.ElementPath", include_str!("xml/etree/ElementPath.py"), "xml/etree/ElementPath.py"),
+    ("xml.etree.ElementTree", include_str!("xml/etree/ElementTree.py"), "xml/etree/ElementTree.py"),
+    ("xml.etree", include_str!("xml/etree/__init__.py"), "xml/etree/__init__.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 
