@@ -487,7 +487,7 @@ fn launcher_for(started: &Path, binary: &Path, kernel: &str, language: &str) -> 
     let libraries = started.parent().map_or_else(String::new, |p| p.to_string_lossy().into_owned());
     let quoted = |word: &str| word.replace('\'', r#"'\''"#);
     let script = format!(
-        "#!/bin/sh\nexec '{}' --library-path '{}' '{}' --kernel '{}' --lang '{}' \"$@\"\n",
+        "#!/bin/sh\nexport LUMEN_LAUNCHER=\"$0\"\nexec '{}' --library-path '{}' '{}' --kernel '{}' --lang '{}' \"$@\"\n",
         quoted(&started.to_string_lossy()),
         quoted(&libraries),
         quoted(&binary.to_string_lossy()),
@@ -662,7 +662,9 @@ fn run_all() {
                 .zip(std::fs::canonicalize(&binary).ok())
                 .map_or(false, |(one, other)| one != other);
             if through_loader {
-                launcher_for(&runner, &binary, &inv.kernel, inv.language.name())
+                // A child launched through our wrapper reports the same interpreter path.
+                std::env::var("LUMEN_LAUNCHER").ok().filter(|path| Path::new(path).is_file())
+                    .unwrap_or_else(|| launcher_for(&runner, &binary, &inv.kernel, inv.language.name()))
             } else {
                 binary.to_string_lossy().into_owned()
             }
