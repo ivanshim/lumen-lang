@@ -316,11 +316,16 @@ pub struct SetStore {
     /// out once however often it is wanted; a store of stores would
     /// otherwise fold every level beneath it over again each time.
     pub reckoned: std::cell::Cell<Option<i64>>,
+    /// How many of the entries are things kept beside their hashes:
+    /// the count that tells a plain value, addressed by its worth
+    /// alone, whether an agreeing thing could still stand among the
+    /// entries and is to be asked for before the value joins them.
+    pub instances: usize,
 }
 
 impl SetStore {
     pub fn new(spelling: &str, sealed: bool) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None) }
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None), instances: 0 }
     }
 
     /// The address the whole store takes where a set holds it: the
@@ -341,14 +346,19 @@ impl SetStore {
 
     pub fn put(&mut self, address: String, item: Value) {
         self.reckoned.set(None);
-        if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
+        if self.keys.insert(address.clone()) {
+            if matches!(item, Value::Keyed(..)) { self.instances += 1; }
+            self.entries.push((address, item));
+        }
     }
 
     pub fn take(&mut self, address: &str) -> Option<Value> {
         self.reckoned.set(None);
         if !self.keys.remove(address) { return None; }
         let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
-        Some(self.entries.remove(place).1)
+        let held = self.entries.remove(place).1;
+        if matches!(held, Value::Keyed(..)) { self.instances -= 1; }
+        Some(held)
     }
 
     /// The entries as they are read out. A thing kept beside its hash
@@ -2164,7 +2174,7 @@ impl Thing {
     pub fn entries_shown(&self) -> Value {
         let holds = self.holds.borrow();
         let mut pairs: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0'))
+            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0') && !name.ends_with('\0'))
             .map(|(name, v)| (Value::text(name), v.clone())).collect();
         // Keys of any other kind are kept beside the names under the
         // hidden name `\0keys` and shown with them.

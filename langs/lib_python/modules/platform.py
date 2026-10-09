@@ -12,3 +12,17 @@ def system():
 
 def machine():
     return __host_info()[2]
+
+def win32_edition():
+    # Only a Windows host names an edition; the registry is absent on the
+    # others, so the missing import answers the question by itself.
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        key = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        with winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, key) as handle:
+            return winreg.QueryValueEx(handle, 'EditionId')[0]
+    except OSError:
+        return None
