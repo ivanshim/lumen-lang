@@ -46,6 +46,14 @@ pub fn answers_to(value: &Value, operation: &str) -> bool {
         .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
 }
 
+/// Whether the table above is the whole of what a value's kind answers
+/// to: a kind whose line there is only a part of its members (the bytes
+/// kinds) is not one.
+pub fn lists_members(value: &Value) -> bool {
+    let kind = value.settled().kind_word();
+    kind != "bytearray" && KIND_MEMBERS.iter().any(|(named, _)| *named == kind)
+}
+
 pub fn gather(source: &Value, bad: &dyn Fn(&str)->String) -> Result<Vec<Value>,String> {
     let source=source.settled();
     let mut result=Vec::new();
@@ -138,6 +146,33 @@ pub(crate) fn cut_units(units: &[u32], separator: Option<&[u32]>, quota: usize, 
     Some(pieces)
 }
 
+fn unit_where(hay: &[u32], wanted: &[u32], after: usize, from_tail: bool) -> Option<usize> {
+    if wanted.is_empty() { return Some(if from_tail { hay.len() } else { after.min(hay.len()) }); }
+    let mut last = None;
+    let mut at = after;
+    while at + wanted.len() <= hay.len() {
+        if hay[at..at + wanted.len()] == *wanted {
+            if !from_tail { return Some(at); }
+            last = Some(at);
+        }
+        at += 1;
+    }
+    last
+}
+
+fn unit_tally(hay: &[u32], wanted: &[u32]) -> usize {
+    if wanted.is_empty() { return hay.len() + 1; }
+    let mut seen = 0;
+    let mut at = 0;
+    loop {
+        match unit_where(hay, wanted, at, false) {
+            Some(spot) => { seen += 1; at = spot + wanted.len(); }
+            None => return seen,
+        }
+    }
+}
+
+
 impl Request<'_> {
     fn fail(&self,key:&str)->String{(self.complaint)(key)}
     fn unknown(&self)->String{(self.unanswered)(self.target,self.operation)}
@@ -196,6 +231,7 @@ impl Request<'_> {
             // Code units standing in for a stowed surrogate half still
             // split, and each piece keeps the units it was cut from.
             Value::Unpaired(numbers) if self.operation=="split" || self.operation=="rsplit" => self.split_units(&numbers),
+            Value::Unpaired(numbers) if self.operation == "count" => self.search_units(&numbers),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
@@ -527,6 +563,24 @@ impl Request<'_> {
             }
         }
         Ok(Value::characters(made))
+    }
+
+    fn search_units(&self, units: &[u32]) -> ResultValue {
+        self.takes(1, 3)?;
+        let size = units.len();
+        let raw = self.number(1, 0)?;
+        let low = place(raw, size);
+        let high = place(self.number(2, size as i64)?, size);
+        let ordered = raw <= size as i64 && low <= high;
+        let part = &units[low..high.max(low)];
+        let wanted = self.given[0].settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+        if self.operation == "count" {
+            let seen = if !ordered { 0 } else { unit_tally(part, &wanted) };
+            return Ok(Value::Small(seen as i64));
+        }
+        let spot = if !ordered { None } else { unit_where(part, &wanted, 0, self.operation == "rfind" || self.operation == "rindex") };
+        if (self.operation == "index" || self.operation == "rindex") && spot.is_none() { return Err(self.fail("substring")); }
+        Ok(Value::Small(spot.map_or(-1, |i| (low + i) as i64)))
     }
 
     fn search_text(&self,s:&str)->ResultValue{

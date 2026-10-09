@@ -92,11 +92,18 @@ environ = _call('environ')
 _stat_dict_missing = object()
 
 
+_stat_extra_fields = ('st_atime', 'st_mtime', 'st_ctime', 'st_atime_ns',
+                      'st_mtime_ns', 'st_ctime_ns', 'st_blksize', 'st_blocks',
+                      'st_rdev')
+
+
 class stat_result(tuple):
     __slots__ = ()
     n_sequence_fields = 10
     n_fields = 19
     n_unnamed_fields = 3
+    __match_args__ = ('st_mode', 'st_ino', 'st_dev', 'st_nlink', 'st_uid',
+                      'st_gid', 'st_size')
 
     def __new__(cls, sequence, dict=_stat_dict_missing):
         if dict is not _stat_dict_missing and not isinstance(dict, type({})):
@@ -106,11 +113,23 @@ class stat_result(tuple):
             raise TypeError('os.stat_result() takes an at least 10-sequence (' + str(len(values)) + '-sequence given)')
         if len(values) > 19:
             raise TypeError('os.stat_result() takes an at most 19-sequence (' + str(len(values)) + '-sequence given)')
-        extra = {} if dict is _stat_dict_missing else dict
-        times = tuple(values[i] if len(values) > i else extra.get(name, values[i - 3]) for i, name in [(10, 'st_atime'), (11, 'st_mtime'), (12, 'st_ctime')])
-        nanos = tuple(values[i] if len(values) > i else extra.get(name) for i, name in [(13, 'st_atime_ns'), (14, 'st_mtime_ns'), (15, 'st_ctime_ns')])
-        host_fields = tuple(values[i] if len(values) > i else extra.get(name) for i, name in [(16, 'st_blksize'), (17, 'st_blocks'), (18, 'st_rdev')])
-        return _host('structseq_new', cls, values[:10], times + nanos + host_fields)
+        changes = {} if dict is _stat_dict_missing else dict
+        row = list(values[:19])
+        found = 0
+        for at in range(10, 19):
+            if at < len(row):
+                continue
+            name = _stat_extra_fields[at - 10]
+            if name in changes:
+                row.append(changes[name])
+                found += 1
+            elif at - 3 < 10:
+                row.append(row[at - 3])
+            else:
+                row.append(None)
+        if len(changes) > found:
+            raise TypeError('os.stat_result() got duplicate or unexpected field name(s)')
+        return _host('structseq_new', cls, values[:10], tuple(row[10:19]))
 
     st_mode = property(lambda self: self[0])
     st_ino = property(lambda self: self[1])
@@ -137,10 +156,53 @@ class stat_result(tuple):
         names = ('st_atime', 'st_mtime', 'st_ctime', 'st_atime_ns', 'st_mtime_ns', 'st_ctime_ns', 'st_blksize', 'st_blocks', 'st_rdev')
         return (type(self), (tuple(self), {name: getattr(self, name) for name in names}))
 
+    def __replace__(self, **changes):
+        raise TypeError('__replace__() is not supported for os.stat_result because it has unnamed field(s)')
+
     def __init_subclass__(cls, **kwargs):
         raise TypeError("type 'os.stat_result' is not an acceptable base type")
 
 stat_result.__module__ = 'os'
+
+
+class times_result(tuple):
+    __slots__ = ()
+    n_sequence_fields = 5
+    n_fields = 5
+    n_unnamed_fields = 0
+    __match_args__ = ('user', 'system', 'children_user', 'children_system', 'elapsed')
+
+    def __new__(cls, sequence):
+        values = tuple(sequence)
+        if len(values) != 5:
+            raise TypeError('posix.times_result() takes a 5-sequence (' + str(len(values)) + '-sequence given)')
+        return tuple.__new__(cls, values)
+
+    user = property(lambda self: self[0])
+    system = property(lambda self: self[1])
+    children_user = property(lambda self: self[2])
+    children_system = property(lambda self: self[3])
+    elapsed = property(lambda self: self[4])
+
+    def __repr__(self):
+        names = ('user', 'system', 'children_user', 'children_system', 'elapsed')
+        return 'posix.times_result(' + ', '.join(name + '=' + repr(value) for name, value in zip(names, self)) + ')'
+
+    def __reduce__(self):
+        return (type(self), (tuple(self),))
+
+    def __replace__(self, **changes):
+        names = ('user', 'system', 'children_user', 'children_system', 'elapsed')
+        values = {}
+        for name in names:
+            values[name] = changes.pop(name) if name in changes else getattr(self, name)
+        if changes:
+            raise TypeError('Got unexpected field name(s): ' + repr(list(changes)))
+        return type(self)(tuple(values[name] for name in names))
+
+
+def times():
+    return times_result(_call('times'))
 
 
 def _stat(data):

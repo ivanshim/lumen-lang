@@ -289,6 +289,15 @@ class Fraction:
             raise TypeError('argument should be a Rational instance or have the as_integer_ratio() method')
         return cls(value)
 
+    @classmethod
+    def _from_coprime_ints(cls, numerator, denominator):
+        # A pair already in lowest terms, its denominator positive,
+        # becomes a ratio without the reducing pass.
+        obj = super(Fraction, cls).__new__(cls)
+        obj._numerator = numerator
+        obj._denominator = denominator
+        return obj
+
     def is_integer(self):
         return self.denominator == 1
 
@@ -336,7 +345,7 @@ class Fraction:
         return 'Fraction(' + str(self.numerator) + ', ' + str(self.denominator) + ')'
 
     def __float__(self):
-        value = _as_float(self.numerator / self.denominator)
+        value = _as_float(int(self.numerator) / int(self.denominator))
         if value == inf or value == -inf:
             raise 'OverflowError: integer division result too large for a float'
         return value
@@ -552,7 +561,7 @@ class Fraction:
                 return False
             return self.__eq__(other.real)
         if not isinstance(other, (Fraction, int, float, bool)):
-            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+            if not isinstance(other, numbers.Rational):
                 return NotImplemented
         right = Fraction(other)
         return self.numerator == right.numerator and self.denominator == right.denominator
@@ -572,7 +581,7 @@ class Fraction:
             if other == -inf:
                 return False
         if not isinstance(other, (Fraction, int, float, bool)):
-            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+            if not isinstance(other, numbers.Rational):
                 return NotImplemented
         right = Fraction(other)
         return self.numerator * right.denominator < right.numerator * self.denominator
@@ -586,7 +595,7 @@ class Fraction:
             if other == -inf:
                 return False
         if not isinstance(other, (Fraction, int, float, bool)):
-            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+            if not isinstance(other, numbers.Rational):
                 return NotImplemented
         right = Fraction(other)
         return self.numerator * right.denominator <= right.numerator * self.denominator
@@ -600,7 +609,7 @@ class Fraction:
             if other == -inf:
                 return True
         if not isinstance(other, (Fraction, int, float, bool)):
-            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+            if not isinstance(other, numbers.Rational):
                 return NotImplemented
         right = Fraction(other)
         return self.numerator * right.denominator > right.numerator * self.denominator
@@ -614,7 +623,7 @@ class Fraction:
             if other == -inf:
                 return True
         if not isinstance(other, (Fraction, int, float, bool)):
-            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+            if not isinstance(other, numbers.Rational):
                 return NotImplemented
         right = Fraction(other)
         return self.numerator * right.denominator >= right.numerator * self.denominator
