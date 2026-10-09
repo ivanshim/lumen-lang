@@ -5303,8 +5303,15 @@ impl<'a> Engine<'a> {
     /// they stand rather than gathered, since such a walk may have no
     /// end at all and a suspension asks it for one member at a time.
     fn delegated_walk(&mut self, source: Value) -> Flow<Value> {
-        if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Walk(_)) { return Ok(self.core_iterator(&source)?); }
-        self.iterator(source)
+        let walk = if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Walk(_)) { self.core_iterator(&source)? } else { self.iterator(source)? };
+        // A walk of the program's own answers send, throw and close by
+        // name, and the value its ending was made with is the value this
+        // delegation stands for, so it is kept in a wrapper that knows
+        // how to ask it for those things.
+        if let Some(thing) = Self::walked_thing(&walk) {
+            return Ok(Self::adapter(33, vec![thing, Value::Binding(Rc::new(RefCell::new(Value::Null))), Value::Binding(Rc::new(RefCell::new(Value::Flag(false))))]));
+        }
+        Ok(walk)
     }
 
     fn delegated_fault(&mut self, fault: Fault) -> Fault {
@@ -5376,6 +5383,11 @@ impl<'a> Engine<'a> {
                         *returned.borrow_mut() = self.class_get(value, "value", false)?;
                         *done.borrow_mut() = Value::Flag(true); Ok(None)
                     }
+                    // Native next slots report exhaustion without a raised value.
+                    Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|name| words == *name || words.starts_with(&format!("{}:", name))) => {
+                        *done.borrow_mut() = Value::Flag(true);
+                        Ok(None)
+                    }
                     Err(fault) => Err(fault),
                 };
             }
@@ -5391,6 +5403,13 @@ impl<'a> Engine<'a> {
                 }
             }
             return Ok(item);
+        }
+        // Only a suspended body and the wrapper above know a word for
+        // being sent into; every other walk refuses the send here, where
+        // the reference would look one up and not find it.
+        if !matches!(sent, Value::Null) {
+            let words = format!("AttributeError: '{}' object has no attribute 'send'", walk.core_kind());
+            return Err(self.as_fault(&words).map(Fault::Thrown).unwrap_or(Fault::Note(words)));
         }
         match self.core_step(walk) {
             Ok(item) => Ok(item),
@@ -5451,7 +5470,17 @@ impl<'a> Engine<'a> {
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown in is raised on the spot.
     fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
-        self.step_generator_mode(held, sent, hurled, given, true)
+        // A body on the stack may not be entered again: it is marked for
+        // as long as the step lasts, so a reentrant call is refused, and
+        // the reference's reading of the running member is answered too.
+        {
+            let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+            if state.running { return Err(self.lang.yield_busy[0].clone().into()); }
+            state.running = true;
+        }
+        let outcome = self.step_generator_mode(held, sent, hurled, given, true);
+        if let Ok(mut state) = held.try_borrow_mut() { state.running = false; }
+        outcome
     }
 
     // Initial async throw/close lets a delegate handle GeneratorExit through
@@ -5522,8 +5551,15 @@ impl<'a> Engine<'a> {
                                 held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None;
                             }
                             Err(fault) => return Err(fault),
-                            Ok(member) => match self.class_apply(member, if given.is_empty() { vec![value] } else { given.to_vec() })
-                                .map_err(|fault| self.delegated_fault(fault)) {
+                            Ok(member) => {
+                                // The method is called with the sleeping
+                                // body's frame behind it, so the reference's
+                                // stack has the delegating generator in it.
+                                let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
+                                let before = std::mem::replace(&mut self.trace_frame, parent);
+                                let applied = self.class_apply(member, if given.is_empty() { vec![value] } else { given.to_vec() });
+                                self.trace_frame = before;
+                                match applied.map_err(|fault| self.delegated_fault(fault)) {
                                 Ok(item) => {
                                     if self.async_generators.contains_key(&(Rc::as_ptr(held) as usize)) {
                                         self.delegated_tokens.insert(Rc::as_ptr(held) as usize);
@@ -5537,6 +5573,7 @@ impl<'a> Engine<'a> {
                                 }
                                 Err(Fault::Thrown(fault)) => { held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None; hurled = Some(fault); }
                                 Err(fault) => return Err(fault),
+                                }
                             }
                         }
                     }
@@ -5561,7 +5598,15 @@ impl<'a> Engine<'a> {
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
                         Ok(None) if closing => { state.delegate = None; }
-                        Ok(None) => { hurled = None; }
+                        Ok(None) => {
+                            // The body's own walk ended under the throw, so
+                            // what it gave back is what the delegation comes
+                            // to; it is kept in a wrapper, since stepping the
+                            // closed body again would clear it.
+                            let returned = inner.try_borrow().map(|held| held.returned.clone()).unwrap_or(Value::Null);
+                            state.delegate = Some(Self::adapter(33, vec![Value::Generator(inner.clone()), Value::Binding(Rc::new(RefCell::new(returned))), Value::Binding(Rc::new(RefCell::new(Value::Flag(true))))]));
+                            hurled = None;
+                        }
                         Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
                         Err(other) => { state.delegate = None; return Err(other); }
                     }
@@ -6249,14 +6294,18 @@ impl<'a> Engine<'a> {
                         }
                         let inner = kept.delegate.as_ref().expect("delegated walk").clone();
                         let sent = std::mem::replace(&mut kept.sent, Value::Null);
-                        match self.delegate_step(&inner, sent)? {
-                            Some(item) => { kept.handed = Some(item); kept.pc = pc; }
-                            None => {
+                        match self.delegate_step(&inner, sent) {
+                            Ok(Some(item)) => { kept.handed = Some(item); kept.pc = pc; }
+                            Ok(None) => {
                                 self.data.push(Self::delegate_returned(&inner));
                                 kept.delegate = None;
                                 pc += 1;
                                 continue;
                             }
+                            // A delegation the body will not go on with is
+                            // let go of, so a later throw is not handed to a
+                            // walk this step has already left.
+                            Err(fault) => { kept.delegate = None; return Err(fault); }
                         }
                     }
                     return Ok(Passage::Suspended);
@@ -7748,7 +7797,7 @@ impl<'a> Engine<'a> {
                 if let Some(program) = &state.program { return Ok(Some(self.routine_code(program))); }
             }
             }
-            if !self.is_async_generator(&Value::Generator(held.clone())) && self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
+            if !self.is_async_generator(&Value::Generator(held.clone())) && self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().map_or(true, |state| state.running)))); }
         }
         if matches!(held, Value::Native(Builtin::AsReal, _)) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
             return Ok(Some(Value::ValueMethod(Rc::new((held.clone(), "float_from_number".to_string())))));

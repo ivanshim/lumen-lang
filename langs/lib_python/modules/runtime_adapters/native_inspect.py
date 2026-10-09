@@ -627,6 +627,8 @@ class Signature:
             if not isinstance(given, cls):
                 raise TypeError('unexpected object in __signature__ attribute')
             return given
+        if not hasattr(obj, '__code__') and getattr(obj, '__text_signature__', None) == '()':
+            return cls()
         bound = getattr(obj, '__self__', None) is not None
         if hasattr(obj, '__func__'):
             obj = obj.__func__

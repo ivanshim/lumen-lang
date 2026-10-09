@@ -3922,6 +3922,11 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        // A builtin accessor answers for the text signature it announces,
+        // the word the reference reads to recover its parameters.
+        if self.table.spells("ext.stmt.class.detail.text_signature", key) {
+            if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
+        }
         let value = match value {
             held @ (Value::Mutable(..) | Value::Shared(_) | Value::Window(..)) if !self.rules.words_ext_stmt_class_builder.is_empty() => held.settled(),
             held => held,
@@ -4189,6 +4194,7 @@ impl<'a> Machine<'a> {
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
             Value::Wrapped(0, parts) if matches!(parts.first(), Some(Value::Tuple(_))) => Some("()"),
+            Value::Wrapped(3, parts) if matches!(parts.first(), Some(Value::Wrapped(tag, entry)) if (*tag == 0 && matches!(entry.first(), Some(Value::Tuple(_)))) || *tag == 60 && entry.first().is_some_and(|owner| owner.bare() == "type") && entry.get(1).is_some_and(|name| name.bare() == self.detail("order"))) => Some("()"),
             Value::Wrapped(2, parts) if parts.first().is_some_and(|entry| entry.bare() == self.detail("subclass")) => Some("()"),
             _ => None,
         }
@@ -5226,9 +5232,9 @@ impl<'a> Machine<'a> {
             let running=self.table.strings("ext.stmt.yield.running");
             if !self.is_async_generator(&value) && running.first().map_or(false,|w|w==key) {
                 // Running exactly while its own frame is on the way
-                // through the machine, which is exactly when the cell
-                // that holds it cannot be borrowed a second time.
-                return Ok(Value::Flag(state.try_borrow().is_err()));
+                // through the machine, and marked for as long as the
+                // step lasts, so a reentrant reading sees it too.
+                return Ok(Value::Flag(state.try_borrow().map_or(true, |held| held.running)));
             }
         }else if let Value::Wrapped(tag,items)=&value {
             if *tag==4||*tag==5 {
@@ -5347,11 +5353,6 @@ impl<'a> Machine<'a> {
         // for it, where it names one.
         if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
             if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
-        }
-        // A builtin accessor answers for the text signature it announces,
-        // the word the reference reads to recover its parameters.
-        if self.table.spells("ext.stmt.class.detail.text_signature", key) {
-            if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
         self.sought_in_vain = Some((key.to_owned(), value.clone()));
         Err(self.absent_attribute(&value,key))

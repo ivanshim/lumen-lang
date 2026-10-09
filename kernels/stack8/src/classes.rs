@@ -3369,6 +3369,11 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        // A builtin accessor answers for the text signature it announces,
+        // the word the reference reads to recover its parameters.
+        if !self.class_word("text_signature").is_empty() && name == self.class_word("text_signature") {
+            if let Some(text) = self.builtin_text_signature(&subject) { return Ok(Value::text(text)); }
+        }
         if !name.is_empty() && name == self.class_word("doc") {
             if let Some(doc) = self.primitive_doc(&subject) { return Ok(Value::text(doc)); }
         }
@@ -3583,6 +3588,7 @@ impl<'a> Engine<'a> {
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
             Value::Adapter(w) if w.0 == 0 && matches!(w.1.first(), Some(Value::Tuple(_))) => Some("()"),
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(entry)) if (entry.0 == 0 && matches!(entry.1.first(), Some(Value::Tuple(_)))) || entry.0 == 29 && entry.1.first().is_some_and(|owner| owner.plain() == "type") && entry.1.get(1).is_some_and(|name| name.plain() == self.class_word("order"))) => Some("()"),
             Value::Adapter(w) if w.0 == 2 && w.1.first().is_some_and(|entry| entry.plain() == self.class_word("subclass")) => Some("()"),
             _ => None,
         }
@@ -4753,11 +4759,6 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-        }
-        // A builtin accessor answers for the text signature it announces,
-        // the word the reference reads to recover its parameters.
-        if !self.class_word("text_signature").is_empty() && name == self.class_word("text_signature") {
-            if let Some(text) = self.builtin_text_signature(&subject) { return Ok(Value::text(text)); }
         }
         self.absent_member = Some((name.to_string(), subject.clone()));
         Err(self.missing_member(&subject,name))
