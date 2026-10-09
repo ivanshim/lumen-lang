@@ -69,9 +69,9 @@ can detect the unavailable facility through the standard import exception.
 
 `_queue.py` is a runtime implementation, not a copied CPython source file.
 It stores FIFO items in the runtime deque and exposes methods through native
-method descriptors. Non-blocking reads and finite deadlines are implemented;
-an empty read with no deadline refuses because this runtime cannot start a
-producer thread. The same descriptor factory binds the native I/O base methods.
+method descriptors. Reads can be non-blocking, timed, or indefinite; waiting
+polls the deque against monotonic deadlines. The runtime has no shared-thread
+backend. The same descriptor factory binds the native I/O base methods.
 
 Object and tuple layout attributes report Rust storage sizes: the allocated
 instance payload, the tuple carrier plus its vector header, and the size of

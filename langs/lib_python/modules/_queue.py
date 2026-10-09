@@ -2,6 +2,7 @@
 from collections import deque
 _method_descriptor = __method_descriptor
 import math
+import operator
 import time
 import types
 
@@ -22,29 +23,42 @@ class SimpleQueue:
         self._items.append(item)
 
     def get(self, block=True, timeout=None):
+        block = bool(block)
         if block and timeout is not None:
-            if not isinstance(timeout, (int, float)):
-                raise TypeError("'" + type(timeout).__name__ + "' object cannot be interpreted as an integer or float")
-            timeout = float(timeout)
-            if math.isnan(timeout):
-                raise ValueError('Invalid value NaN (not a number)')
+            bound = 2**63
+            if isinstance(timeout, float):
+                timeout = float.__float__(timeout)
+                if math.isnan(timeout):
+                    raise ValueError('Invalid value NaN (not a number)')
+                if timeout < -bound / 10**9 or timeout >= bound / 10**9:
+                    raise OverflowError('timestamp out of range for C PyTime_t')
+            else:
+                try:
+                    timeout = operator.index(timeout)
+                except TypeError:
+                    raise TypeError("'" + type(timeout).__name__ + "' object cannot be interpreted as an integer or float") from None
+                except OverflowError:
+                    raise OverflowError('timestamp out of range for C PyTime_t') from None
+                nanoseconds = timeout * 10**9
+                if nanoseconds < -bound or nanoseconds >= bound:
+                    raise OverflowError('timestamp out of range for C PyTime_t')
+                timeout = float(timeout)
             if timeout < 0:
                 raise ValueError("'timeout' must be a non-negative number")
-            if timeout > 9223372036.0:
-                raise OverflowError('timestamp out of range for C PyTime_t')
         if self._items:
             return self._items.popleft()
         if not block:
             raise Empty
-        if timeout is None:
-            # shortcut: the runtime cannot start a producer thread; upgrade when threads are supported.
-            raise RuntimeError('no other thread can put an item on this queue')
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
+        # shortcut: waits poll; use a condition when shared interpreter threads are supported.
         while not self._items:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise Empty
-            time.sleep(min(remaining, 0.01))
+            delay = 0.01
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Empty
+                delay = min(remaining, delay)
+            time.sleep(delay)
         return self._items.popleft()
 
     def get_nowait(self):
