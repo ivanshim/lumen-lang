@@ -15,10 +15,29 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::code::Routine;
 use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance, Members, Phase, Value};
+
+/// A hasher for the graph's keys, which are addresses: one multiply
+/// spreads them, where the default hasher's rounds cost more than the
+/// walk they serve.
+#[derive(Default)]
+struct PlaceHasher(u64);
+
+impl Hasher for PlaceHasher {
+    fn finish(&self) -> u64 { self.0 ^ (self.0 >> 29) }
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes { self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3); }
+    }
+    fn write_usize(&mut self, address: usize) {
+        self.0 = (address as u64 >> 3).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+type Places<V> = HashMap<usize, V, BuildHasherDefault<PlaceHasher>>;
 
 /// What a weak hold points at: one of the kinds a program may hold weakly.
 #[derive(Debug, Clone)]
@@ -97,6 +116,8 @@ thread_local! {
     static WATCHING: Cell<usize> = const { Cell::new(0) };
     /// Those holds.
     static REFERENCES: RefCell<Vec<Weak<Faint>>> = const { RefCell::new(Vec::new()) };
+    /// How long REFERENCES may grow before the dead are swept out of it.
+    static REFERENCE_LIMIT: Cell<usize> = const { Cell::new(32) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
     /// Whether anything at all is waiting for the engine's next step.
     // Bit zero is queued work; bit one marks a nonempty anchor list.
@@ -375,7 +396,12 @@ pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
     let faint = Rc::new(Faint { hold, bearer, told: RefCell::new(told), cached_hash: RefCell::new(None), cleared: Cell::new(false) });
     REFERENCES.with(|all| {
         let mut all = all.borrow_mut();
-        all.retain(|r| r.strong_count() != 0);
+        // Sweeping the whole list for every new hold made a loop that
+        // holds n things cost n squared; it is swept when it has doubled.
+        if all.len() >= REFERENCE_LIMIT.with(Cell::get) {
+            all.retain(|r| r.strong_count() != 0);
+            REFERENCE_LIMIT.with(|limit| limit.set((all.len() * 2).max(32)));
+        }
         all.push(Rc::downgrade(&faint));
     });
     if faint.told.borrow().is_some() {
@@ -423,8 +449,8 @@ struct Node {
 /// unreachable by the program.
 pub struct Graph {
     order: Vec<usize>,
-    nodes: HashMap<usize, Node>,
-    bookkeeping: HashMap<usize, usize>,
+    nodes: Places<Node>,
+    bookkeeping: Places<usize>,
 }
 
 /// Where a value's pointer stands, for the kinds that live behind one.
@@ -634,7 +660,7 @@ fn external_places(value: Value, out: &mut Vec<Value>) {
 impl Graph {
     /// Everything reachable from the remembered candidates still alive.
     pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
-        let mut bookkeeping = HashMap::new();
+        let mut bookkeeping = Places::default();
         for value in &extra {
             let parts = match value {
                 Value::Method(object, routine, _) => vec![Value::Object(object.clone()), Value::Routine(routine.clone())],
@@ -662,8 +688,8 @@ impl Graph {
         }
     }
 
-    fn build(roots: Vec<Value>, bookkeeping: HashMap<usize, usize>) -> Graph {
-        let mut nodes: HashMap<usize, Node> = HashMap::new();
+    fn build(roots: Vec<Value>, bookkeeping: Places<usize>) -> Graph {
+        let mut nodes: Places<Node> = Places::default();
         let mut order = Vec::new();
         let mut open: Vec<usize> = Vec::new();
         for root in roots {
@@ -681,11 +707,11 @@ impl Graph {
             let mut reached = Vec::with_capacity(children.len());
             for child in children.drain(..) {
                 // A bound method is not a place of its own but two.
-                let parts: Vec<Value> = match child {
-                    Value::Method(o, r, _) => vec![Value::Object(o), Value::Routine(r)],
-                    other => vec![other],
+                let (first, second) = match child {
+                    Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
+                    other => (other, None),
                 };
-                for part in parts {
+                for part in std::iter::once(first).chain(second) {
                     let Some(at) = place_of(&part) else { continue };
                     match nodes.get_mut(&at) {
                         Some(node) => node.inward += 1,

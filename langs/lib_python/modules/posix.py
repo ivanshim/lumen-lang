@@ -38,11 +38,13 @@ def _path(path):
 
 
 def _fd(value):
+    if type(value) is int:
+        return value
     return _operator.index(value)
 
 
 def _cint(value):
-    number = _operator.index(value)
+    number = value if type(value) is int else _operator.index(value)
     if number < -2147483648 or number > 2147483647:
         raise OverflowError('Python int too large to convert to C int')
     return number
@@ -78,7 +80,7 @@ def strerror(code, /):
 
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
- SEEK_END, F_OK, R_OK, W_OK, X_OK) = _call('constants')
+ SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE) = _call('constants')
 
 # These feature names describe implemented host entry points, not test expectations.
 _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTAT',
@@ -206,9 +208,12 @@ def times():
 
 
 def _stat(data):
-    nanos = tuple(data[i] * 1000000000 + data[i + 3] for i in (7, 8, 9))
-    times = tuple(data[i] + data[i + 3] / 1000000000 for i in (7, 8, 9))
-    return stat_result(data[:10] + times + nanos + data[13:16])
+    # All nineteen fields are known here, so the sequence checks of
+    # stat_result.__new__ have nothing left to decide.
+    second = 1000000000
+    nanos = (data[7] * second + data[10], data[8] * second + data[11], data[9] * second + data[12])
+    times = (data[7] + data[10] / second, data[8] + data[11] / second, data[9] + data[12] / second)
+    return _host('structseq_new', stat_result, data[:10], times + nanos + data[13:16])
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
@@ -553,6 +558,10 @@ class DirEntry:
             return stat.S_ISREG(self.stat(follow_symlinks=follow_symlinks).st_mode)
         except FileNotFoundError:
             return False
+    # Report the absence of Windows junctions on the POSIX filesystem.
+    def is_junction(self):
+        return False
+
     def is_dir(self, *, follow_symlinks=True):
         if self._type and (self._type != 10 or not follow_symlinks):
             return self._type == 4
@@ -612,5 +621,38 @@ def set_inheritable(fd, inheritable, /):
     _call('set_inheritable', _cint(fd), bool(_cint(inheritable)))
 
 
+def get_blocking(fd, /):
+    return _call('get_blocking', _cint(fd))
+
+
+def set_blocking(fd, blocking, /):
+    _call('set_blocking', _cint(fd), bool(_cint(blocking)))
+
+
 def pipe():
     return _call('pipe')
+
+
+# Keep native module functions callable without Python function binding.
+class _BuiltinFunction:
+    # Preserve the wrapped entry point's public metadata.
+    def __init__(self, function):
+        self._function = function
+        self.__name__ = function.__name__
+        self.__qualname__ = function.__name__
+        self.__doc__ = function.__doc__
+        self.__module__ = __name__
+
+    # Forward arguments without supplying an instance receiver.
+    def __call__(self, *args, **kwargs):
+        return self._function(*args, **kwargs)
+
+    # Render the native entry point's name.
+    def __repr__(self):
+        return '<built-in function ' + self.__name__ + '>'
+
+
+for _name, _entry in list(globals().items()):
+    if not _name.startswith('_') and callable(_entry) and not isinstance(_entry, type):
+        globals()[_name] = _BuiltinFunction(_entry)
+del _name, _entry

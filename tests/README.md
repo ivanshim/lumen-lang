@@ -21,6 +21,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | Directory | Source | Release / tag | Commit / release date | License |
 |---|---|---|---|---|
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_super.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, `test_wave.py`, `test_cmd.py`, `test_nturl2path.py`, `test_codeop.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`, `audiodata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_tempfile.py`, `tf_inherit_check.py` | [CPython `Lib/test/test_tempfile.py`](https://github.com/python/cpython/blob/v3.14.8/Lib/test/test_tempfile.py), and `Lib/test/tf_inherit_check.py`, copied byte for byte; SHA-256 respectively `b71f75232f3582e4486019fbfbe13ab96858d0c16ef5b91539299b13e6672212`, `a4fc0efd8ac47181439a5dcfc19d53cabbe88ba7bff49edafa421f9f04b82220` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py`, `test_subclassinit.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, `Lib/test/test_subclassinit.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, `Lib/wave.py`, `Lib/cmd.py`, `Lib/selectors.py`, `Lib/nturl2path.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py`, `Lib/test/audiotests.py`, and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper,pty_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -91,6 +92,9 @@ byte for byte. The same is true for the pickle support modules
 and their imports `dbm/{__init__,dumb}.py` and `http/{__init__,cookies}.py`.
 The `_pickle` accelerator is absent; the upstream module selects its Python
 implementation and the upstream tests select their accelerator cases accordingly.
+`test_pathlib/` is a library test for profile 1.0 and is not included in the
+counted core-language suite. Its package and support sources remain unchanged.
+
 ## Runtime fixture integrity audit (2026-10-02)
 
 The annotation fixtures are test inputs, not runtime adapters. The earlier
@@ -205,7 +209,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `subprocess.py` | runtime adapter / implementation | `b3947dd75e8d4b84a7e4e84e522c1a5a13f7880571b4f820d3da5f3a2e8e8b2e` | `7fa4af83422024a19e64a80937f6c8094244c3397372a495b348dfbe44a5dd72` |
 | `sys.py` | runtime module; no Lib counterpart | `90019bb1d77e139ef774cc82b3d01e5206435529c869732c137bd8777b5eb443` | `—` |
 | `tabnanny.py` | unchanged release copy | `26d014ee01ce9a469d262b3f1f6a8be341b47ac45eba57472fbd7f96e57a05a2` | `26d014ee01ce9a469d262b3f1f6a8be341b47ac45eba57472fbd7f96e57a05a2` |
-| `tempfile.py` | runtime adapter / implementation | `bc171d211898ecf33be9df1c08a48ce09e3b9e0852e13447b4f508e8d9e1fb63` | `3714372b63f6bc05a5273425d446f6ad3a2112a659c71c321bb4575fd082d634` |
+| `tempfile.py` | unchanged release copy | `3714372b63f6bc05a5273425d446f6ad3a2112a659c71c321bb4575fd082d634` | `3714372b63f6bc05a5273425d446f6ad3a2112a659c71c321bb4575fd082d634` |
 | `test/__init__.py` | restored release copy | `836cdb388117cf81e78d9fa2a141cca1b14b0179733322e710067749a1b16fe9` | `836cdb388117cf81e78d9fa2a141cca1b14b0179733322e710067749a1b16fe9` |
 | `test/audiotests.py` | unchanged release copy | `963c93fafcb826c1f368cf3c033605cc8b196ccc18d9fe2d364a8ce34372882a` | `963c93fafcb826c1f368cf3c033605cc8b196ccc18d9fe2d364a8ce34372882a` |
 | `test/list_tests.py` | unchanged release copy | `41c15b8e00b1e1474e519567b1124d3c5fd7fef975a200a5be276fd2ec8eaaf7` | `41c15b8e00b1e1474e519567b1124d3c5fd7fef975a200a5be276fd2ec8eaaf7` |
@@ -340,3 +344,9 @@ while retaining byte-for-byte v3.14.8 library files at the upstream paths.
 An existing `adapters` overlay still follows a replacement body. The ten source
 moves preserve the registered interpreter source bytes, including the single
 async-aware `test.support.subTests` binding and coroutine recognition.
+The email charset dependency reuses the signed codec port at
+`ecee70ec399ce9338ba6267d06aab481206c43f5`. The released sources in the
+provenance table stay unchanged. `_codecs.py`, `_codec_runtime.py`,
+`unicodedata.py`, and the multibyte family modules are native runtime adapters.
+Mapping data provenance is recorded in `langs/lib_python/data/multibyte/README.md`
+and `langs/lib_python/data/unicode/README.md`.

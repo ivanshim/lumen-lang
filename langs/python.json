@@ -640,10 +640,10 @@
     "bytes"
   ],
   "ext.builtin.bytes.decode": [
-    "decode"
+    "decode", "__codec_decode"
   ],
   "ext.builtin.bytes.encode": [
-    "encode"
+    "encode", "__codec_encode"
   ],
   "ext.builtin.bytes.find": [
     "find"
@@ -3098,6 +3098,9 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.abc.instancecheck": [
+    "__abc_instancecheck"
+  ],
   "ext.builtin.annotation_call": ["__annotation_call__"],
   "ext.builtin.partial_repr": ["__partial_repr__"],
   "ext.builtin.namespace_type": [
@@ -4136,5 +4139,8 @@
   ],
   "ext.builtin.text.intern": [
     "__intern_native__"
+  ],
+  "ext.builtin.multibyte": [
+    "__multibyte_native"
   ]
 }

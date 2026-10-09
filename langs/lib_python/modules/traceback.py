@@ -15,9 +15,7 @@ def format_tb(tb, limit=None, exc=None):
         line = item.tb_lineno
         entry = '  File "' + filename + '", line ' + str(line) + ', in ' + code.co_name + '\n'
         try:
-            import builtins
-            with builtins.open(filename) as source:
-                contents = source.read()
+            contents = _source_text(filename)
             if contents[:1] == '\ufeff':
                 contents = contents[1:]
             lines = contents.splitlines()
@@ -43,6 +41,40 @@ def format_tb(tb, limit=None, exc=None):
         result.append(entry)
     return result
 
+
+def _source_text(filename):
+    # A source file is read in the encoding its first two lines declare
+    # (PEP 263), UTF-8 when they declare none; bytes the encoding cannot
+    # read are replaced rather than hiding the line.
+    import builtins
+    with builtins.open(filename, 'rb') as source:
+        data = source.read()
+    encoding = 'utf-8'
+    for raw in data.split(b'\n', 2)[:2]:
+        text = raw.decode('ascii', 'replace').lstrip(' \t\f')
+        if not text.startswith('#'):
+            if text.strip():
+                break
+            continue
+        at = text.find('coding')
+        while at >= 0:
+            rest = text[at + 6:]
+            if rest[:1] in (':', '='):
+                rest = rest[1:].lstrip(' \t')
+                end = 0
+                while end < len(rest) and (rest[end].isalnum() or rest[end] in '-_.'):
+                    end += 1
+                if end:
+                    encoding = rest[:end]
+                    break
+            at = text.find('coding', at + 1)
+        else:
+            continue
+        break
+    try:
+        return data.decode(encoding, 'replace')
+    except LookupError:
+        return data.decode('utf-8', 'replace')
 
 def format_exception_only(exc, value=None):
     if value is not None:
@@ -159,9 +191,7 @@ class FrameSummary:
         if self._line is None:
             self._line = ''
             try:
-                import builtins
-                with builtins.open(self.filename) as source:
-                    self._line = source.read().splitlines()[self.lineno - 1].strip()
+                self._line = _source_text(self.filename).splitlines()[self.lineno - 1].strip()
             except (OSError, IndexError):
                 pass
         return self._line.strip()

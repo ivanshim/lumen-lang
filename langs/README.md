@@ -4506,6 +4506,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
+| `ext.builtin.abc.instancecheck` | - | - | `__abc_instancecheck` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
 | `ext.builtin.annotation_call` | - | - | `__annotation_call__` | - | - | - | - | - | - | - |
@@ -4533,8 +4534,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
@@ -4834,6 +4835,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.multibyte` | - | - | `__multibyte_native` | - | - | - | - | - | - | - |
 | `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
@@ -6117,9 +6119,11 @@ Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
+`ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.
 The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
