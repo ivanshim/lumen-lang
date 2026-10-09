@@ -209,7 +209,12 @@ class _StandardStream:
     def flush(self):
         self._ensure_open()
 
+    def fileno(self):
+        self._ensure_open()
+        return self._fd
+
 class _BinaryInput(_StandardStream):
+    _fd = 0
     def read(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, False, True)
@@ -226,20 +231,24 @@ class _BinaryInput(_StandardStream):
             raise StopIteration
         return line
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _BinaryOutput(_StandardStream):
     def __init__(self, error=False):
         self.error = error
+        self._fd = 2 if error else 1
     def write(self, data):
         self._ensure_open()
         return _host_stream_write(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Output(_StandardStream):
+    _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
     def write(self, *args, **keywords):
@@ -252,9 +261,11 @@ class _Output(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Error(_StandardStream):
+    _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
@@ -267,7 +278,8 @@ class _Error(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Input(_BinaryInput):
     def __init__(self):
@@ -281,7 +293,8 @@ class _Input(_BinaryInput):
         return _host_stream_read(size, True)
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 stdout = _Output()
 stderr = _Error()

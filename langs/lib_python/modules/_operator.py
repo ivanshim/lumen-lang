@@ -60,20 +60,25 @@ _compare_digest = _DigestComparison()
 
 
 class _Addition:
-    """Provide the non-binding callable supplied by the operator accelerator."""
+    """Callable counterpart of the non-binding _operator.add builtin."""
     __name__ = 'add'
     __qualname__ = 'add'
     __module__ = '_operator'
+    __doc__ = 'Same as a + b.'
 
-    # Add operands through their ordinary Python arithmetic dispatch.
-    def __call__(self, a, b, /):
-        return a + b
+    # Apply Python addition after checking the builtin calling convention.
+    def __call__(self, *args, **kwargs):
+        if kwargs:
+            raise TypeError('_operator.add() takes no keyword arguments')
+        if len(args) != 2:
+            raise TypeError('add expected 2 arguments, got ' + str(len(args)))
+        return args[0] + args[1]
 
+    # Native functions pickle by their module-global name in every protocol.
     def __reduce__(self):
-        return self.__name__
+        return 'add'
 
     def __reduce_ex__(self, protocol):
-        return self.__reduce__()
-
+        return 'add'
 
 add = _Addition()

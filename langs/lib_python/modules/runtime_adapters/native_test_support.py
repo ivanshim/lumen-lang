@@ -1747,3 +1747,14 @@ def _force_run(path, func, *args):
             print('re-run %s%r' % (func.__name__, args))
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
+
+
+def get_attribute(obj, name):
+    """Get an attribute, raising SkipTest if AttributeError is raised."""
+    try:
+        attribute = getattr(obj, name)
+    except AttributeError:
+        raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
+    else:
+        return attribute
+

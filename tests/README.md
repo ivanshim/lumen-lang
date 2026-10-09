@@ -34,6 +34,15 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_tabnanny.py` | `Lib/test/test_tabnanny.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_strftime.py` | [python/cpython](https://github.com/python/cpython) `Lib/test/test_strftime.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `tests/python-3.14.8/test_tarfile.py` | `Lib/test/test_tarfile.py`, copied byte for byte; SHA-256 `a58899b398744cbc641ec26addedbf81fb8e8755ed23dac38d2470b32c37379f` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/tarfile.py` | `Lib/tarfile.py`, copied byte for byte; SHA-256 `825de0990d0bedf6ed8db97b4a0fc98f25617a692c3d38c0bbba800beb9952fb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/test/archiver_tests.py` | `Lib/test/archiver_tests.py`, copied byte for byte; SHA-256 `e8fe8d3cd9b455b6b368c0bffcdfe9f1b32518592fc7b79b671861ddfbc5d6d2` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/archiver_tests.py` | `Lib/test/archiver_tests.py`, copied byte for byte; SHA-256 `e8fe8d3cd9b455b6b368c0bffcdfe9f1b32518592fc7b79b671861ddfbc5d6d2` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/testtar.tar` | `Lib/test/archivetestdata/testtar.tar`, copied byte for byte; SHA-256 `760200dda3cfdff2cd31d8ab6c806794f3770faa465e7eae00a1cb3a2fbcbe3a` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/testtar.tar.xz` | `Lib/test/archivetestdata/testtar.tar.xz`, copied byte for byte; SHA-256 `89e0326292b96a5700582a37ebf3d8ba60f1d136772b5cd15b2c2ae653fda188` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/recursion.tar` | `Lib/test/archivetestdata/recursion.tar`, copied byte for byte; SHA-256 `d80f55ac66a2570c8a19d2b1dad7c057cf4c944d9c2f8adaf5bf6c8539881e13` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/zipdir.zip` | `Lib/test/archivetestdata/zipdir.zip`, copied byte for byte; SHA-256 `19cb87050b0fb410da3b88df752c2e1bdaeec77ac052b04febef31a68823cfcb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
@@ -170,6 +179,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `gc.py` | runtime module; no Lib counterpart | `a879e867e999268f591a51151fb5efe9d51a7046d9d155a6a5f58bfd76ef336f` | `—` |
 | `gettext.py` | unchanged release copy | `a228eba370803d80bc8e761c51526394d6cc47781df6043c82fd0f32b81c658e` | `a228eba370803d80bc8e761c51526394d6cc47781df6043c82fd0f32b81c658e` |
 | `glob.py` | unchanged release copy | `21d290be171e3d0643a444e4b58a2c4ee9bfe2c1474bb36ead043794bb769365` | `21d290be171e3d0643a444e4b58a2c4ee9bfe2c1474bb36ead043794bb769365` |
+| `grp.py` | native runtime adapter; no Lib counterpart | `16d9f4315f0cc158fc708457428e86d583b04ef7edb74bb0be11b6691581aabe` | `—` |
 | `heapq.py` | unchanged release copy | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` |
 | `inspect.py` | runtime adapter / implementation | `82280ae260739cbd600feedaed0e0b76999a69a8708a7b3cb3fd851427e348bd` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
 | `io.py` | runtime adapter / implementation | `cf85cf25e6255e6793812652b1b2e8fce04946c90f88480c76b9ad7cb29ebba1` | `1b75584d4efcc612dc0db2ae98619408276585a106f0544879edb5e25b55430a` |
@@ -187,11 +197,13 @@ source exists. Full working measurements are in ignored `probe/`.
 | `pdb.py` | runtime adapter / implementation | `1a058afea49ceca837b238c1bc0f6aa5cc04119ff283f7935b198946b7023d50` | `50d5e0f9dab1f4e2d114c6e6d62577d8c76018c8732443a48bf783671179317f` |
 | `pickle.py` | runtime adapter / implementation | `5347a713d3192ff3044178d5e04e9e5dc0701d17cfc477d6fefac03293c8c16f` | `c9998751cf3b94536b4c2cffd6bb719fa1ee6027bd1bd37235d597c9ecf9f98c` |
 | `platform.py` | runtime adapter / implementation | `061d8bc521d94f27fca5064a9665a0198292902c2be200783e6b49d9cfab3c45` | `240eba74565cd0dc4f99f182f7afc32bbea0593016ddb34165b529b5bcb6be0a` |
+| `posix.py` | native runtime adapter; no Lib counterpart | `472e89ca87ebe8654fcabd319a3b5f17f78ec2dd8c0fdfc495f9f2402cbbfd6b` | `—` |
 | `posixpath.py` | runtime adapter / implementation | `5545d954ca2362c9643e439abe5ed18d9da7a04ab3923e1cabbff807caeece10` | `8a5bc2b6674e76efe0f507b873a41d746beba466a191153ed18a7580ef6e08e1` |
 | `pprint.py` | runtime adapter / implementation | `352a0d6b5353b6328c6b1860dc651694b0d29ce26e1d3a5581de6ec50affe169` | `0b807d4a62c4292ead5b64e1b455f98b0ba225667ff3ee74bd7e0b873620402d` |
 | `pty.py` | runtime adapter / implementation | `10736d1b718cddab726c2bdd0d0a97065819c546625cddc1780eb5d69cca6176` | `655814df6302412a3991305d05a301e0a2514d1363b7465a30898513a53bddfc` |
 | `py_compile.py` | unchanged release copy | `f027de16c180c20912f14d43e07a50fa4397e315059f5b1206d6ffd4c1326e44` | `f027de16c180c20912f14d43e07a50fa4397e315059f5b1206d6ffd4c1326e44` |
 | `random.py` | runtime adapter / implementation | `c981fd97a1e5c8f91001a30c4fb17da9065437af7953b172456139c36e2792b6` | `cf8e72f887d838e273c274b79758b2bf8630a0927112b8876fa3a9e4b9b1756b` |
+| `pwd.py` | native runtime adapter; no Lib counterpart | `2debbc5e3885729d8155bb782bbdc92c8188bedaccdb16db1865b3e2a1400a28` | `—` |
 | `re.py` | runtime adapter / implementation | `a803e6a068b211d46f3188662b366dc69984ac61bda074c502e82fbadf8824af` | `741a9de729ed8207bfa19db990f8826f1bf3661f33d0970a80c08cd1338ebc35` |
 | `reprlib.py` | unchanged release copy | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` |
 | `runtime_adapters/copy.py` | runtime adapter / implementation | `c0a733b4c73e2c77f4b8b769717b771a44758ee169d27a99c755ebf2d16eacc4` | `15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69` |
