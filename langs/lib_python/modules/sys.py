@@ -84,9 +84,9 @@ class _HashInfo:
     inf = 314159
     nan = 0
     imag = 1000003
-    algorithm = 'unavailable'
+    algorithm = 'siphash13'
     hash_bits = 64
-    seed_bits = 0
+    seed_bits = 128
     cutoff = 0
 
 float_info = _FloatInfo()

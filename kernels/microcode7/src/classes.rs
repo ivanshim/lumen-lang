@@ -978,6 +978,15 @@ impl<'a> Machine<'a> {
             let getter = Self::wrap(32, vec![Value::text(dictionary_word), Value::Blueprint(class.clone()), Value::Small(-2)]);
             class.shared.borrow_mut().push((dictionary_word.to_string(), getter));
         }
+        // A class that says how its things are equal and names no hash of
+        // its own makes things no key can hold: the reference writes the
+        // hash as nothing into its dictionary, so a class asking its line
+        // for `__hash__` finds it and finds it empty.
+        if let (Some(hash), Some(eq)) = (self.rules.specials.get(8).cloned(), self.rules.specials.get(2)) {
+            if Self::own_entry(&class, &hash).is_none() && Self::own_entry(&class, eq).is_some() {
+                class.shared.borrow_mut().push((hash, Value::Nil));
+            }
+        }
         let documentation = self.detail("doc");
         if Self::own_entry(&class, documentation).is_none() { class.shared.borrow_mut().push((documentation.to_owned(), Value::Nil)); }
         // Every entry whose blueprint wants its name is given it now, the
@@ -4096,6 +4105,15 @@ impl<'a> Machine<'a> {
                         pairs.push((Value::text(key), member.clone()));
                     }
                 }
+                // A class whose things no key can hold says so in its own
+                // dictionary: the hash stands there as nothing.
+                if let Some(hash) = self.rules.specials.get(8) {
+                    if !pairs.iter().any(|(name, _)| name.bare() == *hash) {
+                        if let Some(member) = self.carried_by_kind(&value, hash) {
+                            pairs.push((Value::text(hash), member));
+                        }
+                    }
+                }
                 return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(pairs.into()))),'m'));
             }
         }
@@ -4212,10 +4230,19 @@ impl<'a> Machine<'a> {
                 if key==self.detail("namespace") {
                     let mut entries=self.kind_member_names(word);
                     entries.push(key.to_owned());
-                    let members:Vec<(Value,Value)>=entries.into_iter().filter_map(|name| {
+                    let mut members:Vec<(Value,Value)>=entries.into_iter().filter_map(|name| {
                         let member = self.carried_by_kind(&value, &name)?;
                         Some((Value::text(&name), member))
                     }).collect();
+                    // A class whose things no key can hold says so in its
+                    // own dictionary: the hash stands there as nothing.
+                    if let Some(hash) = self.rules.specials.get(8) {
+                        if !members.iter().any(|(name, _)| name.bare() == *hash) {
+                            if let Some(member) = self.carried_by_kind(&value, hash) {
+                                members.push((Value::text(hash), member));
+                            }
+                        }
+                    }
                     return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(members.into()))),'m'));
                 }
                 // Read as a class the kind stands on the root and on
@@ -4395,7 +4422,36 @@ impl<'a> Machine<'a> {
                 }
                 // A blueprint standing for a native kind keeps no
                 // entries of its own; what it names are the ones a
-                // value of that kind answers to.
+                // value of that kind answers to. The root is the one
+                // exception: the methods every thing inherits belong to
+                // it, and its dictionary must name them as the directory
+                // already does, so a class standing only on the root
+                // answers `__hash__` when its methods are asked.
+                if Rc::ptr_eq(b, &self.common_ancestor()) {
+                    let listed: Vec<(Value, Value)> = self.rules.words_ext_stmt_class_detail_root_members.iter()
+                        .filter_map(|name| self.from_the_root(name, false, b).map(|member| (Value::text(name), member)))
+                        .collect();
+                    return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(listed.into()))), 'm'));
+                }
+                // A class standing for a native kind holds what a value
+                // of the kind answers to, the hash among them: a kind
+                // whose values no key can hold names the hash as
+                // nothing, so a class asking its line which methods it
+                // carries is told the hash is there and empty.
+                if Self::native_word(b).is_some() {
+                    if let Some(hash) = self.rules.specials.get(8) {
+                        if Self::own_entry(b, hash).is_none() {
+                            if let Some(member) = self.carried_by_kind(&Value::Blueprint(b.clone()), hash) {
+                                let mut entries: Vec<(Value, Value)> = b.shared.borrow().iter()
+                                    .filter(|(key, _)| !key.starts_with('\0'))
+                                    .map(|(key, value)| (Value::text(key), value.clone()))
+                                    .collect();
+                                entries.push((Value::text(hash), member));
+                                return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))), 'm'));
+                            }
+                        }
+                    }
+                }
                 return Ok(Value::Window(Rc::new(Value::Blueprint(b.clone())), 'm'));
             }
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
