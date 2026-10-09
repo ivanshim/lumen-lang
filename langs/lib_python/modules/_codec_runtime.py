@@ -532,6 +532,9 @@ def _utf7_decode(data, errors, final=True):
 _escape_decode = {'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v', '\\': '\\', "'": "'", '"': '"'}
 
 def _escaped_encode(text, raw):
+    # Raw escapes leave ASCII bytes intact, including backslashes.
+    if raw and type(text) is str and str.isascii(text):
+        return _raw_text_encode(text, 'ascii', 'strict')
     out = []
     for c in text:
         n = ord(c)
@@ -545,7 +548,7 @@ def _escaped_encode(text, raw):
 
 def _escaped_decode(data, raw, errors):
     text = data.decode('latin-1')
-    out = ''
+    out = []
     i = 0
     encoding = 'rawunicodeescape' if raw else 'unicodeescape'
     warning = None
@@ -554,20 +557,24 @@ def _escaped_decode(data, raw, errors):
         c = text[i]
         i += 1
         if c != '\\':
-            out += c
+            end = text.find('\\', start)
+            if end < 0:
+                end = len(text)
+            out.append(text[start:end])
+            i = end
             continue
         if i == len(text):
             if raw:
-                out += '\\'
+                out.append('\\')
                 continue
             repl, i = _decode_error(encoding, data, start, i, '\\ at end of string', errors)
-            out += repl
+            out.append(repl)
             continue
         c = text[i]
         if raw and c not in 'uU':
-            out += '\\'
+            out.append('\\')
             if c == '\\':
-                out += c
+                out.append(c)
                 i += 1
             continue
         i += 1
@@ -585,9 +592,9 @@ def _escaped_decode(data, raw, errors):
                     reason = '\\Uxxxxxxxx out of range' if raw else 'illegal Unicode character'
             if reason:
                 repl, i = _decode_error(encoding, data, start, end, reason, errors)
-                out += repl
+                out.append(repl)
             else:
-                out += chr(n)
+                out.append(chr(n))
                 i = end
         elif c == 'N':
             end = text.find('}', i)
@@ -595,7 +602,7 @@ def _escaped_decode(data, raw, errors):
             if i < len(text) and text[i] == '{' and end >= 0:
                 import _codec_names
                 try:
-                    out += _codec_names.lookup(text[i + 1:end])
+                    out.append(_codec_names.lookup(text[i + 1:end]))
                     i = end + 1
                     continue
                 except KeyError:
@@ -604,9 +611,9 @@ def _escaped_decode(data, raw, errors):
             else:
                 end = i
             repl, i = _decode_error(encoding, data, start, end, reason, errors)
-            out += repl
+            out.append(repl)
         elif c in _escape_decode:
-            out += _escape_decode[c]
+            out.append(_escape_decode[c])
         elif c == '\n':
             pass
         elif c in '01234567':
@@ -616,16 +623,16 @@ def _escaped_decode(data, raw, errors):
             n = int(text[i - 1:end], 8)
             if n > 255 and warning is None:
                 warning = '"\\%s" is an invalid octal escape sequence. Such sequences will not work in the future.' % text[i - 1:end]
-            out += chr(n)
+            out.append(chr(n))
             i = end
         else:
             if warning is None:
                 warning = '"\\%s" is an invalid escape sequence. Such sequences will not work in the future.' % c
-            out += '\\' + c
+            out.append('\\' + c)
     if warning is not None:
         import warnings
         warnings.warn(warning, DeprecationWarning, stacklevel=2)
-    return out
+    return ''.join(out)
 
 # Decode indexed character mappings and validate mapping result types.
 def charmap_decode(data, errors='strict', mapping=None):

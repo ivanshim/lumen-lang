@@ -27,9 +27,12 @@ def _index(value):
 def _size(value):
     if value is None:
         return -1
-    if not hasattr(type(value), '__index__'):
-        raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
-    result = _index(value)
+    if type(value) is int:
+        result = value
+    else:
+        if not hasattr(type(value), '__index__'):
+            raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
+        result = _index(value)
     if result > sys.maxsize or result < -sys.maxsize - 1:
         raise OverflowError("cannot fit '" + type(value).__name__ + "' into an index-sized integer")
     return result
@@ -53,6 +56,9 @@ def _get_buffer(value):
     return _buffer_view(value, 8)
 
 def _buffer(value):
+    # Exact bytes are already an immutable contiguous snapshot.
+    if type(value) is bytes:
+        return value
     with _get_buffer(value) as view:
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -229,7 +235,7 @@ class BytesIO(_BufferedIOBase):
         return obj
     def _checkClosed(self):
         if self.closed:
-            raise ValueError('I/O operation on closed file')
+            raise ValueError('I/O operation on closed file.')
     def __init__(self, initial_bytes=None):
         if hasattr(self, '_data'):
             self._check_exports()
@@ -240,26 +246,30 @@ class BytesIO(_BufferedIOBase):
         if _export(self._data, True):
             raise BufferError('Existing exports of data: object cannot be re-sized')
     def getvalue(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return bytes(self._data)
     def getbuffer(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         view = memoryview(self._data)
         view._object = _BytesIOBuffer(self)
         return view
     def close(self):
-        if not self.closed:
+        if not self._closed:
             self._check_exports()
             self._data.clear()
             self._closed = True
     def readable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return True
     writable = readable
     seekable = readable
     def read(self, size=-1):
         size = _size(size)
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
         if end <= self._pos:
             return b''
@@ -278,21 +288,23 @@ class BytesIO(_BufferedIOBase):
     readinto1 = readinto
     def readline(self, size=-1):
         size = _size(size)
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
         start = self._pos
         if end <= start:
             return b''
-        data = bytes(self._data[start:end])
-        at = data.find(b'\n')
+        at = self._data.find(b'\n', start, end)
         if at >= 0:
-            data = data[:at + 1]
-        self._pos += len(data)
+            end = at + 1
+        data = bytes(self._data[start:end])
+        self._pos = end
         return data
     def write(self, b):
         # Immutable exact bytes need no temporary export or snapshot.
         if type(b) is bytes:
-            self._checkClosed()
+            if self._closed:
+                raise ValueError('I/O operation on closed file.')
             self._check_exports()
             n = len(b)
             if not n:
@@ -307,7 +319,8 @@ class BytesIO(_BufferedIOBase):
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
-            self._checkClosed()
+            if self._closed:
+                raise ValueError('I/O operation on closed file.')
             self._check_exports()
             data = view.tobytes()
             n = len(data)
@@ -323,7 +336,8 @@ class BytesIO(_BufferedIOBase):
     def seek(self, pos, whence=0):
         pos = _ssize(pos)
         whence = _whence(whence)
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         if whence == 0:
             if pos < 0:
                 raise ValueError('negative seek value ' + str(pos))
@@ -338,22 +352,25 @@ class BytesIO(_BufferedIOBase):
         self._pos = max(0, pos)
         return self._pos
     def tell(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._pos
     def truncate(self, size=None):
         size = self._pos if size is None else _ssize(size)
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         self._check_exports()
         if size < 0:
             raise ValueError('negative size value ' + str(size))
         del self._data[size:]
         return size
     def __getstate__(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self.getvalue(), self._pos, self.__dict__.copy()
     def __setstate__(self, state):
         if getattr(self, '_closed', False):
-            raise ValueError('I/O operation on closed file')
+            raise ValueError('I/O operation on closed file.')
         if not isinstance(state, tuple) or len(state) < 3:
             raise TypeError('state should be a 3-tuple')
         data, pos, attrs = state[:3]
