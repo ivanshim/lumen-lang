@@ -5485,7 +5485,7 @@ impl<'a> Engine<'a> {
             None => {
                 let class = Rc::new(Class { direct: Vec::new(), lineage: RefCell::new(Vec::new()), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
+                    reaches: Vec::new(), methods: Vec::new(), constants: vec![(self.class_word("module").to_string(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -25074,7 +25074,7 @@ impl Engine<'_> {
         let hook = if let Value::Object(space) = module {
             space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents())
         } else { None };
-        if let Some(callable) = hook {
+        if let Some(callable) = hook.filter(|held| !matches!(held, Value::Blank)) {
             match self.class_apply(callable, vec![Value::text(name)]) {
                 Ok(value) => return Ok(value),
                 Err(fault) if self.attribute_fault(&fault) => {},

@@ -5628,7 +5628,7 @@ impl<'a> Machine<'a> {
         if self.activation_kind.is_none() {
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
                 parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
+                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(vec![(self.detail("module").to_owned(), Value::text("builtins"))]), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;
@@ -25526,7 +25526,10 @@ impl Machine<'_> {
             Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()),
             _ => None,
         };
-        if let Some(f) = fallback {
+        if let Some(f) = fallback.and_then(|candidate| match candidate {
+            Value::Unset => None,
+            present => Some(present),
+        }) {
             match self.apply_class_member(f, vec![Value::text(wanted)]) {
                 Ok(found) => return Ok(found),
                 Err(escape) if self.missing_member_escape(&escape) => (),

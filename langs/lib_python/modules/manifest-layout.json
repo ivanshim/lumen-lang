@@ -2,7 +2,10 @@
   "files": {
     "collections": "collections/__init__.py",
     "unittest": "unittest/__init__.py",
-    "urllib": "urllib/__init__.py"
+    "urllib": "urllib/__init__.py",
+    "asyncio": "asyncio/__init__.py",
+    "concurrent": "concurrent/__init__.py",
+    "concurrent.futures": "concurrent/futures/__init__.py"
   },
   "aliases": {
     "os.path": "path",
@@ -20,7 +23,9 @@
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
-    "abc": "runtime_adapters/abc.py"
+    "abc": "runtime_adapters/abc.py",
+    "test.support.script_helper": "runtime_adapters/script_helper.py",
+    "test": "runtime_adapters/test_package.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
