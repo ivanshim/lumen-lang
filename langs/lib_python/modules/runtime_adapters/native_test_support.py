@@ -1704,3 +1704,9 @@ def skip_if_buggy_ucrt_strfptime(test):
     return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
 
 
+
+# Render dictionary entries in the order used by CPython test.support.
+def sortdict(dict):
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    return "{%s}" % ", ".join(reprpairs)
