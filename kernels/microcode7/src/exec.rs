@@ -8061,10 +8061,6 @@ impl<'a> Machine<'a> {
                     if args.is_empty() && self.reads_manners() && matches!(op, Prim::HereBook | Prim::MembersOf | Prim::ClassWork(8) | Prim::WorldBook) {
                         return self.names_here(frame, *op).map_err(Escape::Error);
                     }
-                    if matches!(op, Prim::Weigh | Prim::Perform) {
-                        let callable = Value::Intrinsic(*op, name.clone());
-                        if let Some(answer) = self.scoped_text_call(&callable, args, frame) { return answer; }
-                    }
                     let mut values = self.value_list(args, frame)?;
                     // A word of a native kind spelled with the entry
                     // after a dot, such as `str.upper`, calls that
@@ -12828,8 +12824,8 @@ impl<'a> Machine<'a> {
 
     fn explicit_globals(program: &Routine) -> Option<Rc<RefCell<Value>>> {
         match program.globe.as_ref()? {
-            Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_) | Value::Attributes(_)) => Some(cell.clone()),
-            globals @ (Value::Dict(_) | Value::Attributes(_)) => Some(Rc::new(RefCell::new(globals.clone()))),
+            Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_)) => Some(cell.clone()),
+            globals @ Value::Dict(_) => Some(Rc::new(RefCell::new(globals.clone()))),
             mapping @ Value::Thing(_) if Self::underlying(mapping).is_some_and(|row| matches!(row.settled(), Value::Dict(_))) => Some(Rc::new(RefCell::new(mapping.clone()))),
             _ => None,
         }
@@ -27418,8 +27414,8 @@ impl<'a> Machine<'a> {
         let made_beside = self.frames_named.last().and_then(|program| program.globe.clone());
         match made_beside {
             Some(Value::Shared(cell)) | Some(Value::Mutable(cell, _)) => cell,
-            Some(Value::Dict(entries)) => Rc::new(RefCell::new(Value::Dict(entries))),
-            _ => self.space_book_of().unwrap_or_else(|| self.book_about(true)),
+            Some(namespace) => Rc::new(RefCell::new(namespace)),
+            None => self.space_book_of().unwrap_or_else(|| self.book_about(true)),
         }
     }
 
@@ -27691,8 +27687,8 @@ impl<'a> Machine<'a> {
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
         if op == Prim::WorldBook {
-            if let Some(book) = self.frames_named.last().and_then(|body| Self::explicit_globals(body)) {
-                return Ok(Value::Shared(book));
+            if self.frames_named.last().is_some_and(|body| body.globe.is_some()) {
+                return Ok(Value::Shared(self.standing_world()));
             }
         }
         if (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) && self.reading_now.is_none() {
@@ -28089,8 +28085,8 @@ impl<'a> Machine<'a> {
             Prim::WorldBook | Prim::HereBook => {
                 if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
                 if op == Prim::WorldBook {
-                    if let Some(book) = self.frames_named.last().and_then(|body| Self::explicit_globals(body)) {
-                        return Ok(Value::Shared(book));
+                    if self.frames_named.last().is_some_and(|body| body.globe.is_some()) {
+                        return Ok(Value::Shared(self.standing_world()));
                     }
                 }
                 if op == Prim::WorldBook && self.reading_now.is_none() {
