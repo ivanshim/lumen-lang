@@ -9708,6 +9708,20 @@ impl<'a> Engine<'a> {
                 self.fields_restore(o, entries);
                 args[2].clone()
             }
+            Builtin::Erase if args.len() == 2 && matches!(&args[0], Value::Fields(_)) => {
+                let Value::Fields(owner) = &args[0] else { unreachable!() };
+                if let Some(told) = self.unkeyable(&args[1]) { return Err(told); }
+                let key = self.special_key(&args[1])?;
+                let mut entries = self.fields_entries(owner);
+                let mut position = None;
+                for (at, (candidate, _)) in entries.iter().enumerate() {
+                    if self.special_keys_equal(candidate, &key)? { position = Some(at); break; }
+                }
+                let at = position.ok_or_else(|| self.key_absent(&args[1]))?;
+                entries.remove(at);
+                self.fields_restore(owner, entries);
+                args[0].clone()
+            }
             Builtin::Length if args.len() == 1 && matches!(&args[0], Value::Fields(_)) => {
                 let Value::Fields(o) = &args[0] else { unreachable!() };
                 Value::Small(self.fields_entries(o).len() as i64)
@@ -10482,7 +10496,9 @@ impl<'a> Engine<'a> {
             .filter(|(key, held)| !key.starts_with(['\0', '#']) && !matches!(held.contents(), Value::Blank))
             .map(|(key, held)| {
                 let value = match held {
-                    Value::Bond(cell) if module => cell.borrow().clone(),
+                    Value::Bond(cell) if module => {
+                        if matches!(&*cell.borrow(), Value::Array(_) | Value::Map(_)) { held.clone().held(false) } else { cell.borrow().clone() }
+                    },
                     _ => held.clone(),
                 };
                 (Self::attribute_name(key), value)
@@ -10509,6 +10525,10 @@ impl<'a> Engine<'a> {
     /// text go in among the thing's own fields, keys of any other kind
     /// are kept beside them under `\0keys`.
     pub(super) fn fields_restore(&mut self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
+        let entries = entries.into_iter().map(|(key, value)| {
+            let value = match value { Value::Array(_) | Value::Map(_) => value.held(false), other => other };
+            (key, value)
+        }).collect::<Vec<_>>();
         let owner = self.module_holding(&Value::Object(o.clone()));
         let module = owner.is_some();
         if let Some(owner) = owner {
@@ -10533,7 +10553,7 @@ impl<'a> Engine<'a> {
                 let value = replacement.map(|at| remaining.remove(at).1).unwrap_or(Value::Blank);
                 match held {
                     Value::Bond(cell) => {
-                        if !matches!(&value, Value::Bond(other) if Rc::ptr_eq(cell, other)) { *cell.borrow_mut() = value; }
+                        if !matches!(&value, Value::Bond(other) | Value::Collection(other, _) if Rc::ptr_eq(cell, other)) { *cell.borrow_mut() = value; }
                     }
                     _ => *held = value,
                 }
@@ -24706,8 +24726,32 @@ impl Engine<'_> {
         Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", Self::shown_kind(&path), Self::shown_kind(&answer)))
     }
 
-    fn import_path(&self, written: &str) -> Res<String> {
+    fn import_path(&mut self, written: &str) -> Res<String> {
         if !written.starts_with('.') { return Ok(written.to_string()); }
+        if let Some(at) = self.reading_in {
+            let book = self.text_books[at].outer.clone().unwrap_or_else(|| self.text_books[at].near.clone());
+            let package = self.book_get(&book, "__package__").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+            let mut prefix = match package.map(|value| value.contents()) {
+                Some(Value::Text(package)) => package.to_string(),
+                Some(Value::Null) | None => {
+                    let name = self.book_get(&book, "__name__").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                    let is_package = self.book_get(&book, "__path__").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_some();
+                    match name.map(|value| value.contents()) {
+                        Some(Value::Text(name)) if is_package => name.to_string(),
+                        Some(Value::Text(name)) => name.rsplit_once('.').map_or("", |(parent, _)| parent).to_owned(),
+                        _ => String::new(),
+                    }
+                }
+                _ => return Err("TypeError: package must be a string".into()),
+            };
+            if prefix.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+            let level = written.bytes().take_while(|byte| *byte == b'.').count();
+            for _ in 1..level {
+                prefix = prefix.rsplit_once('.').map(|(parent, _)| parent.to_owned()).ok_or_else(|| "ImportError: attempted relative import beyond top-level package".to_owned())?;
+            }
+            if written.len() > level { prefix.push('.'); prefix.push_str(&written[level..]); }
+            return Ok(prefix);
+        }
         let Some((_, owner)) = self.module_slots.get(&self.source) else {
             return Err(self.lang.import_relative_unready.clone());
         };
@@ -24790,7 +24834,15 @@ impl Engine<'_> {
             },
             None => match self.module_sources.get(path).filter(|_| parent.is_none() || registering_alias || self.lang.module_path.is_none()).cloned() {
                 Some(source) => (source, self.library_module_file(path)),
-                None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
+                None => {
+                    if let Some(Value::Object(importlib)) = self.modules.get("importlib") {
+                        let helper = importlib.fields.borrow().iter().find(|(key, _)| key == "_native_import").map(|(_, value)| value.contents());
+                        if let Some(helper) = helper.filter(|value| !matches!(value, Value::Blank | Value::Gap)) {
+                            return self.class_apply(helper, vec![Value::text(path)]);
+                        }
+                    }
+                    return Err(Self::named_fault(&self.lang.import_missing, path).into());
+                },
             },
         };
         if self.lang.module_path.is_none() {
@@ -24910,7 +24962,14 @@ impl Engine<'_> {
         self.importing.insert(path.to_string());
         self.refresh_module_cache(path);
         let saved_depth = self.data.len();
-        let result = self.invoke(&program, Vec::new());
+        let descriptor = self.modules.get("importlib").and_then(|entry| match entry {
+            Value::Object(space) => space.fields.borrow().iter().find(|(key, _)| key == "_native_spec").map(|(_, value)| value.contents()),
+            _ => None,
+        }).filter(|value| !matches!(value, Value::Blank | Value::Gap));
+        let result = match descriptor {
+            Some(function) => self.class_apply(function, vec![module.clone()]).and_then(|_| self.invoke(&program, Vec::new())),
+            None => self.invoke(&program, Vec::new()),
+        };
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);

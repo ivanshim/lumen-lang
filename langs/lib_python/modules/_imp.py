@@ -64,3 +64,7 @@ class _NativeLoader:
     def exec_module(module):
         # The source-backed native create operation initializes the namespace.
         pass
+
+# This interpreter carries source modules, with no frozen code table.
+def find_frozen(name, withdata=False):
+    return None

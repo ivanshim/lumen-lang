@@ -4054,7 +4054,7 @@ impl<'a> Engine<'a> {
                 }
                 if self.module_holding(&subject).is_some() {
                     let getter = o.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, value)| value.contents());
-                    if let Some(getter) = getter { return self.class_apply(getter, vec![Value::text(name)]).map(|value| value.contents()); }
+                    if let Some(getter) = getter.filter(|value| !matches!(value, Value::Blank | Value::Gap)) { return self.class_apply(getter, vec![Value::text(name)]).map(|value| value.contents()); }
                 }
                 // A native base's reduction slots must not be replaced by
                 // the root's empty-argument reconstruction of an ordinary object.
@@ -4890,6 +4890,10 @@ impl<'a> Engine<'a> {
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
                 let module=self.module_holding(&subject).is_some();
+                let value = if module { value.map(|item| {
+                    let same_binding = matches!(&item, Value::Bond(given) if o.fields.borrow().iter().any(|(key, held)| key == name && matches!(held, Value::Bond(existing) if Rc::ptr_eq(given, existing))));
+                    if same_binding { item } else { item.held(false) }
+                }) } else { value };
                 if module { self.module_member_mirror(o, name, &value); }
                 // A name a module takes from outside that it never bound
                 // for itself becomes one of its own globals, standing in

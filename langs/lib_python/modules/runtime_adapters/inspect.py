@@ -134,3 +134,20 @@ def _unwrap_coroutine_callable(func):
             func = func.func
         else:
             return func
+
+
+# Identify module filenames using the installed loader suffixes.
+import os
+import importlib.machinery
+
+def getmodulename(path):
+    """Return the module name for a given file, or None."""
+    fname = os.path.basename(path)
+    # Check for paths that look like an actual module file
+    suffixes = [(-len(suffix), suffix)
+                    for suffix in importlib.machinery.all_suffixes()]
+    suffixes.sort() # try longest suffixes first, in case they overlap
+    for neglen, suffix in suffixes:
+        if fname.endswith(suffix):
+            return fname[:neglen]
+    return None

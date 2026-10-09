@@ -15138,7 +15138,9 @@ impl<'a> Machine<'a> {
             .map(|(name, held)| {
                 let mut value = held.clone();
                 if namespace {
-                    if let Value::Shared(slot) = held { value = slot.borrow().clone(); }
+                    if let Value::Shared(slot) = held {
+                        value = if matches!(&*slot.borrow(), Value::Vector(_) | Value::Dict(_)) { held.clone().keep(false) } else { slot.borrow().clone() };
+                    }
                 }
                 (Self::attribute_key(name), value)
             }).collect();
@@ -15159,7 +15161,10 @@ impl<'a> Machine<'a> {
     /// Write entries back into a thing's dictionary: names written as
     /// text go in among the thing's own holds, keys of any other kind
     /// are kept beside them under `\0keys`.
-    pub(super) fn attribute_restore(&mut self, t: &Rc<Thing>, entries: Vec<(Value, Value)>) {
+    pub(super) fn attribute_restore(&mut self, t: &Rc<Thing>, mut entries: Vec<(Value, Value)>) {
+        for (_, item) in &mut entries {
+            if matches!(item, Value::Vector(_) | Value::Dict(_)) { *item = item.clone().keep(false); }
+        }
         if let Some(owner) = self.namespace_holding(&Value::Thing(t.clone())) {
             if self.rules.names_shadow_builtins {
                 if self.rules.words_ext_system_names_module.first().is_some_and(|word| word == &owner) {
@@ -15181,7 +15186,7 @@ impl<'a> Machine<'a> {
                 let position = pending.iter().position(|(label, _)| matches!(label, Value::Text(label) if label.as_ref() == key.as_str()));
                 let next = match position { Some(at) => pending.remove(at).1, None => Value::Unset };
                 if let Value::Shared(cell) = slot {
-                    let unchanged = matches!(&next, Value::Shared(other) if Rc::ptr_eq(cell, other));
+                    let unchanged = matches!(&next, Value::Shared(other) | Value::Mutable(other, _) if Rc::ptr_eq(cell, other));
                     if !unchanged { *cell.borrow_mut() = next; }
                 } else { *slot = next; }
             }
@@ -25112,9 +25117,30 @@ impl Machine<'_> {
 
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
-    fn qualified_import(&self, name: &str) -> Result<String, String> {
+    fn qualified_import(&mut self, name: &str) -> Result<String, String> {
         let levels = name.bytes().take_while(|&b| b == b'.').count();
         if levels == 0 { return Ok(name.to_owned()); }
+        if let Some(which) = self.reading_now {
+            let global = self.readings[which].outer.as_ref().unwrap_or(&self.readings[which].near).clone();
+            let value = self.booked_get(&global, "__package__").map_err(|escaped| self.carried_native_fault(escaped))?;
+            let mut parts = match value.map(|item| item.settled()) {
+                Some(Value::Text(package)) => package.split('.').map(str::to_owned).collect::<Vec<_>>(),
+                None | Some(Value::Nil) => {
+                    let value = self.booked_get(&global, "__name__").map_err(|escaped| self.carried_native_fault(escaped))?;
+                    let package = self.booked_get(&global, "__path__").map_err(|escaped| self.carried_native_fault(escaped))?.is_some();
+                    let mut words = match value.map(|item| item.settled()) { Some(Value::Text(word)) => word.split('.').map(str::to_owned).collect::<Vec<_>>(), _ => Vec::new() };
+                    if !package { words.pop(); }
+                    words
+                }
+                _ => return Err(String::from("TypeError: package must be a string")),
+            };
+            if parts.is_empty() || parts[0].is_empty() { return Err(String::from("ImportError: attempted relative import with no known parent package")); }
+            if parts.len() < levels { return Err(String::from("ImportError: attempted relative import beyond top-level package")); }
+            parts.truncate(parts.len() + 1 - levels);
+            let mut full = parts.join(".");
+            if let Some(tail) = name.get(levels..).filter(|tail| !tail.is_empty()) { full.push('.'); full.push_str(tail); }
+            return Ok(full);
+        }
         let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_owned())?;
         let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
         let parent = if package { caller.as_str() } else { caller.rsplit_once('.').map_or("", |pair| pair.0) };
@@ -25203,10 +25229,20 @@ impl Machine<'_> {
                 (text, Some(location.clone()))
             },
             None => {
-                let source = self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
-                    let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
-                    format!("{before}{path}{after}")
-                })?;
+                let source = match self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned() {
+                    Some(source) => source,
+                    None => {
+                        let fallback = match self.imported.get("importlib") {
+                            Some(Value::Thing(space)) => space.holds.borrow().iter().find_map(|(key, item)| (key == "_native_import").then(|| item.settled())),
+                            _ => None,
+                        };
+                        if let Some(callable) = fallback.filter(|item| !matches!(item, Value::Unset)) {
+                            return self.apply_class_member(callable, vec![Value::text(path)]).map_err(|escaped| self.carried_native_fault(escaped));
+                        }
+                        let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+                        return Err(format!("{before}{path}{after}"));
+                    }
+                };
                 (Rc::from(source.as_str()), self.library_module_file(path))
             },
         };
@@ -25339,7 +25375,15 @@ impl Machine<'_> {
         self.written_in = Rc::from(filename);
         self.frames_named.push(built.program.clone());
         let caller_reading = self.reading_now.take();
-        let stopped = self.value_of(&built.program.body, &scope);
+        let metadata = match self.imported.get("importlib") {
+            Some(Value::Thing(space)) => space.holds.borrow().iter().find_map(|(key, item)| (key == "_native_spec").then(|| item.settled())),
+            _ => None,
+        };
+        let stopped = if let Some(describe) = metadata.filter(|item| !matches!(item, Value::Unset)) {
+            self.apply_class_member(describe, vec![value.clone()]).and_then(|_| self.value_of(&built.program.body, &scope))
+        } else {
+            self.value_of(&built.program.body, &scope)
+        };
         let stopped = self.traced_result(stopped);
         self.reading_now = caller_reading;
         self.frames_named.pop();
