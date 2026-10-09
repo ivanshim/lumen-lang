@@ -24,7 +24,8 @@
     "codecs": "runtime_adapters/codecs.py",
     "marshal": "runtime_adapters/marshal.py",
     "abc": "runtime_adapters/abc.py",
-    "zipimport": "runtime_adapters/zipimport.py"
+    "zipimport": "runtime_adapters/zipimport.py",
+    "test.support": "runtime_adapters/code_test_support.py"
   },
   "data": {
     "_codec_sjis": {

@@ -52,6 +52,7 @@ pub enum Ghost {
     Routine(Weak<Routine>),
     Method(Weak<Routine>, Weak<Thing>, Weak<crate::data::MethodMark>),
     WrappedMethod(Weak<Vec<Value>>),
+    Code(Weak<Vec<Value>>),
     Lasting(Value),
 }
 
@@ -69,6 +70,7 @@ impl Ghost {
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
             Ghost::Method(p, t, identity) => Some(Value::Method(p.upgrade()?, t.upgrade()?, identity.upgrade()?)),
             Ghost::WrappedMethod(parts) => Some(Value::Wrapped(3, parts.upgrade()?.into())),
+            Ghost::Code(parts) => Some(Value::Wrapped(7, parts.upgrade()?.into())),
             Ghost::Lasting(value) => Some(value.clone()),
         }
     }
@@ -161,7 +163,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
     let in_group = |ghost: &Ghost| -> bool {
         match ghost {
             Ghost::StaticKind(_) => false,
-            Ghost::WrappedMethod(parts) => lost.contains(&(parts.as_ptr() as usize)),
+            Ghost::WrappedMethod(parts) | Ghost::Code(parts) => lost.contains(&(parts.as_ptr() as usize)),
             Ghost::Cell(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Thing(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Blueprint(target) => lost.contains(&(target.as_ptr() as usize)),
@@ -194,7 +196,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             false
         });
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
-        ghost_set(G_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
+        ghost_set(G_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_))));
         notices.into_iter().rev().collect()
     }).unwrap_or_default()
 }
@@ -245,7 +247,7 @@ pub fn stirred() -> bool {
     let flags = GHOST_STATE.try_with(|s| s.get()).unwrap_or(0);
     if flags == 0 { return false; }
     if flags & G_POLL != 0 {
-        let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
+        let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_)) && listener.departed()))).unwrap_or(false);
         if gone_method {
             // The poll found work. Attend now rather than trust the state
             // read before it, since raising the lost flag happened after
@@ -309,7 +311,7 @@ fn watch_ghost(ghost: &Ghost) {
         // address the value itself does not carry, so their kinds
         // keep the broad check.
         Ghost::Cell(_) | Ghost::Walk(_) | Ghost::Set(_) => { let _ = UNHOOKED.try_with(|u| u.set(true)); }
-        Ghost::WrappedMethod(_) | Ghost::Lasting(_) | Ghost::StaticKind(_) => {}
+        Ghost::WrappedMethod(_) | Ghost::Code(_) | Ghost::Lasting(_) | Ghost::StaticKind(_) => {}
     }
 }
 
@@ -397,7 +399,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
-            ghost_set(G_POLL, still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_))));
+            ghost_set(G_POLL, still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_))));
             still.reverse();
             *all = still;
         });
@@ -422,6 +424,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Routine(p) => Ghost::Routine(Rc::downgrade(p)),
         Value::Method(p, t, identity) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t), Rc::downgrade(identity)),
         Value::Wrapped(3, parts) => Ghost::WrappedMethod(Rc::downgrade(parts)),
+        Value::Wrapped(7, parts) => Ghost::Code(Rc::downgrade(parts)),
         _ => return None,
     })
 }
@@ -457,7 +460,7 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
-        if matches!(held.ghost, Ghost::WrappedMethod(_)) { ghost_raise(G_POLL); }
+        if matches!(held.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_)) { ghost_raise(G_POLL); }
     }
     Value::Dim(held)
 }
