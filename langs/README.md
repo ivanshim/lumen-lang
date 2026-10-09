@@ -1857,6 +1857,8 @@ only. The extension labels so far, all from PHP:
   holds words, the clause is read whole but reaching the attempt stops
   with them; where it is empty and the group members are spelled under
   `ext.builtin.exceptions.group.members`, the clauses part the group.
+  `ext.stmt.catch.group.forbidden` gives the words said when a grouped
+  clause names a class of a gatherer, which it may not take.
   `ext.stmt.catch.amiss` gives the complaint for a try mixing plain and
   grouped clauses, or a grouped clause naming no class, told when the
   program is read.
@@ -3501,7 +3503,10 @@ only. The extension labels so far, all from PHP:
   becomes an ordinary group. `.group.split` parts a group by a class,
   a tuple of classes or a truth function into the members taken and the
   rest, keeping nested groups in shape and carrying notes, cause, the
-  hushing flag and the traceback onto both halves; `.group.subgroup`
+  hushing flag and the traceback onto both halves; `.group.split.tuple`
+  and `.group.split.size` hold the words said when a group's own `split`
+  answers with something that is no tuple, or a tuple too short to be a
+  pair; `.group.subgroup`
   answers with the first half alone; `.group.derive` makes a group of
   the same message from another sequence of members. `.group.summary`
   holds the words written after a group's message when it is shown:
@@ -3611,6 +3616,9 @@ only. The extension labels so far, all from PHP:
   `.make` allocates and interns native weak references; `.get` also exposes
   their callback state, cached hash, referent equality, reference list,
   proxy dereference and conditional dead-reference dictionary removal.
+  Its allocator, initializer and operation modes supply native reference
+  constructor, hash and comparison slots with argument validation, subtype
+  checks and descriptor binding.
   The last finds the
   rounds of values holding one another that nothing else reaches, runs
   their finalisers, breaks them so that counting frees them, and answers
@@ -4539,8 +4547,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
@@ -4661,6 +4669,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.group.members` | - | - | `exceptions` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.group.message` | - | - | `message` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.group.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.split.size` | - | - | `TypeError: {}.split must return a 2-tuple, got tuple of size {}` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.split.tuple` | - | - | `TypeError: {}.split must return a tuple, not {}` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.group.subgroup` | - | - | `subgroup` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.group.summary` | - | - | ` (` ` sub-exception)` ` sub-exceptions)` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.name` | - | - | `name` | - | - | - | - | - | - | - |
@@ -4841,6 +4851,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.multibyte` | - | - | `__multibyte_native` | - | - | - | - | - | - | - |
 | `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
@@ -5342,6 +5353,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.amiss` | - | - | `SyntaxError: cannot have both 'except' and 'except*' on the same 'try'` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.group.forbidden` | - | - | `TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group.unsupported` | - | - | - | - | - | - | - | - | - | - |
 | `ext.stmt.catch.invalid` | - | - | `catching classes that do not inherit from BaseException is not allowed` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
@@ -6151,3 +6163,4 @@ wider than CPython's small-integer cache. Runtime adapter frames can retain more
 heap owners than a direct CPython builtin call; those owners are reported, without
 subtracting an adapter offset. Native dispatch transfers its argument vector to
 the primitive instead of retaining a second copy while the primitive runs.
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.

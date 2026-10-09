@@ -26,7 +26,8 @@
     "abc": "runtime_adapters/abc.py",
     "_py_warnings": "runtime_adapters/warnings.py",
     "importlib._bootstrap": "runtime_adapters/importlib_bootstrap.py",
-    "unittest": "runtime_adapters/unittest_bindings.py"
+    "unittest": "runtime_adapters/unittest_bindings.py",
+    "codecs": "runtime_adapters/codecs.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",

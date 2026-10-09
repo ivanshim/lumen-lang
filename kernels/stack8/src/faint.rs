@@ -20,6 +20,25 @@ use std::rc::{Rc, Weak};
 use crate::code::Routine;
 use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance, Members, Phase, Value};
 
+thread_local! {
+    static INTERNED_FAMILIES: RefCell<Vec<Weak<Class>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(super) fn register_family(class: &Rc<Class>) {
+    INTERNED_FAMILIES.with(|families| {
+        let mut known = families.borrow_mut();
+        known.retain(|family| family.strong_count() != 0);
+        if !known.iter().any(|family| family.as_ptr() == Rc::as_ptr(class)) {
+            known.push(Rc::downgrade(class));
+        }
+    });
+}
+
+pub(super) fn family_interns(class: &Rc<Class>) -> bool {
+    INTERNED_FAMILIES.with(|known| known.borrow().iter().any(|family|
+        family.as_ptr() == Rc::as_ptr(class) && family.strong_count() != 0))
+}
+
 /// What a weak hold points at: one of the kinds a program may hold weakly.
 #[derive(Debug, Clone)]
 pub enum Hold {
@@ -119,6 +138,20 @@ impl Faint {
     pub fn gone(&self) -> bool { self.cleared.get() || self.hold.gone() }
 }
 
+#[derive(Eq, Hash, PartialEq)]
+enum WeakTargetKey {
+    Object(usize),
+    Type(usize),
+    Builtin(Rc<str>),
+}
+
+fn weak_target_key(value: &Value) -> Option<WeakTargetKey> {
+    if let Value::Native(_, word) = value { return Some(WeakTargetKey::Builtin(word.clone())); }
+    if let Value::Class(kind) = value { return Some(WeakTargetKey::Type(Rc::as_ptr(kind) as usize)); }
+    if let Value::Object(instance) = value { return Some(WeakTargetKey::Object(Rc::as_ptr(instance) as usize)); }
+    None
+}
+
 // Cyclic garbage loses its weak links before finalizers can resurrect it.
 
 thread_local! {
@@ -134,6 +167,8 @@ thread_local! {
     static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
     static OBSERVED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static TARGET_REFERENCES: RefCell<HashMap<WeakTargetKey, Vec<Weak<Faint>>>> = RefCell::new(HashMap::new());
+    static TARGET_PRUNE_AT: Cell<usize> = const { Cell::new(64) };
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
     static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -416,6 +451,23 @@ pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
         all.retain(|r| r.strong_count() != 0);
         all.push(Rc::downgrade(&faint));
     });
+    if let Some(key) = faint.revive().and_then(|value| weak_target_key(&value)) {
+        TARGET_REFERENCES.with(|inventory| {
+            let mut inventory = inventory.borrow_mut();
+            TARGET_PRUNE_AT.with(|limit| {
+                if inventory.len() >= limit.get() {
+                    inventory.retain(|_, bucket| {
+                        bucket.retain(|handle| handle.strong_count() > 0);
+                        !bucket.is_empty()
+                    });
+                    limit.set(inventory.len().saturating_mul(2).max(64));
+                }
+            });
+            let bucket = inventory.entry(key).or_default();
+            bucket.retain(|handle| handle.strong_count() > 0);
+            bucket.push(Rc::downgrade(&faint));
+        });
+    }
     if faint.told.borrow().is_some() {
         let _ = OBSERVED.try_with(|addresses| observe(&faint, &mut addresses.borrow_mut()));
         let _ = WATCHED.try_with(|w| w.borrow_mut().push(faint.clone()));
@@ -861,6 +913,55 @@ impl Graph {
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
     walk.try_borrow().map_or(false, |g| (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some())
+}
+
+/// Compare weak targets by identity, including classes and builtin types.
+fn same_target(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
+        (Value::Native(a, x), Value::Native(b, y)) => a == b && x == y,
+        (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a, b),
+        (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
+        (Value::SortOf(a), Value::SortOf(b)) => a == b,
+        _ => left.same_place(right),
+    }
+}
+
+/// Find a callback-free reference without collecting unrelated references.
+pub fn reusable(object: &Value, class: &Rc<Class>) -> Option<Value> {
+    let object = object.contents();
+    if let Some(key) = weak_target_key(&object) {
+        return TARGET_REFERENCES.with(|inventory| {
+            let inventory = inventory.borrow();
+            inventory.get(&key)?.iter().rev().find_map(|handle| {
+                let reference = handle.upgrade()?;
+                if reference.cleared.get() || reference.told.borrow().is_some() { return None; }
+                if !same_target(&reference.revive()?, &object) { return None; }
+                let instance = reference.bearer.upgrade()?;
+                Rc::ptr_eq(&instance.class_now(), class).then_some(Value::Object(instance))
+            })
+        });
+    }
+    REFERENCES.with(|all| {
+        let found = all.borrow().iter().rev().find_map(|weak| {
+            let reference = weak.upgrade()?;
+            if reference.cleared.get() || reference.told.borrow().is_some() { return None; }
+            // Compare pointer-backed targets before upgrading unrelated bearers.
+            let matches = match &reference.hold {
+                Hold::Class(saved) => match &object { Value::Class(live) => saved.as_ptr() == Rc::as_ptr(live), _ => false },
+                Hold::Object(saved) => match &object { Value::Object(live) => saved.as_ptr() == Rc::as_ptr(live), _ => false },
+                Hold::Native(operation, spelling) => matches!(&object, Value::Native(op, word) if operation == op && spelling == word),
+                _ => same_target(&reference.revive()?, &object),
+            };
+            if !matches { return None; }
+            let bearer = reference.bearer.upgrade()?;
+            if !Rc::ptr_eq(&bearer.class_now(), class) { return None; }
+            Some(Value::Object(bearer))
+        });
+        // Dead registry entries cannot supply a reference on a later lookup.
+        if found.is_none() { all.borrow_mut().retain(|entry| entry.strong_count() != 0); }
+        found
+    })
 }
 
 /// References in CPython list order: the shared plain reference first,
