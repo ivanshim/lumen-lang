@@ -17593,23 +17593,6 @@ impl<'a> Engine<'a> {
             }
             return Err(self.lang.method_errors["arguments"].clone());
         }
-        if operation == "bytes_fromhex" || operation == "bytearray_fromhex" {
-            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
-            let spelling = match args.as_slice() {
-                [Value::Text(text)] => text.to_string(),
-                [Value::Bytes(row, ..)] => row.borrow().iter().copied().map(char::from).collect(),
-                [other] => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.core_kind())),
-                _ => return Err(self.lang.method_errors["arguments"].clone()),
-            };
-            let parsed = self.byte_make(self.byte_unhex(&spelling)?, operation == "bytearray_fromhex");
-            if let Value::Class(class) = receiver {
-                return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
-                    Fault::Note(message) => message,
-                    raised => { self.carried = Some(raised); String::new() },
-                });
-            }
-            return Err(self.lang.method_errors["arguments"].clone());
-        }
         if operation == "integer_size" {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             let unbound = matches!(receiver, Value::Native(..) | Value::Class(_));

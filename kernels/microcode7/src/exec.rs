@@ -10481,20 +10481,6 @@ impl<'a> Machine<'a> {
                 _ => Err(self.method_fault("arguments").into()),
             };
         }
-        if name == "bytes_fromhex" || name == "bytearray_fromhex" {
-            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
-            let spelling = match &arguments[0] {
-                Value::Text(text) => text.to_string(),
-                Value::Octets { cell, .. } => cell.borrow().iter().copied().map(char::from).collect(),
-                other => return Err(format!("TypeError: fromhex() argument must be str or bytes-like, not {}", other.kind_word()).into()),
-            };
-            let row = self.octets_from_hex(&spelling).map_err(Escape::from)?;
-            let made = self.octets(row, name == "bytearray_fromhex");
-            return match receiver {
-                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![made]),
-                _ => Err(self.method_fault("arguments").into()),
-            };
-        }
         if name == "integer_size" {
             let loose = matches!(receiver, Value::Blueprint(_) | Value::Intrinsic(..));
             if !keywords.is_empty() || arguments.len() != usize::from(loose) { return Err(self.method_fault("arguments").into()); }

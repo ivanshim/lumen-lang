@@ -3391,7 +3391,9 @@ impl<'a> Engine<'a> {
                             let descriptor = self.class_value(meta, name).filter(|member| self.takes_writes(member) && (matches!(member, Value::Adapter(w) if matches!(w.0, 6 | 16 | 28)) || self.descriptor_hook(member, "descriptor.get").is_some()));
                             if let Some(descriptor) = descriptor { let answer = self.bind_class_value(descriptor, Some(subject.clone()), meta.clone()); return self.finish_attribute_read(&subject, name, plain, answer); }
                         }
-                        if let Some(member) = self.class_value(class, name) { let answer = self.bind_class_value(member, None, class.clone()); return self.finish_attribute_read(&subject, name, plain, answer); }
+                        if !(matches!(name, "fromhex" | "maketrans") && matches!(Self::kind_beneath(class).as_deref(), Some("bytes" | "bytearray"))) {
+                            if let Some(member) = self.class_value(class, name) { let answer = self.bind_class_value(member, None, class.clone()); return self.finish_attribute_read(&subject, name, plain, answer); }
+                        }
                     }
                 }
             }
@@ -4037,11 +4039,6 @@ impl<'a> Engine<'a> {
                 }
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "__getformat__" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), String::from("float_getformat")))));
-                }
-                if name == "fromhex" {
-                    if let Some(kind) = Self::kind_beneath(c).filter(|kind| matches!(kind.as_str(), "bytes" | "bytearray")) {
-                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), format!("{kind}_fromhex")))));
-                    }
                 }
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));

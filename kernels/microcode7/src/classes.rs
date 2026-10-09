@@ -3913,8 +3913,10 @@ impl<'a> Machine<'a> {
                                 let sought = self.member_binding(entry, Some(value.clone()), meta.clone()); return self.complete_member_read(&value, key, direct, sought);
                             }
                         }
-                        if let Some(entry) = self.inherited_entry(kind, key) {
+                        if !(matches!(key, "fromhex" | "maketrans") && matches!(Self::native_beneath(kind).as_deref(), Some("bytes" | "bytearray"))) {
+                            if let Some(entry) = self.inherited_entry(kind, key) {
                             let sought = self.member_binding(entry, None, kind.clone()); return self.complete_member_read(&value, key, direct, sought);
+                        }
                         }
                     }
                 }
@@ -4604,12 +4606,6 @@ impl<'a> Machine<'a> {
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "__getformat__" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_getformat")));
-            }
-            if key == "fromhex" {
-                let base = Self::native_beneath(b);
-                if base.as_deref() == Some("bytes") || base.as_deref() == Some("bytearray") {
-                    return Ok(Value::Member(Rc::new(value.clone()), format!("{}_fromhex", base.unwrap())));
-                }
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
