@@ -922,6 +922,8 @@ fn words_of(table: &Table) -> Names<'_> {
     }
 }
 
+include!("native_code.rs");
+
 impl<'a> Machine<'a> {
 
     fn given_faults(table: &Table, ancestor: &Rc<Blueprint>) -> HashMap<String, Value> {
@@ -6796,6 +6798,14 @@ impl<'a> Machine<'a> {
                 Err(Escape::Thrown(raised))
             }
             Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
+                let disabled = self.frames_named.last().is_some_and(|routine|
+                    matches!(&routine.encoded_handlers, Some(Value::Octets { cell, .. }) if cell.borrow().is_empty()));
+                if disabled {
+                    let result = self.value_of(body, frame)?;
+                    if let Some(otherwise) = otherwise { self.value_of(otherwise, frame)?; }
+                    if let Some(last) = last { self.value_of(last, frame)?; }
+                    return Ok(result);
+                }
                 let context_line = self.row;
                 let context_extent = self.extent;
                 if self.rules.has_any_ext_stmt_catch_group_unsupported && clauses.iter().any(|part| part.grouped) {
@@ -10068,6 +10078,14 @@ impl<'a> Machine<'a> {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     if !arguments.is_empty() { return Err(String::from("TypeError: code.replace() takes no positional arguments").into()); }
                     let mut holds = item.holds.borrow().clone();
+                    let snapshot = holds.iter().find_map(|(word, item)| (word == "\0native_code").then(|| item.clone()));
+                    if keywords.iter().any(|(word, _)| word != "co_consts") {
+                        if let Some(view) = &snapshot { return self.value_member(view, name, arguments, keywords); }
+                    }
+                    if let Some(view) = snapshot {
+                        let changed = self.value_member(&view, name, Vec::new(), keywords.clone())?;
+                        holds.iter_mut().find(|(word, _)| word == "\0native_code").expect("native metadata").1 = changed;
+                    }
                     for (keyword, value) in keywords {
                         match (keyword.as_str(), value.settled()) {
                             ("co_consts", replacement @ Value::Tuple(_)) => {
@@ -10145,7 +10163,24 @@ impl<'a> Machine<'a> {
                         if !revised.starts_with(&body.referenced) { return Err(String::from("NotImplementedError: renaming native global and attribute operands is unavailable").into()); }
                         copy.referenced = revised;
                     }
-                    ("co_code" | "co_exceptiontable", _) => return Err(String::from("NotImplementedError: replacing CPython bytecode or exception tables is unavailable").into()),
+                    ("co_code", encoded @ Value::Octets { .. }) => {
+                        if encoded.equals(&self.octets(copy.body_image(), false)) { continue; }
+                        let loaded = self.load_code_image(&encoded)?;
+                        let selected = image_body(&loaded)?;
+                        copy.body = selected.with_literals(&copy.literals)?.body.clone();
+                        copy.lexical_origin = selected.lexical_origin.clone();
+                        copy.body_boundary = selected.body_boundary;
+                        copy.compilation_entry = selected.compilation_entry.clone();
+                        copy.encoded_body = selected.encoded_body.clone();
+                    }
+                    ("co_exceptiontable", handlers @ Value::Octets { .. }) => {
+                        let Value::Octets { cell, .. } = &handlers else { unreachable!() };
+                        if *cell.borrow() == self.code_handler_image(&copy) { continue; }
+                        if !cell.borrow().is_empty() {
+                            return Err(String::from("ValueError: unsupported native exception table layout").into());
+                        }
+                        copy.encoded_handlers = Some(handlers);
+                    }
                     _ => return Err(self.class_unready()),
                 }
             }
@@ -12604,6 +12639,9 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        if let Some(operation) = program.invalid_image_operation() {
+            return Err(Escape::Error(format!("SystemError: unknown opcode {operation}")));
+        }
         let inherited = self.reading_now;
         if program.globe.is_none() { self.reading_now = None; }
         let answer = self.drive_body(program, frame);
@@ -27837,6 +27875,12 @@ impl<'a> Machine<'a> {
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1)), ("co_optimize".to_owned(), Value::Small(settling))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
+        let mut description = built.program.as_ref().clone();
+        description.ident = String::from("<module>");
+        description.qualification = String::from("<module>");
+        description.declared_on = 1;
+        description.flags = bits;
+        holds.push((String::from("\0native_code"), Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(description))]).into())));
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -27905,7 +27949,13 @@ impl<'a> Machine<'a> {
                         if !matches!(requested, None | Some(Value::Nil)) {
                             return Err("TypeError: cannot use a closure with this code object".to_owned());
                         }
-                        return self.invoke(program.clone(), self.outermost.clone(), Vec::new())
+                        if program.compilation_entry.0 == 0 {
+                            self.perform_native_root(program, v)?;
+                            return Ok(Value::Nil);
+                        }
+                        let mut bound = program.as_ref().clone();
+                        bound.globe = v.get(1).filter(|value| !matches!(value.settled(), Value::Nil)).cloned();
+                        return self.invoke(Rc::new(bound), self.outermost.clone(), Vec::new())
                             .map(|_| Value::Nil).map_err(|escape| self.carried_native_fault(escape));
                     }
                     let Some(Value::Tuple(cells)) = requested else {
@@ -29584,6 +29634,8 @@ impl Machine<'_> {
                         program.body.instruction_listing(&mut 0, (program.declared_on, u32::MAX, u32::MAX, u32::MAX), &mut rows);
                         Ok(Value::tuple(rows))
                     }
+                    [Value::Small(3), target] => self.analyze_code_image(target),
+                    [Value::Small(4), encoded] => self.load_code_image(encoded),
                     _ => Err("TypeError: invalid tracing operation".into()),
                 }
             }

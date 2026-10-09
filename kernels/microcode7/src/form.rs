@@ -849,6 +849,9 @@ pub struct Routine {
     pub lineless: bool,
     pub locations: Option<Value>,
     pub stack_bound: Option<i64>,
+    pub encoded_body: Option<Value>,
+    pub compilation_entry: (usize, u32, i64),
+    pub encoded_handlers: Option<Value>,
     pub doc: Option<String>,
     pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.
@@ -1203,5 +1206,23 @@ impl Routine {
             }
         }
         Some(Value::Nil)
+    }
+}
+
+impl Routine {
+    // A native image has a reconstruction opcode followed by scanner records.
+    pub(crate) fn body_image(&self) -> Vec<u8> {
+        match &self.encoded_body {
+            Some(Value::Octets { cell, .. }) => cell.borrow().to_vec(),
+            _ => {
+                let serialized = serde_json::json!([&*self.lexical_origin, self.body_boundary, &self.compilation_entry]).to_string();
+                std::iter::once(1).chain(serialized.into_bytes()).collect()
+            }
+        }
+    }
+
+    pub(crate) fn invalid_image_operation(&self) -> Option<u8> {
+        let Some(Value::Octets { cell, .. }) = &self.encoded_body else { return None };
+        match cell.borrow().first() { Some(1) | None => None, Some(other) => Some(*other) }
     }
 }

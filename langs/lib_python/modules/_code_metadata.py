@@ -61,7 +61,7 @@ def validate_replace(code, changes):
         _layout(*values)
     return checked
 
-# Check constructor inputs, then refuse the unavailable bytecode machine.
+# Rebuild native scanner images and then apply the supplied code layout.
 def construct(*args):
     if len(args) < 16:
         raise TypeError('code expected at least 16 arguments, got ' + str(len(args)))
@@ -75,7 +75,9 @@ def construct(*args):
     _layout(values[0], values[1], values[2], values[3], values[5], values[9])
     if values[4] < 0:
         raise SystemError('Objects/codeobject.c:465: bad argument to internal function')
-    raise NotImplementedError('constructing code from CPython bytecode is unavailable')
+    values.extend([()] * (18 - len(values)))
+    code = __trace_native__(4, values[6])
+    return code.replace(**dict(zip(order, values)))
 
 # Provide the unbound replacement protocol used by copy.replace.
 def replace(code, /, **changes):

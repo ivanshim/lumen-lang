@@ -352,11 +352,21 @@ missing line or column coordinates remain `None`. The location table uses
 Python's documented encoding, including replacement tables and deprecated
 `co_lnotab` warnings.
 
-The opcode catalogue supplies release names and predicates for imports; it
-does not supply bytecode. Reading or replacing CPython bytecode and exception
-tables, constructing runnable code from bytecode, and reading an unrecorded
-operand-stack bound raise `NotImplementedError`. Native closure/local slot
-removal and global-operand renaming remain unavailable. Code comparison keeps
-native compilation provenance, so independent compilations are not yet
-compared by canonical instruction content. C-API hooks remain absent; the
-upstream decorators determine skips and unguarded requests fail normally.
+The opcode catalogue supplies release names and predicates for imports.
+`co_code` is a native compiler image: reconstruction opcode 1 followed by the
+retained scanner records, body boundary and original scope identity. The constructor and
+replacement paths rebuild actual native instructions without evaluating the
+source's top level. Unknown image operations raise `SystemError` when called.
+This format does not claim CPython bytecode compatibility. `co_stacksize` is a
+conservative native operand-storage bound; an explicit replacement is retained.
+`co_exceptiontable` exposes retained native handler layouts. An unchanged table
+can be reconstructed, and an empty replacement removes exception handlers;
+arbitrary new handler layouts remain unsupported.
+
+The four code-analysis hooks in `_testinternalcapi` derive return behavior,
+local kinds, variable counts and statelessness from native instructions,
+calling layouts, closures and the supplied namespaces. Native closure/local
+slot removal and global-operand renaming remain unavailable. Code comparison
+keeps native compilation provenance, so independent compilations are not yet
+compared by canonical instruction content. Upstream decorators determine the
+remaining CPython-specific skips.

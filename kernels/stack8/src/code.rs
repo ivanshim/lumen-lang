@@ -948,6 +948,9 @@ pub struct Routine {
     pub lineless: bool,
     pub location_bytes: Option<Value>,
     pub declared_stack: Option<i64>,
+    pub instruction_image: Option<Value>,
+    pub image_origin: (usize, u32, i64),
+    pub exception_image: Option<Value>,
     pub generator: bool,
     pub doc: Option<String>,
     pub qualified: String,
@@ -1179,5 +1182,40 @@ impl Routine {
             offset += length;
         }
         Some(None)
+    }
+}
+
+impl Routine {
+    // Opcode 1 rebuilds a native routine from scanner records and its body boundary.
+    // This is a native image, not the CPython instruction encoding.
+    pub(crate) fn native_image(&self) -> Vec<u8> {
+        if let Some(Value::Bytes(bytes, ..)) = &self.instruction_image { return bytes.borrow().clone(); }
+        let mut image = vec![1];
+        image.extend(serde_json::json!([self.source_tokens.as_ref(), self.source_end, self.image_origin]).to_string().bytes());
+        image
+    }
+
+    pub(crate) fn handler_image(&self) -> Vec<u8> {
+        if let Some(Value::Bytes(bytes, ..)) = &self.exception_image { return bytes.borrow().clone(); }
+        let plans: Vec<_> = self.instrs.iter().enumerate().filter_map(|(at, word)| match word {
+            Instr::Attempt(plan) => Some(serde_json::json!([at, plan.body, plan.after,
+                plan.clauses.iter().map(|clause| (clause.line, &clause.kinds, clause.body, clause.grouped, clause.bare)).collect::<Vec<_>>(),
+                plan.otherwise, plan.last])),
+            Instr::Guard(target) => Some(serde_json::json!([at, target])),
+            _ => None,
+        }).collect();
+        if plans.is_empty() { Vec::new() } else { serde_json::Value::Array(plans).to_string().into_bytes() }
+    }
+
+    pub(crate) fn stack_bound(&self) -> i64 {
+        self.declared_stack.unwrap_or_else(|| self.instrs.iter().map(|word| match word {
+            Instr::Act(_, count) => count.saturating_add(1), _ => 1,
+        }).sum::<usize>().saturating_add(1) as i64)
+    }
+
+    pub(crate) fn invalid_native_opcode(&self) -> Option<u8> {
+        self.instruction_image.as_ref().and_then(|value| match value {
+            Value::Bytes(bytes, ..) => bytes.borrow().first().copied().filter(|opcode| *opcode != 1), _ => None,
+        })
     }
 }

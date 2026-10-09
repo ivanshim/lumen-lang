@@ -1447,6 +1447,8 @@ impl Value {
             Value::text(&body.ident), Value::Small(body.declared_on as i64),
             Value::Small(body.code_flags | body.future_bits), Value::Flag(body.lineless),
             body.location_bytes.clone().unwrap_or(Value::Null),
+            Value::Bytes(Rc::new(RefCell::new(body.native_image())), false, Rc::from("bytes")),
+            Value::tuple(body.handler_image().into_iter().map(|byte| Value::Small(byte as i64)).collect()),
             Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
             body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
