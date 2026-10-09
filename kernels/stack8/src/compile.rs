@@ -130,18 +130,14 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// A fresh imported or dynamic scope reserves the world's existing addresses.
-    /// These placeholder names are unique, so no lookup is needed before insertion.
+    /// Reserve outer addresses without indexing placeholder names that source cannot read.
     pub fn with_outside_slots(count: usize) -> Self {
         let mut registry = Self {
-            index: HashMap::with_capacity(count),
             idents: Vec::with_capacity(count),
             ..Self::default()
         };
         for at in 0..count {
-            let name = format!("\0outside:{at}");
-            registry.index.insert(name.clone(), at);
-            registry.idents.push(name);
+            registry.idents.push(format!("\0outside:{at}"));
         }
         registry
     }
