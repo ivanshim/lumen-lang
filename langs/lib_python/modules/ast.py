@@ -126,12 +126,24 @@ def _read_string(source, i, prefix):
     if is_bytes:
         numbers = []
         for unit in units:
-            point = ord(unit)
-            if point > 255:
-                raise 'SyntaxError: bytes can only contain ASCII literal characters'
-            numbers.append(point)
+            for ch in unit:
+                point = ord(ch)
+                if point > 255:
+                    raise 'SyntaxError: bytes can only contain ASCII literal characters'
+                numbers.append(point)
         return (bytes(numbers), i)
     return (''.join(units), i)
+
+def _warn_invalid_escape(text):
+    # An escape the reader does not know is still kept, but the reference
+    # warns about it, naming the text it read and the spelling that would
+    # have been meant.
+    import warnings
+    warnings.warn(
+        '"%s" is an invalid escape sequence. Such sequences will not '
+        'work in the future. Did you mean "%s"? A raw string is also '
+        'an option.' % (text, text.replace('\\', '\\\\')),
+        SyntaxWarning, stacklevel=3)
 
 def _read_escape(source, i, is_bytes):
     # i points just past the backslash. Returns the replacement text (or
@@ -152,10 +164,12 @@ def _read_escape(source, i, is_bytes):
         return _read_hex(source, i + 1, 2, '\\x')
     if c == 'u':
         if is_bytes:
+            _warn_invalid_escape('\\u')
             return ('\\u', i + 1)
         return _read_hex(source, i + 1, 4, '\\u')
     if c == 'U':
         if is_bytes:
+            _warn_invalid_escape('\\U')
             return ('\\U', i + 1)
         return _read_hex(source, i + 1, 8, '\\U')
     if c == 'N' and not is_bytes:
@@ -168,8 +182,10 @@ def _read_escape(source, i, is_bytes):
             raise 'SyntaxError: malformed \\N character escape'
         import unicodedata
         return (unicodedata.lookup(source[i + 2:close]), close + 1)
-    # An unknown escape keeps the backslash, as Python does.
-    return ('\\' + c, i + 1)
+    # An unknown escape keeps the backslash, as Python does, and warns.
+    text = '\\' + c
+    _warn_invalid_escape(text)
+    return (text, i + 1)
 
 def _read_hex(source, i, width, label):
     digits = source[i:i + width]
@@ -1987,6 +2003,11 @@ def _formatted(source, i, row, col, raw, multi, template=False):
         if i >= n:
             _syntax("f-string: valid expression required before '}'")
         c = source[i]
+        if debug and c not in ' \t\f\r!:' and c != '}' and not (c == '\n' and multi) and not (c == '\\' and source[i + 1:i + 2] == '\n'):
+            # Past the self-documenting '=', only whitespace, a line
+            # continuation, a conversion, a format spec or the closing
+            # brace may stand.
+            _syntax("f-string: expecting '!', or ':', or '}'")
         if c == '"' or c == "'":
             if _nested_fstring_at(source, i):
                 end = _fstring_end(source, i)[0]
@@ -2346,6 +2367,26 @@ class _Parser:
         return copy_location(pattern, node)
 
     # Parse statement grammar independently from the tree consumers.
+    def match_runs_to_colon(self):
+        # `match` opens a match statement only when a ':' follows its
+        # subject on the same logical line; otherwise it is an ordinary
+        # name (a target, a call, an operand), as the reference reads it.
+        depth = 0
+        j = self.at + 1
+        while j < len(self.toks):
+            tok = self.toks[j]
+            if tok.kind in ('end', 'newline') and depth == 0:
+                return False
+            if tok.kind == 'op':
+                if tok.text in '([{':
+                    depth += 1
+                elif tok.text in ')]}':
+                    depth -= 1
+                elif tok.text == ':' and depth == 0:
+                    return True
+            j += 1
+        return False
+
     def parse_stmt(self, start=None):
         token = self.peek()
         first = token if start is None else start
@@ -2456,7 +2497,7 @@ class _Parser:
                 self.expect_op(')')
             body = self.parse_suite(first)
             return self.located(With, first, body[-1], items=items, body=body)
-        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';'):
+        if word == 'match' and self.match_runs_to_colon():
             self.pop()
             subject, ss, se = self.parse_expr(True)
             self.expect_op(':')
