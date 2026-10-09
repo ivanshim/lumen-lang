@@ -10416,7 +10416,7 @@ impl<'a> Machine<'a> {
                         for (address, ident) in copy.reaching.iter_mut().zip(&revised) { address.ident = Rc::from(ident.as_str()); }
                         let mut next = copy.reaching.iter().filter(|address| address.up == 1).map(|address| address.at + 1).max().unwrap_or(0);
                         for ident in revised.into_iter().skip(copy.reaching.len()) {
-                            copy.reaching.push(Address { ident: Rc::from(ident), up: 1, at: next, fallback: None });
+                            copy.reaching.push(Address { ident: Rc::from(ident), up: 1, at: next, fallback: None, cache_global: false });
                             next += 1;
                         }
                     }
@@ -31415,7 +31415,7 @@ impl Machine<'_> {
             return Err("TypeError: cache ABI inquiry accepts no arguments".into());
         }
         if action == 2 && input.is_empty() {
-            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v5"), Value::Small(u32::from_le_bytes(*b"L7C\x05") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v6"), Value::Small(u32::from_le_bytes(*b"L7C\x06") as i64)]));
         }
         if input.len() != 1 { return Err("TypeError: code cache operation needs one argument".to_owned()); }
         if action == 0 {
@@ -31424,7 +31424,7 @@ impl Machine<'_> {
                 let (forms, spellings, bodies) = crate::cache::serialize_forms(body.clone())?;
                 let metadata = serde_json::json!({"globals": self.idents, "future_bits": body.future_bits,
                     "outer_aliases": [], "seen": {}, "shared_args": {}, "arg_names": {}, "gives_back": [], "bound_globally": [], "native_exports": []});
-                let record = serde_json::json!({"format": "lumen-microcode7-v5", "filename": body.written_in.as_deref().unwrap_or("<string>"),
+                let record = serde_json::json!({"format": "lumen-microcode7-v6", "filename": body.written_in.as_deref().unwrap_or("<string>"),
                     "manner": 0, "function": true, "forms": forms, "metadata": metadata, "spellings": spellings, "bodies": bodies});
                 let bytes = serde_json::to_vec(&record).map_err(|error| format!("ValueError: {error}"))?;
                 return Ok(self.octets(bytes, false));
@@ -31441,7 +31441,7 @@ impl Machine<'_> {
             } else { routine };
             let (body, spellings, bodies) = crate::cache::serialize_forms(routine)?;
             let manner = match attributes[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid compiled mode".into()) };
-            let envelope = serde_json::json!({ "format": "lumen-microcode7-v5", "filename": attributes[1].1.bare(),
+            let envelope = serde_json::json!({ "format": "lumen-microcode7-v6", "filename": attributes[1].1.bare(),
                 "manner": manner, "forms": body, "metadata": metadata, "spellings": spellings, "bodies": bodies });
             let encoded = serde_json::to_vec(&envelope).map_err(|e| format!("ValueError: {e}"))?;
             return Ok(Value::Octets { cell: Rc::new(RefCell::new(encoded)), changeable: false, lead: Rc::from("b") });

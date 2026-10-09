@@ -1144,8 +1144,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     // A name the library keeps is found where the library
                     // keeps it, as the reference finds one walking sys.path.
                     let root = python_library_root();
-                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
-                        if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                    for (at, candidate) in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")].into_iter().enumerate() {
+                        if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source, at == 1)); break; }
                     }
                 }
                 if found.is_none() {

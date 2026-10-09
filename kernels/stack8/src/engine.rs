@@ -13958,7 +13958,7 @@ impl<'a> Engine<'a> {
             let thing = value.contents();
             if !self.lang.class_special.is_empty() && Self::holds_object(&thing) {
                 // The program's own class says its own words, as in `.format`.
-                let text = if conversion.is_empty() { self.special_format(&thing, &spec)?.plain() } else {
+                let text = if conversion.is_empty() { self.special_format(&thing, &spec)? } else {
                     let said = self.special_text(&thing, conversion != "s")?;
                     let said = if conversion == "a" { crate::strings::ascii_escaped(&said) } else { said };
                     Value::text(&Value::text(&said).string_field(&words, &spec, "").ok_or_else(|| crate::strings::fault(self.lang, "format"))?)
@@ -28882,7 +28882,7 @@ impl Engine<'_> {
         }
         if task == 2 {
             if !given.is_empty() { return Err("TypeError: _code_abi() takes no arguments".into()); }
-            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v5"), Value::Small(u32::from_le_bytes(*b"L8C\x05") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v6"), Value::Small(u32::from_le_bytes(*b"L8C\x06") as i64)]));
         }
         if given.len() != 1 { return Err("TypeError: compiled cache primitive expects one argument".into()); }
         if task == 0 {
@@ -28890,7 +28890,7 @@ impl Engine<'_> {
                 if parts.0 != 7 { return Err("TypeError: expected a code object".into()); }
                 let Some(Value::Routine(body)) = parts.1.first() else { return Err("TypeError: expected a code object".into()); };
                 let (graph, origins, routines) = crate::cache::encoded(body)?;
-                let packet = serde_json::json!({"abi": "lumen-stack8-v5", "file": body.written_in.as_deref().unwrap_or("<string>"),
+                let packet = serde_json::json!({"abi": "lumen-stack8-v6", "file": body.written_in.as_deref().unwrap_or("<string>"),
                     "mode": 0, "function": true, "program": graph, "bindings": self.registry, "origins": origins, "routines": routines});
                 let bytes = serde_json::to_vec(&packet).map_err(|e| format!("ValueError: {e}"))?;
                 return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
@@ -28907,7 +28907,7 @@ impl Engine<'_> {
             } else { program.clone() };
             let (graph, origins, routines) = crate::cache::encoded(&program)?;
             let mode = match fields[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid code mode".into()) };
-            let packet = serde_json::json!({"abi": "lumen-stack8-v5", "file": fields[1].1.plain(),
+            let packet = serde_json::json!({"abi": "lumen-stack8-v6", "file": fields[1].1.plain(),
                 "mode": mode, "program": graph, "bindings": bindings, "origins": origins, "routines": routines});
             let bytes = serde_json::to_vec(&packet).map_err(|e| format!("ValueError: {e}"))?;
             return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
