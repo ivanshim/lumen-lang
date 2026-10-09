@@ -7217,8 +7217,13 @@ impl<'a> Builder<'a> {
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let beginning = self.pos;
+            // Collection loops without range operators use Python's full source grammar.
+            let minimum = match (table.strings("op.range").is_empty(), table.single("ext.op.comprehension.for")) {
+                (true, Some(_)) => 0,
+                _ => tier + 1,
+            };
             let start = if self.on_any("ext.syntax.array.spread") { self.comma_value()? }
-                else { let item = self.expr(tier + 1)?; self.comma_tail(item)? };
+                else { let item = self.expr(minimum)?; self.comma_tail(item)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().spelling())) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {

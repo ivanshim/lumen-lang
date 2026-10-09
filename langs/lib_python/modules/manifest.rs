@@ -46,6 +46,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_pyrepl.pager", include_str!("_pyrepl/pager.py"), "_pyrepl/pager.py"),
     ("_random", include_str!("_random.py"), "_random.py"),
     ("_random_seed", include_str!("_random_seed.py"), "_random_seed.py"),
+    ("_runtime_import", include_str!("_runtime_import.py"), "_runtime_import.py"),
     ("_sha1", include_str!("_sha1.py"), "_sha1.py"),
     ("_sha2", include_str!("_sha2.py"), "_sha2.py"),
     ("_sha3", include_str!("_sha3.py"), "_sha3.py"),

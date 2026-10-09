@@ -1530,11 +1530,15 @@ impl<'a> Machine<'a> {
             let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
-            let held = match held {
-                Value::Vector(items) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())),
-                Value::Tuple(items) if notes == Some(key) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())),
-                _ if notes == Some(key) => continue,
-                other => other.clone(),
+            let held = match notes == Some(key) {
+                false => held.clone(),
+                true => {
+                    let entries = match held.settled() {
+                        Value::Vector(items) | Value::Tuple(items) => items.to_vec(),
+                        _ => continue,
+                    };
+                    Value::Vector(crate::tuples::Sequence::plain(entries)).keep(false)
+                }
             };
             match target.iter_mut().find(|(k, _)| k == key) {
                 Some(entry) => entry.1 = held,
@@ -1685,9 +1689,8 @@ impl<'a> Machine<'a> {
             let key = self.table.strings("ext.builtin.exceptions.notes").first().map(String::as_str).unwrap_or_default().to_string();
             let mut holds = thing.holds.borrow_mut();
             match holds.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, Value::Vector(items))) => Rc::make_mut(items).push(given[0].clone()),
-                Some(_) => return Err(String::from("TypeError: __notes__ is not a list").into()),
-                None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(given.to_vec())))),
+                Some((_, target)) => if !Self::extend_notes(target, given[0].clone()) { return Err(String::from("TypeError: __notes__ is not a list").into()); },
+                None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(given.to_vec())).keep(false))),
             }
             return Ok(Value::Nil);
         }
@@ -9115,6 +9118,15 @@ impl<'a> Machine<'a> {
         Some(Value::Member(Rc::new(item.clone()), directory.clone()))
     }
 
+    fn surrogate_case_work(&self, name: &str) -> Option<crate::text::Work> {
+        use crate::text::Work;
+        let cases = [(Work::LOWER,"ext.builtin.text.lower"),(Work::UPPER,"ext.builtin.text.upper"),
+            (Work::CASEFOLD,"ext.builtin.text.casefold"),(Work::SWAPCASE,"ext.builtin.text.swapcase")];
+        for (work,label) in cases {
+            if self.table.spells(label,name) { return Some(work); }
+        }
+        None
+    }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
         if name==self.detail("allocate") && matches!(value.settled(),Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
         if matches!(value, Value::Unpaired(_)) && crate::table::BUILTIN_LABELS.iter().any(|(label,operation)| *label==format!("ext.builtin.text.{name}") && matches!(operation,Prim::Textual(_))) {
@@ -9143,6 +9155,10 @@ impl<'a> Machine<'a> {
 
         if name == self.rules.detail_kind && name.len() > 0 {
             return self.prim(Prim::SortOf, "type", &[value.settled()]).ok();
+        }
+        let raw_string = value.settled();
+        if matches!(raw_string, Value::Unpaired(_)) && self.surrogate_case_work(name).is_some() {
+            return Some(Value::Member(Rc::new(raw_string), name.into()));
         }
         if let Some(hook) = self.directory_attribute(value, name) { return Some(hook); }
         if let Value::Intrinsic(primitive, spelling) = value.settled() {
@@ -10696,6 +10712,11 @@ impl<'a> Machine<'a> {
             if let Some(complaint) = complaint { return Err(format!("TypeError: {classname}.__getnewargs__() {complaint}").into()); }
         }
         if let Value::Unpaired(numbers) = &actual {
+            if let Some(work) = self.surrogate_case_work(name) {
+                let mut operands = vec![actual.clone()]; operands.extend(arguments);
+                crate::text::fit_names(self.table,work,&mut operands,keywords)?;
+                return crate::text::apply(self.table,work,name,&operands,self.wording()).map_err(Escape::from);
+            }
             if name == "__getnewargs__" {
                 let mut input = vec![actual.clone()]; input.extend(arguments);
                 crate::text::fit_names(self.table, crate::text::Work::NEWARGS, &mut input, keywords)?;
@@ -15067,6 +15088,17 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn extend_notes(destination: &mut Value, item: Value) -> bool {
+        *destination = destination.clone().keep(false);
+        match destination {
+            Value::Mutable(storage, _) => match &mut *storage.borrow_mut() {
+                Value::Vector(row) => { Rc::make_mut(row).push(item); true }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// A note written onto a fault's own object, so `__notes__` keeps
     /// the reading the element's place asked for.
     fn attach_note(&self, value: &Value, note: &str) {
@@ -15074,9 +15106,8 @@ impl<'a> Machine<'a> {
         let Some(key) = self.table.strings("ext.builtin.exceptions.notes").first().map(String::as_str).map(str::to_string) else { return };
         let mut holds = thing.holds.borrow_mut();
         match holds.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, Value::Vector(items))) => Rc::make_mut(items).push(Value::text(note)),
-            Some(_) => return,
-            None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(note)])))),
+            Some((_, list)) => { Self::extend_notes(list, Value::text(note)); }
+            None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(note)])).keep(false))),
         }
     }
 
@@ -17048,7 +17079,14 @@ impl<'a> Machine<'a> {
                 && !self.operand_carries_instance(&settled[1]);
             let native_walk = matches!(operation, Prim::Iterator | Prim::Length) && settled.len() == 1;
             let native_concatenation = operation == Prim::Plus && matches!(settled.as_slice(), [a,b] if matches!((a.settled(),b.settled()),(Value::Vector(_),Value::Vector(_))|(Value::Tuple(_),Value::Tuple(_))));
-            if changed && (native_concatenation || native_walk || native_lookup || !settled.iter().any(|v| (if writes { self.carries_instance(v) } else { self.operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
+            // These operations inspect container storage, leaving every member
+            // untouched even when members have their own Python protocols.
+            let structural = match settled.as_slice() {
+                [Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Set(_)] =>
+                    matches!(operation, Prim::Length | Prim::Tupling | Prim::Listed | Prim::Iterator | Prim::Truthful),
+                _ => false,
+            };
+            if changed && (structural || native_concatenation || native_walk || native_lookup || !settled.iter().any(|v| (if writes { self.carries_instance(v) } else { self.operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
@@ -20234,6 +20272,21 @@ impl<'a> Machine<'a> {
                 match (v.len(), v.get(1)) {
                     (2, Some(Value::Flag(false))) => Value::Flag(self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
+                    (2, Some(Value::Text(selector))) if selector.as_ref() == "source" => {
+                        let name = v[0].bare();
+                        match self.sys_path_source(&name) {
+                            Some((_, raw)) => {
+                                let tokenize = self.load_namespace("_tokenize")?;
+                                let decoder = self.attribute(&tokenize, "_decode_source").ok_or("ImportError: source decoder is unavailable")?;
+                                let bytes = self.octets(raw, false);
+                                self.core_run(&decoder, vec![bytes])?
+                            }
+                            None => match self.library_sources.get(&name) {
+                                Some(text) => Value::text(text),
+                                None => return Err(format!("ImportError: source for {} is unavailable", name)),
+                            },
+                        }
+                    }
                     _ => { n(1)?; self.load_namespace(&v[0].bare())? }
                 }
             }
@@ -25990,6 +26043,20 @@ impl Machine<'_> {
                 }
             }
         }
+        if self.table.has_any("ext.system.module.path") {
+            let dispatch = self.imported.get("sys").cloned().and_then(|system| self.attribute(&system, "_find_custom"));
+            if let Some(dispatch) = dispatch {
+                let enclosing = split.and_then(|(name, _)| self.imported.get(name)).cloned();
+                let search = enclosing.and_then(|package| self.attribute(&package, "__path__")).unwrap_or(Value::Nil);
+                let module = self.core_run(&dispatch, vec![Value::text(path), search])?;
+                match module.settled() {
+                    Value::Tuple(reply) if matches!(reply.first(), Some(Value::Flag(false))) => {
+                        return Ok(reply[1].clone());
+                    }
+                    _ => (),
+                }
+            }
+        }
         let from_disk = self.sys_path_source(path);
         let (text, own_file) = match &from_disk {
             Some((location, bytes)) => {
@@ -26156,6 +26223,20 @@ impl Machine<'_> {
             self.imported.remove(path); self.namespace_places.borrow_mut().take();
             self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
+        }
+        if self.table.has_any("ext.system.module.path") {
+            if let Some(filename) = own_file.as_ref() {
+                let factory = self.imported.get("sys").cloned().and_then(|system| self.attribute(&system, "_make_spec"));
+                if let Some(factory) = factory {
+                    let description = self.core_run(&factory, vec![Value::text(path), Value::text(filename)])?;
+                    if let Value::Thing(space) = &value {
+                        let mut attributes = space.holds.borrow_mut();
+                        for entry in attributes.iter_mut() {
+                            if entry.0 == "__spec__" { entry.1 = description.clone(); break; }
+                        }
+                    }
+                }
+            }
         }
         let value = match self.cached_import(path) {
             Some(replacement) => replacement,

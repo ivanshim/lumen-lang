@@ -290,7 +290,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         }
 
 
-        if matches!(work, LOWER | UPPER | CASEFOLD) {
+        if matches!(work, LOWER | UPPER | CASEFOLD | SWAPCASE) {
             if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), input.len()-1)); }
             let mut result: Vec<u32> = Vec::new();
             let mut offset = 0;
