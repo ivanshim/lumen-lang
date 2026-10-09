@@ -3112,6 +3112,7 @@
   ],
   "ext.builtin.annotation_call": ["__annotation_call__"],
   "ext.builtin.partial_repr": ["__partial_repr__"],
+  "ext.builtin.method_descriptor": ["__method_descriptor"],
   "ext.builtin.namespace_type": [
     "__namespace_type"
   ],

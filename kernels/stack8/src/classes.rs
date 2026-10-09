@@ -1827,6 +1827,29 @@ impl<'a> Engine<'a> {
                     if !matches!(parent, Value::Class(_)) { return Err(self.class_refusal()); }
                     Ok(Self::adapter(9, vec![parent, args[1].contents()]))
                 },
+                63 if w.1.len() == 3 => {
+                    let items = self.call_items(args)?;
+                    let Some(receiver) = items.first().filter(|(key, _)| key.is_none()).map(|(_, v)| v.clone()) else {
+                        return Err(format!("TypeError: unbound method {}() needs an argument", self.class_get(w.1[1].clone(), "__qualname__", false)?.plain()).into());
+                    };
+                    self.library_receiver(&w.1, &receiver)?;
+                    let forwarded = items.into_iter().map(|(key, value)| match key { None => value, Some(key) => Value::Tie(Rc::new((Value::text(&key), value))) }).collect();
+                    self.class_apply(w.1[1].clone(), forwarded)
+                }
+                239 => {
+                    let items = self.call_items(args)?;
+                    if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: wrapper __get__() takes no keyword arguments".into()); }
+                    if items.is_empty() || items.len() > 2 { return Err(format!("TypeError: __get__ expected {} {} argument{}, got {}", if items.is_empty() {"at least"} else {"at most"}, if items.is_empty() {1} else {2}, if items.is_empty() {""} else {"s"}, items.len()).into()); }
+                    let descriptor = w.1[0].clone();
+                    let target = items[0].1.contents();
+                    if matches!(target, Value::Null) {
+                        if items.len() == 1 || matches!(items[1].1.contents(), Value::Null) { return Err("TypeError: __get__(None, None) is invalid".into()); }
+                        return Ok(descriptor);
+                    }
+                    let Value::Adapter(slot) = &descriptor else { return Err(self.class_refusal()); };
+                    self.library_receiver(&slot.1, &target)?;
+                    Ok(Self::adapter(3, vec![descriptor, target]))
+                }
                 // C-only draw methods can read the native stream without
                 // building a Python frame. Other calls use the full reader.
                 63 => {
@@ -3211,6 +3234,21 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
+        if let Value::Native(Builtin::Text(_), title) = &value {
+            if let Some((family, method)) = title.split_once('.') {
+                if family == "str" {
+                    if let Some(target) = subject {
+                        let raw = Self::worth_of(&target).unwrap_or_else(|| target.contents());
+                        if !matches!(raw, Value::Text(_) | Value::Codepoints(_)) {
+                            return Err(format!("TypeError: descriptor '{method}' for 'str' objects doesn't apply to a '{}' object", Self::type_argument_kind(&target)).into());
+                        }
+                        return Ok(Self::adapter(3, vec![value, target]));
+                    }
+                    return Ok(value);
+                }
+            }
+        }
+
         if let (Value::Native(Builtin::Text(_), word), Some(receiver)) = (&value, &subject) {
             if word.contains('.') { return Ok(Self::adapter(3, vec![value.clone(), receiver.clone()])); }
         }
@@ -3443,7 +3481,33 @@ impl<'a> Engine<'a> {
     /// own reading hook said so, or a property's getter, or nothing was
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
+    fn library_receiver(&mut self, parts: &[Value], receiver: &Value) -> Flow<()> {
+        let Value::Class(owner) = &parts[2] else { return Err(self.class_refusal()); };
+        if matches!(receiver.contents(), Value::Object(instance) if Rc::ptr_eq(&instance.class_now(), owner) || instance.class_now().lineage.borrow().iter().any(|base| Rc::ptr_eq(base, owner))) { return Ok(()); }
+        let name = self.class_get(parts[1].clone(), "__name__", false)?.plain();
+        Err(format!("TypeError: descriptor '{name}' for '{}' objects doesn't apply to a '{}' object", owner.python_title().unwrap_or_else(|| owner.name.clone()), Self::type_argument_kind(receiver)).into())
+    }
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+
+
+        if self.lang.bind_names && matches!(name, "__basicsize__" | "__itemsize__") {
+            let held = subject.contents();
+            let object = matches!(&held, Value::Class(class) if self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, class)));
+            let tuple = matches!(&held, Value::Native(Builtin::Tuple, _)) || matches!(&held, Value::Class(class) if Self::own_kind(class).as_deref() == Some("tuple"));
+            if object || tuple {
+                // These are the interpreter's storage layouts, not CPython's C structs.
+                let bytes = if name == "__itemsize__" { if tuple { std::mem::size_of::<Value>() } else { 0 } }
+                    else if object { std::mem::size_of::<Instance>() } else { std::mem::size_of::<crate::tuples::Items>() + std::mem::size_of::<Vec<Value>>() };
+                return Ok(Value::Small(bytes as i64));
+            }
+        }
+        if let Value::Adapter(slot) = subject.contents() {
+            if slot.0 == 63 && slot.1.len() == 3 {
+                if name == "__get__" { return Ok(Self::adapter(239, vec![Value::Adapter(slot.clone())])); }
+                if name == "__objclass__" { return Ok(slot.1[2].clone()); }
+            }
+        }
+
         if !name.is_empty() && name == self.class_word("doc") {
             if let Some(doc) = self.primitive_doc(&subject) { return Ok(Value::text(doc)); }
         }
@@ -6546,6 +6610,18 @@ impl<'a> Engine<'a> {
                 if entries.len() != 1 { return Err(format!("TypeError: _typing._idfunc() takes exactly one argument ({} given)", entries.len()).into()); }
                 Ok(entries.into_iter().next().unwrap().1)
             }
+            29 if !self.lang.native_method_descriptors.is_empty() => {
+                let entries = self.call_items(args)?;
+                if entries.len() != 2 || entries.iter().any(|(key, _)| key.is_some()) {
+                    return Err("TypeError: method descriptor requires a class and a function".into());
+                }
+                let owner = entries[0].1.contents();
+                let function = entries[1].1.contents();
+                if !matches!(owner, Value::Class(_)) || !matches!(function, Value::Routine(_)) {
+                    return Err("TypeError: method descriptor requires a class and a function".into());
+                }
+                Ok(Self::adapter(63, vec![Value::text("library"), function, owner]))
+            }
             21 if args.is_empty() => Ok(Value::Class(self.kind_class("SimpleNamespace"))),
             12 if args.len() == 1 => Ok(Value::Flag(match &one {
                 Value::Object(object) => self.slots_allow(&object.class_now(), self.class_word("namespace"))
@@ -6557,7 +6633,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_)|Value::TextMethod(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|14|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|132|133|236|182..=184))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_)|Value::TextMethod(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|14|15|17..=27|29|30|40..=48|77..=80|131|63|64|180|132|133|236|182..=184|239))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

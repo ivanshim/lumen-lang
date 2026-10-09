@@ -2040,6 +2040,31 @@ impl<'a> Machine<'a> {
                             _ => Err(self.class_unready()),
                         }
                     }
+                    239 => {
+                        let (arguments, named) = self.open_arguments(values)?;
+                        if !named.is_empty() { return Err(String::from("TypeError: wrapper __get__() takes no keyword arguments").into()); }
+                        if arguments.is_empty() { return Err(String::from("TypeError: __get__ expected at least 1 argument, got 0").into()); }
+                        if arguments.len() > 2 { return Err(format!("TypeError: __get__ expected at most 2 arguments, got {}", arguments.len()).into()); }
+                        let target = arguments[0].settled();
+                        if matches!(target, Value::Nil) {
+                            if arguments.get(1).is_none_or(|v| matches!(v.settled(), Value::Nil)) { return Err(String::from("TypeError: __get__(None, None) is invalid").into()); }
+                            return Ok(kept[0].clone());
+                        }
+                        let Value::Wrapped(133, description) = &kept[0] else { return Err(self.class_unready()); };
+                        self.check_library_target(description, &target)?;
+                        Ok(Self::wrap(3, vec![kept[0].clone(), target]))
+                    }
+                    133 if kept.len() == 3 => {
+                        let (input, keywords) = self.open_arguments(values)?;
+                        let Some(receiver) = input.first() else {
+                            let word = self.read_class_member(kept[1].clone(), "__qualname__", false)?.bare();
+                            return Err(format!("TypeError: unbound method {word}() needs an argument").into());
+                        };
+                        self.check_library_target(&kept, receiver)?;
+                        let mut forwarded = input;
+                        forwarded.extend(keywords.into_iter().map(|(key, value)| Value::Couple(Rc::new((Value::text(&key), value)))));
+                        self.apply_class_member(kept[1].clone(), forwarded)
+                    }
                     // The native drawing descriptor retains its Python
                     // entry for index protocols, cold instances and refusals.
                     133=>{
@@ -3102,6 +3127,17 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
+        if matches!(&entry, Value::Intrinsic(Prim::Textual(_), title) if title.starts_with("str.")) {
+            let Some(target) = receiver else { return Ok(entry); };
+            let underlying = Self::underlying(&target).unwrap_or_else(|| target.settled());
+            if !matches!(underlying, Value::Text(_) | Value::Unpaired(_)) {
+                let Value::Intrinsic(_, title) = &entry else { unreachable!() };
+                let short = title.split_once('.').unwrap().1;
+                return Err(format!("TypeError: descriptor '{short}' for 'str' objects doesn't apply to a '{}' object", target.settled().kind_word()).into());
+            }
+            return Ok(Self::wrap(3, vec![entry, target]));
+        }
+
         if receiver.is_some() {
             if let Value::Intrinsic(Prim::Textual(_), spelling) = &entry {
                 if spelling.contains('.') { return Ok(Self::wrap(3, vec![entry.clone(), receiver.clone().unwrap()])); }
@@ -3224,6 +3260,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 205 | 206 | 207, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133, _) => return Ok(entry),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -4007,7 +4044,42 @@ impl<'a> Machine<'a> {
         let slot = if at == 1 { 4 } else if derived { 6 } else { 3 };
         words[slot].parse().ok().map(Value::Small)
     }
+    fn check_library_target(&mut self, description: &[Value], target: &Value) -> Res<()> {
+        let Value::Blueprint(declaring) = &description[2] else { return Err(self.class_unready()); };
+        if let Value::Thing(instance) = target.settled() {
+            let class = instance.blueprint();
+            if Rc::ptr_eq(&class, declaring) || class.ancestry.borrow().iter().any(|base| Rc::ptr_eq(base, declaring)) { return Ok(()); }
+        }
+        let method = self.read_class_member(description[1].clone(), "__name__", false)?.bare();
+        Err(format!("TypeError: descriptor '{method}' for '{}' objects doesn't apply to a '{}' object", declaring.python_title().unwrap_or_else(|| declaring.name.clone()), target.settled().kind_word()).into())
+    }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+
+
+        if self.names_in_calls && ["__basicsize__", "__itemsize__"].contains(&key) {
+            let raw = value.settled();
+            let root = matches!(&raw, Value::Blueprint(class) if class.under.borrow().is_none() && class.name == self.detail("root"));
+            let tuple_storage = matches!(&raw, Value::Intrinsic(Prim::Tupling, _)) || matches!(&raw, Value::Blueprint(class) if Self::native_word(class).as_deref() == Some("tuple"));
+            if root || tuple_storage {
+                let amount = match (key, tuple_storage) {
+                    ("__itemsize__", true) => std::mem::size_of::<Value>(),
+                    ("__itemsize__", false) => 0,
+                    (_, true) => std::mem::size_of::<crate::tuples::Sequence>() + std::mem::size_of::<Vec<Value>>(),
+                    _ => std::mem::size_of::<crate::data::Thing>(),
+                };
+                return Ok(Value::Small(amount as i64));
+            }
+        }
+        if let Value::Wrapped(133, description) = value.settled() {
+            if description.len() == 3 {
+                match key {
+                    "__objclass__" => return Ok(description[2].clone()),
+                    "__get__" => return Ok(Self::wrap(239, vec![Value::Wrapped(133, description)])),
+                    _ => (),
+                }
+            }
+        }
+
         let value = match value {
             held @ (Value::Mutable(..) | Value::Shared(_) | Value::Window(..)) if !self.rules.words_ext_stmt_class_builder.is_empty() => held.settled(),
             held => held,
@@ -6818,6 +6890,14 @@ impl<'a> Machine<'a> {
             if positional.len() != 1 { return Err(format!("TypeError: _typing._idfunc() takes exactly one argument ({} given)", positional.len()).into()); }
             return Ok(positional.remove(0));
         }
+        if op == 29 {
+            let (arguments, named) = self.open_arguments(values)?;
+            let arguments: Vec<Value> = arguments.iter().map(Value::settled).collect();
+            match arguments.as_slice() {
+                [owner @ Value::Blueprint(_), implementation @ (Value::Routine(_) | Value::Bound(..))] if named.is_empty() => return Ok(Self::wrap(133, vec![Value::text("library"), implementation.clone(), owner.clone()])),
+                _ => return Err(String::from("TypeError: method descriptor requires a class and a function").into()),
+            }
+        }
         if op == 21 && values.is_empty() { return Ok(Value::Blueprint(self.native_kind("SimpleNamespace"))); }
         if op == 12 && values.len() == 1 {
             let compact = match &values[0] {
@@ -6835,7 +6915,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..)|Value::TextCall {..})||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|81..=85|122|200..=204|132|133|134|135|136|184..=186))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..)|Value::TextCall {..})||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|81..=85|122|200..=204|132|133|134|135|136|184..=186|239))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

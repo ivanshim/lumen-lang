@@ -20505,6 +20505,9 @@ impl<'a> Machine<'a> {
                 if v[1].bare() == self.rules.detail_allocate && matches!(&v[0], Value::Intrinsic(op, _) if op.names_a_kind()) { return Ok(Value::Flag(true)); }
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
+                if word == self.detail("descriptor.get") && matches!(v[0].settled(), Value::Intrinsic(Prim::Textual(_), title) if title.starts_with("str.")) {
+                    return Ok(Value::Flag(true));
+                }
                 if self.has_class_order() && word==self.detail("allocate") {
                     return self.read_class_member(v[0].settled(),&word,false).map(|_|Value::Flag(true)).or_else(|escape|if self.missing_member_escape(&escape){Ok(Value::Flag(false))}else{Err(escape)}).map_err(|escape|self.carried_native_fault(escape));
                 }
@@ -30060,7 +30063,7 @@ impl Machine<'_> {
                 let answer = if input.is_empty() { false } else { self.object_truth(&input[0])? };
                 Ok(Value::Flag(answer))
             }
-            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::TextCall { .. } | Value::Method(..)) || matches!(&input[0], Value::Wrapped(tag,_) if matches!(tag, 0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134)))) }
+            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::TextCall { .. } | Value::Method(..)) || matches!(&input[0], Value::Wrapped(tag,_) if matches!(tag, 0..=4|8..=12|14|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134|239)))) }
             Hashed => {
                 require(1, 1)?;
                 input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &Self::unhashable_kind(&input[0])))
@@ -30324,7 +30327,7 @@ impl Machine<'_> {
                     // A summoned callable answers as callable() judges:
                     // the wrapped member forms among them included.
                     let callable_shape = matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_))
-                        || matches!(&input[0], Value::Wrapped(tag, _) if matches!(tag, 0..=4 | 8..=12 | 31 | 33 | 34 | 36 | 44..=48 | 50..=57 | 59 | 60 | 70..=74 | 77..=79 | 132 | 133 | 134));
+                        || matches!(&input[0], Value::Wrapped(tag, _) if matches!(tag, 0..=4 | 8..=12 | 31 | 33 | 34 | 36 | 44..=48 | 50..=57 | 59 | 60 | 70..=74 | 77..=79 | 132 | 133 | 134 | 239));
                     if input.len() == 2 && !callable_shape {
                         return Err("TypeError: iter(v, w): v must be callable".to_owned());
                     }

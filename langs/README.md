@@ -4841,6 +4841,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
 | `ext.builtin.method.values` | - | - | `values` | - | - | - | - | - | - | - |
 | `ext.builtin.method.zfill` | - | - | `zfill` | - | - | - | - | - | - | - |
+| `ext.builtin.method_descriptor` | - | - | `__method_descriptor` | - | - | - | - | - | - | - |
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
@@ -6136,3 +6137,5 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.method_descriptor` binds a library method to a native method descriptor, preserving its declaring class and validating receivers before calling its implementation.

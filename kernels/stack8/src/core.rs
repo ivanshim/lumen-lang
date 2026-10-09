@@ -183,6 +183,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 183 => if matches!(w.1.last(), Some(Value::Object(_))) { "method-wrapper" } else { "wrapper_descriptor" },
             Value::Adapter(w) if w.0 == 184 => "method-wrapper",
             Value::Adapter(w) if w.0 == 129 => "function",
+            Value::Adapter(w) if w.0 == 239 => "method-wrapper",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",

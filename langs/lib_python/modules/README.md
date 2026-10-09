@@ -66,3 +66,13 @@ retain their `.0` binding and are checked as iterators when resumed.
 v3.14.8 `Lib/concurrent/interpreters/__init__.py`. Importing it requires the
 absent `_interpreters` backend and propagates `ModuleNotFoundError`; callers
 can detect the unavailable facility through the standard import exception.
+
+`_queue.py` is a runtime implementation, not a copied CPython source file.
+It stores FIFO items in the runtime deque and exposes methods through native
+method descriptors. Non-blocking reads and finite deadlines are implemented;
+an empty read with no deadline refuses because this runtime cannot start a
+producer thread. The same descriptor factory binds the native I/O base methods.
+
+Object and tuple layout attributes report Rust storage sizes: the allocated
+instance payload, the tuple carrier plus its vector header, and the size of
+each stored tuple value. They describe this runtime, not CPython C layouts.
