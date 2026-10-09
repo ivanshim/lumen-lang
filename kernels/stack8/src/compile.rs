@@ -194,6 +194,8 @@ struct Cycle {
     restart: Option<usize>,
     resumes: Vec<usize>,
     leaves: Vec<usize>,
+    /// How many grouped catches were open when the loop began.
+    except_star_start: usize,
 }
 
 /// What reading a class body gathers. `arms` counts the arms of
@@ -274,6 +276,8 @@ struct Piece {
     /// before a return, a break or a continue leaves them.
     lasts: Vec<usize>,
     cycles: Vec<Cycle>,
+    /// How many grouped catches were open when this unit was opened.
+    except_star_start: usize,
     escapes: Vec<usize>,
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
@@ -313,6 +317,7 @@ pub struct Compiler<'a> {
     module_annotations: Vec<(String, usize)>,
     syntax_try_nesting: usize,
     syntax_finally_nesting: usize,
+    except_star_nesting: usize,
     in_lazy_from: bool,
     lang: &'a Lang,
     tokens: &'a [Token],
@@ -706,6 +711,7 @@ fn compile_pass(
         globals: std::mem::take(&mut table.pending_globals),
         lasts: Vec::new(),
         cycles: Vec::new(),
+        except_star_start: 0,
         escapes: Vec::new(),
         result_touched: false,
         return_value_at: None,
@@ -742,7 +748,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1806,7 +1812,8 @@ impl<'a> Compiler<'a> {
 
     fn enter_cycle(&mut self, again: Option<usize>) {
         let began = self.mark();
-        self.piece().cycles.push(Cycle { began, restart: again, resumes: Vec::new(), leaves: Vec::new() });
+        let except_star_start = self.except_star_nesting;
+        self.piece().cycles.push(Cycle { began, restart: again, resumes: Vec::new(), leaves: Vec::new(), except_star_start });
     }
 
     fn leave_cycle(&mut self, again: usize) {
@@ -1844,6 +1851,7 @@ impl<'a> Compiler<'a> {
 
     /// The loop a break or continue of so many levels reaches.
     fn cycle_out(&mut self, levels: usize, what: &str) -> Res<Option<usize>> {
+        let star = self.except_star_nesting;
         let unit = self.piece();
         if unit.cycles.is_empty() && unit.outermost {
             return Ok(None);
@@ -1851,7 +1859,11 @@ impl<'a> Compiler<'a> {
         if levels > unit.cycles.len() {
             return Err(format!("Cannot '{}' {} level{}", what, levels, if levels == 1 { "" } else { "s" }));
         }
-        Ok(Some(unit.cycles.len() - levels))
+        let owner = unit.cycles.len() - levels;
+        if star > unit.cycles[owner].except_star_start {
+            return Err("SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block".into());
+        }
+        Ok(Some(owner))
     }
 
     fn leave(&mut self, levels: usize) -> Res<()> {
@@ -1941,6 +1953,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        let except_star_start = self.except_star_nesting;
         self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
@@ -1950,6 +1963,7 @@ impl<'a> Compiler<'a> {
             globals: Vec::new(),
             lasts: Vec::new(),
             cycles: Vec::new(),
+            except_star_start,
             escapes: Vec::new(),
             result_touched: false,
             return_value_at: None,
@@ -2956,6 +2970,13 @@ impl<'a> Compiler<'a> {
                     if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
                 }
             }
+            let star_blocked = if Lang::spells(&lang.return_words, &word) {
+                self.except_star_nesting > self.piece().except_star_start
+            } else if Lang::spells(&lang.break_words, &word) || Lang::spells(&lang.continue_words, &word) {
+                let floor = { let unit = self.piece(); unit.cycles.last().map_or(unit.except_star_start, |cycle| cycle.except_star_start) };
+                self.except_star_nesting > floor
+            } else { false };
+            if star_blocked { return Err("SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block".into()); }
             let invalid_return = Lang::spells(&lang.return_words, &word) && (self.piece().outermost || self.in_class_body());
             let invalid_loop = (Lang::spells(&lang.break_words, &word) || Lang::spells(&lang.continue_words, &word)) && (self.piece().cycles.is_empty() || self.in_class_body());
             if invalid_return || invalid_loop {
@@ -5484,6 +5505,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn return_stmt(&mut self) -> Res<()> {
+        if self.except_star_nesting > self.piece().except_star_start {
+            return Err("SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block".into());
+        }
         let return_at = self.pos;
         self.take();
         let has_value = !(self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes));
@@ -5707,7 +5731,10 @@ impl<'a> Compiler<'a> {
                 self.claim(&name);
                 Some(self.cell_to_write(&name))
             } else { None };
-            let (start, _) = self.guarded_attempt_body()?;
+            self.except_star_nesting += usize::from(grouped);
+            let grouped_body = self.guarded_attempt_body();
+            self.except_star_nesting -= usize::from(grouped);
+            let (start, _) = grouped_body?;
             // A class body lets the caught value's name go once the
             // clause is done with it, as the language this follows lets
             // it go, so the class keeps no member of that name.

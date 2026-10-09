@@ -1038,6 +1038,12 @@
   "ext.builtin.exceptions.group.split": [
     "split"
   ],
+  "ext.builtin.exceptions.group.split.tuple": [
+    "TypeError: {}.split must return a tuple, not {}"
+  ],
+  "ext.builtin.exceptions.group.split.size": [
+    "TypeError: {}.split must return a 2-tuple, got tuple of size {}"
+  ],
   "ext.builtin.exceptions.group.subgroup": [
     "subgroup"
   ],
@@ -2812,6 +2818,9 @@
   ],
   "ext.stmt.catch.group": [
     "*"
+  ],
+  "ext.stmt.catch.group.forbidden": [
+    "TypeError: catching ExceptionGroup with except* is not allowed. Use except instead."
   ],
   "ext.stmt.catch.group.unsupported": [],
   "ext.stmt.catch.invalid": [

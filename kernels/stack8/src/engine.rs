@@ -577,6 +577,8 @@ fn to_radix36(mut n: u64) -> String {
 enum Chooser {
     Kinds(Vec<Rc<Class>>),
     Test(Value),
+    /// Members are taken by identity: the very leaves a part must keep.
+    Leaves(Vec<Value>),
 }
 
 impl<'a> Engine<'a> {
@@ -1067,6 +1069,7 @@ impl<'a> Engine<'a> {
                 let answer = self.class_apply(predicate.clone(), vec![value.clone()])?;
                 Ok(self.truth(&answer))
             }
+            Chooser::Leaves(leaves) => Ok(matches!(value, Value::Object(_)) && leaves.iter().any(|leaf| leaf.identical(value))),
         }
     }
 
@@ -1291,10 +1294,10 @@ impl<'a> Engine<'a> {
             return self.make_group(base, heading, given.clone(), members);
         }
         let is_callable = self.class_work(2, vec![given.clone()])?.is_true();
-        let chooser = match given {
-            Value::Class(class) if self.exception_class(class) => Chooser::Kinds(vec![class.clone()]),
+        let chooser = match given.contents() {
+            Value::Class(class) if self.exception_class(&class) => Chooser::Kinds(vec![class]),
             Value::Tuple(row) if row.iter().all(|kind| matches!(kind.contents(), Value::Class(class) if self.exception_class(&class))) => {
-                Chooser::Kinds(row.iter().filter_map(|kind| match kind.contents() { Value::Class(class) => Some(class.clone()), _ => None }).collect())
+                Chooser::Kinds(row.iter().filter_map(|kind| match kind.contents() { Value::Class(class) => Some(class), _ => None }).collect())
             }
             Value::Class(_) | Value::Tuple(_) => return Err("TypeError: second argument (exception types or predicate) must be an exception type, a tuple of exception types, or a predicate".into()),
             _ if is_callable => Chooser::Test(given.clone()),
@@ -4867,78 +4870,186 @@ impl<'a> Engine<'a> {
     /// again as it was, a lone exception unwrapped, and what they raise
     /// afresh goes with it in a group of no heading, or alone when it
     /// is the only thing left to raise.
+    /// The clauses of a grouped try, walking them as the reference does:
+    /// each clause's kinds are weighed against what still stands, a
+    /// gatherer is parted by its own `split`, and whatever was left or
+    /// raised afresh is gathered again in the shape its whole came with.
     fn grouped_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, raised: Value) -> Flow<Passage> {
         let unready = self.lang.exception_unready.clone().unwrap_or_default();
-        let alone = Self::group_parts(&raised).is_none();
-        let whole = match alone {
-            false => raised.clone(),
-            true => {
-                let Some(base) = self.furnished(37) else { return Err(unready.into()) };
-                self.make_group(base, Value::text(""), Value::tuple(vec![raised.clone()]), vec![raised.clone()])?
-            }
-        };
-        let mut remainder = Some(whole.clone());
-        let mut afresh = Vec::new();
-        let mut kept_back = Vec::new();
-        let mut any_taken = false;
+        let lone = Self::group_parts(&raised).is_none();
+        let mut pending = Some(raised.clone());
+        let mut from_clauses: Vec<Value> = Vec::new();
         for arm in &plan.clauses {
-            let Some(left) = remainder.take() else { break };
             let mut kinds = Vec::new();
             for span in &arm.kinds {
                 self.run_span(program, frame, instrs, *span)?;
-                match self.drop_top()?.contents() {
-                    Value::Class(class) if self.exception_class(&class) => kinds.push(class),
-                    _ => return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()),
-                }
+                let value = self.drop_top()?.contents();
+                self.star_kinds(&value, &mut kinds)?;
             }
-            let (taken, rest) = self.part_group(left, &Chooser::Kinds(kinds))?;
-            remainder = rest;
-            let Some(taken) = taken else { continue };
-            any_taken = true;
-            if let Some(holding) = self.caught.last_mut() { *holding = taken.clone(); }
+            let match_type = if kinds.len() == 1 {
+                Value::Class(kinds[0].clone())
+            } else {
+                Value::tuple(kinds.into_iter().map(Value::Class).collect())
+            };
+            let matched = match pending.take() {
+                None => None,
+                Some(value) => {
+                    let (taken, rest) = self.star_clause(value, &match_type)?;
+                    pending = rest;
+                    taken
+                }
+            };
+            let Some(matched) = matched else { continue };
+            if let Some(holding) = self.caught.last_mut() { *holding = matched.clone(); }
             self.under = None;
             self.entering = None;
-            if let Some(cell) = &arm.held { self.store_cell(cell, frame, taken.clone())?; }
+            if let Some(cell) = &arm.held { self.store_cell(cell, frame, matched.clone())?; }
             let outcome = self.run_span(program, frame, instrs, arm.body);
             if let Some(cell) = &arm.held { self.forget_cell(cell, frame)?; }
             match outcome {
                 Ok(Passage::Along(at)) if at == arm.body.1 => {}
                 Ok(other) => return Ok(other),
-                Err(Fault::Thrown(value)) if value.identical(&taken) => kept_back.push(value),
-                Err(Fault::Thrown(value)) => afresh.push(value),
-                Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => afresh.push(value), None => return Err(Fault::Note(words)) },
+                Err(Fault::Thrown(value)) => from_clauses.push(value),
+                Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => from_clauses.push(value), None => return Err(Fault::Note(words)) },
                 Err(other) => return Err(other),
             }
         }
-        // What was raised again and what no clause took go back
-        // together under the heading they came with.
-        let left: Vec<Value> = kept_back.into_iter().chain(remainder).collect();
-        let left = match left.len() {
-            0 => None,
-            1 => left.into_iter().next(),
-            _ => {
-                let Some((class, heading, _)) = Self::group_parts(&whole) else { return Err(unready.into()) };
-                let members: Vec<Value> = left.iter().flat_map(|part| Self::group_parts(part).map_or_else(|| vec![part.clone()], |(_, _, parts)| parts)).collect();
-                let joined = self.make_group(class, heading, Value::tuple(members.clone()), members)?;
-                self.carry_over(&whole, &joined);
-                Some(joined)
-            }
-        };
-        if afresh.is_empty() {
-            return match left {
-                None => Ok(Passage::Along(plan.after)),
-                Some(_) if alone && !any_taken => Err(Fault::Thrown(raised)),
-                Some(left) => Err(Fault::Thrown(left)),
-            };
-        }
-        if afresh.len() == 1 && left.is_none() { return Err(Fault::Thrown(afresh.remove(0))); }
-        let Some(base) = self.furnished(37) else { return Err(unready.into()) };
-        afresh.extend(left);
-        Err(Fault::Thrown(self.make_group(base, Value::text(""), Value::tuple(afresh.clone()), afresh)?))
+        if let Some(rest) = pending { from_clauses.push(rest); }
+        self.star_result(&raised, lone, from_clauses, plan, unready)
     }
 
-    /// Everything the walk was keeping is let go and it hands out
-    /// nothing more.
+    /// The classes one grouped clause names: a lone fault class, or every
+    /// class in a tuple. A value that is no fault class is refused, as is
+    /// a gatherer, which a grouped clause may not take.
+    fn star_kinds(&self, value: &Value, kinds: &mut Vec<Rc<Class>>) -> Res<()> {
+        match value.contents() {
+            Value::Class(class) => {
+                if !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default()); }
+                if self.stands_on(&class, 37) { return Err(self.lang.catch_group_forbidden.clone().unwrap_or_default()); }
+                kinds.push(class);
+            }
+            Value::Tuple(members) => {
+                for member in members.iter() { self.star_kinds(&member.contents(), kinds)?; }
+            }
+            _ => return Err(self.lang.catch_invalid.clone().unwrap_or_else(|| "A catch needs a class".to_string())),
+        }
+        Ok(())
+    }
+
+    /// What a grouped clause takes from what still stands, and what it
+    /// leaves, weighing a whole match first, wrapping a lone fault, and
+    /// parting a gatherer by its own `split`, whose answer is weighed too.
+    fn star_clause(&mut self, value: Value, match_type: &Value) -> Flow<(Option<Value>, Option<Value>)> {
+        let kinds: Vec<Rc<Class>> = match match_type.contents() {
+            Value::Tuple(members) => members.iter().filter_map(|member| match member.contents() { Value::Class(class) => Some(class), _ => None }).collect(),
+            Value::Class(class) => vec![class],
+            _ => Vec::new(),
+        };
+        if self.chosen(&value, &Chooser::Kinds(kinds))? {
+            if Self::group_parts(&value).is_some() { return Ok((Some(value), None)); }
+            let Some(base) = self.furnished(37) else { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()) };
+            let wrapped = self.make_group(base, Value::text(""), Value::tuple(vec![value.clone()]), vec![value.clone()])?;
+            return Ok((Some(wrapped), None));
+        }
+        if Self::group_parts(&value).is_none() { return Ok((None, Some(value))); }
+        let word = self.lang.group_split.clone().unwrap_or_else(|| "split".to_string());
+        let member = self.class_get(value.clone(), &word, false)?;
+        let pair = self.class_apply(member, vec![match_type.clone()])?;
+        let Value::Tuple(items) = pair.contents() else {
+            let pattern = self.lang.group_split_pair.clone().unwrap_or_default();
+            let told = pattern.replacen("{}", &Self::type_argument_kind(&value), 1).replacen("{}", &Self::type_argument_kind(&pair), 1);
+            return Err(match self.as_fault(&told) { Some(value) => Fault::Thrown(value), None => Fault::Note(told) });
+        };
+        if items.len() < 2 {
+            let pattern = self.lang.group_split_size.clone().unwrap_or_default();
+            let told = pattern.replacen("{}", &Self::type_argument_kind(&value), 1).replacen("{}", &items.len().to_string(), 1);
+            return Err(match self.as_fault(&told) { Some(value) => Fault::Thrown(value), None => Fault::Note(told) });
+        }
+        let taken = match items[0].clone() { Value::Null => None, other => Some(other) };
+        let left = match items[1].clone() { Value::Null => None, other => Some(other) };
+        Ok((taken, left))
+    }
+
+    /// What a grouped try leaves: a lone fault caught whole is answered as
+    /// it stands; otherwise the parts that went back up or were never
+    /// taken are projected onto the whole, and anything raised afresh is
+    /// gathered beside that projection under no heading.
+    fn star_result(&mut self, orig: &Value, lone: bool, result: Vec<Value>, plan: &crate::code::Attempt, unready: String) -> Flow<Passage> {
+        if lone {
+            return match result.into_iter().next() {
+                Some(value) if !matches!(value, Value::Null) => Err(Fault::Thrown(value)),
+                _ => Ok(Passage::Along(plan.after)),
+            };
+        }
+        let mut afresh = Vec::new();
+        let mut went_back = Vec::new();
+        for value in result {
+            if matches!(value, Value::Null) { continue; }
+            if self.metadata_alike(&value, orig) { went_back.push(value); } else { afresh.push(value); }
+        }
+        let projection = self.project_faults(orig, &went_back)?;
+        let raised = if afresh.is_empty() {
+            projection
+        } else {
+            let mut members = afresh;
+            if let Some(part) = projection { members.push(part); }
+            if members.len() == 1 { members.pop() }
+            else {
+                let Some(base) = self.furnished(37) else { return Err(unready.into()) };
+                Some(self.make_group(base, Value::text(""), Value::tuple(members.clone()), members)?)
+            }
+        };
+        match raised {
+            Some(value) => Err(Fault::Thrown(value)),
+            None => Ok(Passage::Along(plan.after)),
+        }
+    }
+
+    /// Whether two faults carry the same traceback, cause and context,
+    /// as the reference weighs a fault that went back up. The reference
+    /// also names a notes field there, but its `add_note` writes the
+    /// `__notes__` attribute into the instance dictionary and never that
+    /// field, so the reference's own notes test is always true and is
+    /// not modelled here; the hushing flag is not weighed either.
+    fn metadata_alike(&self, one: &Value, other: &Value) -> bool {
+        let (Value::Object(one), Value::Object(other)) = (one, other) else { return false };
+        let keys = [&self.lang.traceback_member, &self.lang.exception_cause, &self.lang.exception_context];
+        let one = one.fields.borrow();
+        let other = other.fields.borrow();
+        keys.into_iter().flatten().all(|key| {
+            let left = one.iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
+            let right = other.iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
+            Self::field_same_place(&left, &right)
+        })
+    }
+
+    /// Whether two metadata fields are the very same thing: the same
+    /// notes list, traceback, cause or context.
+    fn field_same_place(one: &Value, two: &Value) -> bool {
+        match (one, two) {
+            (Value::Trace(_), Value::Trace(_)) => one.identical(two),
+            _ => one.same_place(two),
+        }
+    }
+
+    /// The part of a gatherer holding just the faults that went back up,
+    /// in the shape the whole came with.
+    fn project_faults(&mut self, whole: &Value, keep: &[Value]) -> Flow<Option<Value>> {
+        if keep.is_empty() { return Ok(None); }
+        let mut leaves = Vec::new();
+        for value in keep { Self::collect_leaves(value, &mut leaves); }
+        let (taken, _) = self.part_group(whole.clone(), &Chooser::Leaves(leaves))?;
+        Ok(taken)
+    }
+
+    /// Every fault beneath one, in order: the leaves a projection keeps.
+    fn collect_leaves(value: &Value, into: &mut Vec<Value>) {
+        match Self::group_parts(value) {
+            Some((_, _, members)) => for member in members { Self::collect_leaves(&member, into); },
+            None => into.push(value.clone()),
+        }
+    }
+
     fn shut_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
         let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
         if let Some(walk) = state.delegate.take() { self.shut_delegate(&walk)?; }
@@ -12883,6 +12994,18 @@ impl<'a> Engine<'a> {
                 let mut args = self.drop_many(argc)?;
                 let this = args.remove(0);
                 let parent = args.remove(0);
+                // A spread written among a forebear's arguments is opened
+                // here, as it is for any other call; a named argument
+                // stays tied to its name for the call to take.
+                let mut opened = Vec::new();
+                for value in args {
+                    if matches!(&value, Value::Tie(pair) if matches!(pair.0, Value::Flag(false))) {
+                        opened.extend(self.call_items(vec![value])?.into_iter().map(|(_, item)| item));
+                    } else {
+                        opened.push(value);
+                    }
+                }
+                let args = opened;
                 if self.fuller_classes() {if let Value::Text(owner)=parent {let v=self.class_super(this,&owner,name,args)?;self.data.push(v);return Ok(());}}
                 let stands = self.class_it_spells(parent);
                 let Value::Class(class) = stands else {

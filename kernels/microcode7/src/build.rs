@@ -317,6 +317,9 @@ pub struct Builder<'a> {
     place_depth: usize,
     outside_lambda: Vec<String>,
     loop_depth: usize,
+    /// The loop depth at which each open grouped clause began; a break,
+    /// a continue or a return may not reach past the innermost of them.
+    except_star_bases: Vec<usize>,
     range_end: Option<(usize, u32)>,
     annotation_lookup: bool,
     annotation_owner: Option<(String, Vec<String>)>,
@@ -668,7 +671,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -2026,10 +2029,12 @@ impl<'a> Builder<'a> {
         let outer_declarations = std::mem::take(&mut self.declarations);
         let previous_loops = self.loop_depth;
         let previous_finally = self.finally_nesting;
+        let previous_stars = std::mem::take(&mut self.except_star_bases);
         if holds == Holds::Every { self.loop_depth = 0; self.finally_nesting = 0; }
         let mut body = body(self)?;
         self.loop_depth = previous_loops;
         self.finally_nesting = previous_finally;
+        self.except_star_bases = previous_stars;
         self.declarations = outer_declarations;
         self.gather_names = earlier_gathering;
         self.gather_targets = earlier_targets;
@@ -3041,8 +3046,13 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            let text = if self.key("stmt.return") && (self.naming.is_empty() || self.in_class_body()) {
+            let star_sealed = self.except_star_bases.last().copied().map_or(false, |base| self.loop_depth <= base);
+            let text = if self.key("stmt.return") && !self.except_star_bases.is_empty() {
+                Some("'break', 'continue' and 'return' cannot appear in an except* block")
+            } else if self.key("stmt.return") && (self.naming.is_empty() || self.in_class_body()) {
                 Some("'return' outside function")
+            } else if (self.key("stmt.break") || self.key("stmt.continue")) && star_sealed {
+                Some("'break', 'continue' and 'return' cannot appear in an except* block")
             } else if self.loop_depth == 0 || self.in_class_body() {
                 if self.key("stmt.break") { Some("'break' outside loop") }
                 else if self.key("stmt.continue") { Some("'continue' not properly in loop") } else { None }
@@ -3281,12 +3291,14 @@ impl<'a> Builder<'a> {
             if self.key("stmt.break") {
                 self.note_finally_word("break");
                 self.advance();
+                self.star_loop_check()?;
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Leave, levels));
             }
             if self.key("stmt.continue") {
                 self.note_finally_word("continue");
                 self.advance();
+                self.star_loop_check()?;
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Resume, levels));
             }
@@ -4309,7 +4321,10 @@ impl<'a> Builder<'a> {
                 } else { None };
                 self.need_sign(&close, "after the class caught")?;
             }
-            let body = self.guarded_attempt_body(bare_clauses)?;
+            if grouped { self.except_star_bases.push(self.loop_depth); }
+            let grouped_body = self.guarded_attempt_body(bare_clauses);
+            if grouped { self.except_star_bases.pop(); }
+            let body = grouped_body?;
             // A class body lets the caught value's name go when the
             // clause is through with it, as the language this follows
             // does, and so keeps no member under that name.
@@ -6864,6 +6879,19 @@ impl<'a> Builder<'a> {
             }
         }
         self.write_or_expr()
+    }
+
+    /// A break or continue whose target loop lies beyond an open grouped
+    /// clause may not be written, even with a level count.
+    fn star_loop_check(&self) -> Res<()> {
+        let Some(base) = self.except_star_bases.last().copied() else { return Ok(()); };
+        let reach = if self.table.flag("ext.stmt.break.levels") && self.look().shape == Shape::Numeral {
+            self.look().lexeme.parse::<usize>().unwrap_or(1)
+        } else { 1 };
+        if self.loop_depth.saturating_sub(reach) < base {
+            return Err("SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block".to_string());
+        }
+        Ok(())
     }
 
     /// The number after break or continue, when the definition allows

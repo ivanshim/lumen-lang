@@ -6247,6 +6247,10 @@ impl<'a> Engine<'a> {
                     else { self.bind_class_value(member, Some(subject.clone()), receiver.clone())? };
                 return self.class_apply(bound, args);
             }
+            if self.exception_class(c) && self.exception_method_named(name) {
+                let Value::Object(o) = subject.contents() else { return Err(self.class_refusal()); };
+                return self.exception_method(o, name, &args);
+            }
             if self.exception_class(c) && self.class_word("allocate") == name {
                 let Some((Value::Class(cls), rest)) = args.split_first() else { return Err(self.class_refusal()) };
                 return self.native_exception_new(c.clone(), cls.clone(), rest.to_vec());
@@ -6481,6 +6485,10 @@ impl<'a> Engine<'a> {
                 if let Some(word) = Self::own_kind(class) {
                     if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
                 }
+            }
+            if self.exception_class(class) && name == self.class_word("allocate") { return Ok(Some(Self::adapter(1, Vec::new()))); }
+            if self.exception_class(class) && self.exception_method_named(name) {
+                return Ok(Some(Value::ValueMethod(Rc::new((receiver.clone(), name.to_string())))));
             }
             if let Some(value) = Self::own_class_value(class, name) {
                 // The subclass hook is a class method: it binds to the

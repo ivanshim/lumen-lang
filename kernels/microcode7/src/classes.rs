@@ -6457,6 +6457,11 @@ impl<'a> Machine<'a> {
                     return self.fault_method(t.clone(), key, &plain);
                 }
             }
+            if self.is_fault_kind(b) && self.fault_method_word(key) {
+                if let Value::Thing(t) = &receiver {
+                    return self.fault_method(t.clone(), key, &args);
+                }
+            }
             // A fault's making, asked of a base, is the root's making.
             if self.is_fault_kind(b) && key == self.detail("allocate") {
                 return self.apply_class_member(Self::wrap(1, Vec::new()), args);
@@ -6962,6 +6967,9 @@ impl<'a> Machine<'a> {
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                         return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
                     }
+                }
+                if self.is_fault_kind(base) && self.fault_method_word(key) {
+                    return Ok(Some(Value::Member(Rc::new(receiver.clone()), key.to_owned())));
                 }
                 if let Some(entry) = Self::own_entry(base, key) {
                     // The subclass hook is a class method: it ties to
