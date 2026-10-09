@@ -377,3 +377,10 @@ def strftime(format, fields=None):
         else:
             out += _field('', '%' + format[spec:at], flags, digits, 0, ' ')
     return out
+
+# The native struct_time keeps its two named non-sequence fields.
+_STRUCT_TM_ITEMS = struct_time.n_fields
+
+def strptime(string, format='%a %b %d %H:%M:%S %Y'):
+    import _strptime
+    return _strptime._strptime_time(string, format)

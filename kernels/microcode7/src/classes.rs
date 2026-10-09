@@ -3637,6 +3637,17 @@ impl<'a> Machine<'a> {
             _ => None,
         }
     }
+    /// Find native documentation while leaving Python objects to their attribute road.
+    pub(super) fn primitive_doc(&self, subject: &Value) -> Option<&'static str> {
+        match subject.settled() {
+            Value::Intrinsic(op, title) if op.names_a_kind() => Self::builtin_kind_doc(&title),
+            Value::OctetKind { changeable, .. } => Self::builtin_kind_doc(if changeable { "bytearray" } else { "bytes" }),
+            primitive @ (Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_)
+                | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Vector(_) | Value::Tuple(_)
+                | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::Span(_) | Value::Octets { .. }) => Self::builtin_kind_doc(&primitive.kind_word()),
+            _ => None,
+        }
+    }
     pub(super) fn clock_record_type(&mut self) -> Rc<Blueprint> {
         for (spelling, class) in &self.native_kinds { if spelling == "struct_time" { return class.clone(); } }
         let parent=self.native_kind("tuple");
@@ -3698,17 +3709,6 @@ impl<'a> Machine<'a> {
     fn native_allocation(&self, spelling: &str) -> Value {
         let mut saved = self.loose_members.borrow_mut();
         saved.entry(format!("allocate {spelling}")).or_insert_with(|| Self::wrap(14, vec![Value::text(spelling)])).clone()
-    }
-    /// Find native documentation while leaving Python objects to their attribute road.
-    pub(super) fn primitive_doc(&self, subject: &Value) -> Option<&'static str> {
-        match subject.settled() {
-            Value::Intrinsic(op, title) if op.names_a_kind() => Self::builtin_kind_doc(&title),
-            Value::OctetKind { changeable, .. } => Self::builtin_kind_doc(if changeable { "bytearray" } else { "bytes" }),
-            primitive @ (Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_)
-                | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Vector(_) | Value::Tuple(_)
-                | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::Span(_) | Value::Octets { .. }) => Self::builtin_kind_doc(&primitive.kind_word()),
-            _ => None,
-        }
     }
     pub(super) fn integer_attribute(&self, value: &Value, key: &str) -> Option<Value> {
         if let Value::Intrinsic(Prim::Truthful, title) = value {
@@ -6257,7 +6257,6 @@ impl<'a> Machine<'a> {
             self.armed_names = saved;
             return outcome;
         }
-        if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op == 13 { return self.class_from_function(values); }
         if op == 14 { return self.check_class_builtin(); }

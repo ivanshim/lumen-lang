@@ -1,7 +1,7 @@
 # Helpers that run a second interpreter. The host runs a file, so the
 # CPython-style arguments a test hands over (options, a `-c` with code,
 # a file) are turned into a file to run plus the program's own words;
-# options that mean nothing to this host are dropped, and `-c code` is
+# supported startup settings are preserved, other options are dropped, and `-c code` is
 # written to a scratch file first.
 
 import os
@@ -16,6 +16,7 @@ def _to_file_args(args):
     args = list(args)
     file = None
     rest = []
+    startup = []
     i = 0
     n = len(args)
     while i < n:
@@ -31,8 +32,12 @@ def _to_file_args(args):
             rest = args[i + 1:]
             break
         elif a in ('-X', '-W', '-Q') and i + 1 < n:
+            if a == '-X' and args[i + 1].split('=', 1)[0] == 'dev':
+                startup.extend((a, args[i + 1]))
             i += 2
         elif len(a) > 2 and a[:2] in ('-X', '-W', '-Q'):
+            if a[:2] == '-X' and a[2:].split('=', 1)[0] == 'dev':
+                startup.append(a)
             i += 1
         elif a in ('-E', '-I', '-s', '-S', '-u', '-B', '-d', '-v', '-q',
                    '-O', '-OO', '-P', '-R', '-t', '-tt', '-b', '-bb', '-i', '-x'):
@@ -41,6 +46,8 @@ def _to_file_args(args):
             file = a
             rest = args[i + 1:]
             break
+    if startup:
+        return startup[0], startup[1:] + [file] + rest
     return file, rest
 
 
@@ -105,6 +112,25 @@ def make_script(script_dir, script_basename, source, omit_suffix=False):
         with open(script_name, 'wb') as script_file:
             script_file.write(source)
     return script_name
+
+
+def make_zip_script(zip_dir, zip_basename, script_name, name_in_zip=None):
+    import zipfile
+    zip_filename = zip_basename + os.extsep + 'zip'
+    zip_name = os.path.join(zip_dir, zip_filename)
+    with zipfile.ZipFile(zip_name, 'w') as zip_file:
+        if name_in_zip is None:
+            parts = script_name.split(os.sep)
+            if len(parts) >= 2 and parts[-2] == '__pycache__':
+                from importlib.util import source_from_cache
+                from test.support.import_helper import make_legacy_pyc
+                legacy_pyc = make_legacy_pyc(source_from_cache(script_name))
+                name_in_zip = os.path.basename(legacy_pyc)
+                script_name = legacy_pyc
+            else:
+                name_in_zip = os.path.basename(script_name)
+        zip_file.write(script_name, name_in_zip)
+    return zip_name, os.path.join(zip_name, name_in_zip)
 
 
 class _PythonRunResult:

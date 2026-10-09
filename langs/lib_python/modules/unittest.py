@@ -32,8 +32,13 @@ class _Raises:
         if not isinstance(value, self.expected):
             return False
         self.exception = value
-        if self.phrase is not None and self.phrase.search(_message(value)) is None:
-            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + _message(value) + '"')
+        # An exception's string is its own message, the way CPython's
+        # assertRaisesRegex reads it; a `message` attribute on the
+        # exception is not the same thing (argparse's ArgumentError
+        # carries the raw text there and the argument name only in
+        # __str__), so the pattern is matched against str(value).
+        if self.phrase is not None and self.phrase.search(str(value)) is None:
+            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + str(value) + '"')
         return True
 
 class TestResult:
@@ -76,6 +81,7 @@ class TestCase:
     failureException = AssertionError
     maxDiff = 640
     longMessage = True
+    _class_cleanups = []
 
     def __init__(self, methodName='runTest'):
         self._method = methodName
@@ -90,6 +96,38 @@ class TestCase:
     @classmethod
     def tearDownClass(cls):
         pass
+
+    @classmethod
+    def addClassCleanup(cls, function, /, *args, **kwargs):
+        # Each concrete class owns its stack, including classes that inherit
+        # fixture methods from another test case.
+        if '_class_cleanups' not in cls.__dict__:
+            cls._class_cleanups = []
+        cls._class_cleanups.append((function, args, kwargs))
+
+    @classmethod
+    def enterClassContext(cls, cm):
+        kind = type(cm)
+        try:
+            enter = kind.__enter__
+            exit = kind.__exit__
+        except AttributeError:
+            raise TypeError(f"'{kind.__module__}.{kind.__qualname__}' object does not support the context manager protocol") from None
+        result = enter(cm)
+        cls.addClassCleanup(exit, cm, None, None, None)
+        return result
+
+    @classmethod
+    def doClassCleanups(cls):
+        import sys
+        cls.tearDown_exceptions = []
+        cleanups = cls.__dict__.get('_class_cleanups', [])
+        while cleanups:
+            function, args, kwargs = cleanups.pop()
+            try:
+                function(*args, **kwargs)
+            except Exception:
+                cls.tearDown_exceptions.append(sys.exc_info())
 
     def setUp(self):
         pass
@@ -603,6 +641,11 @@ class TestSuite:
             return True
         outcome = _host_call_outcome(fixture)
         if outcome[0]:
+            if name == 'doClassCleanups':
+                faults = getattr(self.class_, 'tearDown_exceptions', [])
+                for kind, value, traceback in faults:
+                    result.errors = [*result.errors, [name, _message(value), _class_name(self.class_)]]
+                return len(faults) == 0
             return True
         entry = [name, _message(outcome[1], outcome[2]), _class_name(self.class_)]
         if isinstance(outcome[1], SkipTest):
@@ -1027,9 +1070,12 @@ class TextTestRunner:
                         test._fixture('tearDownClass', result)
             finally:
                 try:
-                    test._module_fixture('tearDownModule', result)
+                    test._fixture('doClassCleanups', result)
                 finally:
-                    test._module_fixture('doModuleCleanups', result)
+                    try:
+                        test._module_fixture('tearDownModule', result)
+                    finally:
+                        test._module_fixture('doModuleCleanups', result)
             return None
         failures = len(result.failures)
         errors = len(result.errors)

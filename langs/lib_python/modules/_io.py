@@ -943,6 +943,8 @@ class FileIO(_RawIOBase):
         import os
         if getattr(self, '_fd', -1) >= 0:
             self.close()
+        self._fd = -1
+        self._closed = True
         if not isinstance(mode, str):
             raise TypeError('mode must be a string')
         if mode in _PLAIN_MODES:

@@ -39,8 +39,9 @@ thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
 }
 
+
 /// The global names, each with a slot.
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
     index: HashMap<String, usize>,
     module_index: HashMap<String, HashMap<String, usize>>,
@@ -307,6 +308,7 @@ pub struct Compiler<'a> {
     /// How many values a case's pattern has read ahead of the subject.
     pattern_values: usize,
     reading_annotation: bool,
+    starred_annotation_sites: HashSet<usize>,
     annotation_namespace: Option<(String, std::collections::HashSet<String>)>,
     reading_generic_class: bool,
     generic_class_parameters: Vec<String>,
@@ -825,7 +827,7 @@ fn compile_pass(
             // Text alone as the first statement of a program is the
             // program's own documentation, kept under the name the
             // language gives it (ext.system.module.doc).
-            if opening && own_line && alone && !lang.module_doc.is_empty() {
+            if opening && own_line && alone && !lang.module_doc.is_empty()  {
                 let said: Vec<&Instr> = a.piece().instrs[from..].iter().filter(|i| !matches!(i, Instr::Emptied(_) | Instr::Line(_) | Instr::Nothing)).collect();
                 let words = match said.as_slice() {
                     [Instr::Const(Value::Text(words)), Instr::Write(cell)] if cell.ident.as_ref() == RESULT_CELL => Some(words.to_string()),
@@ -929,7 +931,7 @@ fn compile_pass(
     a.registry.top_level_coroutine = unit.generator;
     let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[], !lang.class_builder.is_empty());
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: (if a.registry.top_level_coroutine { 128 } else { 0 }) | a.future_bits, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -2079,7 +2081,8 @@ impl<'a> Compiler<'a> {
                 format!("'{text}'")
             } else { token.lexeme.clone() };
             let touching = matches!(word.as_str(), "." | "," | ":" | ")" | "]" | "}") || matches!(previous.as_str(), "." | "(" | "[" | "{")
-                || matches!(word.as_str(), "(" | "[") && !previous.is_empty();
+                || matches!(word.as_str(), "(" | "[") && !previous.is_empty()
+                || output == previous && Lang::spells(&self.lang.unpack_rest, &previous);
             if !output.is_empty() && !touching { output.push(' '); }
             output.push_str(&word);
             previous = word;
@@ -2120,7 +2123,14 @@ impl<'a> Compiler<'a> {
                 c.pos = *start;
                 let expression = c.mark();
                 let previous = std::mem::replace(&mut c.reading_annotation, true);
+                let unpacked = c.starred_annotation_sites.contains(start);
+                if unpacked { c.take(); }
                 c.expr_at(0, false)?;
+                if unpacked {
+                    c.act(Action::Unpack(1, None), 1);
+                    c.constant(Value::Small(0));
+                    c.act(Action::Apart, 2);
+                }
                 c.reading_annotation = previous;
                 let text = c.annotation_text(*start, c.pos);
                 if c.future_annotations {
@@ -3252,6 +3262,7 @@ impl<'a> Compiler<'a> {
                         if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
                     }
                 }
+                let assertion_begin = self.mark();
                 self.expr(0)?;
                 if self.registry.optimize >= 1 {
                     if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
@@ -3273,6 +3284,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
+                if self.registry.optimize > 0 { self.piece().instrs.truncate(assertion_begin); }
                 return Ok(());
             }
             if Lang::spells(&lang.foreach_words, &w) {
@@ -5447,8 +5459,10 @@ impl<'a> Compiler<'a> {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let source_at = self.pos;
             let from = self.mark();
+            // A Python iterator source admits the whole conditional expression.
+            let source_level = if lang.range_marks.is_empty() && !lang.comprehension_for.is_empty() { 0 } else { tier + 1 };
             if self.on_any(&lang.array_spread) { self.scope_value()?; }
-            else { self.expr(tier + 1)?; self.scope_tail(from)?; }
+            else { self.expr(source_level)?; self.scope_tail(from)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().spelling())) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -7485,6 +7499,7 @@ impl<'a> Compiler<'a> {
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
                     ends.extend(call.between.iter().cloned());
+                    if rule == 3 && self.on_any(&lang.unpack_rest) { self.starred_annotation_sites.insert(self.pos); }
                     self.pending_annotations.push((formals.last().unwrap().clone(), self.pos));
                     self.annotation_expression(&ends)?;
                 } else if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().spelling()) {
@@ -10645,7 +10660,9 @@ impl<'a> Compiler<'a> {
             }
             Shape::Instr => {
                 self.take();
-                if Lang::spells(&lang.true_words, &tok.spelling()) {
+                if lang.debug_binding.as_deref() == Some(tok.spelling()) && !self.writing_place {
+                    self.constant(Value::Flag(self.registry.optimize <= 0));
+                } else if Lang::spells(&lang.true_words, &tok.spelling()) {
                     self.constant(Value::Flag(true));
                 } else if Lang::spells(&lang.false_words, &tok.spelling()) {
                     self.constant(Value::Flag(false));
