@@ -536,7 +536,7 @@ pub struct Machine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
-    pub(super) code_handles: HashMap<usize, Weak<Vec<Value>>>,
+    pub(super) code_handles: HashMap<usize, (Weak<Routine>, Weak<Vec<Value>>)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
@@ -5639,8 +5639,10 @@ impl<'a> Machine<'a> {
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
         if let Some(template) = &body.definition { return self.code_handle(template); }
         let address = Rc::as_ptr(body) as usize;
-        if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
-            return Value::Wrapped(7, parts.into());
+        if let Some((owner, cached)) = self.code_handles.get(&address) {
+            if owner.upgrade().is_some_and(|prior| Rc::ptr_eq(&prior, body)) {
+                if let Some(parts) = cached.upgrade() { return Value::Wrapped(7, parts.into()); }
+            }
         }
         let origin = self.written_over.values().find(|entry| Rc::ptr_eq(&entry.2, body))
             .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
@@ -5657,7 +5659,7 @@ impl<'a> Machine<'a> {
             },
         };
         if let Value::Wrapped(7, parts) = &handle {
-            self.code_handles.insert(address, Rc::downgrade(parts));
+            self.code_handles.insert(address, (Rc::downgrade(body), Rc::downgrade(parts)));
         }
         handle
     }

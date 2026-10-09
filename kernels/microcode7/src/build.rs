@@ -13008,7 +13008,7 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
         Form::Dyad { a, b, .. } => {
             for input in [a, b] {
                 match input {
-                    Input::Form(f) => children.push(f),
+                    Input::Form(f) => inspect_indexed_form(f, locals, constants, names, suspension, indexed),
                     Input::Const(v) => literal(v, constants, indexed),
                     Input::Address(a) => if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); },
                 }
