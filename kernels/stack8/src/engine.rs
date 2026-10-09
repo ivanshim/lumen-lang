@@ -27331,7 +27331,7 @@ impl Engine<'_> {
                 } else { finish = if kind == "TabError" { 0 } else { -1 }; }
             }
             if mode == 0 && (end.is_some() || unclosed || indentation || message.starts_with("unexpected EOF") || message.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
-            if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
+            if message.starts_with("unterminated ") || message.starts_with("Non-UTF-8 code ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
             let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
@@ -27554,9 +27554,7 @@ impl Engine<'_> {
                     let row = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
                     let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
                     let source = String::from_utf8_lossy(bytes);
-                    let why = if error.error_len().is_none() { "unexpected end of data" } else if bytes[error.valid_up_to()] >= 194 { "invalid continuation byte" } else { "invalid start byte" };
-                    let position = prefix.rsplit(['\n', '\'', '"']).next().unwrap_or("").len();
-                    let message = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{:02x} in position {position}: {why}", bytes[error.valid_up_to()]);
+                    let message = format!("SyntaxError: Non-UTF-8 code starting with '\\x{:02x}' on line {row}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[error.valid_up_to()]);
                     return Err(self.text_syntax(0, message, filename, row, col, Some((row, col)), &source));
                 }
             },

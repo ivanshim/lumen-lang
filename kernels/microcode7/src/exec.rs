@@ -12965,7 +12965,10 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Next::Jump(p, f)) => {
                     if !p.frameless && self.rules.trace_words.len() > 15 {
-                        break self.drive(p, f);
+                        let globals = self.enter_function_globals(&p);
+                        let returned = self.drive(p, f);
+                        self.leave_function_globals(globals);
+                        break returned;
                     }
                     if p.generator && self.rules.suspends {
                         if p.flags & 512 != 0 { self.code_handle(&p); }
@@ -27803,6 +27806,7 @@ impl<'a> Machine<'a> {
                 }
                 if mode == 0 && (end.is_some() || needs_closer || bad_indent || words.starts_with("unexpected EOF") || words.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
                 if words.starts_with("unterminated ") || (needs_closer && source.lines().count() > line as usize) { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
+                if words.starts_with("Non-UTF-8 code ") { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if words == "cannot assign to function call" && source.lines().count() > line as usize { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if mode > 0 && words == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { offset = 0; end_offset = 0; }
                 let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate argument ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
@@ -28024,10 +28028,8 @@ impl<'a> Machine<'a> {
                 let line = 1 + upto.iter().filter(|b| **b == 10).count() as u32;
                 let prefix = String::from_utf8_lossy(upto);
                 let offset = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-                let position = prefix.rsplit(['"', '\'', '\n']).next().unwrap_or("").len();
                 let byte = raw[bad.valid_up_to()];
-                let reason = match bad.error_len() { None => "unexpected end of data", Some(_) if byte >= 194 => "invalid continuation byte", _ => "invalid start byte" };
-                let words = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{byte:02x} in position {position}: {reason}");
+                let words = format!("SyntaxError: Non-UTF-8 code starting with '\\x{byte:02x}' on line {line}, but no encoding declared; see https://peps.python.org/pep-0263/ for details");
                 Err(self.text_unreadable_at(0, words, file, line, offset, Some((line, offset)), &String::from_utf8_lossy(raw)))
             }
         }

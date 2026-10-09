@@ -1846,6 +1846,11 @@ def write_mirror(lang, d, files, reasons):
         replacements = layout.get("replacements", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
+            # Non-UTF-8 sources need the filesystem loader's decoding.
+            try:
+                source.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
             relative = source.relative_to(modules).as_posix()
             if relative in adapters.values() or relative in replacements.values() or relative in preludes.values():
                 continue
