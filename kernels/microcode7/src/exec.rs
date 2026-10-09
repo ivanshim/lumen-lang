@@ -14642,7 +14642,7 @@ impl<'a> Machine<'a> {
         let mut budget = store.entry_budget;
         let mut stopped = None;
         if let Some(source) = arguments.first() {
-            let offered = if source.kind_word() == "mappingproxy" { source.proxy_pairs() } else { source.settled() };
+            let offered = if source.kind_word() == "mappingproxy" { source.proxy_pairs() } else if let Some(reading) = Self::proxy_reading(source) { reading } else { source.settled() };
             let direct = if matches!(offered, Value::Thing(_)) && self.appointment(&offered, 15).is_none() {
                 Self::underlying(&offered).map(|value| value.settled()).unwrap_or(offered)
             } else { offered };
@@ -18701,7 +18701,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Quoted | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField);
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Landing(_) | Prim::SetAssign(_) | Prim::Quoted | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
