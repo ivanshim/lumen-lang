@@ -8640,7 +8640,7 @@ impl<'a> Machine<'a> {
             // A sealed set has a hash of its own; the eighth place
             // above leaves the alterable set out and lets this stand.
 
-            9 => counts,
+            9 => counts || mark == 'p',
             10 => holds || "WV".contains(mark),
             11 => holds && !uniques,
             // A run of bytes is written into place by place and gives
@@ -9044,8 +9044,13 @@ impl<'a> Machine<'a> {
             Value::Blueprint(b) => Self::native_word(b)?,
             Value::Intrinsic(_, word) => word.to_string(),
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
+            _ if name == "__class_getitem__" => self.kind_spelling(value)?.to_string(),
             _ => return None,
         };
+        let generic = ["list", "tuple", "set", "frozenset", "dict"].contains(&word.as_str());
+        if generic && name == "__class_getitem__" && self.table.spells("ext.stmt.class.builtin", "tuple") {
+            return Some(Value::Member(Rc::new(value.clone()), name.into()));
+        }
         let reader = self.detail("get");
         if name == reader && !reader.is_empty() && self.kind_stand_in(&word).is_some() {
             return Some(self.kind_entry(&word, name));
@@ -9077,7 +9082,7 @@ impl<'a> Machine<'a> {
         }
         if self.names_in_calls && self.detail("descriptor.get") == name {
             if word == "function" { return Some(Value::Wrapped(31, Rc::new(Vec::new()).into())); }
-            if matches!(word.as_str(), "classmethod" | "staticmethod") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+            if matches!(word.as_str(), "classmethod" | "staticmethod") { return Some(Value::Wrapped(78, Rc::new(vec![Value::text(&word)]).into())); }
         }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));
@@ -10339,10 +10344,11 @@ impl<'a> Machine<'a> {
             return self.apply_class_member(implementation.settled(), vec![receiver.clone(), arguments[0].clone()]);
         }
         if name == "__class_getitem__" {
-            if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
-            let namespace = self.load_namespace("types")?;
-            let constructor = self.namespace_item(&namespace, "types", "GenericAlias")?;
-            return self.apply_class_member(constructor.settled(), vec![receiver.clone(), arguments[0].clone()]);
+            let owner = self.read_class_member(receiver.clone(), "__name__", false)?.bare();
+            if keywords.len() != 0 { return Err(format!("TypeError: {owner}.__class_getitem__() takes no keyword arguments").into()); }
+            if arguments.len() != 1 { return Err(format!("TypeError: {owner}.__class_getitem__() takes exactly one argument ({} given)", arguments.len()).into()); }
+            let alias = self.native_kind("GenericAlias");
+            return self.apply_class_member(Value::Blueprint(alias), vec![receiver.clone(), arguments[0].clone()]);
         }
         if name == "from_number" {
             if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }

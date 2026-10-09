@@ -103,7 +103,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 16 => if w.1.first().is_some_and(|name| matches!(name.plain().as_str(), "__dict__" | "__weakref__")) { "getset_descriptor" } else { "member_descriptor" },
-            Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 79 | 80) => "wrapper_descriptor",
             Value::Adapter(w) if matches!(w.0, 20..=22 | 26) => "wrapper_descriptor",
             Value::Adapter(w) if matches!(w.0, 23..=25 | 27) => "method_descriptor",
             // A slot's own descriptor is a member; the two layout names

@@ -196,7 +196,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     const PAIRS: &[&str] = &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"];
     const PLACES: &[&str] = &["index", "count"];
     const WHOLE: &[&str] = &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio",
-        "is_integer", "__index__", "__truediv__"];
+        "is_integer", "__index__", "__truediv__", "__floor__", "__ceil__"];
     const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"];
     let names: &[&str] = match value.contents() {
         Value::Text(_) | Value::Codepoints(_) => TEXT,
@@ -632,7 +632,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             arity(0,0)?;
             match op {
                 "bit_count" if !real => Ok(Value::Small(held.as_big()?.magnitude().count_ones() as i64)),
-                "numerator" | "__index__" if !real => Ok(Value::of_big(held.as_big()?)),
+                "numerator" | "__index__" | "__floor__" | "__ceil__" if !real => Ok(Value::of_big(held.as_big()?)),
                 "denominator" if !real => Ok(Value::Small(1)),
                 "real" | "conjugate" => Ok(if matches!(held,Value::Flag(_)) {Value::of_big(held.as_big()?)} else {held.clone()}),
                 "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),

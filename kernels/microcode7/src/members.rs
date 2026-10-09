@@ -32,8 +32,8 @@ const KIND_MEMBERS: &[(&str, &str)] = &[
     ("bytearray", "copy"),
     ("tuple", "index count"),
     ("range", "index count"),
-    ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
+    ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__ __floor__ __ceil__"),
+    ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__ __floor__ __ceil__"),
     ("float", "real imag conjugate as_integer_ratio is_integer hex __floor__ __ceil__"),
     ("complex", "real imag conjugate"),
 ];
@@ -251,7 +251,7 @@ impl Request<'_> {
         }
         self.takes(0,0)?;
         if self.operation=="bit_count" && !real{return Ok(Value::Small(value.as_big()?.magnitude().count_ones() as i64));}
-        if (self.operation=="numerator"||self.operation=="__index__") && !real{return Ok(Value::from_big(value.as_big()?));}
+        if ["numerator", "__index__", "__floor__", "__ceil__"].contains(&self.operation) && !real{return Ok(Value::from_big(value.as_big()?));}
         if self.operation=="denominator" && !real{return Ok(Value::Small(1));}
         if self.operation=="real"||self.operation=="conjugate"{return Ok(if matches!(value,Value::Flag(_)){Value::from_big(value.as_big()?)}else{value});}
         if self.operation=="imag"{return Ok(if real{crate::data::worth_of_binary(0.0,crate::math::DEFAULT_PLACES).keeping_point(true)}else{Value::Small(0)});}

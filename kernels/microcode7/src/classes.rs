@@ -118,7 +118,7 @@ impl<'a> Machine<'a> {
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
-            kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
+            kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, vec![Value::text(word)])));
             if self.table.prims.get(word) == Some(&Prim::ClassWork(9)) {
                 kind.shared.borrow_mut().push((self.detail("call").to_owned(), Self::wrap(79, Vec::new())));
             }
@@ -1997,6 +1997,7 @@ impl<'a> Machine<'a> {
                     0=>Ok(kept[0].clone()),
                     136=>{
                         let word = kept[0].bare();
+
                         let Some(first) = values.first() else { return Err(format!("TypeError: unbound method {word}.__reduce__() needs an argument").into()); };
                         let base = Self::underlying(first).unwrap_or_else(|| first.settled()).settled();
                         let walking_type = matches!(self.table.prims.get(&word), Some(Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Backwards));
@@ -2254,6 +2255,13 @@ impl<'a> Machine<'a> {
                     60=>{
                         let entry=kept[1].bare();
                         let word=kept[0].bare();
+                        if entry == "__class_getitem__" && kept.get(2).is_some_and(Value::is_true) {
+                            if values.is_empty() { return Err(format!("TypeError: descriptor '{entry}' of '{word}' object needs an argument").into()); }
+                            let target = values.remove(0);
+                            let raw = Self::wrap(60, kept.as_ref().clone());
+                            let bound = self.get_native_classmethod(&raw, vec![Value::Nil, target], Vec::new())?;
+                            return self.apply_class_member(bound, values);
+                        }
                         if let Some(Value::Blueprint(owner)) = self.fault_kinds.get(&word).cloned() {
                             if values.len() == 0 { return Err(format!("TypeError: descriptor '{entry}' of '{word}' object needs an argument").into()); }
                             let object = match values.first().map(Value::settled) {
@@ -2470,7 +2478,7 @@ impl<'a> Machine<'a> {
                     79 => {
                         if values.is_empty() { return Err(self.class_unready()); }
                         let descriptor = values.remove(0);
-                        let held = Self::underlying(&descriptor).ok_or_else(|| self.class_unready())?;
+                        let held = Self::underlying(&descriptor).unwrap_or_else(|| descriptor.settled());
                         let Value::Wrapped(4, items) = held else { return Err(self.class_unready()); };
                         self.apply_held(items[0].clone(), values)
                     }
@@ -3051,8 +3059,8 @@ impl<'a> Machine<'a> {
         if let Value::Wrapped(60, parts) = &entry {
             if self.names_in_calls {
                 let declaring = parts[0].bare();
-                let is_class_method = declaring == "dict" && parts[1].bare() == "fromkeys";
-                if is_class_method && Self::native_beneath(&owner).as_deref() != Some("dict") {
+                let is_class_method = parts.get(2).is_some_and(Value::is_true);
+                if declaring == "dict" && parts[1].bare() == "fromkeys" && Self::native_beneath(&owner).as_deref() != Some("dict") {
                     let name = &owner.name;
                     return Err(format!("TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received '{name}'").into());
                 }
@@ -3080,7 +3088,8 @@ impl<'a> Machine<'a> {
                 if operation == "from_bytes" { operation = "integer_from_bytes".into(); }
                 else if operation == "__getformat__" { operation = "float_getformat".into(); }
                 else if matches!(operation.as_str(), "fromhex" | "from_number") { operation = [parts[0].bare(), operation].join("_"); }
-                return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), operation));
+                let receiver = match operation.as_str() { "__class_getitem__" => self.visible_blueprint(owner), _ => Value::Blueprint(owner) };
+                return Ok(Value::Member(Rc::new(receiver), operation));
 
             }
             let key = parts[1].bare();
@@ -3821,8 +3830,23 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn wrapper_method_parts(&self, value: &Value) -> Option<(String, String)> {
+        match value.settled() {
+            Value::Wrapped(78, state) => Some((state.first()?.bare(), self.detail("descriptor.get").to_owned())),
+            Value::Wrapped(79, _) => {
+                let family = self.table.prims.iter().find_map(|(word, op)| (*op == Prim::ClassWork(9)).then(|| word.clone()))?;
+                Some((family, self.detail("call").to_owned()))
+            }
+            Value::Wrapped(124, _) => Some((String::from("super"), self.rules.words_ext_stmt_class_constructor.first()?.clone())),
+            _ => None,
+        }
+    }
+
     /// Resolve documentation only for an existing native value.
     pub(super) fn documented_native(&self, value: &Value) -> Option<Value> {
+        if let Some((family, method)) = self.wrapper_method_parts(value) {
+            return self.builtin_kind_doc(&(family + "." + &method)).map(Value::text);
+        }
         if let Some(member) = self.root_wrapper_word(value) {
             let full = self.detail("root").to_owned() + "." + &member;
             return self.builtin_kind_doc(&full).map(Value::text);
@@ -3979,6 +4003,15 @@ impl<'a> Machine<'a> {
         }
         if key == self.detail("doc") {
             if let Some(text) = self.documented_native(&value) { return Ok(text); }
+        }
+        if let Some((family, method)) = self.wrapper_method_parts(&value) {
+            if key == self.detail("name") { return Ok(Value::text(&method)); }
+            if key == self.detail("qualified") { return Ok(Value::text(&(family.clone() + "." + &method))); }
+            if key == "__objclass__" {
+                let owner = self.kind_by_word(&family).unwrap_or_else(|| Value::Blueprint(self.native_kind(&family)));
+                return Ok(owner);
+            }
+            if key == self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value])); }
         }
         if key == self.detail("text_signature") {
             match self.builtin_text_signature(&value) {
@@ -4465,6 +4498,10 @@ impl<'a> Machine<'a> {
                 if matches!(word.as_ref(), "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
                     pairs.push((Value::text(self.detail("allocate")), Self::wrap(14, vec![Value::text(&word)])));
                 }
+                if self.table.spells("ext.stmt.class.builtin", "tuple") && ["tuple", "list", "dict", "set", "frozenset"].contains(&word.as_ref()) {
+                    let descriptor = Self::wrap(60, vec![Value::text(&word), Value::text("__class_getitem__"), Value::Flag(true)]);
+                    pairs.push((Value::text("__class_getitem__"), descriptor));
+                }
                 // Expose stored Python slots on the public native class dictionary.
                 let kind = self.native_kind(&word);
                 for (key, member) in kind.shared.borrow().iter() {
@@ -4671,7 +4708,7 @@ impl<'a> Machine<'a> {
             let base = match &value {
                 Value::Blueprint(class) if self.inherited_entry(class, key).is_none() => Self::native_word(class).or_else(|| Self::native_beneath(class)),
                 Value::Intrinsic(op, word) if Self::names_a_kind(op) => Some(word.to_string()),
-                _ => None,
+                _ => self.kind_spelling(&value).map(|spelling| spelling.to_string()),
             };
             if base.as_deref().is_some_and(|word| ["list", "tuple", "set", "dict", "frozenset"].contains(&word)) {
                 return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));

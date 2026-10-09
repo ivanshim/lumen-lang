@@ -1,3 +1,5 @@
+"Built-in functions, types, exceptions, and other objects.\n\nThis module provides direct access to all 'built-in'\nidentifiers of Python; for example, builtins.len is\nthe full name for the built-in function len().\n\nThis module is not normally accessed explicitly by most\napplications, but can be useful in modules that provide\nobjects with the same name as a built-in value, but in\nwhich the built-in of that name is also needed."
+
 # Host primitives used by class bodies need non-private module bindings.
 _host_file_exists = __file_exists
 _host_file_kind = __file_kind

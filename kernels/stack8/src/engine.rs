@@ -7322,8 +7322,13 @@ impl<'a> Engine<'a> {
             Value::Class(c) => Rc::from(Self::own_kind(c)?),
             Value::Native(_, word) => word.clone(),
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
+            _ if name == "__class_getitem__" => self.kind_spelled(value)?,
             _ => return None,
         };
+        if name == "__class_getitem__" && Lang::spells(&self.lang.builtin_bases, "tuple")
+            && matches!(word.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
+            return Some(Value::ValueMethod(Rc::new((value.clone(), name.to_owned()))));
+        }
         // Native attribute readers validate their receiver and preserve subclass fields.
         if !self.class_word("get").is_empty() && name == self.class_word("get") && self.kind_sample(&word).is_some() {
             return Some(self.held_kind_descriptor(&word, name));
@@ -7350,7 +7355,7 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && name == self.class_word("descriptor.get") {
             match word.as_ref() {
                 "function" => return Some(Self::adapter(15, vec![])),
-                "staticmethod" | "classmethod" => return Some(Self::adapter(79, vec![])),
+                "staticmethod" | "classmethod" => return Some(Self::adapter(79, vec![Value::text(&word)])),
                 _ => {},
             }
         }
@@ -7692,7 +7697,7 @@ impl<'a> Engine<'a> {
         match place {
             0..=7 => standing,
             8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set(false) | Kindred::Bytes(true)),
-            9 => number,
+            9 => number || family == Kindred::Counted,
             10 => holds || matches!(family, Kindred::View(_)),
             11 => holds && !setted,
             12 => written,
@@ -17419,10 +17424,11 @@ impl<'a> Engine<'a> {
             return self.class_apply(function.contents(), vec![receiver.clone(), args[0].clone()]).map_err(|fault| fault.told(&self.wording()));
         }
         if operation == "__class_getitem__" {
-            if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-            let types = self.import_module("types").map_err(|fault| fault.told(&self.wording()))?;
-            let maker = self.class_get(types, "GenericAlias", false).map_err(|fault| fault.told(&self.wording()))?;
-            return self.class_apply(maker.contents(), vec![receiver.clone(), args[0].clone()]).map_err(|fault| fault.told(&self.wording()));
+            let title = self.class_get(receiver.clone(), "__name__", false).map_err(|fault| fault.told(&self.wording()))?.plain();
+            if !named.is_empty() { return Err(format!("TypeError: {title}.__class_getitem__() takes no keyword arguments")); }
+            if args.len() != 1 { return Err(format!("TypeError: {title}.__class_getitem__() takes exactly one argument ({} given)", args.len())); }
+            let maker = Value::Class(self.kind_class("GenericAlias"));
+            return self.class_apply(maker, vec![receiver.clone(), args[0].clone()]).map_err(|fault| fault.told(&self.wording()));
         }
         if operation == "from_number" {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
