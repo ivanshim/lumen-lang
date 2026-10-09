@@ -7072,6 +7072,13 @@ impl<'a> Engine<'a> {
                 names.push(word.rsplit('.').next().unwrap_or(word).to_string());
             }
         }
+        if let Kindred::Bytes(mutable) = family {
+            for spelling in self.lang.byte_words.values().chain(self.lang.text_words.values()).flatten()
+                .chain(self.lang.value_methods.keys()) {
+                let member = spelling.rsplit('.').next().unwrap_or(spelling);
+                if self.byte_member(member, mutable).is_some() { names.push(member.to_string()); }
+            }
+        }
         // A counted row keeps its bounds beside the places it answers
         // through the methods above.
         if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }

@@ -8528,6 +8528,16 @@ impl<'a> Machine<'a> {
             if !wanted { continue; }
             gathered.extend(self.table.strings(label).iter().filter(|word| !word.contains('.')).cloned());
         }
+        if matches!(mark, 'b' | 'B') {
+            let mutations = if mark == 'B' { Self::OCTET_CHANGERS } else { &[] };
+            for (operation, _) in Self::OCTET_MEMBERS.iter().chain(mutations) {
+                for family in ["bytes", "text", "method"] {
+                    let label = format!("ext.builtin.{family}.{operation}");
+                    gathered.extend(self.table.loose_strings(&label).iter()
+                        .map(|spelling| spelling.rsplit('.').next().unwrap_or(spelling).to_owned()));
+                }
+            }
+        }
         // A count of a row keeps its bounds beside the places it answers
         // through the methods above.
         if mark == 'p' { gathered.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
