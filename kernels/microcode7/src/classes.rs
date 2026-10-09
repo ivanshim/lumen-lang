@@ -1236,8 +1236,7 @@ impl<'a> Machine<'a> {
         if let Some(b)=&self.property_kind{return b.clone();}
         let root=self.common_ancestor();
         let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(11)).map(|(w,_)|w.to_string()).unwrap_or_default();
-        let home = self.table.single("ext.system.names.module").unwrap_or("builtins");
-        let mut entries=vec![(self.detail("module").to_string(), Value::text(home))];
+        let mut entries=Vec::new();
         for (part,tag) in [("descriptor.get",50u8),("descriptor.set",51),("descriptor.delete",52),("property.getter",53),("property.deleter",55),("descriptor.name",57)] {
             entries.push((self.detail(part).to_owned(),Self::wrap(tag,Vec::new())));
         }
@@ -2255,6 +2254,41 @@ impl<'a> Machine<'a> {
                     60=>{
                         let entry=kept[1].bare();
                         let word=kept[0].bare();
+                        if let Some(Value::Blueprint(owner)) = self.fault_kinds.get(&word).cloned() {
+                            if values.len() == 0 { return Err(format!("TypeError: descriptor '{entry}' of '{word}' object needs an argument").into()); }
+                            let object = match values.first().map(Value::settled) {
+                                Some(Value::Thing(thing)) if Self::fault_descends(&thing.blueprint(), &owner) => thing,
+                                _ => return Err(format!("TypeError: descriptor '{entry}' requires a '{word}' object but received a '{}'", values[0].kind_word()).into()),
+                            };
+                            values.remove(0);
+                            if self.rules.specials.get(1) == Some(&entry) {
+                                if values.len() != 0 { return Err(format!("TypeError: expected 0 arguments, got {}", values.len()).into()); }
+                                return Ok(Value::text(&Value::Thing(object).representation(self.wording())));
+                            }
+                            if self.rules.specials.first() == Some(&entry) {
+                                if !values.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", values.len()).into()); }
+                                if self.table.strings("ext.builtin.exceptions").first() == Some(&word) {
+                                    let key = self.table.single("ext.builtin.exceptions.args").unwrap_or("args").to_owned();
+                                    let row = self.read_class_member(Value::Thing(object), &key, true)?.settled();
+                                    let Value::Tuple(items) = row else { return Err(self.class_unready()); };
+                                    let text = match items.as_slice() {
+                                        [] => String::new(),
+                                        [item] => self.converted_string(item, false)?.bare(),
+                                        _ => self.converted_string(&Value::Tuple(items), true)?.bare(),
+                                    };
+                                    return Ok(Value::text(&text));
+                                }
+                                return Ok(Value::text(&Value::Thing(object).raised_words(self.wording()).unwrap_or_default()));
+                            }
+                            if self.table.strings("ext.builtin.exceptions").first() == Some(&word)
+                                && self.rules.words_ext_stmt_class_constructor.first() == Some(&entry) {
+                                let (positional, named) = self.open_arguments(values)?;
+                                if !named.is_empty() { return Err("TypeError: BaseException() takes no keyword arguments".to_owned().into()); }
+                                let key = self.table.single("ext.builtin.exceptions.args").unwrap_or("args").to_owned();
+                                return self.alter_class_member(Value::Thing(object), &key, Some(Value::tuple(positional)), true);
+                            }
+                            return self.fault_method(object, &entry, &values);
+                        }
                         if values.is_empty() {
                             if word == "module" && self.rules.specials.get(1).is_some_and(|name| name == &entry) {
                                 return Err("TypeError: descriptor '__repr__' of 'module' object needs an argument".to_owned().into());
@@ -2999,7 +3033,9 @@ impl<'a> Machine<'a> {
                 }
                 if let Some(instance) = receiver.as_ref() {
                     let contents = Self::underlying(instance).unwrap_or_else(|| instance.clone()).settled();
-                    let appropriate = if is_class_method || declaring == self.detail("root") { true } else { match declaring.as_str() {
+                    let appropriate = if let Some(Value::Blueprint(base)) = self.fault_kinds.get(&declaring) {
+                        matches!(&contents, Value::Thing(object) if Self::fault_descends(&object.blueprint(), base))
+                    } else if is_class_method || declaring == self.detail("root") { true } else { match declaring.as_str() {
                         "type" => self.stands_for_a_kind(instance),
                         _ => match self.table.prims.get(&declaring).filter(|primitive| Self::names_a_kind(primitive)) {
                             Some(primitive) => self.kind_covers(primitive, &declaring, &contents),
@@ -3087,7 +3123,7 @@ impl<'a> Machine<'a> {
         }
         match &entry {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(2, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
@@ -3740,8 +3776,32 @@ impl<'a> Machine<'a> {
         None
     }
 
+    fn fault_defines_documented(&self, owner: &Rc<Blueprint>, key: &str) -> bool {
+        if !matches!(self.fault_kinds.get(&owner.name), Some(Value::Blueprint(kind)) if Rc::ptr_eq(kind, owner)) { return false; }
+        let method = self.rules.words_ext_stmt_class_constructor.first().is_some_and(|name| name == key)
+            || self.rules.specials.iter().take(2).any(|name| name == key) || self.fault_method_word(key);
+        method && self.builtin_kind_doc(&(owner.name.clone() + "." + key)).is_some()
+    }
+
+    fn root_wrapper_word(&self, value: &Value) -> Option<String> {
+        match value.settled() {
+            Value::Wrapped(36, state) => state.first().map(Value::bare),
+            Value::Wrapped(2, state) if state.is_empty() => self.rules.words_ext_stmt_class_constructor.first().cloned(),
+            Value::Wrapped(59, _) => self.rules.specials.get(72).cloned(),
+            Value::Wrapped(tag @ 10..=12, state) if state.first().is_some_and(|owner| owner.bare() == self.detail("root")) => {
+                let part = match tag { 10 => "get", 11 => "set", _ => "remove" };
+                Some(self.detail(part).to_owned())
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve documentation only for an existing native value.
     pub(super) fn documented_native(&self, value: &Value) -> Option<Value> {
+        if let Some(member) = self.root_wrapper_word(value) {
+            let full = self.detail("root").to_owned() + "." + &member;
+            return self.builtin_kind_doc(&full).map(Value::text);
+        }
         let label = match value.settled() {
             Value::Intrinsic(_, name) => name.to_string(),
             Value::OctetKind { changeable, .. } => self.octet_kind_word(changeable).into(),
@@ -3875,6 +3935,23 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if key == self.detail("module") {
+            let property = match &value {
+                Value::Blueprint(kind) => self.property_kind.as_ref().is_some_and(|native| Rc::ptr_eq(native, kind)),
+                Value::Intrinsic(Prim::ClassWork(11), _) => true,
+                _ => false,
+            };
+            if property { return Ok(Value::text(self.builtin_module())); }
+        }
+        if matches!(value.settled(), Value::Wrapped(6, _)) && key == self.detail("module") {
+            return Err(self.absent_attribute(&value, key));
+        }
+        if let Some(word) = self.root_wrapper_word(&value) {
+            if key == self.detail("qualified") { return Ok(Value::text(&(self.detail("root").to_owned() + "." + &word))); }
+            if key == self.detail("name") { return Ok(Value::text(&word)); }
+            if key == self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value])); }
+            if key == "__objclass__" { return Ok(Value::Blueprint(self.common_ancestor())); }
+        }
         if key == self.detail("doc") {
             if let Some(text) = self.documented_native(&value) { return Ok(text); }
         }
@@ -4305,7 +4382,7 @@ impl<'a> Machine<'a> {
                 if key==self.detail("qualified") { return Ok(Value::text(&format!("{}.{}", kind, word))); }
                 if key==self.detail("name") { return Ok(Value::text(word)); }
                 if key=="__objclass__" {
-                    if let Some(owner)=self.kind_by_word(kind) { return Ok(owner); }
+                    if let Some(owner)=self.fault_kinds.get(kind.as_ref()).cloned().or_else(|| self.kind_by_word(kind)) { return Ok(owner); }
                 }
                 if key==self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value.clone()])); }
             }
@@ -4672,6 +4749,30 @@ impl<'a> Machine<'a> {
             if key==self.detail("name"){let names=b.type_names.borrow();return Ok(names.as_ref().map_or_else(|| Value::text(&b.name), |names| names.short.clone()));}
             if key==self.detail("qualified"){return Ok(b.type_names.borrow().as_ref().map(|names| names.full.clone()).unwrap_or_else(|| self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name))));}
             if key==self.detail("namespace"){
+                if matches!(self.fault_kinds.get(&b.name), Some(Value::Blueprint(kind)) if Rc::ptr_eq(kind, b)) {
+                    let mut entries: Vec<_> = b.shared.borrow().iter().chain(b.constants.iter())
+                        .filter(|(name, _)| !name.starts_with('\0')).map(|(name, item)| (Value::text(name), item.clone())).collect();
+                    for pair in self.table.strings("ext.builtin.documentation").chunks_exact(2) {
+                        if let Some((owner, member)) = pair[0].split_once('.') {
+                            if owner == b.name && self.fault_defines_documented(b, member) {
+                                entries.push((Value::text(member), self.kind_entry(owner, member)));
+                            }
+                        }
+                    }
+                    entries.push((Value::text(self.detail("doc")), self.builtin_kind_doc(&b.name).map_or(Value::Nil, Value::text)));
+                    return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))), 'm'));
+                }
+                if self.ancestor.as_ref().is_some_and(|root| Rc::ptr_eq(root, b)) {
+                    let mut keys = self.rules.words_ext_stmt_class_detail_root_members.to_vec();
+                    for detail in ["get", "set", "remove"] { keys.push(self.detail(detail).to_owned()); }
+                    keys.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
+                    keys.extend(self.rules.specials.get(72).cloned());
+                    let mut entries: Vec<_> = keys.iter().filter_map(|word| self.from_the_root(word, true, b)
+                        .map(|member| (Value::text(word), member))).collect();
+                    entries.push((Value::text(self.detail("allocate")), self.common_allocation()));
+                    entries.push((Value::text(self.detail("doc")), self.builtin_kind_doc(&b.name).map_or(Value::Nil, Value::text)));
+                    return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))), 'm'));
+                }
                 let title = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
                 if !title.is_empty() && Self::own_entry(b, crate::data::ANNOTATE_WORD).is_some() && Self::own_entry(b, &title).is_none() && Self::own_entry(b, "__annotate_func__").is_none() {
                     self.read_class_member(value.clone(), &title, true)?;
@@ -4721,6 +4822,9 @@ impl<'a> Machine<'a> {
             }
             if self.rules.words_ext_stmt_class_annotations.first().map(String::as_str)==Some(key){return self.blueprint_annotations(b);}
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            for owner in std::iter::once(b).chain(b.ancestry.borrow().iter()) {
+                if self.fault_defines_documented(owner, key) { return Ok(self.kind_entry(&owner.name, key)); }
+            }
             // The classes built beneath this one, the live ones, as the
             // reference's own type.__subclasses__ tells them.
             if key==self.detail("subclasses") && !self.detail("subclasses").is_empty()

@@ -7335,7 +7335,8 @@ impl<'a> Engine<'a> {
             && matches!(word.as_ref(), "list" | "dict" | "set" | "bytearray") { return Some(Value::Null); }
         let qualified = format!("{word}.{name}");
         if let Some(operation) = self.lang.builtins.get(&qualified).filter(|operation| !matches!(operation, Builtin::Bytes(15))) {
-            let factory = if word.as_ref() == "float" && self.lang.value_methods.get(&qualified).is_some_and(|working| working == "fromhex") { Some("float_fromhex") }
+            let factory = if word.as_ref() == "dict" && name == "fromkeys" { Some("fromkeys") }
+                else if word.as_ref() == "float" && self.lang.value_methods.get(&qualified).is_some_and(|working| working == "fromhex") { Some("float_fromhex") }
                 else if self.lang.float_from_number.iter().any(|spelling| spelling == &qualified) { Some("float_from_number") }
                 else { None };
             return Some(match factory {

@@ -9057,7 +9057,8 @@ impl<'a> Machine<'a> {
         match self.table.prims.get(&fullname) {
             None | Some(Prim::Octets(15)) => {}
             Some(operation) => {
-                let working = if word == "float" && self.table.spells("ext.builtin.method.fromhex", &fullname) { "float_fromhex" }
+                let working = if word == "dict" && name == "fromkeys" { "fromkeys" }
+                    else if word == "float" && self.table.spells("ext.builtin.method.fromhex", &fullname) { "float_fromhex" }
                     else if self.table.spells("ext.builtin.method.from_number", &fullname) { "float_from_number" }
                     else { "" };
                 if working.is_empty() {

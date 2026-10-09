@@ -263,8 +263,31 @@ impl<'a> Engine<'a> {
             .find(|entry| entry[0] == word).map(|entry| entry[1].as_str())
     }
 
+    fn documented_exception_member(&self, class: &Rc<Class>, name: &str) -> bool {
+        let registered = matches!(self.native_exceptions.get(&class.name), Some(Value::Class(native)) if Rc::ptr_eq(native, class));
+        registered && (self.lang.constructor.as_deref() == Some(name)
+            || self.lang.class_special.iter().take(2).any(|word| word == name) || self.exception_method_named(name))
+            && self.builtin_kind_doc(&format!("{}.{name}", class.name)).is_some()
+    }
+
+    fn root_descriptor_name(&self, value: &Value) -> Option<String> {
+        let Value::Adapter(parts) = value.contents() else { return None };
+        let name = match parts.0 {
+            2 if parts.1.is_empty() => self.lang.constructor.as_deref()?,
+            10..=12 if parts.1.first().is_some_and(|owner| owner.plain() == self.class_word("root")) =>
+                self.class_word(match parts.0 { 10 => "get", 11 => "set", _ => "remove" }),
+            19 => self.lang.class_special.get(72)?,
+            30 => return Some(parts.1.first()?.plain()),
+            _ => return None,
+        };
+        Some(name.to_string())
+    }
+
     /// Read native documentation without manufacturing an attribute or callable.
     pub(super) fn native_documentation(&self, object: &Value) -> Option<Value> {
+        if let Some(name) = self.root_descriptor_name(object) {
+            return self.builtin_kind_doc(&format!("{}.{name}", self.class_word("root"))).map(Value::text);
+        }
         let word = match object.contents() {
             Value::Native(_, word) => word.to_string(),
             Value::ByteKind(mutable, _) => self.byte_kind_word(mutable).to_owned(),
@@ -1094,7 +1117,7 @@ impl<'a> Engine<'a> {
         if let Some(c) = &self.property_class { return c.clone(); }
         let root = self.root_class();
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ClassTool(11)).map(|(n, _)| n.clone()).unwrap_or_default();
-        let mut members = vec![(self.class_word("module").to_string(), Value::text(self.home_module_word()))];
+        let mut members = Vec::new();
         let workings = [("descriptor.get", 20), ("descriptor.set", 21), ("descriptor.delete", 22), ("property.getter", 23), ("property.deleter", 25), ("descriptor.name", 27)];
         for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
@@ -2132,6 +2155,38 @@ impl<'a> Engine<'a> {
                 29 => {
                     let member = w.1[1].plain();
                     let word = w.1[0].plain();
+                    if let Some(Value::Class(owner)) = self.native_exceptions.get(&word).cloned() {
+                        if args.is_empty() { return Err(format!("TypeError: descriptor '{member}' of '{word}' object needs an argument").into()); }
+                        let receiver = args.first().map(Value::contents);
+                        let Some(Value::Object(object)) = receiver.filter(|value| matches!(value, Value::Object(instance) if Self::exception_beneath(&instance.class_now(), &owner))) else {
+                            return Err(format!("TypeError: descriptor '{member}' requires a '{word}' object but received a '{}'", Self::shown_kind(&args[0])).into());
+                        };
+                        args.remove(0);
+                        if self.lang.class_special.get(1) == Some(&member) {
+                            if !args.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", args.len()).into()); }
+                            return Ok(Value::text(&Value::Object(object).repr(&self.wording())));
+                        }
+                        if self.lang.class_special.first() == Some(&member) {
+                            if !args.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", args.len()).into()); }
+                            if self.lang.exceptions.first() == Some(&word) {
+                                let field = self.lang.exception_args.clone().unwrap_or_default();
+                                let values = self.class_get(Value::Object(object), &field, true)?.contents();
+                                let Value::Tuple(parts) = values else { return Err(self.class_refusal()); };
+                                return Ok(Value::text(&match parts.as_slice() {
+                                    [] => String::new(), [one] => self.special_text(one, false)?,
+                                    _ => self.special_text(&Value::Tuple(parts), true)?,
+                                }));
+                            }
+                            return Ok(Value::text(&Value::Object(object).exception_message(&self.wording()).unwrap_or_default()));
+                        }
+                        if self.lang.exceptions.first() == Some(&word) && self.lang.constructor.as_deref() == Some(member.as_str()) {
+                            let opened = self.call_items(args)?;
+                            if opened.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: BaseException() takes no keyword arguments".into()); }
+                            let field = self.lang.exception_args.clone().unwrap_or_default();
+                            return self.class_write(Value::Object(object), &field, Some(Value::tuple(opened.into_iter().map(|(_, value)| value).collect())), true);
+                        }
+                        return self.exception_method(object, &member, &args);
+                    }
                     if args.is_empty() {
                         if word == "module" && self.lang.class_special.get(1).is_some_and(|name| name == &member) {
                             return Err("TypeError: descriptor '__repr__' of 'module' object needs an argument".into());
@@ -3040,7 +3095,9 @@ impl<'a> Engine<'a> {
                 }
                 if let Some(target) = &subject {
                     let stored = Self::worth_of(target).unwrap_or_else(|| target.clone()).contents();
-                    let accepts = if class_method || native == self.class_word("root") { true } else if native == "type" { self.stands_for_kind(target) }
+                    let accepts = if let Some(Value::Class(owner)) = self.native_exceptions.get(&native) {
+                        matches!(&stored, Value::Object(object) if Self::exception_beneath(&object.class_now(), owner))
+                    } else if class_method || native == self.class_word("root") { true } else if native == "type" { self.stands_for_kind(target) }
                         else { self.lang.builtins.get(&native).filter(|op| Self::kind_builtin(op))
                             .map_or_else(|| stored.core_kind() == native, |op| self.kind_holds(op, &native, &stored)) };
                     if !accepts {
@@ -3124,7 +3181,7 @@ impl<'a> Engine<'a> {
                 return Ok(value);
             }
             return match w.0 {
-                2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                2 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 29 | 122 | 124 | 126 | 133 | 180 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -3261,8 +3318,17 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if name == self.class_word("module") && matches!(subject.contents(), Value::Adapter(parts) if parts.0 == 6) {
+            return Err(self.missing_member(&subject, name));
+        }
         if name == self.class_word("doc") {
             if let Some(documentation) = self.native_documentation(&subject) { return Ok(documentation); }
+        }
+        if let Some(member) = self.root_descriptor_name(&subject) {
+            if name == self.class_word("name") { return Ok(Value::text(&member)); }
+            if name == self.class_word("qualified") { return Ok(Value::text(&format!("{}.{member}", self.class_word("root")))); }
+            if name == "__objclass__" { return Ok(Value::Class(self.root_class())); }
+            if name == self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject])); }
         }
         if name == self.class_word("text_signature") {
             if let Some(header) = self.builtin_text_signature(&subject) { return Ok(Value::text(header)); }
@@ -3284,6 +3350,10 @@ impl<'a> Engine<'a> {
                 if name == "__objclass__" { return Ok(Value::Native(Builtin::ClassTool(11), Rc::from(owner))); }
                 if name == self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject])); }
             }
+        }
+        if name == self.class_word("module") && (self.names_property_class(&subject)
+            || matches!(&subject, Value::Class(class) if self.property_class.as_ref().is_some_and(|native| Rc::ptr_eq(native, class)))) {
+            return Ok(Value::text(self.home_module_word()));
         }
         if self.names_property_class(&subject) { let class = self.property_class(); return self.class_get(Value::Class(class), name, plain); }
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
@@ -4006,6 +4076,31 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("qualified") { return Ok(c.python_names.borrow().as_ref().map(|names| names.1.clone()).unwrap_or_else(|| self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name)))); }
                 if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().cloned().map(|base| self.public_class(base)).collect())); }
                 if name==self.class_word("namespace") {
+                    if matches!(self.native_exceptions.get(&c.name), Some(Value::Class(native)) if Rc::ptr_eq(native, c)) {
+                        let mut rows: Vec<_> = c.shared.borrow().iter().chain(c.constants.iter())
+                            .filter(|(word, _)| !word.starts_with('\0')).map(|(word, value)| (Value::text(word), value.clone())).collect();
+                        let prefix = format!("{}.", c.name);
+                        for entry in self.lang.builtin_documentation.chunks_exact(2) {
+                            if let Some(word) = entry[0].strip_prefix(&prefix).filter(|word| self.documented_exception_member(c, word)) {
+                                rows.push((Value::text(word), self.held_kind_descriptor(&c.name, word)));
+                            }
+                        }
+                        rows.push((Value::text(self.class_word("doc")), self.builtin_kind_doc(&c.name).map_or(Value::Null, Value::text)));
+                        return Ok(Value::View(Rc::new((Value::Map(Rc::new(rows.into())), "mapping".into()))));
+                    }
+                    if self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, c)) {
+                        let mut names = self.lang.class_details.get("root.members").cloned().unwrap_or_default();
+                        names.extend(["get", "set", "remove"].map(|part| self.class_word(part).to_string()));
+                        names.extend(self.lang.constructor.iter().cloned());
+                        names.extend(self.lang.class_special.get(72).cloned());
+                        let mut rows = Vec::new();
+                        for key in names {
+                            if let Some(member) = self.root_member(&key, Some(c)) { rows.push((Value::text(&key), member)); }
+                        }
+                        rows.push((Value::text(self.class_word("allocate")), self.root_allocator()));
+                        rows.push((Value::text(self.class_word("doc")), self.builtin_kind_doc(&c.name).map_or(Value::Null, Value::text)));
+                        return Ok(Value::View(Rc::new((Value::Map(Rc::new(rows.into())), "mapping".into()))));
+                    }
                     let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
                     if !annotate.is_empty() && c.shared.borrow().iter().any(|(key, _)| key == crate::code::ANNOTATE_WORD)
                         && !c.shared.borrow().iter().any(|(key, _)| key == &annotate || key == "__annotate_func__") {
@@ -4059,6 +4154,9 @@ impl<'a> Engine<'a> {
                 }
                 if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                for owner in std::iter::once(c).chain(c.lineage.borrow().iter()) {
+                    if self.documented_exception_member(owner, name) { return Ok(self.held_kind_descriptor(&owner.name, name)); }
+                }
                 // The classes written beneath this one, the live ones,
                 // as the reference's own type.__subclasses__ tells them.
                 if !self.class_word("subclasses").is_empty() && name==self.class_word("subclasses")
@@ -4532,7 +4630,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("qualified") { return Ok(Value::text(&format!("{}.{}", w.1[0].plain(), w.1[1].plain()))); }
                 if name==self.class_word("name") { return Ok(w.1[1].clone()); }
                 if name=="__objclass__" {
-                    if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
+                    if let Some(kind)=self.native_exceptions.get(&w.1[0].plain()).cloned().or_else(|| self.spelled_kind(&w.1[0].plain())) { return Ok(kind); }
                 }
                 if name==self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject.clone()])); }
             }
