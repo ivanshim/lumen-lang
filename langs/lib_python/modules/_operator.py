@@ -20,6 +20,9 @@ class _BuiltinOperator:
         self.__qualname__ = name
         self.__doc__ = getattr(func, '__doc__', None)
         self._func = func
+        # inspect.signature follows __wrapped__; without it the generic
+        # __call__ below would report every operator as (*args, **kwargs).
+        self.__wrapped__ = func
 
     def __call__(self, *args, **kwargs):
         return self._func(*args, **kwargs)
@@ -45,7 +48,7 @@ def _index(a):
                 warnings.warn('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') +
                               ').  The ability to return an instance of a strict subclass of int '
                               'is deprecated, and may be removed in a future version of Python.',
-                              DeprecationWarning, stacklevel=2)
+                              DeprecationWarning, stacklevel=3)
             return int.__index__(answer)
         raise TypeError('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + ')')
     raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
