@@ -1508,7 +1508,7 @@ impl<'a> Engine<'a> {
             _ => false,
         }
     }
-    pub(super) fn own_class_value(c: &Class, name: &str) -> Option<Value> {
+    fn own_class_value(c: &Class, name: &str) -> Option<Value> {
         if let Some(v) = c.shared.read(name, c.python_names.borrow().is_some()) {
             return if matches!(v.contents(), Value::Blank | Value::Gap) { None } else { Some(v) };
         }
@@ -1931,8 +1931,11 @@ impl<'a> Engine<'a> {
                         return self.unresolved_annotation_name(names, &args[1].plain()).map_err(Fault::Note);
                     }
                     if let Value::Class(owner) = args[0].contents() {
-                        if args[1].plain() == "__class__" { return Ok(Value::Class(owner)); }
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                    } else if let Value::Faint(reference) = args[0].contents() {
+                        if let Some(Value::Class(owner)) = reference.revive() {
+                            if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                        }
                     } else if args.get(3).is_some_and(|book| !matches!(book.contents(), Value::Null)) {
                         let Value::Tuple(found) = self.class_namespace_read(vec![args[3].clone(), args[1].clone()])? else { unreachable!() };
                         if found[0].is_true() { return Ok(found[1].clone()); }
@@ -6451,6 +6454,16 @@ impl<'a> Engine<'a> {
                 };
                 if class.python_names.borrow().is_none() || class.sealed.get() { return Err("TypeError: argument is immutable".into()); }
                 class.shared.borrow_mut().retain(|(key, _)| key != "__dict__" && key != "__weakref__");
+                let at = class.shared.borrow().iter().position(|(key, _)| key == "\0annotation_classdict");
+                if let Some(at) = at {
+                    let context = class.shared.borrow_mut().remove(at).1;
+                    if let Value::Binding(cell) | Value::Bond(cell) = context {
+                        *cell.borrow_mut() = Value::Faint(Rc::new(crate::faint::Faint {
+                            hold: crate::faint::Hold::Class(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                            told: RefCell::new(None), cached_hash: RefCell::new(None), cleared: std::cell::Cell::new(false),
+                        }));
+                    }
+                }
                 // The kind no longer carries a weak reference where it
                 // stands, so a class built over it may name one itself.
                 class.weak_storage.set(Some(false));

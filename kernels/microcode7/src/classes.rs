@@ -1829,9 +1829,11 @@ impl<'a> Machine<'a> {
                             return symbolic.map_err(Escape::Error);
                         }
                         match values[0].settled() {
-                            Value::Blueprint(class) => {
-                                if values[1].bare() == "__class__" { return Ok(Value::Blueprint(class)); }
-                                if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
+                            Value::Blueprint(class) => { if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); } },
+                            Value::Dim(reference) => {
+                                if let Some(Value::Blueprint(owner)) = reference.revive() {
+                                    if let Some(entry) = Self::own_entry(&owner, &values[1].bare()) { return Ok(entry.settled()); }
+                                }
                             },
                             _ if values.get(3).is_some_and(|book| !matches!(book.settled(), Value::Nil)) => {
                                 if let Value::Tuple(pair) = self.class_namespace_read(vec![values[3].clone(), values[1].clone()])? {
@@ -6743,6 +6745,16 @@ impl<'a> Machine<'a> {
             class.weak_slot.set(Some(false));
             let mut namespace = class.shared.borrow_mut();
             namespace.retain(|entry| !matches!(entry.0.as_str(), "__dict__" | "__weakref__"));
+            let context = namespace.iter().position(|entry| entry.0 == "\0annotation_classdict").map(|index| namespace.remove(index).1);
+            drop(namespace);
+            if let Some(context) = context {
+                let reference = Value::Dim(Rc::new(crate::ghost::Dim {
+                    ghost: crate::ghost::Ghost::Blueprint(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                    notify: RefCell::new(None), hash: RefCell::new(None), detached: std::cell::Cell::new(false),
+                }));
+                let member = self.detail("cell.contents").to_owned();
+                self.alter_class_member(context, &member, Some(reference), true)?;
+            }
             return Ok(Value::Nil);
         }
         if op == 19 || op == 20 { return self.class_namespace_write(values, op == 20); }

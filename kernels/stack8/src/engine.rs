@@ -120,7 +120,6 @@ pub struct Engine<'a> {
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     delegated_tokens: std::collections::HashSet<usize>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
-    annotation_books: HashMap<usize, (Weak<KeyedPairs>, Weak<Class>)>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
     class_maker: Option<Rc<Class>>,
@@ -1607,7 +1606,6 @@ impl<'a> Engine<'a> {
             async_generators: HashMap::new(),
             delegated_tokens: std::collections::HashSet::new(),
             frame_codes: HashMap::new(),
-            annotation_books: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
             pages_kept: None,
@@ -26297,19 +26295,7 @@ impl Engine<'_> {
     }
 
     pub(super) fn class_namespace_read(&mut self, arguments: Vec<Value>) -> Flow<Value> {
-        let namespace = arguments[0].contents();
-        let namespace = Self::worth_of(&namespace).map_or(namespace.clone(), |value| value.contents());
-        if let Value::Map(book) = &namespace {
-            if let Some((namespace, owner)) = self.annotation_books.get(&(Rc::as_ptr(book) as usize)) {
-                if namespace.upgrade().is_some_and(|kept| Rc::ptr_eq(&kept, book)) {
-                    if let Some(owner) = owner.upgrade() {
-                        let found = Self::own_class_value(&owner, &arguments[1].plain());
-                        return Ok(Value::tuple(vec![Value::Flag(found.is_some()), found.map_or(Value::Null, |value| value.contents())]));
-                    }
-                }
-            }
-        }
-        let found = self.dyn_lookup(&namespace, &arguments[1].plain())?;
+        let found = self.dyn_lookup(&arguments[0].contents(), &arguments[1].plain())?;
         Ok(Value::tuple(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Null)]))
     }
 
@@ -26411,7 +26397,6 @@ impl Engine<'_> {
                 _ => self.dyn_write(&namespace, &base_words[1], Some(original_bases))?,
             }
         }
-        let annotation_book = namespace.clone();
         let result = if let Some(factory) = factory {
             let mut given = vec![Value::Text(name.clone()), bases, namespace]; given.extend(keywords);
             // What the factory's own code raised is raised again as
@@ -26425,14 +26410,12 @@ impl Engine<'_> {
             for (key, value) in self.call_items(keywords)? { if let Some(key) = key { members.push((format!("\0keyword:{key}"), value)); } }
             self.form_class(name.to_string(), parents, members)?
         };
-        let raw = annotation_book.contents();
-        let raw = Self::worth_of(&raw).map_or(raw.clone(), |value| value.contents());
-        if let (Value::Class(owner), Value::Map(book)) = (&result, raw) {
-            if self.annotation_books.len() % 256 == 255 { self.annotation_books.retain(|_, (book, owner)| book.strong_count() != 0 && owner.strong_count() != 0); }
-            self.annotation_books.insert(Rc::as_ptr(&book) as usize, (Rc::downgrade(&book), Rc::downgrade(owner)));
-        }
         if let Some(Value::Bond(cell) | Value::Binding(cell)) = class_cell {
-            if !protocol { *cell.borrow_mut() = result.clone(); return Ok(result); }
+            if !protocol {
+                *cell.borrow_mut() = result.clone();
+                if let Value::Class(owner) = &result { owner.shared.borrow_mut().push(("\0annotation_classdict".into(), Value::Binding(cell.clone()))); }
+                return Ok(result);
+            }
             // What the metaclass answered may be no class at all: the
             // cell then names nothing and nothing is asked of it.
             let Value::Class(made) = result.contents() else { return Ok(result) };
