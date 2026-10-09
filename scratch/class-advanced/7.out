@@ -9,6 +9,7 @@ __dict__
 __dir__
 __doc__
 __eq__
+__firstlineno__
 __format__
 __ge__
 __getattribute__
