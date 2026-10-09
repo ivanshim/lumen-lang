@@ -554,11 +554,11 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("xml.dom", include_str!("xml/dom/__init__.py"), "xml/dom/__init__.py"),
     ("xml.dom.domreg", include_str!("xml/dom/domreg.py"), "xml/dom/domreg.py"),
     ("xml.dom.minicompat", include_str!("xml/dom/minicompat.py"), "xml/dom/minicompat.py"),
-    ("zlib", include_str!("zlib.py"), "zlib.py"),
     ("zipfile", include_str!("zipfile/__init__.py"), "zipfile/__init__.py"),
     ("zipfile.__main__", include_str!("zipfile/__main__.py"), "zipfile/__main__.py"),
     ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
     ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
+    ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.

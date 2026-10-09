@@ -517,3 +517,9 @@ def settrace(trace):
     __trace_native__(1, trace)
 def getdefaultencoding():
     return "utf-8"
+
+# Keep the public finder state beside the native source loader.
+import _imp
+meta_path = [_imp._NativeFinder]
+path_hooks = []
+path_importer_cache = {}

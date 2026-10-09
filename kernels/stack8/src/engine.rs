@@ -25631,7 +25631,17 @@ impl Engine<'_> {
         self.importing.insert(path.to_string());
         self.refresh_module_cache(path);
         let saved_depth = self.data.len();
-        let result = self.invoke(&program, Vec::new());
+        let result = (|| -> Flow<()> {
+            // Once bootstrap is ready, source metadata exists before the body runs.
+            if self.modules.contains_key("importlib._bootstrap_external") && !self.importing.contains("importlib._bootstrap_external") {
+                if let (Some(native), Some(file)) = (self.modules.get("_imp").cloned(), own_file.as_deref()) {
+                    if let Some(setup) = self.member_of(native, "_initialize_source_module")? {
+                        self.call_held(setup, vec![module.clone(), Value::text(path), Value::text(file)])?;
+                    }
+                }
+            }
+            self.invoke(&program, Vec::new())
+        })();
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);

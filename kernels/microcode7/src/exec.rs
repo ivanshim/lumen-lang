@@ -26126,6 +26126,20 @@ impl Machine<'_> {
         self.loaded_spaces.insert(Rc::from(filename), path.to_owned());
         self.importing.insert(path.into());
         self.refresh_import_table(path);
+        let prepare_metadata = (|| -> Res<()> {
+            // Attach a source spec before running code, after the bootstrap dependency settles.
+            let metadata_ready = self.imported.contains_key("importlib._bootstrap_external")
+                && !self.importing.contains("importlib._bootstrap_external");
+            if metadata_ready {
+                if let Some(file) = &own_file {
+                    if let Some(native) = self.imported.get("_imp").cloned() {
+                        let initializer = self.namespace_item(&native, "_imp", "_initialize_source_module")?;
+                        self.apply_held(initializer, vec![value.clone(), Value::text(path), Value::text(file)])?;
+                    }
+                }
+            }
+            Ok(())
+        })();
         let scope = self.outermost.clone();
         let caller_location = (self.written_in.clone(), self.row);
         let caller_activation = self.active_trace.take();
@@ -26135,7 +26149,7 @@ impl Machine<'_> {
         self.written_in = Rc::from(filename);
         self.frames_named.push(built.program.clone());
         let caller_reading = self.reading_now.take();
-        let stopped = self.value_of(&built.program.body, &scope);
+        let stopped = prepare_metadata.and_then(|()| self.value_of(&built.program.body, &scope));
         let stopped = self.traced_result(stopped);
         self.reading_now = caller_reading;
         self.frames_named.pop();
