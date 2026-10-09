@@ -8024,6 +8024,7 @@ impl<'a> Engine<'a> {
     /// Where among the language's special names this one stands, when a
     /// value of a builtin kind answers to it as a member of its own.
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
+        if name == "__bytes__" && Self::native_family(subject) == Some(Kindred::Bytes(false)) && self.kind_owns_protocol("bytes", name) { return Some(usize::MAX - 3); }
         // Ordinary member names cannot invoke a reduction or special slot.
         if !self.native_slots.contains_key(name) && self.lang.constructor.as_deref() != Some(name)
             && !self.lang.class_details.get("root.members").and_then(|row| row.get(12)).is_some_and(|word| word == name) {
@@ -8033,7 +8034,6 @@ impl<'a> Engine<'a> {
             return Some(usize::MAX - 2);
         }
         let family = Self::native_family(subject)?;
-        if name == "__bytes__" && family == Kindred::Bytes(false) && self.kind_owns_protocol("bytes", name) { return Some(usize::MAX - 3); }
         if self.lang.constructor.as_deref() == Some(name) {
             if matches!(family, Kindred::Set(_) | Kindred::Map) { return Some(usize::MAX); }
             if family == Kindred::Row { return Some(usize::MAX - 1); }

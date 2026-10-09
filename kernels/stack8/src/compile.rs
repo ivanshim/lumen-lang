@@ -11712,9 +11712,37 @@ impl<'a> Compiler<'a> {
     /// One place in a subscript row. A place beginning with a spread is
     /// a starred expression, answered as the array of what it yields;
     /// every other place is a slice or an expression as before.
+    // Reject sliced star operands while preserving colons owned by lambdas.
+    fn validate_star_operand(&self) -> Res<()> {
+        let lang = self.lang;
+        if self.at_symbol("(") {
+            if let Some(end) = self.bracket_close(self.pos, self.tokens.len()) {
+                let mut nesting = 0usize;
+                let mut lambda_colons = 0usize;
+                for token in &self.tokens[self.pos + 1..end] {
+                    if !matches!(token.shape, Shape::Sign | Shape::Instr) { continue; }
+                    if nesting == 0 {
+                        if Lang::spells(&lang.lambda_words, token.spelling()) { lambda_colons += 1; }
+                        if token.lexeme == ":" {
+                            if lambda_colons == 0 { return Err("SyntaxError: Invalid star expression".into()); }
+                            lambda_colons -= 1;
+                        }
+                    }
+                    match token.lexeme.as_str() {
+                        "(" | "[" | "{" => nesting += 1,
+                        ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                        _ => (),
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn index_part(&mut self, close: &str, separator: Option<&str>) -> Res<bool> {
         if self.on_any(&self.lang.array_spread) {
             self.take();
+            self.validate_star_operand()?;
             self.expr(0)?;
             return Ok(true);
         }
@@ -11788,27 +11816,7 @@ impl<'a> Compiler<'a> {
                 let next = self.look_ahead(1).lexeme.as_str();
                 if next == close || next == ":" { return Err("SyntaxError: Invalid star expression".into()); }
                 self.take(); expanded = true;
-                if self.at_symbol("(") {
-                    if let Some(end) = self.bracket_close(self.pos, self.tokens.len()) {
-                        let mut nesting = 0usize;
-                        let mut lambda_colons = 0usize;
-                        for token in &self.tokens[self.pos + 1..end] {
-                            if !matches!(token.shape, Shape::Sign | Shape::Instr) { continue; }
-                            if nesting == 0 {
-                                if Lang::spells(&lang.lambda_words, token.spelling()) { lambda_colons += 1; }
-                                if token.lexeme == ":" {
-                                    if lambda_colons == 0 { return Err("SyntaxError: Invalid star expression".into()); }
-                                    lambda_colons -= 1;
-                                }
-                            }
-                            match token.lexeme.as_str() {
-                                "(" | "[" | "{" => nesting += 1,
-                                ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
-                                _ => (),
-                            }
-                        }
-                    }
-                }
+                self.validate_star_operand()?;
             }
             let start = self.mark();
             if star { self.expr(0)?; } else { self.slice_part(close, separator)?; }

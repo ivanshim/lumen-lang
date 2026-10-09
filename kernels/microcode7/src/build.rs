@@ -11215,10 +11215,36 @@ impl<'a> Builder<'a> {
     /// One place in a subscript row, with whether it began with a
     /// spread: a starred expression is answered as the array of what
     /// it yields, every other place as a slice or expression.
+    // Validate star operands without treating lambda colons as slices.
+    fn validate_star_operand(&self) -> Res<()> {
+        if self.sign("(") {
+            if let Some(stop) = self.pair_close(self.pos, self.tokens.len()) {
+                let mut brackets: Vec<&str> = Vec::new();
+                let mut waiting_lambda = 0usize;
+                for word in self.tokens[self.pos + 1..stop].iter() {
+                    if word.shape != Shape::Bare && word.shape != Shape::Sign { continue; }
+                    let text = word.lexeme.as_str();
+                    if brackets.len() == 0 {
+                        if self.table.spells("ext.op.lambda", word.spelling()) { waiting_lambda += 1; }
+                        if text == ":" {
+                            if waiting_lambda == 0 { return Err(String::from("SyntaxError: Invalid star expression")); }
+                            waiting_lambda -= 1;
+                        }
+                    }
+                    if ["(", "[", "{"].contains(&text) { brackets.push(text); }
+                    if [")", "]", "}"].contains(&text) { brackets.pop(); }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn bracket_item(&mut self, close: &str, comma: Option<&str>) -> Res<(Form, bool)> {
         if self.on_any("ext.syntax.array.spread") {
             self.advance();
-            return Ok((self.expr(0)?, true));
+            self.validate_star_operand()?;
+            let part = self.expr(0)?;
+            return Ok((part, true));
         }
         Ok((self.bracket_part(close, comma)?, false))
     }
@@ -11272,25 +11298,7 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: Invalid star expression"));
                 }
                 self.advance();
-                if self.sign("(") {
-                    if let Some(stop) = self.pair_close(self.pos, self.tokens.len()) {
-                        let mut brackets: Vec<&str> = Vec::new();
-                        let mut waiting_lambda = 0usize;
-                        for word in self.tokens[self.pos + 1..stop].iter() {
-                            if word.shape != Shape::Bare && word.shape != Shape::Sign { continue; }
-                            let text = word.lexeme.as_str();
-                            if brackets.len() == 0 {
-                                if self.table.spells("ext.op.lambda", word.spelling()) { waiting_lambda += 1; }
-                                if text == ":" {
-                                    if waiting_lambda == 0 { return Err(String::from("SyntaxError: Invalid star expression")); }
-                                    waiting_lambda -= 1;
-                                }
-                            }
-                            if ["(", "[", "{"].contains(&text) { brackets.push(text); }
-                            if [")", "]", "}"].contains(&text) { brackets.pop(); }
-                        }
-                    }
-                }
+                self.validate_star_operand()?;
             }
             let term = if unpack { self.expr(0)? } else { self.bracket_part(close, separator)? };
             if unpack && self.on_any("ext.op.index.slice") { return Err(String::from("SyntaxError: invalid syntax")); }

@@ -194,6 +194,8 @@ impl Writer<'_> {
     }
 
     pub fn field_value(&self, value: &Value, spec: &str, conversion: &str) -> Result<Value> {
+        if let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value { return self.field_value(&cell.borrow(), spec, conversion); }
+        if matches!(value, Value::View(view) if view.1 == "mapping") { return self.field(value, spec, conversion).map(|text| Value::text(&text)); }
         let held = value.contents();
         if self.lang.python_numbers && matches!(held, Value::Codepoints(_)) && matches!(conversion, "" | "s") {
             // Read the same string specification as the scalar-text path.

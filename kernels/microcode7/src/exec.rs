@@ -8755,6 +8755,7 @@ impl<'a> Machine<'a> {
     /// Where among the table's special names this one stands, when a
     /// value of a native kind answers to it as a member of its own.
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
+        if name == "__bytes__" && Self::native_mark(value) == Some('b') && self.native_declares_protocol("bytes", name) { return Some(usize::MAX - 3); }
         let special = self.native_slots.get(name).copied();
         let constructor = self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word| word == name);
         let state = self.rules.words_ext_stmt_class_detail_root_members.get(12).is_some_and(|word| word == name);
@@ -8765,7 +8766,6 @@ impl<'a> Machine<'a> {
             if ordinary || extended { return Some(usize::MAX - 2); }
         }
         let mark = Self::native_mark(value)?;
-        if mark == 'b' && name == "__bytes__" && self.native_declares_protocol("bytes", name) { return Some(usize::MAX - 3); }
         if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(name) {
             if matches!(mark, 'e' | 'E' | 'd') { return Some(usize::MAX); }
             if mark == 'l' { return Some(usize::MAX - 1); }
