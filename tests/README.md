@@ -442,3 +442,7 @@ implementation: Parameter fields and replacement, immutable parameter mappings,
 Signature replacement/equality/hash, annotation formatting and metaclass call
 signatures. The redundant native replacement is removed; manifest registration
 continues to bind the release source and its separate runtime overlay.
+
+Native union values inherit the v3.14 `typing` module marker from their
+canonical union class. This lets the unchanged inspect formatter remove
+outer typing prefixes while preserving typing inside user module names.

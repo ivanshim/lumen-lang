@@ -67,6 +67,8 @@ impl<'a> Machine<'a> {
             }
         }
         if word == "Union" {
+            let namespace = (self.detail("module").to_string(), Value::text("typing"));
+            protocols.push(namespace);
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
             // The reference builds a union by subscription; the folded
             // members are the very shape the class questions read.

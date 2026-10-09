@@ -67,6 +67,7 @@ impl<'a> Engine<'a> {
             if let Some(name) = self.lang.class_special.get(79) { hooks.push((name.clone(), Self::adapter(133, vec![Value::text(word)]))); }
         }
         if word == "Union" {
+            hooks.push((self.class_word("module").to_owned(), Value::text("typing")));
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
             // The reference builds a union by subscription, which the
             // special form's own item method does; the folded members
