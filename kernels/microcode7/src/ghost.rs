@@ -20,6 +20,25 @@ use crate::data::{Adornment, Blueprint, Env, IteratorKind, SetStore, Thing, Valu
 use crate::exec::Suspension;
 use crate::form::{Callee, CaseTest, Form, Input, Routine};
 
+thread_local! {
+    static SHARING_KINDS: RefCell<Vec<Weak<Blueprint>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(super) fn share_kind(kind: &Rc<Blueprint>) {
+    SHARING_KINDS.with(|book| {
+        let mut book = book.borrow_mut();
+        book.retain(|entry| entry.strong_count() > 0);
+        let sought = Rc::downgrade(kind);
+        if book.iter().all(|entry| !Weak::ptr_eq(entry, &sought)) { book.push(sought); }
+    });
+}
+
+pub(super) fn kind_shares(kind: &Rc<Blueprint>) -> bool {
+    let wanted = Rc::as_ptr(kind);
+    SHARING_KINDS.with(|book| book.borrow().iter()
+        .filter(|entry| entry.strong_count() > 0).any(|entry| entry.as_ptr() == wanted))
+}
+
 /// What a weak hold is on.
 #[derive(Clone)]
 pub enum Ghost {
@@ -79,6 +98,20 @@ impl Dim {
 }
 
 
+// The inventory owns only weak reference handles; a target address never
+// stands for a membership answer or keeps that target alive.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ReferenceAddress { Instance(usize), Class(usize), Native(Rc<str>) }
+
+fn reference_address(value: &Value) -> Option<ReferenceAddress> {
+    match value {
+        Value::Thing(thing) => Some(ReferenceAddress::Instance(Rc::as_ptr(thing) as usize)),
+        Value::Blueprint(class) => Some(ReferenceAddress::Class(Rc::as_ptr(class) as usize)),
+        Value::Intrinsic(_, spelling) => Some(ReferenceAddress::Native(spelling.clone())),
+        _ => None,
+    }
+}
+
 thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static LISTENING: Cell<usize> = const { Cell::new(0) };
@@ -93,6 +126,8 @@ thread_local! {
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
+    static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
+    static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
@@ -230,6 +265,7 @@ fn stir() {
     ghost_raise(G_STIRRED);
 }
 
+
 /// Something a listener might be listening for has gone.
 pub fn anything_departing() {
     if LISTENING.try_with(|l| l.get()).unwrap_or(0) == 0 { return; }
@@ -280,13 +316,15 @@ fn watch_ghost(ghost: &Ghost) {
 /// The farewell method of a class, looked for among its programs first
 /// and then among the values it keeps for itself.
 pub fn farewell_of(class: &Blueprint) -> Option<Value> {
-    let name = FAREWELL_NAME.try_with(|n| n.borrow().clone()).ok().flatten()?;
-    if let Some(program) = class.program(&name) {
-        return Some(Value::Routine(program.clone()));
-    }
-    let keeper = class.keeper(&name)?;
-    let kept = keeper.shared.borrow();
-    kept.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone())
+    FAREWELL_NAME.try_with(|stored| {
+        let borrowed = stored.borrow();
+        let word = borrowed.as_ref()?;
+        class.program(word).map(|body| Value::Routine(body.clone())).or_else(|| {
+            let owner = class.keeper(word)?;
+            let entries = owner.shared.borrow();
+            entries.iter().find_map(|(key, item)| (key == word).then(|| item.clone()))
+        })
+    }).unwrap_or(None)
 }
 
 /// Marks a thing's farewell as bidden, answering whether it was not
@@ -335,6 +373,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
         ghost_set(G_ANCHOR, !kept.is_empty());
         *all = kept;
+        ghost_set(G_ANCHOR, !all.is_empty());
         ready
     }).unwrap_or_default();
     for thing in ready {
@@ -396,9 +435,25 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None), detached: Cell::new(false) });
     REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
-        refs.retain(|weak| weak.strong_count() != 0);
+        let boundary = REFERENCES_NEXT_SWEEP.with(Cell::get);
+        if refs.len() >= boundary {
+            refs.retain(|weak| weak.strong_count() != 0);
+            REFERENCES_NEXT_SWEEP.with(|next| next.set(64.max(refs.len().saturating_mul(2))));
+        }
         refs.push(Rc::downgrade(&held));
     });
+    if let Some(address) = held.revive().as_ref().and_then(reference_address) {
+        REFERENCES_BY_TARGET.with(|book| {
+            let mut book = book.borrow_mut();
+            if book.0.len() >= book.1 {
+                book.0.retain(|_, entries| { entries.retain(|entry| entry.strong_count() != 0); !entries.is_empty() });
+                book.1 = 64.max(book.0.len().saturating_mul(2));
+            }
+            let entries = book.0.entry(address).or_default();
+            entries.retain(|entry| entry.strong_count() != 0);
+            entries.push(Rc::downgrade(&held));
+        });
+    }
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
@@ -410,6 +465,9 @@ pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
 /// Note a thing whose going somebody could notice. Every time the list
 /// has doubled since it was last swept, the departed are swept out.
 pub fn note(ghost: Ghost) {
+    // Intrinsic kinds cannot take part in cycles; keeping every duplicate
+    // would make each later collection revisit permanent scalar roots.
+    if matches!(&ghost, Ghost::StaticKind(Value::Intrinsic(..))) { return; }
     let _ = NOTABLE.try_with(|n| {
         let mut n = n.borrow_mut();
         if n.0.len() >= n.1 {
@@ -889,12 +947,63 @@ impl Web {
     }
 }
 
+/// Include intrinsic kinds and class blueprints in weak target identity.
+fn identical_target(subject: &Value, held: &Value) -> bool {
+    if let (Value::Blueprint(one), Value::Blueprint(two)) = (subject, held) { return Rc::ptr_eq(one, two); }
+    if let (Value::Intrinsic(one, a), Value::Intrinsic(two, b)) = (subject, held) { return one == two && a == b; }
+    match (subject, held) {
+        (Value::Wrapped(a, x), Value::Wrapped(b, y)) => a == b && Rc::ptr_eq(x, y),
+        (Value::OctetKind { changeable: a, .. }, Value::OctetKind { changeable: b, .. }) => a == b,
+        _ => subject.one_place(held),
+    }
+}
+
+/// Select an existing plain reference before reviving other weak targets.
+pub fn reuse(subject: &Value, wanted: &Rc<Blueprint>) -> Option<Value> {
+    let subject = subject.settled();
+    if let Some(address) = reference_address(&subject) {
+        return REFERENCES_BY_TARGET.with(|book| {
+            let book = book.borrow();
+            let entries = book.0.get(&address)?;
+            for entry in entries.iter().rev() {
+                let Some(dim) = entry.upgrade() else { continue; };
+                if dim.detached.get() || dim.notify.borrow().is_some() { continue; }
+                if !dim.revive().is_some_and(|target| identical_target(&subject, &target)) { continue; }
+                if let Some(owner) = dim.bearer.upgrade() {
+                    if Rc::ptr_eq(wanted, &owner.blueprint()) { return Some(Value::Thing(owner)); }
+                }
+            }
+            None
+        });
+    }
+    REFERENCES.with(|book| {
+        let mut entries = book.borrow_mut();
+        for entry in entries.iter().rev() {
+            let Some(dim) = entry.upgrade() else { continue; };
+            if dim.detached.get() || dim.notify.borrow().is_some() { continue; }
+            let same = match (&dim.ghost, &subject) {
+                (Ghost::Blueprint(weak), Value::Blueprint(kind)) => std::ptr::eq(weak.as_ptr(), Rc::as_ptr(kind)),
+                (Ghost::Thing(weak), Value::Thing(thing)) => std::ptr::eq(weak.as_ptr(), Rc::as_ptr(thing)),
+                (Ghost::Blueprint(_) | Ghost::Thing(_), _) => false,
+                (Ghost::StaticKind(held), _) => identical_target(&subject, held),
+                _ => dim.revive().is_some_and(|live| identical_target(&subject, &live)),
+            };
+            if !same { continue; }
+            let Some(owner) = dim.bearer.upgrade() else { continue; };
+            if Rc::ptr_eq(wanted, &owner.blueprint()) { return Some(Value::Thing(owner)); }
+        }
+        // Compact misses so temporary references do not lengthen later searches.
+        entries.retain(|reference| reference.upgrade().is_some());
+        None
+    })
+}
+
 /// Living public weak references, with the two reusable kinds at the head.
 pub fn refs_for(subject: &Value) -> Vec<Value> {
     let mut found = REFERENCES.with(|refs| refs.borrow().iter().rev().filter_map(|entry| {
         let dim = entry.upgrade()?;
         let target = dim.revive()?;
-        if !subject.one_place(&target) { return None; }
+        if !identical_target(&subject.settled(), &target) { return None; }
         dim.bearer.upgrade().map(Value::Thing)
     }).collect::<Vec<_>>());
     found.sort_by_key(|item| {

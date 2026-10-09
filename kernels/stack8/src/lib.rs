@@ -22,6 +22,7 @@ pub mod value;
 pub mod code;
 pub mod faint;
 mod core;
+mod multibyte;
 mod posix;
 mod complex;
 mod structpack;

@@ -9,42 +9,12 @@ class ReferenceType:
     __slots__ = ()
     __module__ = 'weakref'
 
-    def __new__(cls, *args, **kwargs):
-        if not isinstance(cls, type):
-            raise TypeError('weakref.ReferenceType.__new__(X): X is not a type object (' + type(cls).__name__ + ')')
-        if not issubclass(cls, ReferenceType):
-            raise TypeError('weakref.ReferenceType.__new__(' + cls.__name__ + '): ' + cls.__name__ + ' is not a subtype of weakref.ReferenceType')
-        if not 1 <= len(args) <= 2:
-            raise TypeError('__new__ expected at ' + ('least 1 argument' if not args else 'most 2 arguments') + ', got ' + str(len(args)))
-        return _make_weak(args[0], cls, args[1] if len(args) == 2 else None)
-
-    def __init__(self, *args, **kwargs):
-        if not isinstance(self, ReferenceType):
-            raise TypeError("descriptor '__init__' requires a 'weakref.ReferenceType' object but received a '" + type(self).__name__ + "'")
-        if kwargs:
-            raise TypeError('ref() takes no keyword arguments')
-        if not 1 <= len(args) <= 2:
-            raise TypeError('__init__ expected at ' + ('least 1 argument' if not args else 'most 2 arguments') + ', got ' + str(len(args)))
-
     def __call__(self):
         return _get_weak(self, 'call')
 
     @property
     def __callback__(self):
         return _get_weak(self, 'callback')
-
-    def __hash__(self):
-        return _get_weak(self, 'hash')
-
-    def __eq__(self, other):
-        if not isinstance(other, ReferenceType):
-            return NotImplemented
-        return _get_weak(self, 'eq', other)
-
-    def __ne__(self, other):
-        if not isinstance(other, ReferenceType):
-            return NotImplemented
-        return _get_weak(self, 'ne', other)
 
     def __repr__(self):
         ob = self()
@@ -59,6 +29,14 @@ class ReferenceType:
         return "<weakref at %s; to '%s' at %s>" % (hex(id(self)), type(ob).__name__, hex(id(ob)))
 
     __class_getitem__ = classmethod(__import__('types').GenericAlias)
+
+# Native slots validate arguments without temporary Python frames.
+# Subclass overrides still use normal lookup.
+ReferenceType.__new__ = staticmethod(_get_weak(ReferenceType, 'allocator', _make_weak))
+ReferenceType.__init__ = _get_weak(ReferenceType, 'initializer')
+ReferenceType.__hash__ = _get_weak(ReferenceType, 'operation', '__hash__')
+ReferenceType.__eq__ = _get_weak(ReferenceType, 'operation', '__eq__')
+ReferenceType.__ne__ = _get_weak(ReferenceType, 'operation', '__ne__')
 
 ref = ReferenceType
 
@@ -373,5 +351,7 @@ def _proxy_operand(value):
     return value
 
 
+_get_weak(ProxyType, 'intern')
+_get_weak(CallableProxyType, 'intern')
 _get_weak(ProxyType, 'seal')
 _get_weak(CallableProxyType, 'seal')
