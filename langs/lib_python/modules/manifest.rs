@@ -69,6 +69,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_types", include_str!("_types.py"), "_types.py"),
     ("_unicodedata_320", include_str!("_unicodedata_320.py"), "_unicodedata_320.py"),
     ("_typing_runtime", include_str!("_typing_runtime.py"), "_typing_runtime.py"),
+    ("_ucd_3_2_0", include_str!("_ucd_3_2_0.py"), "_ucd_3_2_0.py"),
     ("_warnings", include_str!("_warnings.py"), "_warnings.py"),
     ("_weakref", include_str!("_weakref.py"), "_weakref.py"),
     ("_weakrefset", include_str!("_weakrefset.py"), "_weakrefset.py"),
