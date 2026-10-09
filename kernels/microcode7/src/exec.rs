@@ -14538,6 +14538,10 @@ impl<'a> Machine<'a> {
             _ => {}
         }
         let Some(Value::Octets { cell, changeable, .. }) = values.first() else { return Err(refusal()); };
+        match operation {
+            13 | 18..=21 => return self.octets_textual(operation, cell.borrow().as_slice(), *changeable, &values[1..]),
+            _ => (),
+        }
         let content = cell.borrow().to_vec();
         let args = &values[1..];
         let result;
@@ -14903,21 +14907,21 @@ impl<'a> Machine<'a> {
         if let Some(words) = self.cannot_key(&arguments[0]) { return Err(words); }
         let hashed = self.hash_key(&arguments[0])?;
         let mut current = receiver.settled();
-        let (pairs, found, keyed, slots, span, mut budget) = loop {
+        let (store, found, keyed) = loop {
             let Value::Dict(store) = current else { return Err(self.method_fault("unready")); };
             let located = self.map_locate(&store, Some(&store), &hashed)?;
             current = receiver.settled();
             if matches!(&current, Value::Dict(now) if now.serial != store.serial) { continue; }
-            break (store.to_vec(), located.0, located.1, store.slots_synced(), store.span, store.entry_budget);
+            break (store, located.0, located.1);
         };
         if let Some(index) = found {
-            let answer = pairs[index].1.clone();
+            let answer = store[index].1.clone();
             if name == "pop" {
-                let mut remaining = pairs;
+                let mut remaining = store.to_vec();
                 remaining.remove(index);
-                let mut slots = slots.clone();
+                let mut slots = store.slots_synced();
                 slots.remove(index);
-                self.replace_dict(receiver, remaining, slots, span, budget)?;
+                self.replace_dict(receiver, remaining, slots, store.span, store.entry_budget)?;
             }
             return Ok(answer);
         }
@@ -14926,9 +14930,10 @@ impl<'a> Machine<'a> {
         }
         let answer = arguments.get(1).cloned().unwrap_or(Value::Nil);
         if name == "setdefault" {
-            let mut grown = pairs;
+            let mut grown = store.to_vec();
+            let mut budget = store.entry_budget;
             grown.push((keyed, answer.clone()));
-            let (slots, span) = self.grown_slots(&grown, &slots, span, &mut budget);
+            let (slots, span) = self.grown_slots(&grown, &store.slots_synced(), store.span, &mut budget);
             self.replace_dict(receiver, grown, slots, span, budget)?;
         }
         Ok(answer)
@@ -24443,6 +24448,12 @@ impl<'a> Machine<'a> {
             let numbers = cell.borrow();
             return match at {
                 Value::Span(bounds) => {
+                    let (limits, _, adjacent) = self.span_edges(bounds, numbers.len())?;
+                    if adjacent {
+                        let first = limits[0] as usize;
+                        let last = (limits[1] as usize).max(first);
+                        return Ok(self.octets(numbers[first..last].to_vec(), *changeable));
+                    }
                     let (_, chosen, _) = self.span_selection(bounds, numbers.len())?;
                     Ok(self.octets(chosen.iter().map(|&i| numbers[i]).collect(), *changeable))
                 }
@@ -24459,7 +24470,13 @@ impl<'a> Machine<'a> {
                     Value::Huge(i) => i.to_i64().ok_or_else(||crate::text::complaint(self.table,"index"))?,
                     _ => return Err(crate::text::complaint(self.table,"integer")),
                 };
-                let place = if number < 0 {(word.chars().count() as i64).saturating_add(number)} else {number};
+                if Value::ascii_letters(word) {
+                    let position = if number >= 0 { number } else { number.saturating_add(word.len() as i64) };
+                    let letter = usize::try_from(position).ok().and_then(|position| word.as_bytes().get(position));
+                    return letter.map(|byte| Value::text(&char::from(*byte).to_string()))
+                        .ok_or_else(|| crate::text::complaint(self.table, "index"));
+                }
+                let place = if number < 0 {(crate::text::extent_of_string(word) as i64).saturating_add(number)} else {number};
                 return word.chars().nth(place as usize).map(|c|Value::text(&String::from(c))).ok_or_else(||crate::text::complaint(self.table,"index"));
             }
         }

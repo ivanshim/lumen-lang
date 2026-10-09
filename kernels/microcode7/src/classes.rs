@@ -3943,6 +3943,10 @@ impl<'a> Machine<'a> {
                         (name == key && !matches!(held.settled(), Value::Unset)).then(|| held.clone())
                     });
                     if let Some(stored) = stored { return Ok(stored); }
+                    if inherited.is_none() && self.from_the_root(key, true, &owner).is_none() {
+                        self.sought_in_vain = Some((String::from(key), value.clone()));
+                        return self.complete_member_read(&value, key, direct, Err(self.absent_attribute(&value, key)));
+                    }
                     if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return self.complete_member_read(&value, key, direct, sought); }
                 }
             }

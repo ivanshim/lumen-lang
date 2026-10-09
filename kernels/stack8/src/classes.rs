@@ -3421,6 +3421,11 @@ impl<'a> Engine<'a> {
                     let own = object.fields.borrow().iter().find(|(key, held)| key == name && !matches!(held.contents(), Value::Blank)).map(|(_, held)| held.clone());
                     if let Some(own) = own { return Ok(own); }
                     if let Some(member) = member { let answer = self.bind_class_value(member, Some(subject.clone()), class); return self.finish_attribute_read(&subject, name, plain, answer); }
+                    if self.root_member(name, Some(&class)).is_none() {
+                        self.absent_member = Some((name.to_owned(), subject.clone()));
+                        let absent = Err(self.missing_member(&subject, name));
+                        return self.finish_attribute_read(&subject, name, plain, absent);
+                    }
                 }
             }
         }

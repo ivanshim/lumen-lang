@@ -6772,12 +6772,11 @@ impl<'a> Engine<'a> {
             if Self::map_cell(receiver).is_some_and(|cell| Self::map_size(&cell).1 != store.revision) { continue; }
             break (store, found, keyed);
         };
-        let pairs = store.to_vec();
         let mut budget = store.entry_budget;
         if let Some(index) = found {
-            let value = pairs[index].1.clone();
+            let value = store[index].1.clone();
             if operation == "pop" {
-                let mut remaining = pairs;
+                let mut remaining = store.to_vec();
                 remaining.remove(index);
                 let mut slots = store.slots_synced();
                 slots.remove(index);
@@ -6790,7 +6789,7 @@ impl<'a> Engine<'a> {
         }
         let value = args.get(1).cloned().unwrap_or(Value::Null);
         if operation == "setdefault" {
-            let mut grown = pairs;
+            let mut grown = store.to_vec();
             grown.push((keyed, value.clone()));
             let (slots, span) = self.grown_slots(&grown, &store.slots_synced(), store.span, &mut budget);
             self.replace_map(receiver, grown, slots, span, budget)?;
@@ -9516,10 +9515,8 @@ impl<'a> Engine<'a> {
                 // A value that could be no key of a map is in no map,
                 // and the language says so rather than answering no.
                 if let Some(told) = self.unkeyable(a) { return Err(told); }
-                let wanted = self.special_key(a)?;
-                let mut found = false;
-                for (key, _) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = true; break; } }
-                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+                let (found, _) = self.map_locate(entries, Some(entries), a)?;
+                return Ok(Value::Flag(found.is_some() != matches!(op, Action::Lacks)));
             }
             // A class that sets the membership name to nothing has said
             // there is no membership in its things: the question stops
@@ -16030,6 +16027,11 @@ impl<'a> Engine<'a> {
         match target {
             Value::Bytes(row, mutable, _) => {
                 let row = row.borrow();
+                let (begin, end, stride) = self.slice_edges(parts, row.len())?;
+                if stride == 1 {
+                    let begin = begin as usize;
+                    return Ok(self.byte_make(row[begin..(end as usize).max(begin)].to_vec(), *mutable));
+                }
                 let (_, _, _, places) = self.slice_places(parts, row.len())?;
                 Ok(self.byte_make(places.into_iter().map(|i| row[i]).collect(), *mutable))
             }
@@ -16131,7 +16133,13 @@ impl<'a> Engine<'a> {
                     return Err(self.sequence_subscript_fault(target, at));
                 }
                 let index = match at { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().ok_or_else(||crate::strings::fault(self.lang,"index"))?, _ => return Err(crate::strings::fault(self.lang,"integer")) };
-                let offset = if index < 0 { index.saturating_add(s.chars().count() as i64) } else { index };
+                // ASCII character positions are byte positions, including negative indices.
+                if Value::text_ascii(s) {
+                    let offset = if index < 0 { index.saturating_add(s.len() as i64) } else { index };
+                    return usize::try_from(offset).ok().and_then(|at| s.get(at..at + 1))
+                        .map(Value::text).ok_or_else(|| crate::strings::fault(self.lang, "index"));
+                }
+                let offset = if index < 0 { index.saturating_add(crate::strings::character_length(s) as i64) } else { index };
                 return s.chars().nth(offset as usize).map(|c|Value::text(&c.to_string())).ok_or_else(||crate::strings::fault(self.lang,"index"));
             }
         }
@@ -19608,6 +19616,9 @@ impl<'a> Engine<'a> {
             return Ok(self.byte_make(row, false));
         }
         let Some(Value::Bytes(cell, mutable, _)) = args.first() else { return Err(unready()); };
+        if matches!(task, 13 | 18 | 19 | 20 | 21) {
+            return self.byte_text_work(task, &cell.borrow(), *mutable, &args[1..]);
+        }
         let row = cell.borrow().clone();
         let given = &args[1..];
         let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
