@@ -10588,3 +10588,27 @@
 {"t":"2026-10-09T23:30:15Z","event":"finished","job":"stdlib-inspect-followup","exit_time":"2026-10-09T23:27:06Z"}
 {"t":"2026-10-09T23:30:15Z","event":"review-queued","job":"stdlib-inspect-followup","review":"review-auto-stdlib-inspect-followup-2330"}
 {"t":"2026-10-09T23:31:59Z","event":"review-started","job":"stdlib-inspect-followup","review":"review-auto-stdlib-inspect-followup-2330"}
+{"t":"2026-10-09T23:34:25Z","event":"exited","job":"dsflash-modulefinder-sol","code":0}
+{"t":"2026-10-09T23:34:42Z","event":"returned","job":"dsflash-dunder-all","review":"review-auto-dsflash-dunder-all-2309","commit":"c865f5313","round":2,"model":"deepseek-flash","note":"(2nd DS Flash return -> FAILED; integrity ok; check 1196/0 gates ok; test___all__ absent->1/1 both kernels; blocker: subprocess dev_mode warnoptions ValueError) -> returns/dsflash-dunder-all-return2.md"}
+{"t":"2026-10-09T23:34:42Z","event":"returned","job":"dsflash-interactive","review":"review-auto-dsflash-interactive-2309","commit":"c0661a578","round":2,"model":"deepseek-flash","note":"(2nd DS Flash return -> FAILED; integrity ok; check 1196/0 gates ok; test_fstring 91->92/94 both; blockers: decorated defs never complete with open stdin; keyword-call/semicolon expressions lose display) -> returns/dsflash-interactive-return2.md"}
+{"t":"2026-10-09T23:34:42Z","event":"returned","job":"dsflash-unparse","review":"review-auto-dsflash-unparse-2309","commit":"d467d50c7","round":2,"model":"deepseek-flash","note":"(2nd DS Flash return -> FAILED; integrity ok; check 1196/0 gates ok; unparse 66->77/79, ast 139->142 both; blocker: soft-match lookahead breaks match: int = 1 / match = lambda) -> returns/dsflash-unparse-return2.md"}
+{"t":"2026-10-09T23:34:42Z","event":"handed-over","job":"dsflash-dunder-all","to":"claude-haiku-5-5","note":"2 DS Flash returns; DS Pro busy (dsflash-frame-dspro), Haiku free -> brief-dsflash-dunder-all-haiku.md, same branch/worktree, head c865f5313; started claude-run.sh dsflash-dunder-all-haiku"}
+{"t":"2026-10-09T23:34:42Z","event":"started","job":"dsflash-dunder-all-haiku","model":"claude-haiku-5-5","brief":"brief-dsflash-dunder-all-haiku.md"}
+{"t":"2026-10-09T23:34:42Z","event":"handed-over","job":"dsflash-interactive","to":"gpt-6.1-sol","note":"2 DS Flash returns; DS Pro, Sonnet busy, Haiku taken by dunder-all -> brief-dsflash-interactive-sol.md, same branch/worktree, head c0661a578; sol-new dsflash-interactive-sol queued"}
+{"t":"2026-10-09T23:34:42Z","event":"handed-over","job":"dsflash-unparse","to":"gpt-6.1-sol","note":"2 DS Flash returns; DS Pro, Haiku, Sonnet busy -> brief-dsflash-unparse-sol.md, same branch/worktree, head d467d50c7; sol-new dsflash-unparse-sol queued"}
+{"t":"2026-10-09T23:34:42Z","event":"queued","job":"dsflash-interactive-sol","model":"gpt-6.1-sol","line":"sol-new dsflash-interactive-sol"}
+{"t":"2026-10-09T23:34:42Z","event":"queued","job":"dsflash-unparse-sol","model":"gpt-6.1-sol","line":"sol-new dsflash-unparse-sol"}
+{"t":"2026-10-09T23:35:17Z","event":"quota","codex_week_used":76,"codex_credits":0,"claude_week_used":25,"claude_5h_used":12,"deepseek_usd":236.74}
+{"t":"2026-10-09T23:35:21Z","event":"finished","job":"dsflash-modulefinder-sol","exit_time":"2026-10-09T23:34:25Z"}
+{"t":"2026-10-09T23:35:21Z","event":"review-queued","job":"dsflash-modulefinder-sol","review":"review-auto-dsflash-modulefinder-sol-2335"}
+{"t":"2026-10-09T23:35:22Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":76,"expected":79.3,"gap":-3.3,"status":"ok"}
+{"t":"2026-10-09T23:35:32Z","event":"checkin","status":"done","actions":"RETURN dsflash-dunder-all (2nd DS Flash -> FAILED; subprocess dev_mode warnoptions ValueError); RETURN dsflash-interactive (2nd -> FAILED; decorator completion + expression display); RETURN dsflash-unparse (2nd -> FAILED; soft-match lookahead breaks annotations/lambdas); handed-over dsflash-dunder-all to Haiku (claude-run.sh dsflash-dunder-all-haiku started); handed-over dsflash-interactive + dsflash-unparse to Sol (sol-new queued); prune-merged freed 0MB; luna FINDINGS appended","notes":"DS Flash 4/12, 8 idle: no Flash-sized subject or F/E follow-up left; DS Pro frame-dspro; Haiku dunder-all-haiku; Sonnet struct-sonnet; Sol 12/12 (11 non-review + review inspect-followup) + 3 queued; Astra genericalias-astra (doctest-astra held); Codex week 76% (>= 75%: no new Astra); box load 6.4/8, 11.4G avail, disk 74%; Mac disk 87%; Claude 5h 12%/week 25%; no open PR (integrate-21h running); luna gap -3.3 ok"}
+{"t":"2026-10-09T23:36:44Z","event":"exited","job":"review-auto-stdlib-inspect-followup-2330","code":0}
+{"t":"2026-10-09T23:37:00Z","event":"started","job":"dsflash-hmac-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T23:42:02Z","event":"review-started","job":"dsflash-modulefinder-sol","review":"review-auto-dsflash-modulefinder-sol-2335"}
+{"t":"2026-10-09T23:44:54Z","event":"exited","job":"review-auto-dsflash-modulefinder-sol-2335","code":0}
+{"t":"2026-10-09T23:49:11Z","event":"exited","job":"dsflash-reprlib","code":0}
+{"t":"2026-10-09T23:50:42Z","event":"finished","job":"dsflash-reprlib","exit_time":"2026-10-09T23:49:10Z"}
+{"t":"2026-10-09T23:50:42Z","event":"review-queued","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-2350"}
+{"t":"2026-10-09T23:51:06Z","event":"review-started","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-2350"}
+{"t":"2026-10-09T23:52:07Z","event":"exited","job":"dsflash-dataclasses-sol","code":0}
