@@ -9878,3 +9878,22 @@
 {"t":"2026-10-09T08:36:11Z","event":"started","job":"dsflash-frame-dspro","model":"deepseek-v4-pro","via":"ds-run"}
 {"t":"2026-10-09T08:41:13Z","event":"review-started","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-0817"}
 {"t":"2026-10-09T08:42:40Z","event":"exited","job":"dsflash-pyclbr-sol","code":0}
+{"t":"2026-10-09T08:46:14Z","event":"review-started","job":"dsflash-bigmem","review":"review-auto-dsflash-bigmem-0822"}
+{"t":"2026-10-09T08:47:39Z","event":"exited","job":"review-auto-dsflash-reprlib-0817","code":0}
+{"t":"2026-10-09T08:47:49Z","event":"finished","job":"dsflash-pyclbr-sol","exit_time":"2026-10-09T08:42:40Z"}
+{"t":"2026-10-09T08:47:49Z","event":"review-queued","job":"dsflash-pyclbr-sol","review":"review-auto-dsflash-pyclbr-sol-0847"}
+{"t":"2026-10-09T08:47:53Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T08:51:06Z","event":"exited","job":"review-auto-dsflash-bigmem-0822","code":0}
+{"t":"2026-10-09T08:51:15Z","event":"review-started","job":"dsflash-mathprop-bigaddr","review":"review-auto-dsflash-mathprop-bigaddr-0822"}
+{"t":"2026-10-09T08:53:38Z","event":"returned","job":"dsflash-bigmem","review":"review-auto-dsflash-bigmem-0822","commit":"b1fff10a3","round":1,"model":"deepseek-flash","note":"(1st; integrity ok; clean check 1196/0 gates ok; bigmem 161->165/166 both; blocking: saved str-subclass strip methods return the same object every call (stack8 bound Rc reuse); engine.rs fixed-bytes copy not limited to strip) -> returns + or-resume queued"}
+{"t":"2026-10-09T08:53:38Z","event":"queued","job":"dsflash-bigmem","model":"deepseek-flash","line":"or-resume dsflash-bigmem deepseek-flash session-ecd5b4e7-16ef-48c1-b11c-f6ea00d0968b","note":"1st return resume"}
+{"t":"2026-10-09T08:53:38Z","event":"returned","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-0817","commit":"f4a131f12","round":1,"model":"deepseek-flash","note":"(1st this round; integrity ok, spoof gone; clean check 1196/0 gates ok; reprlib 30->31/33 both; blocking: sys stream methods transplanted from hidden impl (enter/iter identity, detach ownership), TextIOWrapper half-initialized (reconfigure AttributeError, I/O bypasses config)) -> returns + or-resume queued"}
+{"t":"2026-10-09T08:53:38Z","event":"queued","job":"dsflash-reprlib","model":"deepseek-flash","line":"or-resume dsflash-reprlib deepseek-flash session-0d18c9c1-5cff-42a2-bab8-11b904fd784d","note":"1st return resume"}
+{"t":"2026-10-09T08:56:00Z","event":"exited","job":"review-auto-dsflash-mathprop-bigaddr-0822","code":0}
+{"t":"2026-10-09T08:56:17Z","event":"review-started","job":"stdlib-mailbox","review":"review-auto-stdlib-mailbox-0822"}
+{"t":"2026-10-09T08:56:17Z","event":"queued","job":"dsflash-hmac","model":"deepseek-flash","line":"ds-new dsflash-hmac deepseek-flash","note":"DS Flash slot fed: test_hmac (library, below 42/100; 4 setUpClass errors: mock.patch.object autospec unsupported, small/medium), worktree at 94f805110"}
+{"t":"2026-10-09T08:56:37Z","event":"quota","codex_week_used":25,"codex_credits":0,"claude_week_used":19,"claude_5h_used":20,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":256.61}
+{"t":"2026-10-09T08:56:42Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":25,"expected":26.7,"gap":-1.7,"status":"ok"}
+{"t":"2026-10-09T08:56:51Z","event":"checkin","status":"done","actions":"RETURN dsflash-bigmem (1st; saved str-subclass strip methods reuse one result object) -> returns + or-resume queued; RETURN dsflash-reprlib (1st this round; sys stream methods transplanted from hidden impl, TextIOWrapper half-initialized) -> returns + or-resume queued; DS Flash fed: dsflash-hmac (test_hmac 42/100, mock autospec) brief + worktree at 94f805110, ds-new queued; prune-merged 0MB (kept trial-grok-reprlib); no idle accepted target/ to delete; luna FINDINGS appended","notes":"DS Flash 9 running + 3 queued /12; Sol 10/12 running + 8 queued (box load 8.6 gate); DS Pro/Haiku/Sonnet/Astra 1/1 each; PR #542 (21g) CI in progress, merge watcher running; Codex week 25%; Claude 5h 20%/week 19%; box disk 82%, 10.7 GB avail; Mac disk 87%; luna gap -1.7 ok, alert = OpenClaw relay (expected)"}
+{"t":"2026-10-09T09:01:18Z","event":"review-started","job":"stdlib-type-params","review":"review-auto-stdlib-type-params-0822"}
+{"t":"2026-10-09T09:02:39Z","event":"exited","job":"review-auto-stdlib-mailbox-0822","code":0}
