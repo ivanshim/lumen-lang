@@ -24962,6 +24962,7 @@ impl Engine<'_> {
         self.importing.insert(path.to_string());
         self.refresh_module_cache(path);
         let saved_depth = self.data.len();
+        let caller_text = self.reading_in.take();
         let descriptor = self.modules.get("importlib").and_then(|entry| match entry {
             Value::Object(space) => space.fields.borrow().iter().find(|(key, _)| key == "_native_spec").map(|(_, value)| value.contents()),
             _ => None,
@@ -24970,6 +24971,7 @@ impl Engine<'_> {
             Some(function) => self.class_apply(function, vec![module.clone()]).and_then(|_| self.invoke(&program, Vec::new())),
             None => self.invoke(&program, Vec::new()),
         };
+        self.reading_in = caller_text;
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
