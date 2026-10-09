@@ -88,6 +88,10 @@ class _Flags:
 
 flags = _Flags()
 
+# The runtime writes no bytecode beside a source file, so the
+# reference's flag for it is set the same way `flags` reports it.
+dont_write_bytecode = True
+
 # Stub: compatibility records advertise binary64 and 32-bit limbs;
 # they are not a probe of every arithmetic operation in the kernel.
 class _FloatInfo:

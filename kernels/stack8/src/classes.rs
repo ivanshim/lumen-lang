@@ -3994,6 +3994,12 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if name==self.class_word("qualified") { return Ok(Value::text(word)); }
+                // `from_bytes`, read off the kind itself, is the loose
+                // descriptor the name written whole in a program gives,
+                // so a read by attribute and a read by name agree.
+                if self.lang.builtins.get(&format!("{word}.{name}")) == Some(&Builtin::Bytes(15)) {
+                    return Ok(Value::Native(Builtin::Bytes(15), Rc::from(format!("{word}.{name}"))));
+                }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") {
                     // Making a property outright allocates the subclass it

@@ -4492,6 +4492,12 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
             }
             if Self::names_a_kind(op) {
+                // `from_bytes`, read off the kind itself, is the loose
+                // builtin the name written whole in a program gives, so
+                // a read by attribute and a read by name agree.
+                if self.table.strings("ext.builtin.bytes.to_int").iter().any(|spelling| spelling == &format!("{word}.{key}")) {
+                    return Ok(Value::Intrinsic(Prim::Octets(15), Rc::from(format!("{word}.{key}"))));
+                }
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if !key.is_empty() && key == self.detail("bases") {
                     let ancestor = if word.as_ref() == "bool" { self.kind_by_word("int") }

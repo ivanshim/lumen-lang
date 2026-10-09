@@ -39,6 +39,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/pathlib/{types,_local}.py` | `Lib/pathlib/{types,_local}.py`, unchanged beneath a provenance/PSF header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_patma.py` | `Lib/test/test_patma.py` (unchanged; SHA-256 `ce4a802e1722fdd02ca6da58138a465a050edd360a150bbbba829586b3d15f55`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/{test_pickle,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_pkgutil.py` | `Lib/test/test_pkgutil.py` (unchanged; SHA-256 `eda1ff4820942ddbe0ca4581f16cb1b8b76ac4d3496fa2b13b27d7ff1a2cef7f`) and the support packages its name-resolution tests import, `Lib/test/test_import/data/package3` and `package4` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/` (pkgutil) | [python/cpython](https://github.com/python/cpython) `Lib/pkgutil.py` (unchanged; SHA-256 `c0ae4cc6a6d36be016d77764cf846c0da4b1b85229d94f090ac994495fc2f203`), the library it and its test import that the runtime lacked: `Lib/logging/handlers.py`, the `Lib/zipfile/` package (`__init__.py`, `__main__.py`, `_path/__init__.py`, `_path/glob.py`) and `Lib/zipimport.py` (unchanged; SHA-256 `4de64633a484e16c39fdb46a3f939ce7c577b14a6e9ee49b79871ec1880b4597`). The frozen bootstrap names `zipimport` imports are answered by two adapter modules, `_frozen_importlib.py` and `_frozen_importlib_external.py`, which stand for `importlib._bootstrap` and `importlib._bootstrap_external`; `_testmultiphase.py` is an importable stand-in for the C test extension the runtime does not build | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/codeop.py` | `Lib/codeop.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_code.py`, `test/_code_definitions.py`, `test/support/bytecode_helper.py` | `Lib/test/test_code.py`, `Lib/test/_code_definitions.py`, `Lib/test/support/bytecode_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/{opcode,_opcode_metadata}.py` | `Lib/opcode.py`, `Lib/_opcode_metadata.py`, copied byte for byte; `_opcode.py` supplies release catalogue data and refuses bytecode implementation operations | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -111,7 +113,11 @@ bodies under PSF provenance headers.
 The suite also holds `test_ordered_dict.py` and `test_defaultdict.py`,
 copied byte for byte from `v3.14.8`; the support they import
 (`test/mapping_tests.py` and `test/support/import_helper.py`) was already
-present unchanged at that commit.
+present unchanged at that commit. The `test_pkgutil` test also imports
+`test.test_importlib.util.uncache`; `langs/lib_python/modules/test/test_importlib/`
+holds CPython's unchanged `__init__.py` (SHA-256 `8962a375442bddd8d49865f3bf601c2c7a741fe947d8ec667358bb640cd0d19b`)
+and `util.py` (SHA-256 `d75a6ec76a675ba5504842d143b0e36eb69e56571bc76b8590560728fe7ef121`),
+both byte for byte from the same release.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a

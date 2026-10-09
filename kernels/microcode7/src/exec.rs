@@ -26262,12 +26262,9 @@ impl Machine<'_> {
                 };
                 (text, Some(location.clone()))
             },
-            None => {
-                let source = self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
-                    let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
-                    format!("{before}{path}{after}")
-                })?;
-                (Rc::from(source.as_str()), self.library_module_file(path))
+            None => match self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned() {
+                Some(source) => (Rc::from(source.as_str()), self.library_module_file(path)),
+                None => return self.python_import_fallback(path),
             },
         };
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() {
@@ -26484,7 +26481,87 @@ impl Machine<'_> {
         }
         self.importing.remove(path);
         self.refresh_import_table(path);
-        Ok(value)
+        Ok(self.attire_module(path, value))
+    }
+
+    /// The reader's own modules keep their file and package directories
+    /// but lack the spec the reference sits beside them. Where the
+    /// importlib the library carries is already up, ask its helper for
+    /// one; a finder-supplied module, or the importlib being read, is
+    /// left untouched.
+    fn attire_module(&mut self, name: &str, namespace: Value) -> Value {
+        if name == "importlib" || !self.imported.contains_key("importlib") { return namespace; }
+        let Value::Thing(thing) = &namespace else { return namespace };
+        let supplied = thing.holds.borrow().iter().any(|entry| entry.0 == "__spec__" && !matches!(entry.1.settled(), Value::Nil));
+        if supplied { return namespace; }
+        let carrier = match self.imported.get("importlib") { Some(found) => found.clone(), None => return namespace };
+        let helper = match self.read_class_member(carrier, "_attach_native_spec", true) {
+            Ok(found) => found.settled(),
+            Err(_) => return namespace,
+        };
+        let _ = self.apply_class_member(helper, vec![namespace.clone()]);
+        namespace
+    }
+
+    /// A name the reader cannot answer itself is offered to the reference
+    /// machinery the library carries: the finders standing on the meta
+    /// path and the hooks over `sys.path` that a program or a loader put
+    /// in place. The loader a finder names is run, and the module it makes
+    /// is kept as any other, so the second ask is answered from the cache
+    /// without running it again.
+    fn python_import_fallback(&mut self, path: &str) -> Result<Value, String> {
+        let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+        let missing = format!("{before}{path}{after}");
+        // The reference finders stand only once importlib has been read;
+        // asking for them sooner would read importlib in the middle of
+        // its own bootstrap, so the reader's own complaint stands.
+        if !self.imported.contains_key("importlib") { return Err(missing); }
+        let bootstrap = match self.load_namespace("importlib._bootstrap") {
+            Ok(namespace) => namespace,
+            Err(_) => return Err(missing),
+        };
+        let search = match path.rsplit_once('.') {
+            Some((owner, _)) => match self.load_namespace(owner) {
+                Ok(parent) => self.read_class_member(parent, "__path__", true).ok().map(|found| found.settled()).unwrap_or(Value::Nil),
+                Err(_) => Value::Nil,
+            },
+            None => Value::Nil,
+        };
+        let find = match self.read_class_member(bootstrap.clone(), "_find_spec", true) {
+            Ok(callable) => callable.settled(),
+            Err(_) => return Err(missing),
+        };
+        // A finder that raises is answered with its own exception; only
+        // a discovery that returns None means the name is not there.
+        let spec = match self.apply_class_member(find, vec![Value::text(path), search]) {
+            Ok(spec) => spec,
+            Err(Escape::Error(message)) => return Err(message),
+            Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+        };
+        if matches!(spec.settled(), Value::Nil) { return Err(missing); }
+        let load = match self.read_class_member(bootstrap, "_load", true) {
+            Ok(callable) => callable.settled(),
+            Err(_) => return Err(missing),
+        };
+        let namespace = match self.apply_class_member(load, vec![spec]) {
+            Ok(namespace) => namespace,
+            Err(Escape::Error(message)) => return Err(message),
+            Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+        };
+        self.imported.insert(path.to_owned(), namespace.clone());
+        // The loader leaves the module off its owner, so bind the child
+        // here the way this kernel's ordinary load binds it.
+        if let Some((owner, name)) = path.rsplit_once('.') {
+            if let Some(Value::Thing(parent)) = self.imported.get(owner) {
+                let mut holdings = parent.holds.borrow_mut();
+                if let Some(at) = holdings.iter().position(|entry| entry.0 == name) {
+                    if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = namespace.clone(); }
+                    else { holdings[at].1 = namespace.clone(); }
+                } else { holdings.push((name.into(), namespace.clone())); }
+            }
+        }
+        self.refresh_import_table(path);
+        Ok(namespace)
     }
 
     /// Check each search directory for an enclosing regular file.
