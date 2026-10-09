@@ -9863,6 +9863,12 @@ impl<'a> Machine<'a> {
             // Each proxy retains a separate allocation around the live dictionary.
             if let Some(owner) = raw { return Ok(Value::Window(Rc::new(owner.as_ref().clone()), 'm')); }
         }
+        // Any other member of a window is bound to the window itself;
+        // settling it into the row it shows would weigh that row's
+        // members instead of the window's own.
+        if Self::window_inside(&receiver).is_some() {
+            return Ok(Value::Member(Rc::new(receiver), operation.to_string()));
+        }
         if ["numerator", "denominator", "real", "imag"].contains(&operation) {
             match receiver.settled() {
                 Value::Complex(pair) => return Ok(crate::complex::decimal_value(if operation == "real" { pair.0 } else { pair.1 })),
@@ -18413,6 +18419,16 @@ impl<'a> Machine<'a> {
         if matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14)) && v.iter().any(|value| matches!(value, Value::Shared(..) | Value::Mutable(..)) && Self::window_inside(value).is_some()) {
             let exposed: Vec<_> = v.iter().map(|value| Self::window_inside(value).unwrap_or_else(|| value.clone())).collect();
             return self.prim_values(op, name, &exposed);
+        }
+        // Membership in a view follows the view: the keys and the map
+        // itself are searched as the map is, by a key's address and only
+        // then by its own equality; the pairs search their key the same
+        // way before weighing the value; the values have no address to go
+        // by and walk their members by equality alone.
+        if matches!(op, Prim::Contains | Prim::Absent) && v.len() == 2 {
+            if let Some(Value::Window(owner, portion)) = Self::window_inside(&v[1]) {
+                return self.window_membership(op, &v[0], &owner, portion);
+            }
         }
 
         if matches!(op, Prim::Selfsame | Prim::Unlike) && self.rules.has_any_ext_op_identical_negated && v.len() == 2 {
@@ -29135,6 +29151,39 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether a needle stands among the members of a window on to a
+    /// map, asked as the reference asks it: the keys and the map itself
+    /// by the map's own lookup, the pairs by their key first and only
+    /// then by the value, and the values by walking them.
+    fn window_membership(&mut self, op: Prim, needle: &Value, owner: &Rc<Value>, portion: char) -> Result<Value, String> {
+        let absent = op == Prim::Absent;
+        let needle = needle.settled();
+        let owner_map = owner.proxy_pairs();
+        if matches!(portion, 'k' | 'm') {
+            if let Some(answer) = self.user_operation(op, &[needle, owner_map])? { return Ok(answer); }
+            return Ok(Value::Flag(absent));
+        }
+        let Value::Dict(entries) = &owner_map else { return Ok(Value::Flag(absent)); };
+        let store: &crate::data::MapStore = entries;
+        if portion == 'v' {
+            let mut present = false;
+            for (_, value) in store.iter() {
+                if self.member_agrees(value, &needle)? { present = true; break; }
+            }
+            return Ok(Value::Flag(present != absent));
+        }
+        let Value::Tuple(pair) = &needle else { return Ok(Value::Flag(absent)); };
+        if pair.len() != 2 { return Ok(Value::Flag(absent)); }
+        let (at, _) = self.map_locate(store, Some(store), &pair[0])?;
+        let Some(at) = at else { return Ok(Value::Flag(absent)); };
+        let stored = store[at].1.clone();
+        let alike = if stored.one_place(&pair[1]) { true } else {
+            let answer = self.prim(Prim::Eq, "", &[stored, pair[1].clone()])?;
+            self.object_truth(&answer)?
+        };
+        Ok(Value::Flag(alike != absent))
+    }
+
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
         if self.spells_property_kind(expected) {
             let canonical = self.property_blueprint();
@@ -29259,6 +29308,10 @@ impl Machine<'_> {
                 if op == Prim::Belongs {
                     if let Some(window) = Self::window_inside(item) { *item = window; continue; }
                 }
+                // A window read by name keeps the window as it stands:
+                // settling it into its row would lose the members only a
+                // window answers, its reduction refusal among them.
+                if matches!(op, Prim::GetMember | Prim::HasAttribute) && Self::window_inside(item).is_some() { continue; }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
                 let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };

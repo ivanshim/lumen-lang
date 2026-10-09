@@ -14321,16 +14321,48 @@ impl<'a> Engine<'a> {
                 };
                 return self.dyadic(op, &as_set(a)?, &as_set(b)?);
             }
+            // Membership in a view follows the view: a view of a map's
+            // keys or of the map itself is asked as the map is, by a key's
+            // hash and only then by its own equality; a view of its pairs
+            // looks the pair's key up the same way and only then weighs the
+            // value; a view of its values has no hash to go by and walks
+            // its members by equality alone.
             if matches!(op, Action::Contains | Action::Lacks) {
-                if let Value::View(_) = b {
-                    let contents = b.contents();
-                    let mut present = false;
-                    if let Value::Array(items) = contents {
-                        for item in items.iter() {
-                            if self.sequence_equal_item(item, a)? { present = true; break; }
+                if let Value::View(view) = b {
+                    let wrapped = |present: bool| Value::Flag(present == matches!(op, Action::Contains));
+                    match view.1.as_str() {
+                        "keys" | "mapping" => {
+                            let owner = view.0.proxy_dictionary();
+                            return self.special_dyad(op, a, &owner);
+                        }
+                        "items" => {
+                            let held = Self::worth_of(a).map(|worth| worth.contents()).unwrap_or_else(|| a.contents());
+                            let Value::Tuple(pair) = held else { return Ok(wrapped(false)); };
+                            if pair.len() != 2 { return Ok(wrapped(false)); }
+                            let owner = view.0.proxy_dictionary();
+                            let Value::Map(entries) = owner else { return Ok(wrapped(false)); };
+                            if let Some(told) = self.unkeyable(&pair[0]) { return Err(told); }
+                            let wanted = self.special_key(&pair[0])?;
+                            let mut found = None;
+                            for (stored, value) in entries.iter() {
+                                if self.special_keys_equal(stored, &wanted)? { found = Some(value.clone()); break; }
+                            }
+                            match found {
+                                Some(value) => return Ok(wrapped(self.sequence_equal_item(&value, &pair[1])?)),
+                                None => return Ok(wrapped(false)),
+                            }
+                        }
+                        _ => {
+                            let contents = b.contents();
+                            let mut present = false;
+                            if let Value::Array(items) = contents {
+                                for item in items.iter() {
+                                    if self.sequence_equal_item(item, a)? { present = true; break; }
+                                }
+                            }
+                            return Ok(wrapped(present));
                         }
                     }
-                    return Ok(Value::Flag(present == matches!(op, Action::Contains)));
                 }
             }
             // A view of a map's values reads no member by member: it
