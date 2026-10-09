@@ -9450,7 +9450,7 @@ impl<'a> Machine<'a> {
                     },
                     (_, Value::Wrapped(60, parts)) if parts[0].bare() == "dict" && self.table.spells("ext.builtin.method.fromkeys", &parts[1].bare()) =>
                         Value::Member(Rc::new(Value::Blueprint(class.clone())), parts[1].bare()),
-                    (Value::Thing(object), Value::Wrapped(60, _)) =>
+                    (Value::Thing(object), Value::Wrapped(60 | 133, _)) =>
                         Value::Wrapped(3, Rc::new(vec![x.clone(), Value::Thing(object.clone())]).into()),
                     (Value::Thing(object), Value::Routine(_) | Value::Bound(..)) => Value::Adorned(Rc::new(Adornment {
                         manner: 'b', target: x.clone(), extra: Some(Value::Thing(object.clone())),
