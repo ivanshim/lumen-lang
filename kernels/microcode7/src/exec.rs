@@ -3801,7 +3801,7 @@ impl<'a> Machine<'a> {
     fn take(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
-            if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+            if let Some(found) = self.function_global_read(slot.at, &slot.ident) {
                 return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
             }
         }
@@ -3845,7 +3845,7 @@ impl<'a> Machine<'a> {
             }
         }
         if Rc::ptr_eq(&f, &self.outermost) {
-            if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+            if let Some(found) = self.function_global_read(slot.at, &slot.ident) {
                 if let Err(message) = &found {
                     if message.starts_with("Undefined variable:") {
                         if let Some((names, _)) = self.annotation_scope(frame) { return self.unresolved_annotation_name(&names, &slot.ident); }
@@ -3855,7 +3855,7 @@ impl<'a> Machine<'a> {
             }
         }
         let Some(mut v) = f.cells.borrow().get(slot.at).cloned() else {
-            if let Some(g) = slot.fallback { if let Some(found) = self.booked_read(g, &slot.ident) { return found; } }
+            if let Some(g) = slot.fallback { if let Some(found) = self.function_global_read(g, &slot.ident) { return found; } }
             if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
@@ -3898,7 +3898,7 @@ impl<'a> Machine<'a> {
             return Ok(v);
         }
         if let Some(g) = slot.fallback {
-            if let Some(found) = self.booked_read(g, &slot.ident) { return found.map(|v| match v.settled() { native @ (Value::Blueprint(_) | Value::Thing(_)) => native, _ => v }); }
+            if let Some(found) = self.function_global_read(g, &slot.ident) { return found.map(|v| match v.settled() { native @ (Value::Blueprint(_) | Value::Thing(_)) => native, _ => v }); }
             let v = self.outermost.cells.borrow()[g].clone();
             if !matches!(v, Value::Unset) {
                 return Ok(v);
@@ -3981,9 +3981,10 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
-        // A copied annotation namespace owns its global writes.
+        // Supplied globals receive writes without changing the original module.
         if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
-            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
+            && (self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some())
+                || self.frames_named.last().is_some_and(|routine| (routine.flags & 1 == 1 || routine.class_namespace.is_some()) && routine.globe.as_ref().is_some_and(|book| matches!(book.settled(), Value::Dict(_))))) {
             if let Some(book) = self.world_book.clone() {
                 let content = self.collection_cell(value);
                 set_down(&book, &slot.ident, Some(content));
@@ -6462,8 +6463,9 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
-                if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
-                    && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
+                if Rc::ptr_eq(f, &self.outermost) && Self::visible_name(&slot.ident)
+                    && (self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|routine| routine.globe.is_some())
+                        || self.frames_named.last().is_some_and(|code| (code.flags & 1 == 1 || code.class_namespace.is_some()) && code.globe.as_ref().is_some_and(|held| matches!(held.settled(), Value::Dict(_))))) {
                     if let Some(book) = &self.world_book {
                         set_down(book, &slot.ident, None);
                         return Ok(Value::Nil);
@@ -9678,10 +9680,13 @@ impl<'a> Machine<'a> {
         // even when its defining environment is the unchanged module root.
         // Its code remains the compiled definition; its attributes belong
         // to this creation, including the globals' name at this instant.
-        let bound = if function && self.rules.closes_over {
+        let inherited = self.frames_named.last().filter(|parent| parent.lexical_origin == program.lexical_origin)
+            .and_then(|parent| parent.globe.clone()).filter(|globals| matches!(globals.settled(), Value::Dict(_)));
+        let bound = if function && self.rules.closes_over || inherited.is_some() {
             let mut instance = (**program).clone();
             instance.definition = Some(program.definition.as_ref().unwrap_or(program).clone());
-            let namespace = program.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+            if let Some(globals) = inherited { instance.globe = Some(globals); }
+            let namespace = instance.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
             instance.framed_in = None;
             for key in self.rules.words_ext_system_module_name {
                 match self.mapping_read(&namespace, key) {
@@ -26234,9 +26239,7 @@ impl<'a> Machine<'a> {
         let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
             self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
         });
-        let explicit_function = self.frames_named.last().is_some_and(|body| body.flags & 1 == 1
-            && body.globe.as_ref().is_some_and(|namespace| matches!(namespace.settled(), Value::Dict(_))));
-        if (scoped || explicit_function) && self.world_book.is_some() { return Some(Held::World); }
+        if scoped && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {
@@ -26275,8 +26278,19 @@ impl<'a> Machine<'a> {
 
     /// Read a slot's name out of the dictionary it lives in; nothing
     /// means the cell itself is to be read after all.
+    fn function_global_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
+        let explicit = Self::visible_name(name) && self.world_book.is_some()
+            && self.frames_named.last().is_some_and(|body| (body.flags & 1 == 1 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|globals| matches!(globals.settled(), Value::Dict(_))));
+        if explicit { self.read_held(Held::World, at, name) } else { self.booked_read(at, name) }
+    }
+
     fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
-        match self.book_holding(at)? {
+        let owner = self.book_holding(at)?;
+        self.read_held(owner, at, name)
+    }
+
+    fn read_held(&mut self, owner: Held, at: usize, name: &str) -> Option<Result<Value, String>> {
+        match owner {
             Held::Namespace(index) => {
                 if !Self::visible_name(name) { return None; }
                 let found = looked_up(&self.namespace_books[index].1, name);
@@ -26297,10 +26311,13 @@ impl<'a> Machine<'a> {
                 }
             }
             Held::World => {
-                let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up(book, name) {
+                let book = self.world_book.clone()?;
+                if let Some(worth) = looked_up(&book, name) {
                     if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
+                }
+                if self.frames_named.last().is_some_and(|code| (code.flags & 1 == 1 || code.class_namespace.is_some()) && code.globe.as_ref().is_some_and(|value| matches!(value.settled(), Value::Dict(_)))) {
+                    return self.read_builtin_book(book, name);
                 }
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
@@ -26330,43 +26347,46 @@ impl<'a> Machine<'a> {
                 // one of its own and so choose what the text can reach.
                 // Such a dictionary need not be a plain one: it is asked
                 // for the very way any other name is.
-                let roots = outer.unwrap_or(near);
-                let named = match self.table.strings("ext.system.module.builtins").first().map(String::as_str) {
-                    Some(word) => match self.builtin_entry(&roots, word) {
-                        Ok(v) => v,
-                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
-                    },
-                    None => None,
-                };
-                // A dictionary of builtins the program put there shuts
-                // the text in; the one the kernel supplied stands for
-                // the ordinary names, and those find the spare namespace
-                // the way a name anywhere else does.
-                let found = match named {
-                    Some(Value::Shared(natives)) => {
-                        let supplied = self.natives_book.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
-                        match looked_up(&natives, name) {
-                            Some(worth) => Some(worth),
-                            None if supplied => self.spare_name(name),
-                            None => None,
-                        }
-                    }
-                    Some(other) => {
-                        let found = self.builtin_dictionary(other)
-                            .and_then(|dictionary| self.mapping_read(&dictionary, name));
-                        match found {
-                            Ok(value) => value,
-                            Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
-                        }
-                    },
-                    None => match self.native_of(name) {
-                        Some(worth) => Some(worth),
-                        None => self.spare_name(name),
-                    },
-                };
-                Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
+                self.read_builtin_book(outer.unwrap_or(near), name)
             }
         }
+    }
+
+    fn read_builtin_book(&mut self, roots: Rc<RefCell<Value>>, name: &str) -> Option<Result<Value, String>> {
+        let named = match self.table.strings("ext.system.module.builtins").first().map(String::as_str) {
+            Some(word) => match self.builtin_entry(&roots, word) {
+                Ok(v) => v,
+                Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+            },
+            None => None,
+        };
+        // A dictionary of builtins the program put there shuts
+        // the text in; the one the kernel supplied stands for
+        // the ordinary names, and those find the spare namespace
+        // the way a name anywhere else does.
+        let found = match named {
+            Some(Value::Shared(natives)) => {
+                let supplied = self.natives_book.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
+                match looked_up(&natives, name) {
+                    Some(worth) => Some(worth),
+                    None if supplied => self.spare_name(name),
+                    None => None,
+                }
+            }
+            Some(other) => {
+                let found = self.builtin_dictionary(other)
+                    .and_then(|dictionary| self.mapping_read(&dictionary, name));
+                match found {
+                    Ok(value) => value,
+                    Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                }
+            },
+            None => match self.native_of(name) {
+                Some(worth) => Some(worth),
+                None => self.spare_name(name),
+            },
+        };
+        Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
     }
 
     /// Write a slot's name into the dictionary it lives in, or strike it out.

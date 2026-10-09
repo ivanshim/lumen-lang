@@ -3041,7 +3041,10 @@ impl<'a> Engine<'a> {
                 return self.unresolved_annotation_name(&names, &slot.ident);
             }
         }
-        if let Some(kept) = self.book_of(slot.far) {
+        let explicit = Self::public_name(&slot.ident) && self.outer_book.is_some()
+            && self.running_routine.as_ref().is_some_and(|body| (body.code_flags & 1 != 0 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))));
+        let location = if explicit { Some(Kept::Outer) } else { self.book_of(slot.far) };
+        if let Some(kept) = location {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) {
                 if matches!(&found, Err(message) if message.starts_with("Undefined variable:")) {
                     if let Some((names, _)) = self.annotation_scope() { return self.unresolved_annotation_name(&names, &slot.ident); }
@@ -3204,8 +3207,9 @@ impl<'a> Engine<'a> {
     /// Clear the binding itself so retained frames and closures observe
     /// deletion too, rather than keeping the old value through its cell.
     fn forget_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
-        if slot.near.is_empty() && !slot.ident.starts_with('#') && self.annotation_scope().is_some()
-            && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
+        if slot.near.is_empty() && Self::public_name(&slot.ident)
+            && (self.annotation_scope().is_some() && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some())
+                || self.running_routine.as_ref().is_some_and(|body| (body.code_flags & 1 != 0 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))))) {
             if let Some(book) = &self.outer_book {
                 book_write(book, &slot.ident, None);
                 return Ok(());
@@ -3328,9 +3332,10 @@ impl<'a> Engine<'a> {
     /// A store: into the hole a taking load left, if one is addressed;
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
-        // An isolated annotator writes its supplied dictionary, not a module cell.
-        if slot.near.is_empty() && !slot.ident.starts_with('#') && self.annotation_scope().is_some()
-            && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
+        // Explicit function globals own writes independently of the original module.
+        if slot.near.is_empty() && Self::public_name(&slot.ident)
+            && (self.annotation_scope().is_some() && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some())
+                || self.running_routine.as_ref().is_some_and(|body| (body.code_flags & 1 != 0 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))))) {
             if let Some(book) = self.outer_book.clone() {
                 let held = self.keep_collection(v);
                 book_write(&book, &slot.ident, Some(held));
@@ -5880,6 +5885,11 @@ impl<'a> Engine<'a> {
                     // the language writes an anonymous routine under is
                     // such a mark and yet is a function all the same.
                     if let Some(title) = self.creation_title(program) { closed.home = Some(title); }
+                    if let Some(parent) = self.running_routine.as_ref().filter(|parent| parent.source_tokens == program.source_tokens) {
+                        if parent.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))) {
+                            closed.globe = parent.globe.clone();
+                        }
+                    }
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
                         closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
@@ -5916,6 +5926,11 @@ impl<'a> Engine<'a> {
                         Value::Routine(body) if self.fresh_routines => {
                             let mut made = (**body).clone();
                             if let Some(title) = self.creation_title(body) { made.home = Some(title); }
+                            if let Some(parent) = self.running_routine.as_ref().filter(|parent| parent.source_tokens == body.source_tokens) {
+                                if parent.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))) {
+                                    made.globe = parent.globe.clone();
+                                }
+                            }
                             Value::Routine(Rc::new(made))
                         }
                         other => other.clone(),
@@ -25703,10 +25718,10 @@ impl Engine<'_> {
     /// in one: a slot text was given, or any the program may name once
     /// the outermost dictionary has been handed out.
     fn book_of(&self, far: usize) -> Option<Kept> {
-        if self.outer_book.is_some() && self.running_routine.as_ref().is_some_and(|routine|
-            routine.globe.is_some() && (self.annotation_scope().is_some() || routine.code_flags & 1 != 0
-                && routine.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))))) {
-            return Some(Kept::Outer);
+        if self.annotation_scope().is_some() && self.outer_book.is_some() {
+            if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
+                return Some(Kept::Outer);
+            }
         }
         let ident = self.registry.idents.get(far)?;
         if let Some(rest) = ident.strip_prefix("\0module:") {
@@ -25777,6 +25792,9 @@ impl Engine<'_> {
                     });
                 }
                 if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
+                if self.running_routine.as_ref().is_some_and(|body| (body.code_flags & 1 != 0 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|value| matches!(value.contents(), Value::Map(_)))) {
+                    return self.builtins_from_book(book, name);
+                }
                 if self.left_out(name, &self.world[far]) { return None; }
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
                 Some(Err(format!("Undefined variable: {}", name)))
@@ -25804,49 +25822,52 @@ impl Engine<'_> {
                 // dictionary of builtins the outer one names, so that a
                 // program handing over a dictionary of its own chooses
                 // what the text may reach.
-                let roots = outer.unwrap_or(near);
-                // Only a dictionary of builtins the program made itself
-                // shuts the text in: the one the kernel put there stands
-                // for the ordinary names, and those reach the module of
-                // unbound names as any other name does. Such a
-                // dictionary is not always a plain map: a program may
-                // hand over any reading of its own, a read-only view
-                // among them, and the builtins are read through it the
-                // very way any other name is.
-                let builtins_value = match self.lang.module_builtins.first() {
-                    Some(word) => match self.book_builtins(&roots, word) {
-                        Ok(v) => v,
-                        Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
-                    },
-                    None => None,
-                };
-                let found = match builtins_value {
-                    Some(Value::Bond(natives)) => {
-                        let ours = self.natives.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
-                        match book_entry(&natives, name) {
-                            Some(held) => Some(held),
-                            None if ours => self.kept_by_module(name),
-                            None => None,
-                        }
-                    }
-                    Some(other) if !matches!(other, Value::Null) => {
-                        let found = self.as_builtins_dictionary(other)
-                            .and_then(|dictionary| self.dyn_lookup(&dictionary, name));
-                        match found {
-                            Ok(value) => value,
-                            Err(failure) => { self.carried = Some(failure); return Some(Err(self.special_fault())); }
-                        }
-                    },
-                    // A dictionary the module does not truly keep, named
-                    // by nothing: the builtins are read the ordinary way.
-                    _ => match self.native_named(name) {
-                        Some(held) => Some(held),
-                        None => self.kept_by_module(name),
-                    },
-                };
-                Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
+                self.builtins_from_book(outer.unwrap_or(near), name)
             }
         }
+    }
+
+    fn builtins_from_book(&mut self, roots: Rc<RefCell<Value>>, name: &str) -> Option<Res<Value>> {
+        // Only a dictionary of builtins the program made itself
+        // shuts the text in: the one the kernel put there stands
+        // for the ordinary names, and those reach the module of
+        // unbound names as any other name does. Such a
+        // dictionary is not always a plain map: a program may
+        // hand over any reading of its own, a read-only view
+        // among them, and the builtins are read through it the
+        // very way any other name is.
+        let builtins_value = match self.lang.module_builtins.first() {
+            Some(word) => match self.book_builtins(&roots, word) {
+                Ok(v) => v,
+                Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
+            },
+            None => None,
+        };
+        let found = match builtins_value {
+            Some(Value::Bond(natives)) => {
+                let ours = self.natives.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
+                match book_entry(&natives, name) {
+                    Some(held) => Some(held),
+                    None if ours => self.kept_by_module(name),
+                    None => None,
+                }
+            }
+            Some(other) if !matches!(other, Value::Null) => {
+                let found = self.as_builtins_dictionary(other)
+                    .and_then(|dictionary| self.dyn_lookup(&dictionary, name));
+                match found {
+                    Ok(value) => value,
+                    Err(failure) => { self.carried = Some(failure); return Some(Err(self.special_fault())); }
+                }
+            },
+            // A dictionary the module does not truly keep, named
+            // by nothing: the builtins are read the ordinary way.
+            _ => match self.native_named(name) {
+                Some(held) => Some(held),
+                None => self.kept_by_module(name),
+            },
+        };
+        Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
     }
 
     /// Write a name into the dictionary it is kept in, or take it out.
