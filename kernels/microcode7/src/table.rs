@@ -187,7 +187,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 332] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 333] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
