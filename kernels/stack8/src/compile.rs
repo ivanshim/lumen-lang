@@ -210,6 +210,10 @@ struct ClassBody {
     class_cell_protocol: bool,
     methods: Vec<(String, Rc<Routine>)>,
     shared: Vec<(String, String)>,
+    /// The member names a `self.<name> = ...` store anywhere within the
+    /// body's methods writes, gathered as the reference's own compiler
+    /// gathers them for __static_attributes__: a set, kept sorted.
+    attributes: std::collections::BTreeSet<String>,
     /// The names the body has bound, each where the body first bound
     /// it, methods standing among the attributes. The namespace the
     /// class shows follows this and nothing else.
@@ -3746,6 +3750,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
         let before_decorators = self.mark();
+        let adorned_from = self.pos;
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -3765,7 +3770,7 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
-            if self.explicit_class()? {
+            if self.explicit_class((!held.is_empty()).then_some(adorned_from))? {
                 self.piece().instrs.truncate(before_decorators);
                 self.class_cannot_run();
                 self.discard();
@@ -5952,6 +5957,7 @@ impl<'a> Compiler<'a> {
     /// is kept once, so the parent's name may be an expression as well.
     fn adorned_member(&mut self) -> Res<(String, String)> {
         let lang = self.lang;
+        let adorned_from = self.pos;
         let mut saved = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -5984,7 +5990,7 @@ impl<'a> Compiler<'a> {
         let named;
         if self.on_keyword(&lang.class_words) {
             named = self.look_ahead(1).lexeme.clone();
-            self.explicit_class()?;
+            self.explicit_class(if saved.is_empty() { None } else { Some(adorned_from) })?;
             // The member just made stands in the body's own place, not
             // yet in its live namespace; read it from the place, then
             // put the finished member there once.
@@ -6257,6 +6263,7 @@ impl<'a> Compiler<'a> {
             self.skip_seps();
             return Ok(false);
         }
+        let adorned_from = self.pos;
         let mut decorators = Vec::new();
         while lang.class_details.get("root").map_or(false,|v|!v.is_empty()) && self.on_any(&lang.decorator_words) {
             self.take();
@@ -6343,7 +6350,7 @@ impl<'a> Compiler<'a> {
             }
         } else if self.on_keyword(&lang.class_words) {
             let named = self.look_ahead(1).lexeme.clone();
-            self.explicit_class()?;
+            self.explicit_class(if decorators.is_empty() { None } else { Some(adorned_from) })?;
             if !self.read_class_alias(&named) { self.read(&named); }
             for place in decorators.into_iter().rev() { self.read(&place); self.act(Action::Invoke(Rc::from("")), 2); }
             let slot = self.member_place(&named, "nested");
@@ -6625,9 +6632,12 @@ impl<'a> Compiler<'a> {
         false
     }
 
-    fn python_class(&mut self, generic: bool) -> Res<bool> {
+    fn python_class(&mut self, generic: bool, adorned: Option<usize>) -> Res<bool> {
         let parameters = if generic { std::mem::take(&mut self.generic_class_parameters) } else { Vec::new() };
         let lang = self.lang;
+        // The line the definition begins on, adornments included: what
+        // the reference records as the class's __firstlineno__.
+        let first_row = adorned.map(|at| self.tokens[at].row).unwrap_or_else(|| self.tokens[self.pos].row).saturating_sub(self.before as usize);
         self.act(Action::Builtin(Builtin::ClassTool(14), Rc::from("")), 0);
         let builder = self.gensym("class_builder"); self.write(&builder);
         self.take();
@@ -6655,7 +6665,7 @@ impl<'a> Compiler<'a> {
         let mut namespace = None;
         let mut unready = false;
         let body = self.routine(&original_name, Vec::new(), 0, true, |c| {
-            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters)?;
+            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters, first_row)?;
             namespace = Some((book, cell, protocol)); unready = declined; Ok(())
         })?;
         let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
@@ -6669,7 +6679,7 @@ impl<'a> Compiler<'a> {
         Ok(unready)
     }
 
-    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String]) -> Res<(String, Option<String>, bool, bool)> {
+    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String], first_row: usize) -> Res<(String, Option<String>, bool, bool)> {
         self.piece().python_fallthrough = true;
         let lang = self.lang;
         let base = None;
@@ -6713,7 +6723,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // Prepare the live mapping before ordered metadata stores and body statements.
         let metadata = std::mem::take(&mut self.gathering().shared);
@@ -6725,6 +6735,10 @@ impl<'a> Compiler<'a> {
             self.mirror_member(&word, &module_slot)?;
         }
         for (word, slot) in metadata { self.mirror_member(&word, &slot)?; }
+        let first_line = self.gensym("first_line");
+        self.constant(Value::Small(first_row as i64));
+        self.write(&first_line);
+        self.mirror_member("__firstlineno__", &first_line)?;
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             let heads_the_body = std::mem::take(&mut opening);
@@ -6741,6 +6755,14 @@ impl<'a> Compiler<'a> {
             let names = self.gathering().bindings.iter().cloned().collect();
             self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
         }
+        // The attributes the body's methods wrote through `self`, one
+        // sorted tuple, written last into the namespace, as the
+        // reference's own class body ends.
+        let attribute_names: Vec<Value> = self.gathered.last().expect("class body").attributes.iter().map(|named| Value::text(named)).collect();
+        let attributes_slot = self.gensym("static_attributes");
+        self.constant(Value::tuple(attribute_names));
+        self.write(&attributes_slot);
+        self.mirror_member("__static_attributes__", &attributes_slot)?;
         let parts = self.gathered.pop().expect("class body");
         if !parts.annotated.is_empty() && !lang.class_annotations.is_empty() {
             self.constant(Value::text(crate::code::ANNOTATE_WORD));
@@ -6764,7 +6786,7 @@ impl<'a> Compiler<'a> {
         Ok((parts.book.expect("class namespace"), parts.needs_class_cell.then_some(parts.class_cell), parts.class_cell_protocol, parts.unready))
     }
 
-    fn explicit_class(&mut self) -> Res<bool> {
+    fn explicit_class(&mut self, adorned: Option<usize>) -> Res<bool> {
         let inside_wrapper = std::mem::take(&mut self.reading_generic_class);
         let lang = self.lang;
         if !inside_wrapper && Lang::spells(&lang.type_params_open, &self.look_ahead(2).lexeme) {
@@ -6776,7 +6798,7 @@ impl<'a> Compiler<'a> {
                 compiler.pos = declaration;
                 compiler.reading_generic_class = true;
                 compiler.generic_class_parameters = parameters.clone();
-                compiler.explicit_class()?;
+                compiler.explicit_class(adorned)?;
                 compiler.attach_type_parameters(&name, &parameters);
                 compiler.read(&name);
                 compiler.write(RESULT_CELL);
@@ -6788,7 +6810,7 @@ impl<'a> Compiler<'a> {
             self.write(&name);
             return Ok(false);
         }
-        if !lang.class_builder.is_empty() { return self.python_class(inside_wrapper); }
+        if !lang.class_builder.is_empty() { return self.python_class(inside_wrapper, adorned); }
         self.take();
         let original_name = self.spelled[self.pos].lexeme.clone();
         let name = self.want_name("as the class name")?;
@@ -6926,7 +6948,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // The module a class statement is written in is the module's
         // own `__name__`, read where the class is defined, as the
@@ -7113,7 +7135,7 @@ impl<'a> Compiler<'a> {
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.explicit_this {
-            return self.explicit_class().map(|_| ());
+            return self.explicit_class(None).map(|_| ());
         }
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
@@ -9500,6 +9522,15 @@ impl<'a> Compiler<'a> {
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 if !self.lang.syntax_members.is_empty() && member.as_ref() == "__debug__" {
                     return Err("SyntaxError: cannot assign to __debug__".into());
+                }
+                // A store to a member of the one called `self`, made
+                // within a class body's methods, names a static
+                // attribute of the class being read, as the reference
+                // gathers them for __static_attributes__.
+                if !self.lang.class_builder.is_empty() && !self.gathered.is_empty() {
+                    if let [Instr::Read(place)] = rest {
+                        if place.ident.as_ref() == "self" { self.gathering().attributes.insert(member.to_string()); }
+                    }
                 }
                 let (member, rest) = (member.clone(), rest.to_vec());
                 for w in relocated(rest, 0) {

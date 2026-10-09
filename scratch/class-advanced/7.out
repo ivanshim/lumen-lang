@@ -9,6 +9,7 @@ __dict__
 __dir__
 __doc__
 __eq__
+__firstlineno__
 __format__
 __ge__
 __getattribute__
@@ -27,6 +28,7 @@ __reduce_ex__
 __repr__
 __setattr__
 __sizeof__
+__static_attributes__
 __str__
 __subclasshook__
 __weakref__

@@ -26649,8 +26649,13 @@ impl<'a> Machine<'a> {
         let Value::Text(name) = plain.remove(0).settled() else { return Err("TypeError: __build_class__: name is not a string".to_owned().into()) };
         let mut asked = None; let mut keywords = Vec::new();
         for (key, value) in named {
-            if self.table.spells("ext.stmt.class.metaclass", &key) { asked = Some(value); }
-            else { keywords.push(Value::Couple(Rc::new((Value::text(&key), value)))); }
+            if self.table.spells("ext.stmt.class.metaclass", &key) {
+                if asked.is_some() { return Err(format!("TypeError: __build_class__() got multiple values for keyword argument '{key}'").into()); }
+                asked = Some(value);
+            } else {
+                if keywords.iter().any(|kept| matches!(kept, Value::Couple(pair) if pair.0.bare() == key)) { return Err(format!("TypeError: __build_class__() got multiple values for keyword argument '{key}'").into()); }
+                keywords.push(Value::Couple(Rc::new((Value::text(&key), value))));
+            }
         }
         let before_bases = Value::tuple(plain.clone());
         let mut bases_changed = false;

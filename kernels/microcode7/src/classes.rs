@@ -578,6 +578,12 @@ impl<'a> Machine<'a> {
         self.made+=1;
         Ok(Value::Thing(Rc::new(Thing{reclassified: RefCell::new(None), of:class,holds:RefCell::new(vec![("\0underlying".to_owned(),kept)]),turn:self.made})))
     }
+    pub(super) fn resolution_order(owner: &Rc<Blueprint>) -> Vec<Rc<Blueprint>> {
+        if owner.order_supplied.get() { return owner.supplied_order.borrow().iter().flat_map(|entry| entry.upgrade()).collect(); }
+        let mut entries = owner.ancestry.borrow().clone();
+        if !owner.order_supplied.get() { entries.insert(0, owner.clone()); }
+        entries
+    }
     pub(super) fn build_class_value(&mut self,title:String,parents:Vec<Rc<Blueprint>>,entries:Vec<(String,Value)>)->Res {
         self.build_named_class(Value::text(&title),parents,entries)
     }
@@ -772,12 +778,6 @@ impl<'a> Machine<'a> {
             if let Some(public) = self.kind_by_word(&word) { return public; }
         }
         Value::Blueprint(class)
-    }
-    pub(super) fn resolution_order(owner: &Rc<Blueprint>) -> Vec<Rc<Blueprint>> {
-        if owner.order_supplied.get() { return owner.supplied_order.borrow().iter().flat_map(|entry| entry.upgrade()).collect(); }
-        let mut entries = owner.ancestry.borrow().clone();
-        if !owner.order_supplied.get() { entries.insert(0, owner.clone()); }
-        entries
     }
     fn root_in_resolution(&self, owner: &Rc<Blueprint>) -> bool {
         if !owner.order_supplied.get() { return true; }
@@ -4655,6 +4655,19 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Window(Rc::new(Value::Blueprint(b.clone())), 'm'));
             }
             if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.visible_blueprint(p.clone())).collect()));}
+            // A metaclass spelling `mro` of its own answers for the
+            // name itself: the reference's own lookup asks the metatype
+            // before the class's forebears.
+            if key==self.detail("order") && !key.is_empty() {
+                if let Some(builder)=Self::builder_over(b) {
+                    let mut declared=None;
+                    for base in std::iter::once(&builder).chain(builder.ancestry.borrow().iter()) {
+                        if self.builds_classes(base){break;}
+                        if let Some(entry)=Self::own_entry(base,key){declared=Some((entry,base.clone()));break;}
+                    }
+                    if let Some((entry,owner))=declared { return self.member_binding(entry,Some(value.clone()),owner); }
+                }
+            }
             if key == self.detail("order") && self.table.has_any("ext.stmt.class.builder") {
                 if let Some(entry) = self.inherited_entry(b, key) { return self.member_binding(entry, None, b.clone()); }
                 if let Some(builder) = Self::builder_over(b) {
@@ -6711,6 +6724,10 @@ impl<'a> Machine<'a> {
             // class out and makes a thing of one, as the kind primitive
             // plainly does.
             if self.builds_classes(b) {
+                // The preparing the builder answers for on a plain
+                // read is reached up the line as well:
+                // super().__prepare__ is type.__prepare__ from below.
+                if key==self.detail("prepare") && !self.detail("prepare").is_empty() {return self.apply_class_member(Self::wrap(72,Vec::new()),args);}
                 // The kind primitive's own building: a name, the
                 // parents and a namespace become a class, remembering
                 // the metaclass handed to it as the one that built it.

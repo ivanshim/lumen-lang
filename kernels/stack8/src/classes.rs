@@ -705,7 +705,10 @@ impl<'a> Engine<'a> {
         }
         Ok(chosen)
     }
-    /// The class itself, laid out from its name, its bases, its members
+
+
+
+
     /// and the metaclass it is to remember. This is the making the kind
     /// builtin does, and what a metaclass reaches for through its
     /// forebears when it has made a namespace of its own.
@@ -843,6 +846,43 @@ impl<'a> Engine<'a> {
             }
         }
 
+
+        // A metaclass whose own answering of the order is written out
+        // is asked for it once while the class is made, and its answer
+        // is the order the class keeps, measured the way the reference
+        // measures it: never empty, every entry a class, and no two
+        // builtin kinds kept in the one thing.
+        let mro_word = self.class_word("order");
+        if !mro_word.is_empty() {
+            if let Some(meta) = Self::maker_beneath(&c) {
+                let meta_order = Self::class_order(&meta);
+                let reader = meta_order.iter().find_map(|base| Self::own_class_value(base, mro_word));
+                if let Some(reader @ Value::Routine(_)) = reader {
+                    let bound = self.bind_class_value(reader, Some(Value::Class(c.clone())), meta)?;
+                    let answer = self.class_apply(bound, Vec::new())?;
+                    let given = self.comprehension_items(&answer)?;
+                    if given.is_empty() { return Err("TypeError: type MRO must not be empty".into()); }
+                    let mut adopted = Vec::new();
+                    for item in &given {
+                        let base = match item.contents() {
+                            Value::Class(b) => b,
+                            Value::Native(op, word) if Self::kind_builtin(&op) => self.kind_class(&word),
+                            other => return Err(format!("TypeError: mro() returned a non-class ('{}')", self.super_tp_name(&other)).into()),
+                        };
+                        adopted.push(base);
+                    }
+                    let layout = std::iter::once(&c).chain(c.lineage.borrow().iter()).find_map(|b| Self::own_kind(b));
+                    if let Some(amiss) = adopted.iter().find(|b| Self::own_kind(b).is_some() && Self::own_kind(b) != layout) {
+                        return Err(format!("TypeError: mro() returned base with unsuitable layout ('{}')", amiss.name).into());
+                    }
+                    // A supplied MRO is a complete order, independent of the
+                    // declared bases. Its owner need not occur first, or at all.
+                    *c.adopted_order.borrow_mut() = adopted.iter().map(Rc::downgrade).collect();
+                    *c.lineage.borrow_mut() = adopted.into_iter().filter(|base| !Rc::ptr_eq(base, &c)).collect();
+                    c.mro_adopted.set(true);
+                }
+            }
+        }
 
         self.furnish_slots(&c)?;
         if !self.lang.class_builder.is_empty() && self.slots_allow(&c, self.class_word("namespace"))
@@ -4030,6 +4070,20 @@ impl<'a> Engine<'a> {
                     }
                     return Ok(Value::View(Rc::new((Value::Class(c.clone()), "mapping".into()))));
                 }
+                // A metaclass that declares an `mro` of its own
+                // answers for the name itself: the reference's own
+                // attribute lookup asks the metatype before the class's
+                // forebears.
+                if name == self.class_word("order") && !name.is_empty() {
+                    if let Some(maker) = Self::maker_beneath(c) {
+                        let mut declared = None;
+                        for base in std::iter::once(&maker).chain(maker.lineage.borrow().iter()) {
+                            if self.is_metaclass_root(base) { break; }
+                            if let Some(held) = Self::own_class_value(base, name) { declared = Some((held, base.clone())); break; }
+                        }
+                        if let Some((held, owner)) = declared { return self.bind_class_value(held, Some(subject.clone()), owner); }
+                    }
+                }
                 if name == self.class_word("order") && !self.lang.class_builder.is_empty() {
                     if let Some(own) = self.class_value(c, name) { return self.bind_class_value(own, None, c.clone()); }
                     if let Some(maker) = Self::maker_beneath(c) {
@@ -6470,6 +6524,12 @@ impl<'a> Engine<'a> {
             // The class every metaclass stands on: it lays a class out
             // and makes a thing of one, as the kind builtin plainly does.
             if self.is_metaclass_root(c) {
+                // The preparing the root answers for on a plain read is
+                // reached through the line as well: super().__prepare__
+                // is type.__prepare__ asked from below.
+                if name == self.class_word("prepare") && !self.class_word("prepare").is_empty() {
+                    return self.class_apply(Self::adapter(42, Vec::new()), args);
+                }
                 // The kind builtin's own making: a name, the bases and
                 // a namespace become a class, remembering the metaclass
                 // it was handed as the one that made it.
