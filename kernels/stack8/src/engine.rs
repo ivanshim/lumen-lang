@@ -1463,6 +1463,7 @@ impl<'a> Engine<'a> {
             }
             _ => {
                 let tag = match &kind {
+                    Value::Class(_) => "type".to_owned(),
                     Value::Native(builtin, _) if builtin.names_kind() => "type".to_string(),
                     _ => kind.core_kind(),
                 };

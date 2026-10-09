@@ -10,4 +10,4 @@ def object_hasattrstring(obj, name):
 
 
 def __getattr__(name):
-    raise 'NotImplementedError: _testlimitedcapi.' + name + ' is not supported'
+    raise AttributeError("module '_testlimitedcapi' has no attribute '" + name + "'")

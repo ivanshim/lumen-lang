@@ -173,6 +173,10 @@ impl<'a> Machine<'a> {
             kind.shared.borrow_mut().push(("__buffer__".to_owned(), self.kind_entry(word, "__buffer__")));
             if word == "bytearray" { kind.shared.borrow_mut().push(("__release_buffer__".to_owned(), self.kind_entry(word, "__release_buffer__"))); }
         }
+        if ["list", "set", "bytearray", "dict"].contains(&word) {
+            let hash_name = self.rules.specials.get(8).cloned();
+            if let Some(key) = hash_name { kind.shared.borrow_mut().push((key, Value::Nil)); }
+        }
         if let Some(representative) = self.kind_stand_in(word) {
             let owner = Value::Blueprint(kind.clone());
             let mut known = self.native_directory(&representative);

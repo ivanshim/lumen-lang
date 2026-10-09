@@ -165,6 +165,9 @@ impl<'a> Engine<'a> {
             c.shared.borrow_mut().push(("__buffer__".into(), self.held_kind_descriptor(word, "__buffer__")));
             if word == "bytearray" { c.shared.borrow_mut().push(("__release_buffer__".into(), self.held_kind_descriptor(word, "__release_buffer__"))); }
         }
+        if matches!(word, "bytearray" | "list" | "dict" | "set") {
+            if let Some(hash) = self.lang.class_special.get(8) { c.shared.borrow_mut().push((hash.clone(), Value::Null)); }
+        }
         if let Some(sample) = self.kind_sample(word) {
             let mut names = self.kind_member_names(&sample);
             let prefix = format!("{word}.");
