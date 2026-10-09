@@ -13517,30 +13517,67 @@ impl<'a> Machine<'a> {
         Ok(Value::characters(result))
     }
 
-    // Acquire and release the existing buffer adapter around a contiguous copy.
-    fn octet_exported(&mut self, source: &Value) -> Result<Vec<u8>, String> {
-        if let Value::Octets { cell, .. } = Self::underlying(source).unwrap_or_else(|| source.settled()) {
-            return Ok(cell.borrow().to_vec());
+    fn octet_window(&mut self, source: &Value, exports: &mut Vec<Value>) -> Result<Value, String> {
+        match Self::underlying(source).unwrap_or_else(|| source.settled()) {
+            native @ Value::Octets { .. } => {
+                if let Value::Octets { ref cell, changeable: true, .. } = native {
+                    exports.push(Value::Export(Rc::new(OctetLease::new(cell))));
+                }
+                Ok(native)
+            }
+            _ => {
+                let attempt = (|| -> Res {
+                    let namespace = self.load_namespace("builtins")?;
+                    let factory = self.read_class_member(namespace, "_buffer_view", false)?;
+                    let window = self.apply_class_member(factory, vec![source.clone(), Value::Small(0), Value::text("")])?;
+                    exports.push(window.clone());
+                    let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
+                    if contiguous.is_true() { Ok(window) }
+                    else { Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()) }
+                })();
+                attempt.map_err(|escape| self.carried_native_fault(escape))
+            }
         }
-        let attempt = (|| -> Res {
-            let namespace = self.load_namespace("builtins")?;
-            let factory = self.read_class_member(namespace, "_buffer_view", false)?;
-            let window = self.apply_class_member(factory, vec![source.clone(), Value::Small(0), Value::text("")])?;
-            let conversion = (|| -> Res {
-                let contiguous = self.read_class_member(window.clone(), "c_contiguous", false)?;
-                if !contiguous.is_true() { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous").into()); }
-                let method = self.read_class_member(window.clone(), "tobytes", false)?;
-                self.apply_class_member(method, vec![])
-            })();
-            let close = self.read_class_member(window, "release", false)?;
-            self.apply_class_member(close, vec![])?;
-            conversion
-        })();
-        let value = attempt.map_err(|escape| self.carried_native_fault(escape))?;
-        match value.settled() {
+    }
+
+    fn octet_snapshot(&mut self, window: &Value) -> Result<Vec<u8>, String> {
+        match window {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
-            _ => Err(self.octet_error("arguments")),
+            _ => {
+                let read = (|| -> Res {
+                    let copy = self.read_class_member(window.clone(), "tobytes", false)?;
+                    self.apply_class_member(copy, vec![])
+                })();
+                let plain = read.map_err(|escape| self.carried_native_fault(escape))?;
+                self.octet_contents(&plain, false)
+            }
         }
+    }
+
+    fn finish_octet_windows<T>(&mut self, exports: Vec<Value>, outcome: Result<T, String>) -> Result<T, String> {
+        let saved = self.got_away.take();
+        let preserve = outcome.is_err();
+        let mut answer = outcome;
+        for export in exports {
+            match export {
+                Value::Export(lease) => drop(lease),
+                view => {
+                    let closed = self.read_class_member(view, "release", false).and_then(|f| self.apply_class_member(f, vec![]));
+                    if let Err(escape) = closed {
+                        if answer.is_ok() { answer = Err(self.carried_native_fault(escape)); }
+                    }
+                }
+            }
+        }
+        if preserve { self.got_away = saved; }
+        answer
+    }
+
+    fn octet_exported(&mut self, source: &Value) -> Result<Vec<u8>, String> {
+        let mut exports = vec![];
+        let acquired = self.octet_window(source, &mut exports);
+        let copied = acquired.and_then(|window| self.octet_snapshot(&window));
+        self.finish_octet_windows(exports, copied)
     }
 
     // Acquire every buffer first so later callbacks can still change equal-sized contents.
@@ -14031,125 +14068,136 @@ impl<'a> Machine<'a> {
             _ => {}
         }
         let Some(Value::Octets { cell, changeable, .. }) = values.first() else { return Err(refusal()); };
-        let mut converted = values.to_vec();
-        let integer_indices = match operation {
-            8 | 23 => vec![2], 29..=33 => vec![1], 10 | 13 | 18..=22 => vec![2, 3], _ => vec![],
-        };
-        for index in integer_indices {
-            if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
-                converted[index] = Value::from_big(self.span_whole(&converted[index])?);
+        let mut exports = vec![];
+        let outcome = (|| -> Result<Value, String> {
+            let mut converted = values.to_vec();
+            let mut windows = Vec::new();
+            let integer_indices = match operation {
+                8 | 23 => vec![2], 29..=33 => vec![1], 10 | 13 | 18..=22 => vec![2, 3], _ => vec![],
+            };
+            for index in integer_indices {
+                if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                    converted[index] = Value::from_big(self.span_whole(&converted[index])?);
+                }
             }
-        }
-        let _lease = (*changeable && matches!(operation, 8 | 10 | 13 | 18..=23)).then(|| OctetLease::new(cell));
-        let buffer_indices = match operation {
-            11 | 39 => vec![1, 2], 8 | 12 | 23..=27 | 37 | 38 => vec![1], _ => vec![],
-        };
-        for index in buffer_indices {
-            if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_))) {
-                let data = self.octet_exported(&converted[index])?;
-                converted[index] = self.octets(data, false);
+            let _lease = (*changeable && matches!(operation, 8 | 10 | 13 | 18..=23)).then(|| OctetLease::new(cell));
+            let buffer_indices = match operation {
+                11 | 39 => vec![1, 2], 8 | 12 | 23..=27 | 37 | 38 => vec![1], _ => vec![],
+            };
+            for index in buffer_indices {
+                if converted.get(index).is_some_and(|v| matches!(v, Value::Thing(_) | Value::Octets { .. })) {
+                    windows.push((index, self.octet_window(&converted[index], &mut exports)?));
+                }
             }
-        }
-        if operation == 11 && converted.get(3).is_some_and(|v| matches!(v, Value::Thing(_))) {
-            let count = self.span_whole(&converted[3])?;
-            converted[3] = Value::from_big(count);
-        }
-        if matches!(operation, 13 | 18..=21) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
-            let argument = &converted[1];
-            converted[1] = if let Some(integer) = self.stood_for_whole(argument)? { integer }
-                else { let row = self.octet_exported(argument)?; self.octets(row, false) };
-        }
-        if matches!(operation, 10 | 22) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
-            let row = self.octet_exported(&converted[1])?;
-            converted[1] = self.octets(row, false);
-        }
-        let amount = |value: Option<&Value>| -> Result<usize, String> {
-            match value { None => Ok(usize::MAX), Some(v) => { let n = self.octet_whole(v)?; Ok(n.to_usize().unwrap_or(usize::MAX)) } }
-        };
-        let content = cell.borrow().to_vec();
-        let args = &converted[1..];
-        let result;
-        match operation {
-            3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
-            4 if args.len() <= 2 => return self.octets_in_hex(&content, args),
-            6 | 7 if args.is_empty() => {
-                result = if operation == 6 { content.to_ascii_uppercase() } else { content.to_ascii_lowercase() };
+            if operation == 11 && converted.get(3).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                let count = self.span_whole(&converted[3])?;
+                converted[3] = Value::from_big(count);
             }
-            8 if args.len() <= 2 => {
-                let maximum = amount(args.get(1))?;
-                let mut chunks = Vec::new();
-                if args.first().map_or(true, |v| matches!(v, Value::Unset | Value::Nil)) {
-                    let mut rest = content.as_slice();
-                    while !rest.is_empty() && (rest[0].is_ascii_whitespace() || rest[0] == 11) { rest = &rest[1..]; }
-                    while !rest.is_empty() {
-                        if chunks.len() == maximum { chunks.push(rest.to_vec()); break; }
-                        let end = rest.iter().position(|n| n.is_ascii_whitespace() || *n == 11).unwrap_or(rest.len());
-                        chunks.push(rest[..end].to_vec()); rest = &rest[end..];
+            if matches!(operation, 13 | 18..=21) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                let argument = &converted[1];
+                let supported = matches!(Self::underlying(argument), Some(Value::Octets { .. }))
+                    || matches!(argument.settled(), Value::Thing(t) if self.inherited_entry(&t.blueprint(), "__buffer__").is_some());
+                match (supported, if supported { None } else { self.stood_for_whole(argument)? }) {
+                    (false, Some(integer)) => converted[1] = integer,
+                    _ => windows.push((1, self.octet_window(argument, &mut exports)?)),
+                }
+            }
+            if matches!(operation, 10 | 22) && converted.get(1).is_some_and(|v| matches!(v, Value::Thing(_))) {
+                windows.push((1, self.octet_window(&converted[1], &mut exports)?));
+            }
+            for (slot, window) in windows {
+                let content = self.octet_snapshot(&window)?;
+                converted[slot] = self.octets(content, false);
+            }
+            let amount = |value: Option<&Value>| -> Result<usize, String> {
+                match value { None => Ok(usize::MAX), Some(v) => { let n = self.octet_whole(v)?; Ok(n.to_usize().unwrap_or(usize::MAX)) } }
+            };
+            let content = cell.borrow().to_vec();
+            let args = &converted[1..];
+            let result;
+            match operation {
+                3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
+                4 if args.len() <= 2 => return self.octets_in_hex(&content, args),
+                6 | 7 if args.is_empty() => {
+                    result = if operation == 6 { content.to_ascii_uppercase() } else { content.to_ascii_lowercase() };
+                }
+                8 if args.len() <= 2 => {
+                    let maximum = amount(args.get(1))?;
+                    let mut chunks = Vec::new();
+                    if args.first().map_or(true, |v| matches!(v, Value::Unset | Value::Nil)) {
+                        let mut rest = content.as_slice();
                         while !rest.is_empty() && (rest[0].is_ascii_whitespace() || rest[0] == 11) { rest = &rest[1..]; }
+                        while !rest.is_empty() {
+                            if chunks.len() == maximum { chunks.push(rest.to_vec()); break; }
+                            let end = rest.iter().position(|n| n.is_ascii_whitespace() || *n == 11).unwrap_or(rest.len());
+                            chunks.push(rest[..end].to_vec()); rest = &rest[end..];
+                            while !rest.is_empty() && (rest[0].is_ascii_whitespace() || rest[0] == 11) { rest = &rest[1..]; }
+                        }
+                    } else {
+                        let separator = self.octet_contents(&args[0], false)?;
+                        if separator.is_empty() { return Err(self.octet_error("separator")); }
+                        let mut remaining = content.as_slice();
+                        while chunks.len() < maximum {
+                            match seek(remaining, &separator) {
+                                None => break,
+                                Some(i) => { chunks.push(remaining[..i].to_vec()); remaining = &remaining[i + separator.len()..]; }
+                            }
+                        }
+                        chunks.push(remaining.to_vec());
                     }
-                } else {
-                    let separator = self.octet_contents(&args[0], false)?;
-                    if separator.is_empty() { return Err(self.octet_error("separator")); }
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect::<Vec<_>>())));
+                }
+                9 if args.len() == 1 => {
+                    let _lease = if *changeable { Some(OctetLease::new(cell)) } else { None };
+                    result = self.join_octets(cell, &args[0])?;
+                }
+                11 if (2..=3).contains(&args.len()) => {
+                    let old = self.octet_contents(&args[0], false)?;
+                    let new = self.octet_contents(&args[1], false)?;
+                    let maximum = amount(args.get(2))?;
+                    let mut made = Vec::new();
+                    let mut cursor = 0;
+                    for _ in 0..maximum {
+                        let Some(relative) = seek(&content[cursor..], &old) else { break; };
+                        let found = cursor + relative;
+                        made.extend_from_slice(&content[cursor..found]);
+                        made.extend_from_slice(&new);
+                        cursor = found + old.len();
+                        if old.is_empty() {
+                            if cursor >= content.len() { break; }
+                            made.push(content[cursor]); cursor += 1;
+                        }
+                    }
+                    made.extend_from_slice(&content[cursor..]);
+                    result = made;
+                }
+                12 if args.len() <= 1 => {
+                    let set = match args.first() { None | Some(Value::Nil) => vec![32, 9, 10, 13, 11, 12], Some(v) => self.octet_contents(v, false)? };
                     let mut remaining = content.as_slice();
-                    while chunks.len() < maximum {
-                        match seek(remaining, &separator) {
-                            None => break,
-                            Some(i) => { chunks.push(remaining[..i].to_vec()); remaining = &remaining[i + separator.len()..]; }
+                    while remaining.first().map_or(false, |n| set.contains(n)) { remaining = &remaining[1..]; }
+                    while remaining.last().map_or(false, |n| set.contains(n)) { remaining = &remaining[..remaining.len() - 1]; }
+                    result = remaining.to_vec();
+                }
+                // Whatever else a row of bytes answers to it shares with
+                // text, and every one of those is worked over the bytes.
+                _ => {
+                    let produced = self.octets_textual(operation, &content, *changeable, args)?;
+                    if matches!(operation, 26 | 27) && !changeable {
+                        if let Value::Tuple(triple) = &produced {
+                            let found = matches!(&triple[1], Value::Octets { cell, .. } if !cell.borrow().is_empty());
+                            if found {
+                                let mut pieces = triple.to_vec();
+                                pieces[1] = values[1].settled();
+                                return Ok(Value::tuple(pieces));
+                            }
                         }
                     }
-                    chunks.push(remaining.to_vec());
-                }
-                return Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect::<Vec<_>>())));
+                    return Ok(produced);
+                },
             }
-            9 if args.len() == 1 => {
-                let _lease = if *changeable { Some(OctetLease::new(cell)) } else { None };
-                result = self.join_octets(cell, &args[0])?;
-            }
-            11 if (2..=3).contains(&args.len()) => {
-                let old = self.octet_contents(&args[0], false)?;
-                let new = self.octet_contents(&args[1], false)?;
-                let maximum = amount(args.get(2))?;
-                let mut made = Vec::new();
-                let mut cursor = 0;
-                for _ in 0..maximum {
-                    let Some(relative) = seek(&content[cursor..], &old) else { break; };
-                    let found = cursor + relative;
-                    made.extend_from_slice(&content[cursor..found]);
-                    made.extend_from_slice(&new);
-                    cursor = found + old.len();
-                    if old.is_empty() {
-                        if cursor >= content.len() { break; }
-                        made.push(content[cursor]); cursor += 1;
-                    }
-                }
-                made.extend_from_slice(&content[cursor..]);
-                result = made;
-            }
-            12 if args.len() <= 1 => {
-                let set = match args.first() { None | Some(Value::Nil) => vec![32, 9, 10, 13, 11, 12], Some(v) => self.octet_contents(v, false)? };
-                let mut remaining = content.as_slice();
-                while remaining.first().map_or(false, |n| set.contains(n)) { remaining = &remaining[1..]; }
-                while remaining.last().map_or(false, |n| set.contains(n)) { remaining = &remaining[..remaining.len() - 1]; }
-                result = remaining.to_vec();
-            }
-            // Whatever else a row of bytes answers to it shares with
-            // text, and every one of those is worked over the bytes.
-            _ => {
-                let produced = self.octets_textual(operation, &content, *changeable, args)?;
-                if matches!(operation, 26 | 27) && !changeable {
-                    if let Value::Tuple(triple) = &produced {
-                        let found = matches!(&triple[1], Value::Octets { cell, .. } if !cell.borrow().is_empty());
-                        if found {
-                            let mut pieces = triple.to_vec();
-                            pieces[1] = values[1].settled();
-                            return Ok(Value::tuple(pieces));
-                        }
-                    }
-                }
-                return Ok(produced);
-            },
-        }
-        Ok(self.octets(result, *changeable))
+            Ok(self.octets(result, *changeable))
+        })();
+        self.finish_octet_windows(exports, outcome)
     }
 
     fn bit_integer(&self, held: &Value) -> Result<BigInt, String> {

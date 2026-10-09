@@ -18470,31 +18470,61 @@ impl<'a> Engine<'a> {
         Ok(Value::from_codes(decoded))
     }
 
-    // Copy a contiguous buffer while keeping its export alive during conversion.
-    fn byte_buffer(&mut self, value: &Value) -> Res<Vec<u8>> {
-        let held = Self::worth_of(value).unwrap_or_else(|| value.contents());
-        if let Value::Bytes(row, ..) = held { return Ok(row.borrow().clone()); }
-        let copied = (|| -> Flow<Value> {
+    fn byte_buffer_open(&mut self, value: &Value, held: &mut Vec<Value>) -> Res<Value> {
+        let plain = Self::worth_of(value).unwrap_or_else(|| value.contents());
+        if let Value::Bytes(cell, mutable, _) = &plain {
+            if *mutable { held.push(Value::Export(Rc::new(ByteExport::acquire(cell)))); }
+            return Ok(plain);
+        }
+        let acquired = (|| -> Flow<Value> {
             let module = self.import_module("builtins")?;
             let acquire = self.class_get(module, "_buffer_view", false)?;
             let view = self.class_apply(acquire, vec![value.clone(), Value::Small(0), Value::text("")])?;
-            let result = (|| -> Flow<Value> {
-                if !self.class_get(view.clone(), "c_contiguous", false)?.is_true() {
-                    return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into());
-                }
-                let copier = self.class_get(view.clone(), "tobytes", false)?;
-                self.class_apply(copier, Vec::new())
-            })();
-            let release = self.class_get(view, "release", false)?;
-            self.class_apply(release, Vec::new())?;
-            result
+            held.push(view.clone());
+            if !self.class_get(view.clone(), "c_contiguous", false)?.is_true() {
+                return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into());
+            }
+            Ok(view)
         })();
-        match copied {
-            Ok(Value::Bytes(row, ..)) => Ok(row.borrow().clone()),
-            Ok(_) => Err(self.byte_fault("arguments")),
-            Err(Fault::Note(words)) => Err(words),
+        match acquired {
+            Ok(view) => Ok(view), Err(Fault::Note(words)) => Err(words),
             Err(raised) => { self.carried = Some(raised); Err(String::new()) }
         }
+    }
+
+    fn byte_buffer_read(&mut self, buffer: &Value) -> Res<Vec<u8>> {
+        if let Value::Bytes(row, ..) = buffer { return Ok(row.borrow().clone()); }
+        let copied = self.class_get(buffer.clone(), "tobytes", false).and_then(|f| self.class_apply(f, Vec::new()));
+        match copied {
+            Ok(Value::Bytes(row, ..)) => Ok(row.borrow().clone()),
+            Ok(_) => Err(self.byte_fault("arguments")), Err(Fault::Note(words)) => Err(words),
+            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+        }
+    }
+
+    fn byte_buffers_close<T>(&mut self, held: Vec<Value>, mut result: Res<T>) -> Res<T> {
+        let original = self.carried.take();
+        let failed = result.is_err();
+        for view in held {
+            if matches!(view, Value::Export(_)) { drop(view); continue; }
+            let release = self.class_get(view, "release", false).and_then(|f| self.class_apply(f, Vec::new()));
+            if result.is_ok() {
+                if let Err(fault) = release {
+                    result = Err(match fault {
+                        Fault::Note(words) => words,
+                        other => { self.carried = Some(other); String::new() }
+                    });
+                }
+            }
+        }
+        if failed { self.carried = original; }
+        result
+    }
+
+    fn byte_buffer(&mut self, value: &Value) -> Res<Vec<u8>> {
+        let mut held = Vec::new();
+        let result = self.byte_buffer_open(value, &mut held).and_then(|view| self.byte_buffer_read(&view));
+        self.byte_buffers_close(held, result)
     }
 
     // Hold exports through argument conversion, then copy the current buffer contents.
@@ -18971,124 +19001,132 @@ impl<'a> Engine<'a> {
             return Ok(self.byte_make(row, false));
         }
         let Some(Value::Bytes(cell, mutable, _)) = args.first() else { return Err(unready()); };
-        let mut supplied = args.to_vec();
-        let numbers: &[usize] = match task {
-            10 | 13 | 18..=22 => &[2, 3], 8 | 23 => &[2], 29..=33 => &[1], _ => &[],
-        };
-        for &at in numbers {
-            if let Some(value @ Value::Object(_)) = supplied.get(at) {
-                supplied[at] = Value::of_big(self.slice_whole(value)?);
-            }
-        }
-        let _export = if *mutable && matches!(task, 8 | 10 | 13 | 18..=23) { Some(ByteExport::acquire(cell)) } else { None };
-        let buffers: &[usize] = match task {
-            8 | 12 | 23..=27 | 37 | 38 => &[1], 11 | 39 => &[1, 2], _ => &[],
-        };
-        for &at in buffers {
-            if let Some(value @ Value::Object(_)) = supplied.get(at) {
-                let data = self.byte_buffer(value)?;
-                supplied[at] = self.byte_make(data, false);
-            }
-        }
-        if task == 11 {
-            if let Some(value @ Value::Object(_)) = supplied.get(3) {
-                supplied[3] = Value::of_big(self.slice_whole(value)?);
-            }
-        }
-        if matches!(task, 13 | 18..=21) {
-            if let Some(value @ Value::Object(_)) = supplied.get(1) {
-                supplied[1] = match self.special_index(value)? {
-                    Some(number) => number,
-                    None => { let data = self.byte_buffer(value)?; self.byte_make(data, false) },
-                };
-            }
-        }
-        if matches!(task, 10 | 22) && matches!(supplied.get(1), Some(Value::Object(_))) {
-            let data = self.byte_buffer(&supplied[1])?;
-            supplied[1] = self.byte_make(data, false);
-        }
-        let row = cell.borrow().clone();
-        let given = &supplied[1..];
-        let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
-        let count = |v: Option<&Value>| -> Res<usize> {
-            match v {
-                None | Some(Value::Blank) => Ok(usize::MAX),
-                Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
-                    let n = v.as_big()?;
-                    Ok(n.to_usize().unwrap_or(usize::MAX))
+        let mut held = Vec::new();
+        let result = (|| -> Res<Value> {
+            let mut supplied = args.to_vec();
+            let mut operands = Vec::new();
+            let numbers: &[usize] = match task {
+                10 | 13 | 18..=22 => &[2, 3], 8 | 23 => &[2], 29..=33 => &[1], _ => &[],
+            };
+            for &at in numbers {
+                if let Some(value @ Value::Object(_)) = supplied.get(at) {
+                    supplied[at] = Value::of_big(self.slice_whole(value)?);
                 }
-                _ => Err(bad()),
             }
-        };
-        let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
-        let result = match task {
-            3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
-            4 if given.len() <= 2 => return self.byte_hex(&row, given),
-            6 | 7 if given.is_empty() => row.iter().map(|b| if task == 6 { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() }).collect(),
-            8 if given.len() <= 2 => {
-                let limit = count(given.get(1))?;
-                let mut parts = Vec::new();
-                if given.first().map_or(true, |v| matches!(v, Value::Blank | Value::Null)) {
-                    let mut pos = 0;
-                    while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
-                    while pos < row.len() {
-                        if parts.len() == limit { parts.push(self.byte_make(row[pos..].to_vec(), *mutable)); break; }
-                        let start = pos;
-                        while pos < row.len() && !(row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
-                        parts.push(self.byte_make(row[start..pos].to_vec(), *mutable));
+            let _export = if *mutable && matches!(task, 8 | 10 | 13 | 18..=23) { Some(ByteExport::acquire(cell)) } else { None };
+            let buffers: &[usize] = match task {
+                8 | 12 | 23..=27 | 37 | 38 => &[1], 11 | 39 => &[1, 2], _ => &[],
+            };
+            for &at in buffers {
+                if let Some(value @ (Value::Object(_) | Value::Bytes(..))) = supplied.get(at) {
+                    operands.push((at, self.byte_buffer_open(value, &mut held)?));
+                }
+            }
+            if task == 11 {
+                if let Some(value @ Value::Object(_)) = supplied.get(3) {
+                    supplied[3] = Value::of_big(self.slice_whole(value)?);
+                }
+            }
+            if matches!(task, 13 | 18..=21) {
+                if let Some(value @ Value::Object(_)) = supplied.get(1) {
+                    let buffer = matches!(Self::worth_of(value), Some(Value::Bytes(..)))
+                        || matches!(value.contents(), Value::Object(o) if self.class_value(&o.class_now(), "__buffer__").is_some());
+                    if buffer { operands.push((1, self.byte_buffer_open(value, &mut held)?)); }
+                    else if let Some(number) = self.special_index(value)? { supplied[1] = number; }
+                    else { operands.push((1, self.byte_buffer_open(value, &mut held)?)); }
+                }
+            }
+            if matches!(task, 10 | 22) && matches!(supplied.get(1), Some(Value::Object(_))) {
+                operands.push((1, self.byte_buffer_open(&supplied[1], &mut held)?));
+            }
+            for (at, buffer) in operands {
+                let current = self.byte_buffer_read(&buffer)?;
+                supplied[at] = self.byte_make(current, false);
+            }
+            let row = cell.borrow().clone();
+            let given = &supplied[1..];
+            let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
+            let count = |v: Option<&Value>| -> Res<usize> {
+                match v {
+                    None | Some(Value::Blank) => Ok(usize::MAX),
+                    Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                        let n = v.as_big()?;
+                        Ok(n.to_usize().unwrap_or(usize::MAX))
+                    }
+                    _ => Err(bad()),
+                }
+            };
+            let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
+            let result = match task {
+                3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
+                4 if given.len() <= 2 => return self.byte_hex(&row, given),
+                6 | 7 if given.is_empty() => row.iter().map(|b| if task == 6 { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() }).collect(),
+                8 if given.len() <= 2 => {
+                    let limit = count(given.get(1))?;
+                    let mut parts = Vec::new();
+                    if given.first().map_or(true, |v| matches!(v, Value::Blank | Value::Null)) {
+                        let mut pos = 0;
                         while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
+                        while pos < row.len() {
+                            if parts.len() == limit { parts.push(self.byte_make(row[pos..].to_vec(), *mutable)); break; }
+                            let start = pos;
+                            while pos < row.len() && !(row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
+                            parts.push(self.byte_make(row[start..pos].to_vec(), *mutable));
+                            while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
+                        }
+                    } else {
+                        let sep = bytes(&given[0])?;
+                        if sep.is_empty() { return Err(self.byte_fault("separator")); }
+                        let mut start = 0;
+                        while parts.len() < limit {
+                            let Some(offset) = find(&row[start..], &sep) else { break; };
+                            parts.push(self.byte_make(row[start..start + offset].to_vec(), *mutable));
+                            start += offset + sep.len();
+                        }
+                        parts.push(self.byte_make(row[start..].to_vec(), *mutable));
                     }
-                } else {
-                    let sep = bytes(&given[0])?;
-                    if sep.is_empty() { return Err(self.byte_fault("separator")); }
-                    let mut start = 0;
-                    while parts.len() < limit {
-                        let Some(offset) = find(&row[start..], &sep) else { break; };
-                        parts.push(self.byte_make(row[start..start + offset].to_vec(), *mutable));
-                        start += offset + sep.len();
+                    return Ok(Value::array(parts));
+                }
+                9 if given.len() == 1 => {
+                    let _export = if *mutable { Some(ByteExport::acquire(cell)) } else { None };
+                    self.byte_join(cell, &given[0])?
+                }
+                11 if given.len() == 2 || given.len() == 3 => {
+                    let (old, new) = (bytes(&given[0])?, bytes(&given[1])?);
+                    let mut left = count(given.get(2))?;
+                    let (mut made, mut pos) = (Vec::new(), 0);
+                    while pos <= row.len() && left > 0 {
+                        let Some(offset) = find(&row[pos..], &old) else { break; };
+                        made.extend(&row[pos..pos + offset]); made.extend(&new); left -= 1; pos += offset + old.len();
+                        if old.is_empty() { if pos == row.len() { break; } made.push(row[pos]); pos += 1; }
                     }
-                    parts.push(self.byte_make(row[start..].to_vec(), *mutable));
+                    made.extend(&row[pos..]); made
                 }
-                return Ok(Value::array(parts));
-            }
-            9 if given.len() == 1 => {
-                let _export = if *mutable { Some(ByteExport::acquire(cell)) } else { None };
-                self.byte_join(cell, &given[0])?
-            }
-            11 if given.len() == 2 || given.len() == 3 => {
-                let (old, new) = (bytes(&given[0])?, bytes(&given[1])?);
-                let mut left = count(given.get(2))?;
-                let (mut made, mut pos) = (Vec::new(), 0);
-                while pos <= row.len() && left > 0 {
-                    let Some(offset) = find(&row[pos..], &old) else { break; };
-                    made.extend(&row[pos..pos + offset]); made.extend(&new); left -= 1; pos += offset + old.len();
-                    if old.is_empty() { if pos == row.len() { break; } made.push(row[pos]); pos += 1; }
+                12 if given.len() <= 1 => {
+                    let trim = match given.first() { None | Some(Value::Null) => vec![9, 10, 11, 12, 13, 32], Some(v) => bytes(v)? };
+                    let start = row.iter().position(|b| !trim.contains(b)).unwrap_or(row.len());
+                    let stop = row.iter().rposition(|b| !trim.contains(b)).map_or(start, |i| i + 1);
+                    row[start..stop].to_vec()
                 }
-                made.extend(&row[pos..]); made
-            }
-            12 if given.len() <= 1 => {
-                let trim = match given.first() { None | Some(Value::Null) => vec![9, 10, 11, 12, 13, 32], Some(v) => bytes(v)? };
-                let start = row.iter().position(|b| !trim.contains(b)).unwrap_or(row.len());
-                let stop = row.iter().rposition(|b| !trim.contains(b)).map_or(start, |i| i + 1);
-                row[start..stop].to_vec()
-            }
-            // Everything else a row of bytes answers to it shares with
-            // text, and each of those is worked out over the bytes.
-            _ => {
-                let answer = self.byte_text_work(task, &row, *mutable, given)?;
-                if !mutable && matches!(task, 26 | 27) {
-                    if let Value::Tuple(parts) = &answer {
-                        if matches!(&parts[1], Value::Bytes(bytes, ..) if !bytes.borrow().is_empty()) {
-                            let mut parts = parts.to_vec();
-                            parts[1] = args[1].contents();
-                            return Ok(Value::tuple(parts));
+                // Everything else a row of bytes answers to it shares with
+                // text, and each of those is worked out over the bytes.
+                _ => {
+                    let answer = self.byte_text_work(task, &row, *mutable, given)?;
+                    if !mutable && matches!(task, 26 | 27) {
+                        if let Value::Tuple(parts) = &answer {
+                            if matches!(&parts[1], Value::Bytes(bytes, ..) if !bytes.borrow().is_empty()) {
+                                let mut parts = parts.to_vec();
+                                parts[1] = args[1].contents();
+                                return Ok(Value::tuple(parts));
+                            }
                         }
                     }
-                }
-                return Ok(answer);
-            },
-        };
-        Ok(self.byte_make(result, *mutable))
+                    return Ok(answer);
+                },
+            };
+            Ok(self.byte_make(result, *mutable))
+        })();
+        self.byte_buffers_close(held, result)
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
