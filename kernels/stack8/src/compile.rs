@@ -1958,7 +1958,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        let asynchronous = name == "<genexpr>" || (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
         let except_star_start = self.except_star_nesting;
         self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
