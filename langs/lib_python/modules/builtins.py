@@ -120,6 +120,7 @@ map = map
 # stands on the root all the same, and the list of bases it was built on
 # hands the real class over, which the name then stands for instead.
 class object:
+    'The base class of the class hierarchy.\n\nWhen called, it accepts no arguments and returns a new featureless\ninstance that has no instance attributes and cannot be given any.\n'
     pass
 object = object.__bases__[0]
 property = property
@@ -480,6 +481,7 @@ class _HostFile:
 
 
 def breakpoint(*args, **kws):
+    'Call sys.breakpointhook(*args, **kws).  sys.breakpointhook() must accept\nwhatever arguments are passed.\n\nBy default, this drops you into the pdb debugger.'
     import sys
     try:
         hook = sys.breakpointhook
@@ -518,6 +520,7 @@ def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline
 
 
 def open(*args, **kwargs):
+    'Open file and return a stream.  Raise OSError upon failure.\n\nfile is either a text or byte string giving the name (and the path\nif the file isn\'t in the current working directory) of the file to\nbe opened or an integer file descriptor of the file to be\nwrapped.  (If a file descriptor is given, it is closed when the\nreturned I/O object is closed, unless closefd is set to False.)\n\nmode is an optional string that specifies the mode in which the file\nis opened.  It defaults to \'r\' which means open for reading in text\nmode.  Other common values are \'w\' for writing (truncating the file if\nit already exists), \'x\' for creating and writing to a new file, and\n\'a\' for appending (which on some Unix systems, means that all writes\nappend to the end of the file regardless of the current seek position).\nIn text mode, if encoding is not specified the encoding used is platform\ndependent: locale.getencoding() is called to get the current locale\nencoding.  (For reading and writing raw bytes use binary mode and leave\nencoding unspecified.)  The available modes are:\n\n========= ==========================================================\nCharacter Meaning\n--------- ----------------------------------------------------------\n\'r\'       open for reading (default)\n\'w\'       open for writing, truncating the file first\n\'x\'       create a new file and open it for writing\n\'a\'       open for writing, appending to the end of the file if it\n          exists\n\'b\'       binary mode\n\'t\'       text mode (default)\n\'+\'       open a disk file for updating (reading and writing)\n========= ==========================================================\n\nThe default mode is \'rt\' (open for reading text).  For binary random\naccess, the mode \'w+b\' opens and truncates the file to 0 bytes, while\n\'r+b\' opens the file without truncation.  The \'x\' mode implies \'w\' and\nraises an `FileExistsError` if the file already exists.\n\nPython distinguishes between files opened in binary and text modes,\neven when the underlying operating system doesn\'t.  Files opened in\nbinary mode (appending \'b\' to the mode argument) return contents as\nbytes objects without any decoding.  In text mode (the default, or when\n\'t\' is appended to the mode argument), the contents of the file are\nreturned as strings, the bytes having been first decoded using a\nplatform-dependent encoding or using the specified encoding if given.\n\nbuffering is an optional integer used to set the buffering policy.\nPass 0 to switch buffering off (only allowed in binary mode), 1 to\nselect line buffering (only usable in text mode), and an integer > 1 to\nindicate the size of a fixed-size chunk buffer.   When no buffering\nargument is given, the default buffering policy works as follows:\n\n* Binary files are buffered in fixed-size chunks; the size of the buffer\n  is max(min(blocksize, 8 MiB), DEFAULT_BUFFER_SIZE) when the device\n  block size is available.\n  On most systems, the buffer will typically be 128 kilobytes long.\n\n* "Interactive" text files (files for which isatty() returns True)\n  use line buffering.  Other text files use the policy described above\n  for binary files.\n\nencoding is the name of the encoding used to decode or encode the\nfile.  This should only be used in text mode.  The default encoding is\nplatform dependent, but any encoding supported by Python can be\npassed.  See the codecs module for the list of supported encodings.\n\nerrors is an optional string that specifies how encoding errors are to\nbe handled---this argument should not be used in binary mode.  Pass\n\'strict\' to raise a ValueError exception if there is an encoding error\n(the default of None has the same effect), or pass \'ignore\' to ignore\nerrors.  (Note that ignoring encoding errors can lead to data loss.)\nSee the documentation for codecs.register or run \'help(codecs.Codec)\'\nfor a list of the permitted encoding error strings.\n\nnewline controls how universal newlines works (it only applies to text\nmode).  It can be None, \'\', \'\\n\', \'\\r\', and \'\\r\\n\'.  It works as\nfollows:\n\n* On input, if newline is None, universal newlines mode is enabled.\n  Lines in the input can end in \'\\n\', \'\\r\', or \'\\r\\n\', and these are\n  translated into \'\\n\' before being returned to the caller.  If it is\n  \'\', universal newline mode is enabled, but line endings are returned\n  to the caller untranslated.  If it has any of the other legal values,\n  input lines are only terminated by the given string, and the line\n  ending is returned to the caller untranslated.\n\n* On output, if newline is None, any \'\\n\' characters written are\n  translated to the system default line separator, os.linesep.  If\n  newline is \'\' or \'\\n\', no translation takes place.  If newline is any\n  of the other legal values, any \'\\n\' characters written are translated\n  to the given string.\n\nIf closefd is False, the underlying file descriptor will be kept open\nwhen the file is closed.  This does not work when a file name is given\nand must be True in that case.\n\nA custom opener can be used by passing a callable as *opener*.  The\nunderlying file descriptor for the file object is then obtained by\ncalling *opener* with (*file*, *flags*).  *opener* must return an open\nfile descriptor (passing os.open as *opener* results in functionality\nsimilar to passing None).\n\nopen() returns a file object whose type depends on the mode, and\nthrough which the standard file operations such as reading and writing\nare performed.  When open() is used to open a file in a text mode (\'w\',\n\'r\', \'wt\', \'rt\', etc.), it returns a TextIOWrapper.  When used to open\na file in a binary mode, the returned class varies: in read binary\nmode, it returns a BufferedReader; in write binary and append binary\nmodes, it returns a BufferedWriter, and in read/write mode, it returns\na BufferedRandom.\n\nIt is also possible to use a string or bytearray as a file for both\nreading and writing.  For strings StringIO can be used like a file\nopened in a text mode, and for bytes a BytesIO can be used like a file\nopened in a binary mode.'
     from io import open as io_open
     return io_open(*args, **kwargs)
 
@@ -525,11 +528,14 @@ def open(*args, **kwargs):
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
 class memoryview:
+    'Create a new memoryview object which references the given object.'
     def __buffer__(self, flags, /):
+        'Return a buffer object that exposes the underlying memory of the object.'
         from _buffer import getbuffer
         return getbuffer(self, flags)
 
     def __release_buffer__(self, view, /):
+        'Release the buffer object that exposes the underlying memory of the object.'
         from _buffer import releasebuffer
         return releasebuffer(self, view)
 
@@ -578,16 +584,19 @@ class memoryview:
 
     @property
     def ndim(self):
+        'An integer indicating how many dimensions of a multi-dimensional\n array the memory represents.'
         self._check()
         return 1
 
     @property
     def shape(self):
+        'A tuple of ndim integers giving the shape of the memory\n as an N-dimensional array.'
         self._check()
         return (len(self),)
 
     @property
     def strides(self):
+        'A tuple of ndim integers giving the size in bytes to access\n each element for each dimension of the array.'
         self._check()
         if len(self._shape) > 1:
             stride = self._itemsize
@@ -600,6 +609,7 @@ class memoryview:
 
     @property
     def suboffsets(self):
+        'A tuple of integers used internally for PIL-style arrays.'
         self._check()
         return ()
 
@@ -625,21 +635,25 @@ class memoryview:
 
     @property
     def obj(self):
+        'The underlying object of the memoryview.'
         self._check()
         return self._object
 
     @property
     def format(self):
+        'A string containing the format (in struct module style)\n for each element in the view.'
         self._check()
         return self._format
 
     @property
     def itemsize(self):
+        'The size in bytes of each element of the memoryview.'
         self._check()
         return self._itemsize
 
     @property
     def strides(self):
+        'A tuple of ndim integers giving the size in bytes to access\n each element for each dimension of the array.'
         self._check()
         stride = self._offsets.step if isinstance(self._offsets, range) else self._offsets[1] - self._offsets[0] if len(self._offsets) > 1 else self._itemsize
         result = []
@@ -650,11 +664,13 @@ class memoryview:
 
     @property
     def readonly(self):
+        'A bool indicating whether the memory is read only.'
         self._check()
         return self._readonly
 
     @property
     def c_contiguous(self):
+        'A bool indicating whether the memory is C contiguous.'
         self._check()
         offsets = self._offsets
         if isinstance(offsets, range):
@@ -665,32 +681,39 @@ class memoryview:
 
     @property
     def contiguous(self):
+        'A bool indicating whether the memory is contiguous.'
         return self.c_contiguous
 
     @property
     def f_contiguous(self):
+        'A bool indicating whether the memory is Fortran contiguous.'
         return self.c_contiguous and (self.nbytes == 0 or sum(length > 1 for length in self._shape) <= 1)
 
     @property
     def nbytes(self):
+        'The amount of space in bytes that the array would use in\n a contiguous representation.'
         self._check()
         return len(self._offsets) * self.itemsize
 
     @property
     def ndim(self):
+        'An integer indicating how many dimensions of a multi-dimensional\n array the memory represents.'
         self._check()
         return len(self._shape)
 
     @property
     def shape(self):
+        'A tuple of ndim integers giving the shape of the memory\n as an N-dimensional array.'
         self._check()
         return self._shape
 
     def __len__(self):
+        'Return len(self).'
         self._check()
         return self._shape[0]
 
     def __getitem__(self, key):
+        'Return self[key].'
         self._check()
         if self.ndim != 1:
             raise NotImplementedError('multi-dimensional sub-views are not implemented')
@@ -714,6 +737,7 @@ class memoryview:
         return struct.unpack('@' + format, raw[:struct.calcsize('@' + format)])[0]
 
     def __setitem__(self, key, value):
+        'Set self[key] to value.'
         self._check()
         format = self._format[1:] if self._format.startswith('@') else self._format
         if self._readonly:
@@ -780,16 +804,19 @@ class memoryview:
                 self._put_byte(first + i, raw[i])
 
     def tolist(self):
+        'Return the data in the buffer as a list of elements.'
         self._check()
         return [self[i] for i in range(len(self))]
 
     def toreadonly(self):
+        'Return a readonly version of the memoryview.'
         self._check()
         result = memoryview(self)
         result._readonly = True
         return result
 
     def tobytes(self):
+        "Return the data in the buffer as a byte string.\n\nOrder can be {'C', 'F', 'A'}.  When order is 'C' or 'F', the data of\nthe original array is converted to C or Fortran order.  For\ncontiguous views, 'A' returns an exact copy of the physical memory.\nIn particular, in-memory Fortran order is preserved.  For\nnon-contiguous views, the data is converted to C first.  order=None\nis the same as order='C'."
         self._check()
         if self.c_contiguous:
             from array import array
@@ -814,11 +841,13 @@ class memoryview:
             raise ValueError('could not convert string to float: ' + repr(self))
 
     def hex(self, sep=None, bytes_per_sep=1):
+        "Return the data in the buffer as a str of hexadecimal numbers.\n\n  sep\n    An optional single character or byte to separate hex bytes.\n  bytes_per_sep\n    How many bytes between separators.  Positive values count from\n    the right, negative values count from the left.\n\nExample:\n>>> value = memoryview(b'\\xb9\\x01\\xef')\n>>> value.hex()\n'b901ef'\n>>> value.hex(':')\n'b9:01:ef'\n>>> value.hex(':', 2)\n'b9:01ef'\n>>> value.hex(':', -2)\n'b901:ef'"
         if sep is None:
             return self.tobytes().hex()
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
+        'Cast a memoryview to a new format or shape.'
         if not isinstance(format, str):
             raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
@@ -865,6 +894,7 @@ class memoryview:
             self.release()
 
     def release(self):
+        'Release the underlying buffer exposed by the memoryview object.'
         if self._released:
             return
         self._released = True
@@ -882,9 +912,11 @@ class memoryview:
         return self
 
     def __exit__(self, kind, value, traceback):
+        'Release the underlying buffer exposed by the memoryview object.'
         self.release()
 
     def __eq__(self, other):
+        'Return self==value.'
         from array import array
         self._check()
         if isinstance(other, array):
@@ -894,6 +926,7 @@ class memoryview:
         return NotImplemented
 
     def __hash__(self):
+        'Return hash(self).'
         self._check()
         if not self._readonly:
             raise ValueError('cannot hash writable memoryview object')
@@ -902,6 +935,7 @@ class memoryview:
         return hash(self.tobytes())
 
     def __repr__(self):
+        'Return repr(self).'
         return '<memory at 0x%x>' % id(self)
 
 # What CPython's builtins holds and this one does not, so that a reader

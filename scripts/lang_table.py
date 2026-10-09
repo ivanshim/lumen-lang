@@ -33,6 +33,8 @@ def plain(s: str) -> str:
 def cell(value, provided=None) -> str:
     """A table cell; an empty label the language's library provides says so."""
     if isinstance(value, list):
+        if sum(len(v) for v in value) > 4096:
+            return f"({len(value)} strings; see language definition)"
         if value:
             return " ".join(code(v) for v in value)
         return f"(library: {code(provided)})" if provided else "-"

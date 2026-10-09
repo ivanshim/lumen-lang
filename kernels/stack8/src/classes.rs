@@ -232,14 +232,36 @@ impl<'a> Engine<'a> {
     /// The reference's own docstring for a builtin kind's word, where
     /// this runtime keeps one. Nothing for a word left undocumented,
     /// which is exposed as an absent docstring (None).
-    pub(super) fn builtin_kind_doc(word: &str) -> Option<&'static str> {
-        match word {
-            "int" => Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"),
-            "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
-            "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
-            _ => None,
-        }
+    pub(super) fn builtin_kind_doc(&self, word: &str) -> Option<&str> {
+        self.lang.builtin_documentation.chunks_exact(2)
+            .find(|entry| entry[0] == word).map(|entry| entry[1].as_str())
     }
+
+    /// Read native documentation without manufacturing an attribute or callable.
+    pub(super) fn native_documentation(&self, object: &Value) -> Option<Value> {
+        let word = match object.contents() {
+            Value::Native(_, word) => word.to_string(),
+            Value::ByteKind(mutable, _) => self.byte_kind_word(mutable).to_owned(),
+            Value::Class(class) => Self::own_kind(&class).or_else(|| {
+                self.native_exceptions.iter().find_map(|(name, value)|
+                    matches!(value, Value::Class(native) if Rc::ptr_eq(native, &class)).then(|| name.clone()))
+            }).or_else(|| self.class_root.as_ref().filter(|root| Rc::ptr_eq(root, &class)).map(|_| self.class_word("root").to_owned()))?,
+            Value::Adapter(parts) => match parts.0 {
+                3 => return self.native_documentation(parts.1.first()?),
+                29 => format!("{}.{}", parts.1.first()?.plain(), parts.1.get(1)?.plain()),
+                30 => format!("{}.{}", parts.1.get(1).map(Value::plain).unwrap_or_else(|| self.class_word("root").into()), parts.1.first()?.plain()),
+                14 => format!("{}.__new__", parts.1.first()?.plain()),
+                16 => {
+                    let Value::Class(owner) = parts.1.get(1)? else { return None };
+                    format!("{}.{}", Self::own_kind(owner)?, parts.1.first()?.plain())
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        self.builtin_kind_doc(&word).map(Value::text)
+    }
+
     /// The builtin kind a class itself stands for, if it is one.
     pub(super) fn own_kind(c: &Class) -> Option<String> {
         c.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v.plain())
@@ -3153,6 +3175,9 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if name == self.class_word("doc") {
+            if let Some(documentation) = self.native_documentation(&subject) { return Ok(documentation); }
+        }
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
             return Ok(Value::text("The type of the None singleton."));
         }
@@ -3533,6 +3558,10 @@ impl<'a> Engine<'a> {
                 let title = match &owner { Value::Class(_) => self.class_get(owner.clone(), name, false)?.plain(), Value::Native(_, spelling) => spelling.to_string(), _ => owner.core_kind() };
                 return Ok(Value::text(&format!("{title}.{member}")));
             }
+            if name == self.class_word("doc") {
+                let kind = match &owner { Value::Native(_, spelling) => spelling.to_string(), Value::Class(c) => c.name.clone(), _ => owner.core_kind() };
+                if let Some(doc) = self.builtin_kind_doc(&format!("{kind}.{member}")) { return Ok(Value::text(doc)); }
+            }
             if name == self.class_word("module") { return Ok(Value::Null); }
             if self.lang.class_special.get(79).is_some_and(|word| word == name) {
                 let getter = Value::Native(Builtin::GetAttr, Rc::from("getattr"));
@@ -3704,7 +3733,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
-                    return Ok(Self::builtin_kind_doc(word).map_or(Value::Null, Value::text));
+                    return Ok(self.builtin_kind_doc(word).map_or(Value::Null, Value::text));
                 }
                 if name==self.class_word("namespace") {
 

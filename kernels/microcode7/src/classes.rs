@@ -3608,14 +3608,49 @@ impl<'a> Machine<'a> {
     /// The reference's own docstring for a native kind's word, where
     /// this runtime keeps one. Nothing for a word left undocumented,
     /// which is exposed as an absent docstring (None).
-    pub(super) fn builtin_kind_doc(word:&str)->Option<&'static str> {
-        match word {
-            "int" => Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"),
-            "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
-            "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
-            _ => None,
+    pub(super) fn builtin_kind_doc(&self, word: &str) -> Option<&str> {
+        let entries = self.table.strings("ext.builtin.documentation");
+        let mut at = 0;
+        while at + 1 < entries.len() {
+            if entries[at] == word { return Some(entries[at + 1].as_str()); }
+            at += 2;
         }
+        None
     }
+
+    /// Resolve documentation only for an existing native value.
+    pub(super) fn documented_native(&self, value: &Value) -> Option<Value> {
+        let label = match value.settled() {
+            Value::Intrinsic(_, name) => name.to_string(),
+            Value::OctetKind { changeable, .. } => self.octet_kind_word(changeable).into(),
+            Value::Blueprint(class) => {
+                let mut name = Self::native_word(&class);
+                if name.is_none() {
+                    for (word, native) in &self.fault_kinds {
+                        if matches!(native, Value::Blueprint(held) if Rc::ptr_eq(held, &class)) { name = Some(word.clone()); break; }
+                    }
+                }
+                if name.is_none() && self.ancestor.as_ref().is_some_and(|root| Rc::ptr_eq(root, &class)) { name = Some(self.detail("root").into()); }
+                name?
+            }
+            Value::Wrapped(tag, data) => {
+                if tag == 3 { return self.documented_native(data.first()?); }
+                match tag {
+                    60 => [data.first()?.bare(), data.get(1)?.bare()].join("."),
+                    36 => [data.get(1).map(Value::bare).unwrap_or_else(|| self.detail("root").into()), data.first()?.bare()].join("."),
+                    14 => data.first()?.bare() + ".__new__",
+                    32 => match data.get(1)? {
+                        Value::Blueprint(owner) => Self::native_word(owner)? + "." + &data.first()?.bare(),
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        Some(Value::text(self.builtin_kind_doc(&label)?))
+    }
+
     pub(super) fn clock_record_type(&mut self) -> Rc<Blueprint> {
         for (spelling, class) in &self.native_kinds { if spelling == "struct_time" { return class.clone(); } }
         let parent=self.native_kind("tuple");
@@ -3718,6 +3753,9 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if key == self.detail("doc") {
+            if let Some(text) = self.documented_native(&value) { return Ok(text); }
+        }
         let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
         if self.names_in_calls && !key.starts_with("__") {
             let slot = match &value {
@@ -3979,6 +4017,11 @@ impl<'a> Machine<'a> {
                 let defining = if matches!(&receiver, Value::Blueprint(_)) { self.read_class_member(receiver.clone(), key, false)?.bare() } else if let Value::Intrinsic(_, spelling) = &receiver { spelling.to_string() } else { receiver.kind_word() };
                 return Ok(Value::text(&format!("{}.{}", defining, word)));
             }
+            if key == self.detail("doc") {
+                let owner_name = match &receiver { Value::Blueprint(c) => c.name.clone(), Value::Intrinsic(_, name) => name.to_string(), _ => receiver.kind_word() };
+                let qualified = [owner_name, word.clone()].join(".");
+                if let Some(text) = self.builtin_kind_doc(&qualified) { return Ok(Value::text(text)); }
+            }
             if key == self.detail("module") { return Ok(Value::Nil); }
             if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                 let restore = Value::Intrinsic(Prim::GetMember, Rc::from("getattr"));
@@ -4234,7 +4277,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Small(bits));
                 }
                 if key==self.detail("doc") {
-                    return Ok(match Self::builtin_kind_doc(word) { Some(doc) => Value::text(doc), None => Value::Nil });
+                    return Ok(match self.builtin_kind_doc(word) { Some(doc) => Value::text(doc), None => Value::Nil });
                 }
                 if key==self.detail("namespace") {
                     let mut entries=self.kind_member_names(word);

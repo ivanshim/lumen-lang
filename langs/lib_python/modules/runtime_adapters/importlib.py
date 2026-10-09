@@ -8,7 +8,10 @@
 
 
 def invalidate_caches():
-    return None
+    for finder in sys.meta_path:
+        invalidate = getattr(finder, 'invalidate_caches', None)
+        if invalidate is not None:
+            invalidate()
 
 # The utility part lives in importlib.util; the name below stands ready
 # for the embedded alias that brings that module in beside this one.
@@ -28,3 +31,8 @@ def import_module(name, package=None):
         remainder = name[level:]
         name = parts[0] + '.' + remainder if remainder else parts[0]
     return __load_module(name)
+
+# Bootstrap discovery around the native source loader, including namespace packages.
+sys.meta_path.extend((_imp._NativeFinder, _bootstrap_external.PathFinder))
+sys.path_hooks.append(_bootstrap_external.FileFinder.path_hook(
+    (_bootstrap_external.SourceFileLoader, _bootstrap_external.SOURCE_SUFFIXES)))

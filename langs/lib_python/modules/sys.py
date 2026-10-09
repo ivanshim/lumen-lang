@@ -29,6 +29,9 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
+meta_path = []
+path_hooks = []
+path_importer_cache = {}
 _recursion_limit = 1000
 
 # Stub: startup flags describe the fixed library environment.

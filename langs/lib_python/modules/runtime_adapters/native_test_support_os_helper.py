@@ -1,3 +1,4 @@
+import errno
 import os
 import warnings
 from collections.abc import MutableMapping
@@ -111,6 +112,16 @@ def unlink(filename):
         os.unlink(filename)
     except FileNotFoundError:
         pass
+    except OSError as error:
+        if error.errno != errno.EROFS:
+            raise
+        # Some read-only filesystems reject unlink before checking existence.
+        try:
+            os.lstat(filename)
+        except FileNotFoundError:
+            pass
+        else:
+            raise
 
 # A guard over os.environ: it remembers each name's value the first
 # time a test changes or removes it, and puts every one of them back

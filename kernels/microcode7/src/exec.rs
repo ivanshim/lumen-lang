@@ -563,6 +563,7 @@ pub struct Machine<'a> {
     /// already standing, not read as stale for want of a place in
     /// `sys.modules` that only the finished import will write.
     importing: std::collections::HashSet<String>,
+    finding_names: Vec<String>,
     /// Set while the namespace that answers for unbound names is being
     /// read, so that a name missing inside it stops there instead of
     /// asking for the same namespace over again.
@@ -1993,6 +1994,7 @@ impl<'a> Machine<'a> {
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
+            finding_names: Vec::new(),
             imported: HashMap::new(),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
@@ -5716,6 +5718,12 @@ impl<'a> Machine<'a> {
         entries.push((String::from("\0environment"), body));
         entries.push((String::from("\0observed"), Value::Nil));
         entries.push((String::from("\0instruction"), Value::Small(-1)));
+        if routine.ident == "<program>" {
+            if let Some(reading) = self.reading_now {
+                entries[3].1 = Value::Shared(self.readings[reading].near.clone());
+                entries.push((String::from("\0dynamic_locals"), Value::Flag(true)));
+            }
+        }
         if !matches!(self.tracing_function, Value::Nil) {
             entries.push(("f_trace".to_owned(), Value::Nil));
             entries.push(("f_trace_lines".to_owned(), Value::Flag(true)));
@@ -5799,6 +5807,7 @@ impl<'a> Machine<'a> {
 
     fn update_activation_locals(&self, item: &Rc<Thing>) {
         let kept = item.holds.borrow();
+        if kept.iter().any(|(name, _)| name == "\0dynamic_locals") { return; }
         let Value::Bound(body, environment) = &kept[5].1 else { return };
         let mut entries = Vec::new();
         for (word, value) in body.idents.iter().zip(environment.cells.borrow().iter()) {
@@ -9262,7 +9271,7 @@ impl<'a> Machine<'a> {
         }
         if name == self.rules.detail_doc {
             if let Value::Intrinsic(_, word) = value {
-                if let Some(doc) = Self::builtin_kind_doc(word) { return Some(Value::text(doc)); }
+                if let Some(doc) = self.builtin_kind_doc(word) { return Some(Value::text(doc)); }
             }
         }
         if matches!(value, Value::Unpaired(_)) && matches!(self.table.prims.get(name), Some(Prim::Textual(_))) {
@@ -19810,7 +19819,7 @@ impl<'a> Machine<'a> {
                 // A native kind the reference keeps a docstring for
                 // answers to the member that reads it, whether or not
                 // the kind is one a class may stand on.
-                if word == self.rules.detail_doc && matches!(&v[0], Value::Intrinsic(_, kind) if Self::builtin_kind_doc(kind).is_some()) { return Ok(Value::Flag(true)); }
+                if word == self.rules.detail_doc && matches!(&v[0], Value::Intrinsic(_, kind) if self.builtin_kind_doc(kind).is_some()) { return Ok(Value::Flag(true)); }
                 let (class, own) = match &v[0] {
                     Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
                     Value::Span(_) => (None, self.span_bound_named(&word).is_some()),
@@ -25439,6 +25448,20 @@ impl Machine<'_> {
             let absolute = self.qualified_import(path)?;
             return self.load_namespace(&absolute);
         }
+        // A recursive visit from a source loader needs the native reader;
+        // other imports consult the initialized Python finder protocol.
+        let python_finders = self.table.has_any("ext.system.module.path")
+            && !self.importing.contains("importlib")
+            && !self.finding_names.iter().any(|name| name == path);
+        if python_finders {
+            if let Some(owner) = self.imported.get("importlib._bootstrap").cloned() {
+                let load = self.member_text(owner, "_gcd_import")?;
+                self.finding_names.push(path.into());
+                let found = self.apply_text(load, vec![Value::text(path)]);
+                self.finding_names.pop();
+                return found;
+            }
+        }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let split = path.rsplit_once('.');
@@ -27985,7 +28008,8 @@ impl<'a> Machine<'a> {
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
-            (None, None) => return match within.filter(|_| mode != 2) {
+            (None, None) => return match within.filter(|_| mode != 2 && !(self.reading_now.is_some()
+                && self.frames_named.last().is_some_and(|body| body.ident == "<program>"))) {
                 Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, settling),
                 None => self.perform_here(&source, file, mode, top_await, literals, settling),
             },
@@ -28135,11 +28159,7 @@ impl<'a> Machine<'a> {
         }
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file.as_str());
-        self.frames_named.push(built.program.clone());
-        let outer_trace = self.active_trace.take();
-        let ran = self.value_of(&built.program.body, &mine);
-        self.active_trace = outer_trace;
-        self.frames_named.pop();
+        let ran = self.drive(built.program.clone(), mine);
         self.written_in = was_in;
         self.row = was_on;
         let answer = match ran {
@@ -28225,11 +28245,10 @@ impl<'a> Machine<'a> {
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file);
         let top = self.outermost.clone();
-        let prior = self.active_trace.take();
-        self.frames_named.push(built.program.clone());
-        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
-        self.frames_named.pop();
-        self.active_trace = prior;
+        // Dynamic code owns a normal activation, including tracing and the
+        // caller's saved source position, just as a function body does.
+        let ran = if built.program.generator { self.invoke(built.program.clone(), top, Vec::new()) }
+            else { self.drive(built.program.clone(), top) };
         self.written_in = was_in;
         self.row = was_on;
         let answer = match ran {

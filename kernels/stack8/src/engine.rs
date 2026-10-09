@@ -212,6 +212,7 @@ pub struct Engine<'a> {
     /// already standing, not read as stale for want of a place in
     /// `sys.modules` that only the finished import will write.
     importing: std::collections::HashSet<String>,
+    meta_imports: std::collections::HashSet<String>,
     /// Whether the module of unbound names is being loaded just now, so
     /// that a name missed inside it does not send the loader round again.
     fetching_names: bool,
@@ -1667,6 +1668,7 @@ impl<'a> Engine<'a> {
             module_books: Vec::new(),
             book_source: None,
             importing: std::collections::HashSet::new(),
+            meta_imports: std::collections::HashSet::new(),
             fetching_names: false,
             registry,
         };
@@ -5618,6 +5620,12 @@ impl<'a> Engine<'a> {
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
         ];
+        if program.ident == "<program>" {
+            if let Some(book) = self.reading_in {
+                fields[3].1 = Value::Bond(self.text_books[book].near.clone());
+                fields.push(("\0namespace_frame".into(), Value::Flag(true)));
+            }
+        }
         if !matches!(self.trace_hook, Value::Null) {
             fields.push(("f_trace".into(), Value::Null));
             fields.push(("f_trace_lines".into(), Value::Flag(true)));
@@ -5665,6 +5673,7 @@ impl<'a> Engine<'a> {
 
     fn refresh_frame(&mut self, object: &Rc<Instance>) {
         let fields = object.fields.borrow();
+        if fields.iter().any(|(key, _)| key == "\0namespace_frame") { return; }
         let Value::Routine(program) = &fields[6].1 else { return };
         let Value::Tuple(slots) = &fields[5].1 else { return };
         let mut pairs: Vec<(Value, Value)> = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
@@ -7302,6 +7311,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if name == self.class_word("doc") {
+            if let Some(doc) = self.native_documentation(value) { return Ok(Some(doc)); }
+        }
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
@@ -12261,7 +12273,7 @@ impl<'a> Engine<'a> {
                 // answers to the member that reads it, whether or not
                 // the kind is one a class may stand on.
                 let kind_doc = name.as_ref() == self.class_word("doc")
-                    && matches!(&held, Value::Native(_, word) if Self::builtin_kind_doc(word).is_some());
+                    && matches!(&held, Value::Native(_, word) if self.builtin_kind_doc(word).is_some());
                 let kind_initialiser = matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) && self.lang.constructor.as_deref() == Some(name.as_ref())
                     || matches!(&held, Value::Native(op, _) if !Self::kind_builtin(op)) && [79, 81].iter().any(|index| self.lang.class_special.get(*index).is_some_and(|word| word == name.as_ref()));
                 let kind_namespace = name.as_ref() == self.class_word("namespace")
@@ -12390,8 +12402,8 @@ impl<'a> Engine<'a> {
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(Builtin::ValueMethod, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) && self.lang.float_getformat.iter().any(|public| public == word.as_ref()) => Value::text(word.rsplit('.').next().unwrap_or(&word)),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
-                Value::Native(_, word) if name.as_ref() == self.class_word("doc") && Self::builtin_kind_doc(&word).is_some() => {
-                    Value::text(Self::builtin_kind_doc(&word).expect("checked"))
+                Value::Native(_, word) if name.as_ref() == self.class_word("doc") && self.builtin_kind_doc(&word).is_some() => {
+                    Value::text(self.builtin_kind_doc(&word).expect("checked"))
                 }
                 Value::SortOf(sort) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(Value::sort_called(sort)),
                 // Either bytes kind stands as a value of its own rather
@@ -25011,6 +25023,18 @@ impl Engine<'_> {
         // `sys.path` under a name used before this run needs to.
         if let Some(held) = self.modules.get(path) {
             if self.importing.contains(path) || self.module_cache_names(path) { return Ok(held.clone()); }
+        }
+        // Once importlib is initialized, its finders own discovery. A native
+        // loader reentering for this same name supplies only the source body.
+        if self.lang.module_path.is_some() && !self.importing.contains("importlib") && !self.meta_imports.contains(path) {
+            if let Some(bootstrap) = self.modules.get("importlib._bootstrap").cloned() {
+                if let Some(importer) = self.member_of(bootstrap, "_gcd_import")? {
+                    self.meta_imports.insert(path.to_owned());
+                    let result = self.call_held(importer, vec![Value::text(path)]);
+                    self.meta_imports.remove(path);
+                    return result.map_err(|words| self.carried.take().unwrap_or_else(|| words.into()));
+                }
+            }
         }
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a
