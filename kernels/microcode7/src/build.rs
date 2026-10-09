@@ -844,7 +844,9 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let mut body = body;
+    let mut body = if !value_only && table.has_any("ext.builtin.compile.modes") {
+        sequence(vec![body, constant(Value::Nil)])
+    } else { body };
     if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
     let mut root_literals = vec![Value::Nil];
     let mut root_names = Vec::new();

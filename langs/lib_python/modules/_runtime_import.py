@@ -115,7 +115,8 @@ class SourceLoader:
 
     def get_source(self, fullname):
         self.get_filename(fullname)
-        return _load_module(fullname, 'source')
+        import sys
+        return None if fullname in sys.builtin_module_names else _load_module(fullname, 'source')
 
     def is_package(self, fullname):
         return self.get_filename(fullname).endswith('/__init__.py')

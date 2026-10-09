@@ -59,6 +59,10 @@ class _NativeFinder:
 
 class _NativeLoader:
     @staticmethod
+    def get_source(fullname):
+        return None if is_builtin(fullname) else __load_module(fullname, 'source')
+
+    @staticmethod
     def create_module(spec):
         module = __load_module(spec.name)
         spec.loader_state = tuple(name for name in ('__name__', '__file__', '__cached__', '__loader__', '__package__', '__spec__')

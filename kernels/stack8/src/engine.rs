@@ -4443,7 +4443,7 @@ impl<'a> Engine<'a> {
         if !self.lang.trace_fields.is_empty() { self.line = program.declared_on; self.location = None; }
         let outcome = if matches!(self.trace_hook, Value::Null) { self.run_instrs(program, &mut frame) } else { self.trace_event("call", Value::Null).and_then(|()| self.run_instrs(program, &mut frame)) };
         let outcome = if matches!(self.trace_hook, Value::Null) { outcome } else { match outcome {
-            Ok(()) => { let result = self.data.last().cloned().unwrap_or(Value::Null); self.trace_event("return", result) },
+            Ok(()) => { let result = self.data.get(base..).and_then(|values| values.last()).cloned().unwrap_or(Value::Null); self.trace_event("return", result) },
             Err(fault) => match self.trace_event("return", Value::Null) {
                 Ok(()) => Err(fault),
                 Err(callback) => { self.trace_outside_body(&callback); Err(callback) },
