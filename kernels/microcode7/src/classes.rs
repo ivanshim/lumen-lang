@@ -140,6 +140,10 @@ impl<'a> Machine<'a> {
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared: crate::data::BlueprintEntries::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
+        if word == "SimpleNamespace" && !self.detail("namespace").is_empty() {
+            let name = self.detail("namespace").to_owned();
+            kind.shared.borrow_mut().push((name.clone(), Self::wrap(32, vec![Value::text(&name), Value::Blueprint(kind.clone()), Value::Small(-2)])));
+        }
         let final_parameter = ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "NoDefaultType", "Union", "ParamSpecArgs", "ParamSpecKwargs"].contains(&word);
         if final_parameter && self.table.flag("ext.stmt.type_parameters") { kind.sealed.set(true); }
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
@@ -7735,10 +7739,7 @@ impl<'a> Machine<'a> {
         let lookup_order = Self::resolution_order(&actual);
         for base in &lookup_order {
             if passed {
-                if key == self.detail("allocate") {
-                    if Self::native_word(base).as_deref() == Some("GenericAlias") {
-                        if let Some(entry) = Self::own_entry(base, key) { return Ok(Some(self.member_binding(entry, None, actual.clone())?)); }
-                    }
+                if key == self.detail("allocate") && Self::own_entry(base, key).is_none() {
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                         return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
                     }

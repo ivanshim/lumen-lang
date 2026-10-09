@@ -10397,7 +10397,8 @@ impl<'a> Engine<'a> {
                 // things that cannot be hashed.
                 let selected = self.special_value(&args[0], 8);
                 if matches!(selected, Some(Value::Null)) {
-                    return Err(self.core_fault("core.unhashable", &args[0].core_kind()));
+                    let kind = match &args[0] { Value::Class(class) => Self::maker_beneath(class).map(|meta| meta.name.clone()).unwrap_or_else(|| args[0].core_kind()), _ => args[0].core_kind() };
+                    return Err(self.core_fault("core.unhashable", &kind));
                 }
                 if let Some(answer) = self.invoke_resolved_special(&args[0], 8, selected, Vec::new())? {
                     let answer = Self::worth_of(&answer).map_or(answer.clone(), |v| v.contents());
@@ -17671,6 +17672,7 @@ impl<'a> Engine<'a> {
                 let unary = match operation { "__len__" => Some(Builtin::Length), "__iter__" => Some(Builtin::Iter), "__reversed__" => Some(Builtin::Reversed), "__hash__" => Some(Builtin::Hash), _ => None };
                 if let Some(op) = unary {
                     if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    if op == Builtin::Reversed { return self.core_call(op, operation, vec![backing], Vec::new()); }
                     return self.builtin(op, operation, &mut vec![backing]);
                 }
                 if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -20061,6 +20063,7 @@ impl<'a> Engine<'a> {
         }
         if args.len() == 1 && matches!(builtin, Builtin::Length | Builtin::Iter | Builtin::Reversed | Builtin::Hash | Builtin::Sorted) {
             if let Value::View(window) = &args[0] { if window.1 == "mapping" && !matches!(window.0.contents(), Value::Class(_)) {
+                if builtin == Builtin::Reversed { return self.core_call(builtin, name, vec![window.0.clone()], Vec::new()); }
                 return self.builtin(builtin, name, &mut vec![window.0.clone()]);
             } }
         }

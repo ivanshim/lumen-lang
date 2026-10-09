@@ -136,6 +136,10 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: RefCell::new(ancestry), base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: crate::value::ClassMembers::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
+        if word == "SimpleNamespace" && !self.class_word("namespace").is_empty() {
+            let name = self.class_word("namespace").to_owned();
+            c.shared.borrow_mut().push((name.clone(), Self::adapter(16, vec![Value::text(&name), Value::Class(c.clone()), Value::text("\0instance-namespace")])));
+        }
         if self.lang.type_parameters && matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType" | "Union" | "ParamSpecArgs" | "ParamSpecKwargs") { c.sealed.set(true); }
         if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
@@ -2913,7 +2917,7 @@ impl<'a> Engine<'a> {
     /// naming the root where the class wrote over the one working and
     /// the class where it wrote over neither.
     fn root_refuses_arguments(&self, c: &Rc<Class>, allocating: bool) -> Flow<()> {
-        let made_own = self.class_value(c,self.class_word("allocate")).is_some();
+        let made_own = self.class_value(c,self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(parts) if parts.0 == 1 && parts.1.is_empty()));
         let built_own = self.lang.constructor.as_deref().map_or(false,|n| self.class_value(c,n).is_some_and(|f| !matches!(f, Value::Adapter(a) if a.0 == 2 && a.1.is_empty())));
         let (own, other, part) = if allocating {(made_own, built_own, "arguments.new")} else {(built_own, made_own, "arguments.init")};
         let (part, named) = if own {(part, self.class_word("root").to_string())}
@@ -3359,7 +3363,7 @@ impl<'a> Engine<'a> {
                 return Ok(value);
             }
             return match w.0 {
-                2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                2 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 29 | 122 | 124 | 126 | 133 | 180 | 155 | 156 | 157 | 158 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -3826,6 +3830,9 @@ impl<'a> Engine<'a> {
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
         let raw = subject.contents();
+        if matches!(raw, Value::Ellipsis | Value::Declined(_)) && [79, 81].iter().any(|slot| self.lang.class_special.get(*slot).is_some_and(|word| word == name)) {
+            return Ok(Value::ValueMethod(Rc::new((raw, name.to_owned()))));
+        }
         if matches!(raw, Value::Codepoints(_)) && self.surrogate_case_operation(name).is_some() {
             return Ok(Value::ValueMethod(Rc::new((raw, name.to_owned()))));
         }

@@ -10368,6 +10368,7 @@ impl<'a> Machine<'a> {
                 let unary = match name { "__hash__" => Some(Prim::Hashed), "__reversed__" => Some(Prim::Backwards), "__iter__" => Some(Prim::Iterator), "__len__" => Some(Prim::Length), _ => None };
                 if let Some(work) = unary {
                     if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                    if work == Prim::Backwards { return self.core_primitive(work, name, vec![target], Vec::new()).map_err(Escape::from); }
                     return self.prim(work, name, &[target]).map_err(Escape::from);
                 }
                 if name == "__ior__" { return Err(String::from("TypeError: '|=' is not supported by mappingproxy; use '|' instead").into()); }
@@ -17914,7 +17915,8 @@ impl<'a> Machine<'a> {
             (Prim::Hashed, [one]) => {
                 let selected = self.appointment(one, 8);
                 if matches!(selected, Some(Value::Nil)) {
-                    return Err(self.core_complaint("core.unhashable", &one.kind_word()));
+                    let kind = match one { Value::Blueprint(class) => Self::builder_over(class).map(|meta| meta.name.clone()).unwrap_or_else(|| one.kind_word()), _ => one.kind_word() };
+                    return Err(self.core_complaint("core.unhashable", &kind));
                 }
                 match self.dispatch_appointment(8, one, &[], selected)? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
@@ -18847,6 +18849,7 @@ impl<'a> Machine<'a> {
 
         if let [Value::Window(owner, 'm')] = v {
             if matches!(op, Prim::Length | Prim::Iterator | Prim::Backwards | Prim::Hashed) && !matches!(owner.settled(), Value::Blueprint(_)) {
+                if op == Prim::Backwards { return self.core_primitive(op, name, vec![owner.as_ref().clone()], Vec::new()); }
                 return self.prim(op, name, &[owner.as_ref().clone()]);
             }
         }

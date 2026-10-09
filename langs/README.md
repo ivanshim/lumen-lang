@@ -4552,10 +4552,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
-
-
-
-
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |

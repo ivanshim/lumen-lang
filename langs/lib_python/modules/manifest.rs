@@ -67,9 +67,9 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_thread", include_str!("_thread.py"), "_thread.py"),
     ("_tokenize", include_str!("_tokenize.py"), "_tokenize.py"),
     ("_types", include_str!("_types.py"), "_types.py"),
-    ("_unicodedata_320", include_str!("_unicodedata_320.py"), "_unicodedata_320.py"),
     ("_typing_runtime", include_str!("_typing_runtime.py"), "_typing_runtime.py"),
     ("_ucd_3_2_0", include_str!("_ucd_3_2_0.py"), "_ucd_3_2_0.py"),
+    ("_unicodedata_320", include_str!("_unicodedata_320.py"), "_unicodedata_320.py"),
     ("_warnings", include_str!("_warnings.py"), "_warnings.py"),
     ("_weakref", include_str!("_weakref.py"), "_weakref.py"),
     ("_weakrefset", include_str!("_weakrefset.py"), "_weakrefset.py"),
@@ -461,7 +461,6 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("xml.dom", include_str!("xml/dom/__init__.py"), "xml/dom/__init__.py"),
     ("xml.dom.domreg", include_str!("xml/dom/domreg.py"), "xml/dom/domreg.py"),
     ("xml.dom.minicompat", include_str!("xml/dom/minicompat.py"), "xml/dom/minicompat.py"),
-
     ("zipfile", include_str!("zipfile/__init__.py"), "zipfile/__init__.py"),
     ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
     ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
