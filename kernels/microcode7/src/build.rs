@@ -11393,10 +11393,12 @@ impl<'a> Builder<'a> {
             }
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
+        let opener = if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray };
+        let mut parts: Vec<(Form, bool)> = Vec::new();
+        let mut opened = false;
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
-            if spreading { self.advance(); }
+            if spreading { self.advance(); opened = true; }
             let mut beginning = self.pos;
             let mut item = self.expr(0)?;
             if mapped && !spreading {
@@ -11425,11 +11427,28 @@ impl<'a> Builder<'a> {
                 self.pos = beginning;
                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
             }
-            value = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![value, item]);
+            parts.push((item, spreading));
             if self.sign(&closing) { break; }
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
+        // A list display with nothing opened out is made whole in one
+        // step: a literal of tens of thousands of members would otherwise
+        // be a chain of one-member growings as deep as the display is
+        // long, and reading that chain back would run the run out of
+        // stack. A map, a set, or anything opened out, still grows part
+        // by part so that every member lands in the order the text wrote
+        // it, and custom keys keep the handling they already had.
+        let flat = !opened && family == "array";
+        let mut value = if flat {
+            prim_call(opener, parts.into_iter().map(|(item, _)| item).collect())
+        } else {
+            let mut grown = prim_call(opener, Vec::new());
+            for (item, spreading) in parts {
+                grown = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![grown, item]);
+            }
+            grown
+        };
         if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { value = prim_call(Prim::DistinctObjects, vec![value]); }
         Ok(value)
     }

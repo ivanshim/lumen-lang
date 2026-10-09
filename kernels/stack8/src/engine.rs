@@ -203,6 +203,12 @@ pub struct Engine<'a> {
     wildcard_active: bool,
     changed_builtin_scopes: std::collections::HashSet<Rc<str>>,
     changed_builtins: std::collections::HashSet<String>,
+    /// The file the run began from, set once the program's own
+    /// outermost dictionary has been written through. A name that
+    /// dictionary holds stands over a builtin of the same spelling,
+    /// but only for code written in that file, whose globals the
+    /// dictionary is.
+    outer_globals_source: Option<Rc<str>>,
     wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
     module_slots: HashMap<Rc<str>, (usize, String)>,
     module_books: Vec<(String, Rc<RefCell<Value>>)>,
@@ -1702,6 +1708,7 @@ impl<'a> Engine<'a> {
             wildcard_active: false,
             changed_builtin_scopes: std::collections::HashSet::new(),
             changed_builtins: std::collections::HashSet::new(),
+            outer_globals_source: None,
             native_stack_start: &lang as *const &Lang as usize,
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
@@ -25528,13 +25535,31 @@ impl Engine<'_> {
     fn wildcard_in_scope(&mut self) -> bool {
         let changed = self.wildcard_file.as_ref().map_or(true, |file| !Rc::ptr_eq(file, &self.source));
         if changed {
-            self.wildcard_active = self.wildcard_slots.contains_key(&self.source) || self.changed_builtin_scopes.contains(&self.source) || !self.changed_builtins.is_empty();
+            self.wildcard_active = self.outer_shadow_applies() || self.wildcard_slots.contains_key(&self.source) || self.changed_builtin_scopes.contains(&self.source) || !self.changed_builtins.is_empty();
             self.wildcard_file = Some(self.source.clone());
         }
         self.wildcard_active
     }
 
+    /// Whether the code now running is the main program's own, whose
+    /// globals the outermost dictionary is, after that dictionary was
+    /// written through.
+    fn outer_shadow_applies(&self) -> bool {
+        self.outer_globals_source.as_deref() == Some(self.source.as_ref())
+    }
+
     fn wildcard_value(&self, name: &str) -> Option<Value> {
+        // A name written into the program's own globals dictionary after
+        // globals() handed it out stands over a builtin of the same
+        // spelling, exactly as a name the text itself had bound would.
+        if self.outer_shadow_applies() {
+            if let Some(book) = &self.outer_book {
+                if let Some(held) = book_entry(book, name) {
+                    let settled = held.contents();
+                    if !matches!(settled, Value::Blank) { return Some(settled); }
+                }
+            }
+        }
         if self.changed_builtin_scopes.contains(&self.source) {
             if let Some((_, owner)) = self.module_slots.get(&self.source) {
                 if let Some(Value::Object(namespace)) = self.modules.get(owner) {
@@ -26809,8 +26834,19 @@ impl Engine<'_> {
     // A dictionary write can replace any native binding, including through
     // an existing shared cell. Conservatively invalidate this namespace.
     fn globals_callable_changed(&mut self, cell: &Rc<RefCell<Value>>) {
-        let Some(owner) = self.globals_module_of(cell) else { return };
         if !self.lang.shadow_builtins { return; }
+        // The program's own globals dictionary is not filed as any
+        // module's, but a write into it can still stand a name over a
+        // builtin; reading a name consults it while this stands.
+        if self.outer_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
+            // The outermost dictionary is the main program's own,
+            // however far from it the write is made; its reader is the
+            // code written in the file the run began from.
+            self.outer_globals_source = Some(self.root_source.clone());
+            self.wildcard_file = None;
+            return;
+        }
+        let Some(owner) = self.globals_module_of(cell) else { return };
         if self.lang.names_module.first().is_some_and(|word| word == &owner) {
             self.changed_builtins.extend(self.lang.builtins.keys().cloned());
         }
