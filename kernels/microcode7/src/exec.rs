@@ -9863,10 +9863,8 @@ impl<'a> Machine<'a> {
             // Each proxy retains a separate allocation around the live dictionary.
             if let Some(owner) = raw { return Ok(Value::Window(Rc::new(owner.as_ref().clone()), 'm')); }
         }
-        // Any other member of a window is bound to the window itself;
-        // settling it into the row it shows would weigh that row's
-        // members instead of the window's own.
-        if Self::window_inside(&receiver).is_some() {
+        // Reduction must retain the window rather than its materialized row.
+        if operation == "callable_reduce_ex" && Self::window_inside(&receiver).is_some() {
             return Ok(Value::Member(Rc::new(receiver), operation.to_string()));
         }
         if ["numerator", "denominator", "real", "imag"].contains(&operation) {
