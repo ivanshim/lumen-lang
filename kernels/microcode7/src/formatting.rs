@@ -87,6 +87,8 @@ impl Layout<'_> {
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
+            // A mapping proxy is quoted as the proxy it is.
+            Value::Window(_, 'm') => format!("mappingproxy({})", self.quote(&item.proxy_pairs(), escaped)?),
             // A text is quoted by the hand that quotes it everywhere
             // else, so that a field and the representation builtin
             // agree on a letter that cannot be shown as itself.
@@ -141,6 +143,8 @@ impl Layout<'_> {
     }
 
     fn plain(&self, item: &Value) -> Answer {
+        // What a mapping proxy writes for `str` is the mapping it reads.
+        if let Value::Window(_, 'm') = item { return self.quote(&item.proxy_pairs(), false); }
         if let Value::Text(s) = item { Ok(s.to_string()) } else { self.quote(item, false) }
     }
 
@@ -215,6 +219,7 @@ impl Layout<'_> {
 
     pub fn present(&self, item: &Value, pattern: &str, convert: &str) -> Answer {
         if let Value::Shared(held) | Value::Mutable(held, _) = item { return self.present(&held.borrow(), pattern, convert); }
+        if let (Value::Window(_, 'm'), false) = (item, matches!(convert, "r" | "a")) { return self.present(&item.proxy_pairs(), pattern, convert); }
         if !convert.is_empty() {
             let rendered = match convert {
                 "a" => self.quote(item, true)?, "r" => self.quote(item, false)?, "s" => self.plain(item)?,

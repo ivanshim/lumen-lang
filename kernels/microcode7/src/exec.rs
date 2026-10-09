@@ -18701,7 +18701,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember);
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Quoted | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
@@ -29485,7 +29485,7 @@ impl Machine<'_> {
                 // A reading of the map itself is quoted as the map is,
                 // under the name CPython gives it.
                 if let Some(owner) = &window_owner {
-                    let rendering = self.object_words(owner, true)?;
+                    let rendering = if matches!(owner, Value::Window(_, 'm')) { format!("mappingproxy({})", self.object_words(&owner.proxy_pairs(), true)?) } else { self.object_words(owner, true)? };
                     return Ok(Value::text(&format!("mappingproxy({rendering})")));
                 }
                 if let Value::Wrapped(3, parts) = &input[0] {

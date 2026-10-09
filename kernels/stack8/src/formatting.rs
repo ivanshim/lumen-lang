@@ -132,7 +132,22 @@ impl Writer<'_> {
         self.lang.fmt_text_format_kinds.get(at).map_or("", String::as_str)
     }
 
+    /// The dictionary a mapping proxy reads, where the value is one (however it is held).
+    fn proxied(value: &Value) -> Option<Value> {
+        match value {
+            Value::View(view) if view.1 == "mapping" => Some(view.0.proxy_dictionary()),
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::proxied(&cell.borrow()),
+            _ => None,
+        }
+    }
+
+    /// A value written for `str`: what a mapping proxy writes is the mapping it reads.
+    fn written(&self, value: &Value) -> Result<String> {
+        match Self::proxied(value) { Some(dictionary) => self.representation(&dictionary, false), None => self.representation(value, false) }
+    }
+
     pub fn representation(&self, value: &Value, ascii: bool) -> Result<String> {
+        if let Some(dictionary) = Self::proxied(value) { return Ok(format!("mappingproxy({})", self.representation(&dictionary, ascii)?)); }
         if matches!(value, Value::Collection(..) | Value::View(_)) { return self.representation(&value.contents(), ascii); }
         match value {
             // A text is written as the representation builtin writes
@@ -179,11 +194,18 @@ impl Writer<'_> {
     }
 
     pub fn field(&self, value: &Value, spec: &str, conversion: &str) -> Result<String> {
+        // A mapping proxy is written as the proxy it is when quoted, and as the mapping it reads otherwise.
+        if let Some(dictionary) = Self::proxied(value) {
+            return match conversion {
+                "r" | "a" => self.field(&Value::text(&self.representation(value, conversion == "a")?), spec, ""),
+                _ => self.field(&dictionary, spec, conversion),
+            };
+        }
         if matches!(value, Value::Bond(_) | Value::Collection(..) | Value::View(_)) { return self.field(&value.contents(), spec, conversion); }
         if !conversion.is_empty() {
             let text = match conversion {
                 "r" | "a" => self.representation(value, conversion == "a")?,
-                "s" => match value { Value::Text(s) => s.to_string(), _ => self.representation(value, false)? },
+                "s" => match value { Value::Text(s) => s.to_string(), _ => self.written(value)? },
                 _ => return Err(self.fault("ext.text.format.conversion", &[conversion])),
             };
             return self.field(&Value::text(&text), spec, "");
@@ -339,7 +361,7 @@ impl Writer<'_> {
     }
 
     fn representation_plain(&self, value: &Value) -> Result<String> {
-        match value { Value::Text(s) => Ok(s.to_string()), Value::Real(_) => Ok(value.display(&self.words)), _ => self.representation(value, false) }
+        match value { Value::Text(s) => Ok(s.to_string()), Value::Real(_) => Ok(value.display(&self.words)), _ => self.written(value) }
     }
 
     fn unknown(&self, value: &Value, code: char) -> String {
@@ -639,7 +661,7 @@ impl Writer<'_> {
                         return Err(self.fault("ext.op.rem.format.byte", &[&location, self.kind(value)]));
                     }
                     Answer::Unsaid if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
-                    Answer::Unsaid => self.representation(value, code == 'a')?,
+                    Answer::Unsaid => if code == 's' { self.written(value)? } else { self.representation(value, code == 'a')? },
                     _ => unreachable!(),
                 };
                 let shown: String = shown.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();

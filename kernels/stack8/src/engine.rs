@@ -8147,6 +8147,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
+        // A mapping proxy is written as the mapping it reads, named when it is quoted.
+        if let Some(reading) = Self::proxy_reading(value) {
+            let inner = self.special_text(&reading, representation)?;
+            return Ok(if representation { format!("mappingproxy({inner})") } else { inner });
+        }
         if let Value::Native(Builtin::UnicodeDecomposition, _) = value {
             if let Some(title) = self.lang.decomposition_callable.first() {
                 return Ok(Value::Native(Builtin::UnicodeDecomposition, Rc::from(title.as_str())).repr(&self.wording()));
@@ -12362,9 +12367,9 @@ impl<'a> Engine<'a> {
                 // A counted row keeps its bounds rather than its places,
                 // and hands each of them over by name.
                 // The special methods a mapping proxy answers to work on what it reads.
-                proxy @ Value::View(_) if matches!(&proxy, Value::View(w) if w.1 == "mapping")
-                    && matches!(name.as_ref(), "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") =>
-                    Value::ValueMethod(Rc::new((proxy, format!("mapping{name}")))),
+                held if matches!(name.as_ref(), "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__")
+                    && Self::view_in(&held).is_some_and(|view| matches!(&view, Value::View(w) if w.1 == "mapping")) =>
+                    Value::ValueMethod(Rc::new((Self::view_in(&held).expect("the proxy"), format!("mapping{name}")))),
                 Value::Counted(row) if self.range_member_named(name).is_some() => match self.range_member_named(name).expect("the member") {
                     0 => Value::of_big(row.start.clone()),
                     1 => Value::of_big(row.stop.clone()),
@@ -12796,7 +12801,6 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
-                let subject = if !self.lang.class_builder.is_empty() { self.what_it_spells(subject) } else { subject };
                 // A special method sent to a mapping proxy works on the mapping it reads.
                 if matches!(name.as_ref(), "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") {
                     if let Some(proxy @ Value::View(_)) = Self::view_in(&subject).filter(|view| matches!(view, Value::View(w) if w.1 == "mapping")) {
@@ -12807,6 +12811,7 @@ impl<'a> Engine<'a> {
                         return Ok(());
                     }
                 }
+                let subject = if !self.lang.class_builder.is_empty() { self.what_it_spells(subject) } else { subject };
                 if let Value::Generator(held) = subject {
                     let opened = self.call_items(args)?;
                     if opened.iter().any(|(name, _)| name.is_some()) { return Err(self.lang.yield_unsupported[0].clone().into()); }
@@ -19703,6 +19708,8 @@ impl<'a> Engine<'a> {
                 if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint | Builtin::InstanceOf) {
                     if let Some(view) = Self::view_in(value) { *value = view; continue; }
                 }
+                // A mapping proxy is written as the proxy it is, named when it is quoted.
+                if matches!(builtin, Builtin::Repr | Builtin::Ascii) && Self::proxy_reading(value).is_some() { continue; }
                 *value = value.contents();
             }
         }
@@ -24193,7 +24200,7 @@ impl Engine<'_> {
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
         let living = if b == Builtin::Iter && args.len() == 1 { self.living_source(&args[0]) } else { None };
-        let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
+        let window = match (b, args.first().and_then(Self::view_in)) { (Builtin::Repr, Some(Value::View(view))) => Some(view), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one: the value is kept before its cell is opened.
@@ -24212,6 +24219,8 @@ impl Engine<'_> {
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
                     && matches!(value.contents(), Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) { continue; }
                 let lazy_source = match b { Builtin::Enumerate => position == 0, Builtin::Zip => true, Builtin::Map => position != 0, Builtin::Filter => position == 1, _ => false };
+                // A mapping proxy is quoted as the proxy it is.
+                if b == Builtin::Repr && Self::proxy_reading(value).is_some() { continue; }
                 if !lazy_source { *value = value.contents(); }
             }
         }

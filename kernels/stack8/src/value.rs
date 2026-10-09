@@ -938,6 +938,16 @@ impl Value {
         match self {
             Value::Collection(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
             Value::View(view) => {
+                // A reading of a mapping is that mapping, for whatever is asked of it unnamed.
+                if view.1 == "mapping" {
+                    let whole = view.0.proxy_dictionary();
+                    if let Value::Map(pairs) = &whole {
+                        if pairs.iter().any(|(_, held)| matches!(held.contents(), Value::Blank | Value::Gap)) {
+                            return Value::Map(Rc::new(pairs.iter().filter(|(_, held)| !matches!(held.contents(), Value::Blank | Value::Gap)).cloned().collect()));
+                        }
+                    }
+                    return whole;
+                }
                 let Value::Map(pairs) = view.0.proxy_dictionary() else { return Value::array(Vec::new()); };
                 // A key kept beside its hash is handed out as the thing
                 // itself: the hash is the map's own reckoning of where
