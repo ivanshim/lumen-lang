@@ -17,11 +17,17 @@ class _BuiltinOperator:
 
     def __init__(self, name, func):
         self.__name__ = name
+        self.__qualname__ = name
         self.__doc__ = getattr(func, '__doc__', None)
         self._func = func
 
     def __call__(self, *args, **kwargs):
         return self._func(*args, **kwargs)
+
+    def __reduce__(self):
+        # A C builtin pickles by name and is re-found in its module.  Return
+        # the name so ``pickle`` looks this callable up as ``_operator.add``.
+        return self.__name__
 
     def __repr__(self):
         return '<built-in function ' + self.__name__ + '>'
