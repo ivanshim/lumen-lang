@@ -10283,3 +10283,25 @@
 {"t":"2026-10-09T16:21:40Z","event":"review-queued","job":"dsflash-hmac","review":"review-auto-dsflash-hmac-1621"}
 {"t":"2026-10-09T16:23:37Z","event":"review-started","job":"dsflash-hmac","review":"review-auto-dsflash-hmac-1621"}
 {"t":"2026-10-09T16:27:35Z","event":"exited","job":"review-auto-dsflash-hmac-1621","code":0}
+{"t":"2026-10-09T16:34:29Z","event":"returned","job":"dsflash-hmac","review":"review-auto-dsflash-hmac-1621","commit":"0440ecce1","round":2,"model":"deepseek-flash","note":"(2nd at DS Flash -> FAILED; integrity ok; clean check 1196/0 gates ok; hmac 42/100->62/140 both, 0 fail; return-1 points fixed; introduced: autospec skipfirst strips real args of staticmethod/bound classmethod) -> returns/dsflash-hmac.md"}
+{"t":"2026-10-09T16:34:30Z","event":"handed-over","job":"dsflash-hmac","to":"claude-haiku-5-5","note":"2 DS Flash returns; DS Pro busy (dsflash-frame-dspro), Haiku free -> brief-dsflash-hmac-haiku.md, same branch/worktree, head 0440ecce1; started claude-run.sh dsflash-hmac-haiku"}
+{"t":"2026-10-09T16:34:30Z","event":"started","job":"dsflash-hmac-haiku","model":"claude-haiku-5-5","via":"claude-run"}
+{"t":"2026-10-09T16:34:38Z","event":"returned","job":"dsflash-dunder-all","review":"review-auto-dsflash-dunder-all-1606","commit":"3fe37578d","round":1,"model":"deepseek-flash","note":"(1st; integrity ok; clean check 1196/0 gates ok; real export/exec fixes; official test___all__ walk is empty (tests/ has no packages), real lib walk still fails both kernels: concurrent.futures.process, xml.parsers missing) -> returns + or-resume queued"}
+{"t":"2026-10-09T16:34:38Z","event":"queued","job":"dsflash-dunder-all","model":"deepseek-flash","line":"or-resume dsflash-dunder-all deepseek-flash session-6f2759db-9ad8-461e-bf6a-2c596809cc86","note":"1st return resume"}
+{"t":"2026-10-09T16:34:38Z","event":"returned","job":"dsflash-unparse","review":"review-auto-dsflash-unparse-1606","commit":"89fe32dc0","round":1,"model":"deepseek-flash","note":"(1st; integrity ok; clean check 1196/0 gates ok; unparse 66->77/79, ast 139->142/217; invalid-escape SyntaxWarning missing, roundtrip corpus empty, introduced: f-string debug = accepts invalid syntax) -> returns + or-resume queued"}
+{"t":"2026-10-09T16:34:38Z","event":"queued","job":"dsflash-unparse","model":"deepseek-flash","line":"or-resume dsflash-unparse deepseek-flash session-7ad676bb-18e3-4dfe-9cd0-2dd0e642f295","note":"1st return resume"}
+{"t":"2026-10-09T16:34:41Z","event":"resumed","job":"dsflash-dunder-all","model":"deepseek-flash","session":"session-6f2759db-9ad8-461e-bf6a-2c596809cc86"}
+{"t":"2026-10-09T16:35:21Z","event":"quota","codex_week_used":49,"codex_credits":0,"claude_week_used":23,"claude_5h_used":8,"deepseek_usd":246.19}
+{"t":"2026-10-09T16:35:26Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":49,"expected":51.8,"gap":-2.8,"status":"ok"}
+{"t":"2026-10-09T16:35:39Z","event":"checkin","status":"done","actions":"RETURN dsflash-hmac (2nd DS Flash -> failed; autospec strips staticmethod/bound classmethod args) -> handed over to Haiku 5.5, brief-dsflash-hmac-haiku.md, claude-run started; RETURN dsflash-dunder-all (1st; empty official walk, concurrent.futures.process/xml.parsers missing) -> returns + or-resume queued (session 6f2759db); RETURN dsflash-unparse (1st; invalid-escape SyntaxWarning, empty roundtrip corpus, f-string debug = accepts invalid syntax) -> returns + or-resume queued (session 7ad676bb); prune-merged 0MB (box disk 79%)","notes":"DS Flash 7 running + 2 resumes queued, 3 idle: no fresh Flash-sized in-scope subject; DS Pro 1/1 frame-dspro; Haiku 1/1 hmac-haiku; Sonnet 1/1 bigmem-sonnet; Sol 11 running incl integrate-21h, 4 Sol lines queued; Astra doctest-astra; box load 7.5, 12.7G avail, disk 79%; Mac disk 87%; Codex week 49%; Claude 5h 8%/week 23%; luna gap -2.8 ok, 1 alert expected source; no open PR"}
+{"t":"2026-10-09T16:36:03Z","event":"exited","job":"dsflash-longexp-sol","code":0}
+{"t":"2026-10-09T16:36:54Z","event":"finished","job":"dsflash-longexp-sol","exit_time":"2026-10-09T16:36:03Z"}
+{"t":"2026-10-09T16:36:54Z","event":"review-queued","job":"dsflash-longexp-sol","review":"review-auto-dsflash-longexp-sol-1636"}
+{"t":"2026-10-09T16:37:21Z","event":"exited","job":"dsflash-interactive","code":0}
+{"t":"2026-10-09T16:38:22Z","event":"exited","job":"stdlib-zipimport","code":0}
+{"t":"2026-10-09T16:39:42Z","event":"resumed","job":"dsflash-unparse","model":"deepseek-flash","session":"session-7ad676bb-18e3-4dfe-9cd0-2dd0e642f295"}
+{"t":"2026-10-09T16:42:02Z","event":"finished","job":"dsflash-interactive","exit_time":"2026-10-09T16:37:21Z"}
+{"t":"2026-10-09T16:42:02Z","event":"review-queued","job":"dsflash-interactive","review":"review-auto-dsflash-interactive-1642"}
+{"t":"2026-10-09T16:42:07Z","event":"finished","job":"stdlib-zipimport","exit_time":"2026-10-09T16:38:22Z"}
+{"t":"2026-10-09T16:42:07Z","event":"review-queued","job":"stdlib-zipimport","review":"review-auto-stdlib-zipimport-1642"}
+{"t":"2026-10-09T16:44:44Z","event":"resumed","job":"dsflash-genericalias-sol","model":"gpt-6.1-sol"}
