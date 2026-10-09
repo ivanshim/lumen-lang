@@ -3301,7 +3301,10 @@ def _tree_signature(value):
                 fields, attributes = tuple(value._fields), tuple(value._attributes)
                 signature.append((kind, fields, attributes))
                 for name in reversed(fields + attributes):
-                    pending.append((getattr(value, name, None), False))
+                    present = hasattr(value, name)
+                    signature.append((name, present))
+                    if present:
+                        pending.append((getattr(value, name), False))
             else:
                 signature.append((kind, len(value)))
                 for child in reversed(value):
