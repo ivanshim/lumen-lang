@@ -6,6 +6,8 @@ import sys
 from builtins import _buffer_view
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
+_SSIZE_MAX = sys.maxsize
+_SSIZE_MIN = -_SSIZE_MAX - 1
 BlockingIOError = BlockingIOError
 
 class UnsupportedOperation(OSError, ValueError):
@@ -33,13 +35,13 @@ def _size(value):
         if not hasattr(type(value), '__index__'):
             raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
         result = _index(value)
-    if result > sys.maxsize or result < -sys.maxsize - 1:
+    if result > _SSIZE_MAX or result < _SSIZE_MIN:
         raise OverflowError("cannot fit '" + type(value).__name__ + "' into an index-sized integer")
     return result
 
 def _ssize(value):
     value = _index(value)
-    if value > sys.maxsize or value < -sys.maxsize - 1:
+    if value > _SSIZE_MAX or value < _SSIZE_MIN:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return value
 
@@ -238,7 +240,8 @@ class BytesIO(_BufferedIOBase):
             raise ValueError('I/O operation on closed file.')
     def __init__(self, initial_bytes=None):
         if hasattr(self, '_data'):
-            self._check_exports()
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
         self._data = bytearray() if initial_bytes is None else bytearray(_buffer(initial_bytes))
         self._pos = 0
         self._closed = False
@@ -257,7 +260,8 @@ class BytesIO(_BufferedIOBase):
         return view
     def close(self):
         if not self._closed:
-            self._check_exports()
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
             self._data.clear()
             self._closed = True
     def readable(self):
@@ -267,7 +271,11 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        size = _size(size)
+        if type(size) is int:
+            if size > _SSIZE_MAX or size < _SSIZE_MIN:
+                raise OverflowError("cannot fit 'int' into an index-sized integer")
+        else:
+            size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file.')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
@@ -287,7 +295,11 @@ class BytesIO(_BufferedIOBase):
             return len(data)
     readinto1 = readinto
     def readline(self, size=-1):
-        size = _size(size)
+        if type(size) is int:
+            if size > _SSIZE_MAX or size < _SSIZE_MIN:
+                raise OverflowError("cannot fit 'int' into an index-sized integer")
+        else:
+            size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file.')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
@@ -305,11 +317,12 @@ class BytesIO(_BufferedIOBase):
         if type(b) is bytes:
             if self._closed:
                 raise ValueError('I/O operation on closed file.')
-            self._check_exports()
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
             n = len(b)
             if not n:
                 return 0
-            if self._pos > sys.maxsize - n:
+            if self._pos > _SSIZE_MAX - n:
                 raise OverflowError('new position too large')
             if self._pos > len(self._data):
                 self._data.extend(b'\0' * (self._pos - len(self._data)))
@@ -321,12 +334,13 @@ class BytesIO(_BufferedIOBase):
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
             if self._closed:
                 raise ValueError('I/O operation on closed file.')
-            self._check_exports()
+            if _export(self._data, True):
+                raise BufferError('Existing exports of data: object cannot be re-sized')
             data = view.tobytes()
             n = len(data)
             if not n:
                 return 0
-            if self._pos > sys.maxsize - n:
+            if self._pos > _SSIZE_MAX - n:
                 raise OverflowError('new position too large')
             if self._pos > len(self._data):
                 self._data.extend(b'\0' * (self._pos - len(self._data)))
@@ -347,7 +361,7 @@ class BytesIO(_BufferedIOBase):
             pos += len(self._data)
         else:
             raise ValueError('invalid whence (' + str(whence) + ', should be 0, 1 or 2)')
-        if pos > sys.maxsize:
+        if pos > _SSIZE_MAX:
             raise OverflowError('new position too large')
         self._pos = max(0, pos)
         return self._pos
@@ -359,7 +373,8 @@ class BytesIO(_BufferedIOBase):
         size = self._pos if size is None else _ssize(size)
         if self._closed:
             raise ValueError('I/O operation on closed file.')
-        self._check_exports()
+        if _export(self._data, True):
+            raise BufferError('Existing exports of data: object cannot be re-sized')
         if size < 0:
             raise ValueError('negative size value ' + str(size))
         del self._data[size:]
