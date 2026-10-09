@@ -766,9 +766,6 @@ impl<'a> Engine<'a> {
         Ok(chosen)
     }
 
-
-
-
     /// Plan every affected C3 order without publishing a partial hierarchy.
     fn planned_rebase(&self, class: &Rc<Class>, bases: &[Rc<Class>]) -> Flow<Vec<(Rc<Class>, Vec<Rc<Class>>)>> {
         let mut affected = vec![class.clone()];
@@ -785,6 +782,7 @@ impl<'a> Engine<'a> {
                 .any(|parent| affected.iter().any(|pending| Rc::ptr_eq(pending, parent))))
                 .ok_or_else(|| self.class_word("mro.amiss").to_owned())?;
             let current = affected.remove(ready);
+            // shortcut: custom MRO callbacks need a transactional callback protocol before rebasing.
             if current.mro_adopted.get() { return Err("TypeError: rebasing a class with a custom mro is not supported".into()); }
             let parents = if Rc::ptr_eq(&current, class) { bases.to_vec() } else { current.direct.borrow().clone() };
             let mut lines: Vec<Vec<Rc<Class>>> = parents.iter().map(|parent| {
@@ -1122,9 +1120,7 @@ impl<'a> Engine<'a> {
         }
         letters.all(|c| c == '_' || c.is_alphanumeric())
     }
-    /// Where a slot's value is kept in a thing: under the slot's name and
-    /// the class that declared it. A thing not of that class has no such
-    /// place, and the descriptor says so.
+    /// A descriptor checks its owner before addressing the stable physical slot.
     pub(super) fn slot_place(&self, thing: &Value, parts: &[Value]) -> Flow<String> {
         let (Value::Object(o), Some(Value::Class(owner))) = (thing, parts.get(1)) else { return Err(self.class_refusal()) };
         let word = parts[0].plain();
@@ -3074,10 +3070,22 @@ impl<'a> Engine<'a> {
             }
         }
         let dictionary = if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) };
-        let slots: Vec<_> = o.fields.borrow().iter().filter_map(|(key, value)| {
-            let slot = key.strip_prefix("\0slot:")?.rsplit_once(':')?.0;
-            (!matches!(value, Value::Blank)).then(|| (Value::text(slot), value.clone()))
-        }).collect();
+        let mut slots = Vec::new();
+        let mut visited = Vec::new();
+        let fields = o.fields.borrow();
+        for owner in Self::class_order(&o.class_now()) {
+            let layout = owner.slot_layout.borrow();
+            let Some(names) = layout.as_ref() else { continue; };
+            let offset = owner.base.borrow().as_ref().map_or(0, |base| self.slot_count(base));
+            for (index, name) in names.iter().enumerate() {
+                if visited.contains(name) { continue; }
+                visited.push(name.clone());
+                let key = format!("\0slot:{}", offset + index);
+                if let Some((_, value)) = fields.iter().find(|(keyed, value)| keyed == &key && !matches!(value, Value::Blank)) {
+                    slots.push((Value::text(name), value.clone()));
+                }
+            }
+        }
         if slots.is_empty() { dictionary }
         else { Value::tuple(vec![dictionary, Value::Map(Rc::new(slots.into()))]) }
     }
@@ -5374,15 +5382,7 @@ impl<'a> Engine<'a> {
                     let same_slots = self.same_slot_layout(&old, &next);
                     if Self::own_class_value(&old, self.class_word("module")).is_none() || Self::own_class_value(&next, self.class_word("module")).is_none()
                         || Self::kind_beneath(&old) != Self::kind_beneath(&next) || (!same_slots && (self.slots_named(&old) || self.slots_named(&next))) {
-                        return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
-                    }
-                    // What the slots hold is kept under the class that
-                    // declares them, so it moves to the new class's keys.
-                    if same_slots {
-                        let (was, now) = (format!(":{:p}", Rc::as_ptr(&old)), format!(":{:p}", Rc::as_ptr(&next)));
-                        for (key, _) in o.fields.borrow_mut().iter_mut() {
-                            if key.starts_with("\0slot:") && key.ends_with(&was) { key.truncate(key.len() - was.len()); key.push_str(&now); }
-                        }
+                        return Err(format!("TypeError: __class__ assignment: '{}' object layout differs from '{}'", next.name, old.name).into());
                     }
                     *o.replacement_class.borrow_mut() = Some(next);
                     return Ok(Value::Null);
@@ -5770,7 +5770,7 @@ impl<'a> Engine<'a> {
         }
     }
     fn slots_named(&self,c:&Class)->bool {
-        Self::own_class_value(c,self.class_word("slots")).is_some()
+        c.declares_slots
             || c.direct.borrow().iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
     }
     /// Weak storage belongs to the instance layout, independently of its

@@ -869,6 +869,7 @@ impl<'a> Machine<'a> {
                 item.parents.borrow().iter().all(|base| !waiting.iter().any(|item| Rc::ptr_eq(item, base)))
             }).ok_or_else(|| self.detail("mro.amiss").to_owned())?;
             let item = waiting.remove(index);
+            // shortcut: support custom order callbacks only with rollback-safe rebasing.
             if item.order_supplied.get() { return Err(String::from("TypeError: rebasing a class with a custom mro is not supported").into()); }
             let parents = match Rc::ptr_eq(&item, target) { true => replacements.to_vec(), false => item.parents.borrow().clone() };
             let mut queues = Vec::new();
@@ -3724,10 +3725,25 @@ impl<'a> Machine<'a> {
         let Value::Thing(t)=value else{return Value::Nil};
         let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
         let ordinary = if pairs.is_empty() { Value::Nil } else { Value::Dict(Rc::new(pairs.into())) };
+        fn preceding_slots(parent: &Blueprint) -> usize {
+            let own = parent.instance_slots.borrow().as_ref().map_or(0, Vec::len);
+            own + parent.under.borrow().as_ref().map_or(0, |above| preceding_slots(above))
+        }
         let mut slotted = Vec::new();
-        for (key, held) in t.holds.borrow().iter() {
-            if let Some(named) = key.strip_prefix("\0slot:").and_then(|rest| rest.rsplit_once(':')) {
-                if !matches!(held, Value::Unset) { slotted.push((Value::text(named.0), held.clone())); }
+        let mut named = std::collections::HashSet::new();
+        let held = t.holds.borrow();
+        for owner in Self::resolution_order(&t.blueprint()) {
+            let names = owner.instance_slots.borrow();
+            if let Some(names) = names.as_ref() {
+                let start = owner.under.borrow().as_ref().map_or(0, |above| preceding_slots(above));
+                for (position, name) in names.iter().enumerate() {
+                    if !named.insert(name.clone()) { continue; }
+                    let address = format!("\0slot:{}", start + position);
+                    match held.iter().find(|entry| entry.0 == address) {
+                        Some((_, item)) if !matches!(item, Value::Unset) => slotted.push((Value::text(name), item.clone())),
+                        _ => (),
+                    }
+                }
             }
         }
         if slotted.is_empty() { ordinary } else { Value::tuple(vec![ordinary, Value::Dict(Rc::new(slotted.into()))]) }
@@ -5396,7 +5412,7 @@ impl<'a> Machine<'a> {
         }
     }
     fn slots_named(&self,b:&Blueprint)->bool {
-        if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
+        if b.has_slot_storage { return true; }
         b.parents.borrow().iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
     }
     /// A weak-reference slot is inherited even when a child declares no
@@ -5739,15 +5755,7 @@ impl<'a> Machine<'a> {
                                 && Self::own_entry(&next, self.detail("module")).is_some()
                                 && Self::native_beneath(&previous) == Self::native_beneath(&next)
                                 && (alike || (!self.slots_named(&previous) && !self.slots_named(&next)));
-                            if !compatible { return Err("TypeError: __class__ assignment: object layout differs".to_owned().into()); }
-                            // The worth a slot keeps stands under the key of
-                            // the blueprint that declared it: move it over.
-                            if alike {
-                                let (was, now) = (format!(":{:p}", Rc::as_ptr(&previous)), format!(":{:p}", Rc::as_ptr(&next)));
-                                for entry in t.holds.borrow_mut().iter_mut() {
-                                    if entry.0.starts_with("\0slot:") && entry.0.ends_with(&was) { let cut = entry.0.len() - was.len(); entry.0.truncate(cut); entry.0.push_str(&now); }
-                                }
-                            }
+                            if !compatible { return Err(format!("TypeError: __class__ assignment: '{}' object layout differs from '{}'", next.name, previous.name).into()); }
                             t.reclassified.replace(Some(next));
                             return Ok(Value::Nil);
                         }
