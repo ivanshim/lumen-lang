@@ -603,6 +603,7 @@ impl<'a> Engine<'a> {
         let Value::Tuple(listed) = bases_value else { return Err(format!("TypeError: type.__new__() argument 2 must be tuple, not {}", plain[2].core_kind()).into()) };
         let namespace = plain[3].contents();
         let namespace = Self::worth_of(&namespace).map_or(namespace.clone(), |v| v.contents());
+        let namespace = if Self::proxy_reading(&plain[3]).is_some() { Value::Null } else { namespace };
         let Value::Map(entries) = namespace else { return Err(format!("TypeError: type.__new__() argument 3 must be dict, not {}", plain[3].core_kind()).into()) };
         let mut parents = Vec::new();
         for b in listed.iter() {

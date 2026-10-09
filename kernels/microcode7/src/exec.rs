@@ -14535,7 +14535,7 @@ impl<'a> Machine<'a> {
     fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
         // A namespace is spread by the pairs it gives as a map, as `dict` reads it.
         let converted;
-        let item = if expanded && matches!(item.settled(), Value::Attributes(_) | Value::Window(..)) {
+        let item = if expanded && (matches!(item.settled(), Value::Attributes(_)) || Self::window_inside(item).is_some()) {
             converted = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(item))?;
             &converted
         } else { item };
@@ -16396,7 +16396,7 @@ impl<'a> Machine<'a> {
         let made = matches!(op, Prim::Length | Prim::Iterator | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Dictionary
             | Prim::SortedValues | Prim::Ordered | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue
             | Prim::Least | Prim::Greatest | Prim::Total | Prim::Listed | Prim::Truthful | Prim::NextItem);
-        let read = matches!(op, Prim::Backwards | Prim::Hashed | Prim::AsText | Prim::Eq | Prim::Ne | Prim::Contains | Prim::Absent | Prim::At);
+        let read = matches!(op, Prim::Backwards | Prim::Hashed | Prim::AsText | Prim::Say | Prim::Out | Prim::Eq | Prim::Ne | Prim::Contains | Prim::Absent | Prim::At);
         if !made && !read { return None; }
         let swapped: Vec<Option<Value>> = v.iter().map(|value| if made { Self::proxied_mapping(value) } else { Self::proxy_reading(value) }).collect();
         if swapped.iter().all(Option::is_none) { return None; }
@@ -18701,7 +18701,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Quoted | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField);
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Quoted | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
@@ -19389,7 +19389,7 @@ impl<'a> Machine<'a> {
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
                     let spread_dict;
-                    let v1 = if expanded && matches!(v[1].settled(), Value::Attributes(_) | Value::Window(..)) {
+                    let v1 = if expanded && (matches!(v[1].settled(), Value::Attributes(_)) || Self::window_inside(&v[1]).is_some()) {
                         spread_dict = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(&v[1]))?;
                         spread_dict.settled()
                     } else { v[1].clone() };
