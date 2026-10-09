@@ -3777,8 +3777,15 @@ impl<'a> Machine<'a> {
     fn blueprint_annotation_values(&mut self, b: &Rc<Blueprint>, symbolic: bool) -> Res {
         let mut pairs=Vec::new();
         // The entry is kept in a cell, as the blueprint's members are; keys
-        // and routines alternate along it.
-        if let Some(Value::Vector(row))=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled()) {
+        // and routines alternate along it. A blueprint rebuilt from its own
+        // namespace keeps only the public adapter, so the row is read from
+        // that as well.
+        let row=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled())
+            .or_else(|| Self::own_entry(b, "__annotate_func__").and_then(|kept| match kept.settled() {
+                Value::Wrapped(44, contents) => contents.first().map(|first| first.settled()),
+                _ => None,
+            }));
+        if let Some(Value::Vector(row))=row {
             for pair in row.chunks(2) {
                 let [key,worth]=pair else{break};
                 let worth = worth.settled();

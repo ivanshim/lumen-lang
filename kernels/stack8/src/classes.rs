@@ -5061,8 +5061,14 @@ impl<'a> Engine<'a> {
         self.class_annotation_values(c, false)
     }
     fn class_annotation_values(&mut self, c: &Rc<Class>, forward: bool) -> Flow<Value> {
-        // The entry stands in a cell, as a class's members do.
-        let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
+        // The entry stands in a cell, as a class's members do; a class
+        // rebuilt from its own namespace keeps only the public adapter,
+        // so the row is read from that as well.
+        let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents())
+            .or_else(|| c.shared.borrow().iter().find(|(n,_)|n=="__annotate_func__").and_then(|(_,v)| match v.contents() {
+                Value::Adapter(parts) if parts.0 == 44 => parts.1.first().map(|first| first.contents()),
+                _ => None,
+            }));
         let mut pairs=Vec::new();
         if let Some(Value::Array(row))=kept {
             for pair in row.chunks(2) {
