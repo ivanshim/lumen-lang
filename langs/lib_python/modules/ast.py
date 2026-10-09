@@ -4078,11 +4078,12 @@ def _compile_source(tree, mode):
         raise ValueError('compile(): invalid mode')
     if not isinstance(tree, expected):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
-    _validate_node(tree)
-    _validate_contexts(tree)
     original = _unchanged_source(tree, mode)
     if original is not None:
+        # An unchanged parser-built tree is compiled and checked from its source.
         return original, ()
+    _validate_node(tree)
+    _validate_contexts(tree)
     from _ast_unparse import Unparser
     class CompilerUnparser(Unparser):
         def _write_constant(self, value):

@@ -2171,7 +2171,6 @@ impl<'a> Builder<'a> {
         }
         if scope.permits_async { flags |= 128; } else if generator { flags |= 32; }
         let mut literals: Vec<Value> = doc.iter().map(|s| Value::text(s)).collect();
-        if doc.is_none() && holds != Holds::Nothing { literals.push(Value::Nil); }
         let mut referenced = Vec::new();
         let mut suspension = false;
         if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }

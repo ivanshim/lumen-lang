@@ -13738,7 +13738,6 @@ fn same_constant(left: &Value, right: &Value) -> bool {
 
 fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], function: bool) -> (Vec<Value>, Vec<String>) {
     let mut constants: Vec<Value> = doc.as_ref().map(|text| Value::text(text)).into_iter().collect();
-    if function && doc.is_none() { constants.push(Value::Null); }
     let mut names = Vec::new();
     let mut constant_buckets: HashMap<i64, Vec<usize>> = HashMap::new();
     for (at, value) in constants.iter().enumerate() {
