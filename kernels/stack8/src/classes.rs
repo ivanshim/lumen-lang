@@ -166,13 +166,19 @@ impl<'a> Engine<'a> {
             if word == "bytearray" { c.shared.borrow_mut().push(("__release_buffer__".into(), self.held_kind_descriptor(word, "__release_buffer__"))); }
         }
         if let Some(sample) = self.kind_sample(word) {
-            let names = self.kind_member_names(&sample);
+            let mut names = self.kind_member_names(&sample);
+            let prefix = format!("{word}.");
+            names.extend(self.lang.builtins.keys().filter_map(|name| name.strip_prefix(&prefix).map(str::to_owned)));
+            names.sort(); names.dedup();
             for name in names {
                 if matches!(name.as_str(), "start" | "stop" | "step" | "real" | "imag" | "numerator" | "denominator" | "__reduce_ex__" | "__dir__") { continue; }
                 if word == "generator" && name == "__setstate__" { continue; }
                 if self.lang.builtins.get(word) == Some(&Builtin::Frozen) && self.lang.constructor.as_deref() == Some(name.as_str()) { continue; }
                 if c.shared.borrow().iter().any(|(key, _)| key == &name) { continue; }
                 if let Some(descriptor) = self.loose_kind_member(&Value::Class(c.clone()), &name) {
+                    let descriptor = if matches!(name.as_str(), "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__") {
+                        Self::adapter(29, vec![Value::text(word), Value::text(&name), Value::Flag(true)])
+                    } else { descriptor };
                     c.shared.borrow_mut().push((name, descriptor));
                 }
             }
@@ -1088,7 +1094,7 @@ impl<'a> Engine<'a> {
         if let Some(c) = &self.property_class { return c.clone(); }
         let root = self.root_class();
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ClassTool(11)).map(|(n, _)| n.clone()).unwrap_or_default();
-        let mut members = Vec::new();
+        let mut members = vec![(self.class_word("module").to_string(), Value::text(self.home_module_word()))];
         let workings = [("descriptor.get", 20), ("descriptor.set", 21), ("descriptor.delete", 22), ("property.getter", 23), ("property.deleter", 25), ("descriptor.name", 27)];
         for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
@@ -3045,11 +3051,13 @@ impl<'a> Engine<'a> {
             if w.0 == 29 && w.1.len() == 3 {
                 let class = match &subject { Some(Value::Object(object)) => object.class_now(), Some(Value::Class(owner)) => owner.clone(), _ => class };
                 let name = w.1[1].plain();
-                if Self::own_kind(&class).as_deref() == Some("dict") {
-                    let qualified = format!("dict.{name}");
-                    if let Some(operation) = self.lang.builtins.get(&qualified) { return Ok(Value::Native(*operation, Rc::from(qualified))); }
-                }
-                return Ok(Value::ValueMethod(Rc::new((Value::Class(class), name))));
+                let operation = match name.as_str() {
+                    "from_bytes" => "integer_from_bytes".to_string(),
+                    "__getformat__" => "float_getformat".to_string(),
+                    "fromhex" | "from_number" => format!("{}_{}", w.1[0].plain(), name),
+                    _ => name,
+                };
+                return Ok(Value::ValueMethod(Rc::new((Value::Class(class), operation))));
             }
             if (10..=12).contains(&w.0) && w.1.first().is_some_and(|owner| owner.plain() == self.class_word("root")) {
                 if let Some(receiver) = subject {
@@ -3258,6 +3266,24 @@ impl<'a> Engine<'a> {
         }
         if name == self.class_word("text_signature") {
             if let Some(header) = self.builtin_text_signature(&subject) { return Ok(Value::text(header)); }
+        }
+        if let Value::Adapter(descriptor) = &subject {
+            if (20..=27).contains(&descriptor.0) {
+                let operation = match descriptor.0 {
+                    20 => self.class_word("descriptor.get"), 21 => self.class_word("descriptor.set"),
+                    22 => self.class_word("descriptor.delete"), 23 => self.class_word("property.getter"),
+                    24 => self.lang.property_setter.first().map_or("", String::as_str),
+                    25 => self.class_word("property.deleter"), 26 => self.lang.constructor.as_deref().unwrap_or(""),
+                    _ => self.class_word("descriptor.name"),
+                };
+                if name == self.class_word("name") { return Ok(Value::text(operation)); }
+                let owner = self.lang.builtin_words.iter().find(|(op, _)| *op == Builtin::ClassTool(11)).map(|(_, word)| word.as_str()).unwrap_or("");
+                let qualified = format!("{owner}.{operation}");
+                if name == self.class_word("qualified") { return Ok(Value::text(&qualified)); }
+                if name == self.class_word("doc") { return Ok(self.builtin_kind_doc(&qualified).map_or(Value::Null, Value::text)); }
+                if name == "__objclass__" { return Ok(Value::Native(Builtin::ClassTool(11), Rc::from(owner))); }
+                if name == self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject])); }
+            }
         }
         if self.names_property_class(&subject) { let class = self.property_class(); return self.class_get(Value::Class(class), name, plain); }
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
@@ -3748,10 +3774,15 @@ impl<'a> Engine<'a> {
                     return Ok(Value::View(Rc::new((Value::Class(owner), "mapping".into()))));
                 }
                 let mut listed = self.kind_sample(&word).map_or_else(Vec::new, |sample| self.kind_member_names(&sample));
+                let prefix = format!("{word}.");
+                listed.extend(self.lang.builtins.keys().filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned)));
+                listed.sort(); listed.dedup();
                 if word.as_ref() == "type" { listed.extend([8, 17].iter().filter_map(|at| self.lang.class_special.get(*at).cloned())); }
                 if word.as_ref() == "dict" { listed.extend(self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == "fromkeys").map(|(key, _)| key.clone())); }
                 let mut pairs: Vec<(Value, Value)> = listed.iter().filter_map(|key| self.loose_kind_member(&subject, key).map(|held| {
-                    let raw = if word.as_ref() == "dict" && key == "fromkeys" { Self::adapter(29, vec![Value::text("dict"), Value::text(key), Value::Flag(true)]) } else { held };
+                    let raw = if matches!(key.as_str(), "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__") {
+                        Self::adapter(29, vec![Value::text(&word), Value::text(key), Value::Flag(true)])
+                    } else { held };
                     (Value::text(key), raw)
                 })).collect();
                 if matches!(word.as_ref(), "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {

@@ -10197,10 +10197,11 @@ impl<'a> Builder<'a> {
                 self.advance();
                 self.read_class(&t.lexeme)?
             }
-            // Resolve a shadowed owner before calling an entry whose full
-            // dotted spelling would otherwise select a native primitive.
+            // Resolve native descriptors through their owner, even for a dotted token.
             Shape::Bare if t.lexeme.split_once('.').is_some_and(|(kind, _)| {
-                table.prims.contains_key(t.lexeme.as_str()) && self.uses_bound_callable(kind)
+                table.prims.contains_key(t.lexeme.as_str())
+                    && (self.uses_bound_callable(kind) || table.flag("ext.syntax.call.bind_names") && table.spells("ext.stmt.class.builtin", kind)
+                        && !table.single("syntax.call.open").is_some_and(|open| self.tokens.get(self.pos + 1).is_some_and(|next| next.shape == Shape::Sign && next.lexeme == open)))
             }) => {
                 self.advance();
                 let (kind, entry) = t.lexeme.split_once('.').expect("native entry spelling");

@@ -80,6 +80,8 @@ impl Value {
             Self::Wrapped(122, _) => "function",
             Self::Wrapped(31, held) => match held.is_empty() { true => "wrapper_descriptor", false => "method-wrapper" },
             Self::Wrapped(78, _) => "wrapper_descriptor",
+            Self::Wrapped(50..=52 | 56, _) => "wrapper_descriptor",
+            Self::Wrapped(53..=55 | 57, _) => "method_descriptor",
             Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
             Self::Wrapped(133, _) => "method_descriptor",
             Self::Wrapped(134, _) => "builtin_function_or_method",

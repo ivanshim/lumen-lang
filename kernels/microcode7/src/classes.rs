@@ -175,13 +175,24 @@ impl<'a> Machine<'a> {
         }
         if let Some(representative) = self.kind_stand_in(word) {
             let owner = Value::Blueprint(kind.clone());
-            let known = self.native_directory(&representative);
+            let mut known = self.native_directory(&representative);
+            known.extend(self.table.prims.keys().filter_map(|qualified| {
+                let (family, member) = qualified.split_once('.')?;
+                (family == word).then(|| member.to_owned())
+            }));
+            known.sort_unstable(); known.dedup();
             let descriptors = known.into_iter().filter(|name|
                 !["real", "imag", "numerator", "denominator", "start", "stop", "step", "__dir__", "__reduce_ex__"].contains(&name.as_str())
                 && !(word == "generator" && name == "__setstate__")
                 && !(self.table.prims.get(word) == Some(&Prim::Unchanging) && self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(name.as_str()))
                 && !kind.shared.borrow().iter().any(|(key, _)| key == name))
-                .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| (name, entry))).collect::<Vec<_>>();
+                .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| {
+                    let member = match name.as_str() {
+                        "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__" => Self::wrap(60, vec![Value::text(word), Value::text(&name), Value::Flag(true)]),
+                        _ => entry,
+                    };
+                    (name, member)
+                })).collect::<Vec<_>>();
             kind.shared.borrow_mut().extend(descriptors);
         }
         if word == "dict" {
@@ -1225,7 +1236,8 @@ impl<'a> Machine<'a> {
         if let Some(b)=&self.property_kind{return b.clone();}
         let root=self.common_ancestor();
         let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(11)).map(|(w,_)|w.to_string()).unwrap_or_default();
-        let mut entries=Vec::new();
+        let home = self.table.single("ext.system.names.module").unwrap_or("builtins");
+        let mut entries=vec![(self.detail("module").to_string(), Value::text(home))];
         for (part,tag) in [("descriptor.get",50u8),("descriptor.set",51),("descriptor.delete",52),("property.getter",53),("property.deleter",55),("descriptor.name",57)] {
             entries.push((self.detail(part).to_owned(),Self::wrap(tag,Vec::new())));
         }
@@ -3003,11 +3015,11 @@ impl<'a> Machine<'a> {
             if parts.len() == 3 {
                 let owner = if let Some(Value::Thing(instance)) = &receiver { instance.blueprint() }
                     else if let Some(Value::Blueprint(class)) = &receiver { class.clone() } else { owner };
-                let qualified = format!("{}.{}", parts[0].bare(), parts[1].bare());
-                if Self::native_word(&owner).as_deref() == Some(parts[0].bare().as_str()) {
-                    if let Some(task) = self.table.prims.get(&qualified) { return Ok(Value::Intrinsic(*task, Rc::from(qualified))); }
-                }
-                return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), parts[1].bare()));
+                let mut operation = parts[1].bare();
+                if operation == "from_bytes" { operation = "integer_from_bytes".into(); }
+                else if operation == "__getformat__" { operation = "float_getformat".into(); }
+                else if matches!(operation.as_str(), "fromhex" | "from_number") { operation = [parts[0].bare(), operation].join("_"); }
+                return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), operation));
 
             }
             let key = parts[1].bare();
@@ -3872,6 +3884,22 @@ impl<'a> Machine<'a> {
                 None => (),
             }
         }
+        if let Value::Wrapped(tag @ 50..=57, _) = &value {
+            let member = match tag {
+                50 => self.detail("descriptor.get"), 51 => self.detail("descriptor.set"),
+                52 => self.detail("descriptor.delete"), 53 => self.detail("property.getter"),
+                54 => self.table.single("ext.stmt.class.property.setter").unwrap_or(""),
+                55 => self.detail("property.deleter"), 56 => self.rules.words_ext_stmt_class_constructor.first().map_or("", String::as_str),
+                _ => self.detail("descriptor.name"),
+            };
+            if key == self.detail("name") { return Ok(Value::text(member)); }
+            let owner = self.table.prims.iter().find(|(_, op)| **op == Prim::ClassWork(11)).map(|(word, _)| word.as_str()).unwrap_or("");
+            let title = [owner, member].join(".");
+            if key == self.detail("qualified") { return Ok(Value::text(&title)); }
+            if key == self.detail("doc") { return Ok(self.builtin_kind_doc(&title).map_or(Value::Nil, Value::text)); }
+            if key == "__objclass__" { return Ok(Value::Intrinsic(Prim::ClassWork(11), Rc::from(owner))); }
+            if key == self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value])); }
+        }
         if self.spells_property_kind(&value) { let owner = self.property_blueprint(); return self.read_class_member(Value::Blueprint(owner), key, direct); }
         let value = if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { value };
         if self.names_in_calls && !key.starts_with("__") {
@@ -4310,12 +4338,21 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Window(Rc::new(Value::Blueprint(actual)), 'm'));
                 }
                 let mut names = self.kind_stand_in(&word).map_or_else(Vec::new, |sample| self.native_directory(&sample));
+                names.extend(self.table.prims.keys().filter_map(|spelling| {
+                    let (family, member) = spelling.split_once('.')?;
+                    (family == word.as_ref()).then(|| member.to_string())
+                }));
+                names.sort_unstable(); names.dedup();
                 if word.as_ref() == "type" { let slots = self.rules.specials; names.extend([8, 17].iter().filter_map(|at| slots.get(*at).cloned())); }
                 if word.as_ref() == "dict" { names.extend(self.table.strings("ext.builtin.method.fromkeys").iter().cloned()); }
                 let mut pairs = names.into_iter().filter_map(|name| {
-                    if word.as_ref() == "dict" && name == "fromkeys" {
-                        Some((Value::text(&name), Self::wrap(60, vec![Value::text("dict"), Value::text(&name), Value::Flag(true)])))
-                    } else { self.carried_by_kind(&value, &name).map(|descriptor| (Value::text(&name), descriptor)) }
+                    self.carried_by_kind(&value, &name).map(|descriptor| {
+                        let stored = match name.as_str() {
+                            "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__" => Self::wrap(60, vec![Value::text(&word), Value::text(&name), Value::Flag(true)]),
+                            _ => descriptor,
+                        };
+                        (Value::text(&name), stored)
+                    })
                 }).collect::<Vec<_>>();
                 if matches!(word.as_ref(), "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
                     pairs.push((Value::text(self.detail("allocate")), Self::wrap(14, vec![Value::text(&word)])));

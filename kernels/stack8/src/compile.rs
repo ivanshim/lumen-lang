@@ -10671,10 +10671,11 @@ impl<'a> Compiler<'a> {
                 self.take();
                 self.read_class(&tok.lexeme)?;
             }
-            // A dotted builtin spelling still reads the program's binding
-            // of its owner when that owner has been shadowed.
+            // Native class members use descriptor lookup, including a shadowed owner.
             Shape::Instr if tok.lexeme.contains('.') && lang.builtins.contains_key(&tok.lexeme)
-                && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)) => {
+                && tok.lexeme.split_once('.').is_some_and(|(owner, _)| self.builtin_shadowed(owner)
+                    || lang.bind_names && Lang::spells(&lang.builtin_bases, owner)
+                        && !lang.calling.as_ref().is_some_and(|call| self.look_ahead(1).is_lexeme(Shape::Sign, &call.open))) => {
                 self.take();
                 let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");
                 self.read(owner);

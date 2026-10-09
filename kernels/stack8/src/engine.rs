@@ -7333,7 +7333,8 @@ impl<'a> Engine<'a> {
                 else { None };
             return Some(match factory {
                 Some(working) => Value::ValueMethod(Rc::new((value.clone(), working.to_string()))),
-                None => Value::Native(*operation, Rc::from(qualified)),
+                None if name == "fromhex" || name == "from_bytes" || name == "maketrans" => Value::Native(*operation, Rc::from(qualified)),
+                None => self.held_kind_descriptor(&word, name),
             });
         }
         if self.lang.bind_names && name == self.class_word("descriptor.get") {

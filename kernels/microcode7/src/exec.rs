@@ -9050,7 +9050,11 @@ impl<'a> Machine<'a> {
                 let working = if word == "float" && self.table.spells("ext.builtin.method.fromhex", &fullname) { "float_fromhex" }
                     else if self.table.spells("ext.builtin.method.from_number", &fullname) { "float_from_number" }
                     else { "" };
-                if working.is_empty() { return Some(Value::Intrinsic(*operation, Rc::from(fullname))); }
+                if working.is_empty() {
+                    return Some(if matches!(name, "fromhex" | "from_bytes" | "maketrans") {
+                        Value::Intrinsic(*operation, Rc::from(fullname))
+                    } else { self.kind_entry(&word, name) });
+                }
                 return Some(Value::Member(Rc::new(value.clone()), working.to_owned()));
             }
         }
