@@ -3892,8 +3892,11 @@ impl<'a> Engine<'a> {
             row.resize(rules.len(), Value::Blank);
             return Ok(row);
         }
-        let callee_name = self.routine_string(program);
-        let items = self.call_items_for(args, Callee::Routine(&callee_name))?;
+        // Only spread errors need the callee's module lookup.
+        let items = if args.iter().any(|value| matches!(value, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let callee_name = self.routine_string(program);
+            self.call_items_for(args, Callee::Routine(&callee_name))?
+        } else { self.call_items(args)? };
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
         let rest = rules.iter().position(|r| *r == 3);

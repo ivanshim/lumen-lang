@@ -12567,13 +12567,15 @@ impl<'a> Machine<'a> {
                 return Ok(fitted);
             }
         }
-        let title = self.routine_called(program);
-        let called = match self.routine_module(program).settled() {
-            Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
-            _ => title,
-        };
-        let shown = format!("{called}() ");
-        let (positional, named) = self.open_arguments_shown(values, &shown)?;
+        // Only spread errors need the callee's module lookup.
+        let (positional, named) = if values.iter().any(|value| matches!(value, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let title = self.routine_called(program);
+            let called = match self.routine_module(program).settled() {
+                Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
+                _ => title,
+            };
+            self.open_arguments_shown(values, &format!("{called}() "))?
+        } else { self.open_arguments(values)? };
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
             .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
