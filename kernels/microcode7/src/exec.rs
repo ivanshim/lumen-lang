@@ -26295,6 +26295,62 @@ impl Machine<'_> {
         false
     }
 
+    /// Bring in from-list children while preserving missing dependency errors.
+    fn load_fromlist(&mut self, namespace: &Value, requests: &Value, expanded: bool) -> Result<(), String> {
+        if let Err(escape) = self.read_class_member(namespace.clone(), "__path__", false) {
+            return if self.missing_member_escape(&escape) { Ok(()) } else { Err(self.suspension_fault(escape)) };
+        }
+        let module_name = self.read_class_member(namespace.clone(), "__name__", false).map_err(|escape| self.suspension_fault(escape))?;
+        let fullname = match module_name.settled() {
+            Value::Text(name) => name,
+            _ => return Err(String::from("TypeError: module name must be a string")),
+        };
+        let iterator = self.iterated_value(requests)?;
+        loop {
+            let Some(request) = self.next_value(&iterator)? else { break };
+            let word = Self::underlying(&request).unwrap_or_else(|| request.settled());
+            let member = match word {
+                Value::Text(text) => text,
+                _ => {
+                    let place = if expanded { format!("{fullname}.__all__") } else { String::from("``from list''") };
+                    return Err(format!("TypeError: Item in {place} must be str, not {}", request.kind_word()));
+                }
+            };
+            match member.as_ref() {
+                "*" => {
+                    if expanded { continue; }
+                    match self.read_class_member(namespace.clone(), "__all__", false) {
+                        Ok(exports) => self.load_fromlist(namespace, &exports, true)?,
+                        Err(escape) if self.missing_member_escape(&escape) => (),
+                        Err(escape) => return Err(self.suspension_fault(escape)),
+                    }
+                },
+                _ => {
+                    match self.read_class_member(namespace.clone(), &member, false) {
+                        Ok(_) => continue,
+                        Err(escape) if self.missing_member_escape(&escape) => (),
+                        Err(escape) => return Err(self.suspension_fault(escape)),
+                    }
+                    let qualified = format!("{fullname}.{member}");
+                    if let Err(words) = self.load_namespace(&qualified) {
+                        let absent = if let Some(escape) = self.got_away.as_ref() {
+                            if self.escape_names(escape, "ModuleNotFoundError") {
+                                match escape {
+                                    Escape::Thrown(Value::Thing(error)) => error.holds.borrow().iter().find(|entry| entry.0 == "name")
+                                        .and_then(|entry| if let Value::Text(name) = entry.1.settled() { Some(name.to_string()) } else { None }),
+                                    _ => None,
+                                }
+                            } else { None }
+                        } else if words.starts_with("ModuleNotFoundError: ") { self.import_source_not_there(&words) } else { None };
+                        if absent.as_ref() != Some(&qualified) || matches!(self.cached_import(&qualified), Some(Value::Nil)) { return Err(words); }
+                        self.got_away = None;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
         if path.as_bytes().first() == Some(&b'.') {
             let full_name = self.qualified_import(path)?;
@@ -27647,41 +27703,58 @@ impl<'a> Machine<'a> {
                     None => return Err("TypeError: __import__() missing required argument 'name' (pos 1)".to_owned()),
                 };
                 if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_owned()); }
-                if level > 0 {
-                    // A relative import resolves against the package the
-                    // handed globals name. Globals that name none leave
-                    // nothing to resolve against, which the reference says
-                    // with an ImportError after an ImportWarning about the
-                    // names it fell back on.
+                let mut full_name = name.to_string();
+                if level != 0 {
                     let globe = v.get(1).map(Value::settled);
+                    match &globe {
+                        Some(Value::Attributes(_) | Value::Dict(_)) => (),
+                        _ => return Err(String::from("TypeError: globals must be a dict")),
+                    }
                     let asked = |word: &str| match &globe {
-                        Some(Value::Dict(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, kept)| kept.clone()),
+                        Some(Value::Attributes(space)) => space.holds.borrow().iter().find(|entry| entry.0 == word).map(|entry| entry.1.settled()),
+                        Some(Value::Dict(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, kept)| kept.settled()),
                         _ => None,
                     };
-                    let package = match asked("__package__") {
-                        Some(Value::Text(named)) => Some(named.to_string()),
-                        Some(other) if !matches!(other, Value::Nil) => None,
-                        _ => match asked("__spec__") {
-                            Some(found) if !matches!(found, Value::Nil) => None,
-                            _ => {
-                                match self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__") {
-                                    Ok(()) => {}
-                                    Err(Escape::Error(told)) => return Err(told),
-                                    Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                    let parent = match asked("__package__").map(|value| Self::underlying(&value).unwrap_or(value)) {
+                        Some(Value::Text(package)) => package.to_string(),
+                        Some(value) if !matches!(value, Value::Nil) => return Err(String::from("TypeError: package must be a string")),
+                        _ => {
+                            if let Some(spec) = asked("__spec__").filter(|spec| !matches!(spec, Value::Nil)) {
+                                let value = self.read_class_member(spec, "parent", false).map_err(|escape| self.carried_native_fault(escape))?;
+                                match value.settled() {
+                                    Value::Text(text) => text.to_string(),
+                                    _ => return Err(String::from("TypeError: __spec__.parent must be a string")),
                                 }
+                            } else {
+                                self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__").map_err(|escape| self.carried_native_fault(escape))?;
                                 match asked("__name__") {
-                                    Some(Value::Text(named)) => Some(if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() }),
-                                    _ => None,
+                                    Some(Value::Text(text)) if asked("__path__").is_some() => text.to_string(),
+                                    Some(Value::Text(text)) => text.rsplit_once('.').map_or(String::new(), |pair| pair.0.to_owned()),
+                                    Some(_) => return Err(String::from("TypeError: __name__ must be a string")),
+                                    None => return Err(String::from("KeyError: '__name__' not in globals")),
                                 }
                             }
-                        },
+                        }
                     };
-                    match package {
-                        Some(named) if !named.is_empty() => return Err(self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_string()),
-                        _ => return Err("ImportError: attempted relative import with no known parent package".to_owned()),
+                    if parent.is_empty() { return Err(String::from("ImportError: attempted relative import with no known parent package")); }
+                    let mut anchor = parent.as_str();
+                    for _ in 1..level {
+                        anchor = anchor.rsplit_once('.').map(|pair| pair.0).ok_or_else(|| String::from("ImportError: attempted relative import beyond top-level package"))?;
                     }
+                    full_name = if name.is_empty() { anchor.to_owned() } else { format!("{anchor}.{name}") };
                 }
-                self.load_namespace(&name)
+                let namespace = self.load_namespace(&full_name)?;
+                if let Some(requests) = v.get(3).filter(|requests| requests.is_true()) {
+                    self.load_fromlist(&namespace, requests, false)?;
+                    return Ok(namespace);
+                }
+                let result_name = if level == 0 { full_name.split('.').next().unwrap_or(&full_name).to_owned() }
+                    else if name.is_empty() { full_name }
+                    else {
+                        let suffix = name.find('.').map_or(0, |at| name.len() - at);
+                        full_name[..full_name.len() - suffix].to_owned()
+                    };
+                self.load_namespace(&result_name)
             }
             Prim::Prepare => self.text_prepared(name, v),
             _ => self.text_performed(op == Prim::Weigh, name, v),

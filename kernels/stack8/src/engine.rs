@@ -25778,6 +25778,55 @@ impl Engine<'_> {
         })
     }
 
+    /// Load requested children of a package, leaving absent children for from-import to diagnose.
+    fn import_fromlist(&mut self, module: &Value, names: &Value, star: bool) -> Flow<()> {
+        match self.class_get(module.clone(), "__path__", false) {
+            Ok(_) => {},
+            Err(fault) if self.attribute_fault(&fault) => return Ok(()),
+            Err(fault) => return Err(fault),
+        }
+        let canonical = self.class_get(module.clone(), "__name__", false)?;
+        let Value::Text(canonical) = canonical.contents() else { return Err("TypeError: module name must be a string".into()) };
+        let path = canonical.as_ref();
+        let walk = self.core_iterator(names)?;
+        while let Some(item) = self.core_step(&walk)? {
+            let spelling = Self::worth_of(&item).unwrap_or_else(|| item.contents());
+            let Value::Text(name) = spelling else {
+                let where_from = if star { format!("{path}.__all__") } else { "``from list''".to_owned() };
+                return Err(format!("TypeError: Item in {where_from} must be str, not {}", Self::shown_kind(&item)).into());
+            };
+            if name.as_ref() == "*" {
+                if !star {
+                    match self.class_get(module.clone(), "__all__", false) {
+                        Ok(all) => self.import_fromlist(module, &all, true)?,
+                        Err(fault) if self.attribute_fault(&fault) => {},
+                        Err(fault) => return Err(fault),
+                    }
+                }
+                continue;
+            }
+            match self.class_get(module.clone(), &name, false) {
+                Ok(_) => continue,
+                Err(fault) if self.attribute_fault(&fault) => {},
+                Err(fault) => return Err(fault),
+            }
+            let child = format!("{path}.{name}");
+            match self.import_module(&child) {
+                Ok(_) => {},
+                Err(fault) => {
+                    let absent = match &fault {
+                        Fault::Note(told) if self.fault_names(&fault, "ModuleNotFoundError") => self.absent_import(told),
+                        Fault::Thrown(Value::Object(error)) if self.fault_names(&fault, "ModuleNotFoundError") => error.fields.borrow().iter()
+                            .find(|(key, _)| key == "name").and_then(|(_, held)| match held.contents() { Value::Text(name) => Some(name.to_string()), _ => None }),
+                        _ => None,
+                    };
+                    if absent.as_deref() != Some(child.as_str()) || matches!(self.module_cache_value(&child), Some(Value::Null)) { return Err(fault); }
+                },
+            }
+        }
+        Ok(())
+    }
+
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
         if path.starts_with('.') {
             let resolved = self.import_path(path)?;
@@ -27220,37 +27269,53 @@ impl Engine<'_> {
                     None => return Err("TypeError: __import__() missing required argument 'name' (pos 1)".to_string()),
                 };
                 if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_string()); }
+                let mut absolute = name.to_string();
                 if level > 0 {
-                    // A relative import is resolved against the package
-                    // the handed globals name. Globals naming no package
-                    // at all leave nothing to resolve against: the
-                    // reference says so with an ImportError, after an
-                    // ImportWarning about the names it fell back on.
                     let globe = args.get(1).map(Value::contents);
+                    if !matches!(globe, Some(Value::Map(_) | Value::Fields(_))) { return Err("TypeError: globals must be a dict".into()); }
                     let asked = |word: &str| match &globe {
-                        Some(Value::Map(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, held)| held.clone()),
+                        Some(Value::Map(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, held)| held.contents()),
+                        Some(Value::Fields(space)) => space.fields.borrow().iter().find(|(key, _)| key == word).map(|(_, held)| held.contents()),
                         _ => None,
                     };
-                    let package = match asked("__package__") {
-                        Some(Value::Text(named)) => Some(named.to_string()),
-                        Some(other) if !matches!(other, Value::Null) => None,
+                    let package = match asked("__package__").map(|value| Self::worth_of(&value).unwrap_or(value)) {
+                        Some(Value::Text(named)) => named.to_string(),
+                        Some(other) if !matches!(other, Value::Null) => return Err("TypeError: package must be a string".into()),
                         _ => match asked("__spec__") {
-                            Some(found) if !matches!(found, Value::Null) => None,
+                            Some(found) if !matches!(found, Value::Null) => {
+                                let parent = self.class_get(found, "parent", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                                let Value::Text(parent) = parent.contents() else { return Err("TypeError: __spec__.parent must be a string".into()) };
+                                parent.to_string()
+                            },
                             _ => {
                                 self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__")?;
                                 match asked("__name__") {
-                                    Some(Value::Text(named)) => Some(if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() }),
-                                    _ => None,
+                                    Some(Value::Text(named)) => if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() },
+                                    Some(_) => return Err("TypeError: __name__ must be a string".into()),
+                                    None => return Err("KeyError: '__name__' not in globals".into()),
                                 }
                             }
                         },
                     };
-                    match package {
-                        Some(named) if !named.is_empty() => return Err(self.lang.import_relative_unready.clone().into()),
-                        _ => return Err("ImportError: attempted relative import with no known parent package".to_string()),
-                    }
+                    if package.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+                    let mut parts: Vec<&str> = package.split('.').collect();
+                    if level as usize > parts.len() { return Err("ImportError: attempted relative import beyond top-level package".into()); }
+                    parts.truncate(parts.len() - level as usize + 1);
+                    absolute = parts.join(".");
+                    if !name.is_empty() { absolute.push('.'); absolute.push_str(&name); }
                 }
-                match self.import_module(&name) {
+                let loaded = (|| -> Flow<Value> {
+                    let module = self.import_module(&absolute)?;
+                    if args.get(3).is_some_and(Value::is_true) {
+                        self.import_fromlist(&module, &args[3], false)?;
+                        return Ok(module);
+                    }
+                    let returned = if level == 0 { absolute.split('.').next().unwrap_or(&absolute) }
+                        else if name.is_empty() { absolute.as_str() }
+                        else { &absolute[..absolute.len() - name.len() + name.split('.').next().unwrap_or(&name).len()] };
+                    self.import_module(returned)
+                })();
+                match loaded {
                     Ok(module) => Ok(module),
                     Err(Fault::Note(told)) => Err(told),
                     Err(fled) => { self.carried = Some(fled); Err(String::new()) }
