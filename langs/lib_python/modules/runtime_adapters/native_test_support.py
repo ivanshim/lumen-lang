@@ -1841,3 +1841,26 @@ def skip_if_buggy_ucrt_strfptime(test):
     return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
 
 
+
+# Render dictionary entries in the order used by CPython test.support.
+def sortdict(dict):
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    return "{%s}" % ", ".join(reprpairs)
+
+# CPython v3.14.8 Lib/test/support/__init__.py; PSF License.
+import stat
+def _force_run(path, func, *args):
+    try:
+        return func(*args)
+    except FileNotFoundError as err:
+        # chmod() won't fix a missing file.
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+        raise
+    except OSError as err:
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+            print('re-run %s%r' % (func.__name__, args))
+        os.chmod(path, stat.S_IRWXU)
+        return func(*args)

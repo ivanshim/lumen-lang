@@ -52,6 +52,7 @@ class herror(OSError):
 
 timeout = TimeoutError
 
+
 # An omitted timeout is distinct from None, which requests blocking I/O.
 _GLOBAL_DEFAULT_TIMEOUT = object()
 
