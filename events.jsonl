@@ -9867,3 +9867,14 @@
 {"t":"2026-10-09T08:22:21Z","event":"finished","job":"stdlib-type-params","exit_time":"2026-10-09T08:21:35Z"}
 {"t":"2026-10-09T08:22:21Z","event":"review-queued","job":"stdlib-type-params","review":"review-auto-stdlib-type-params-0822"}
 {"t":"2026-10-09T08:22:22Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T08:26:07Z","event":"resumed","job":"stdlib-zipimport","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T08:31:09Z","event":"resumed","job":"dsflash-py-compile","model":"deepseek-flash","session":"session-ecd8c17f-33fd-4bd6-a638-577303c74b99"}
+{"t":"2026-10-09T08:34:20Z","event":"returned","job":"dsflash-frame","review":"review-auto-dsflash-frame-0801","commit":"565af8bfe","round":3,"model":"deepseek-flash","note":"(3rd at DS Flash; integrity ok; clean check 1196/0 gates ok; test_frame absent->49/61 both, 0 F/E; blocking: dict snapshot/retry guards reject unchanged keys (no bool arm both kernels, stack8 Hashed wrapper) -> infinite retry) -> FAILED at Flash"}
+{"t":"2026-10-09T08:34:20Z","event":"handed-over","job":"dsflash-frame","to":"deepseek-v4-pro","note":"3 DS Flash returns; DS Pro free -> brief-dsflash-frame-dspro.md, same branch/worktree, head 565af8bfe; ds-new dsflash-frame-dspro queued at head"}
+{"t":"2026-10-09T08:34:20Z","event":"queued","job":"dsflash-frame-dspro","model":"deepseek-v4-pro","line":"ds-new dsflash-frame-dspro deepseek-v4-pro","note":"cascade rung 2"}
+{"t":"2026-10-09T08:35:44Z","event":"quota","codex_week_used":24,"codex_credits":0,"claude_week_used":19,"claude_5h_used":19,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":257.35}
+{"t":"2026-10-09T08:35:49Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":24,"expected":25.4,"gap":-1.4,"status":"ok"}
+{"t":"2026-10-09T08:35:58Z","event":"checkin","status":"done","actions":"RETURN dsflash-frame (3rd at DS Flash; dict snapshot/retry guards reject unchanged bool/hashed keys -> infinite retry) -> FAILED, handed over to DS Pro (free), brief-dsflash-frame-dspro.md, ds-new dsflash-frame-dspro queued at head; prune-merged 0MB; luna FINDINGS appended","notes":"PR #542 (21g) CI in progress, pr-merge-watch running; DS Flash 9/12 running, 3 idle (small/medium pool exhausted, already asked Ivan 07:57); box disk 79%, load 6.3/8, 11.6G avail; Mac 87%; Codex week 24%; Claude 5h 19%/week 19%; luna ok gap -1.4"}
+{"t":"2026-10-09T08:36:11Z","event":"started","job":"dsflash-frame-dspro","model":"deepseek-v4-pro","via":"ds-run"}
+{"t":"2026-10-09T08:41:13Z","event":"review-started","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-0817"}
+{"t":"2026-10-09T08:42:40Z","event":"exited","job":"dsflash-pyclbr-sol","code":0}
