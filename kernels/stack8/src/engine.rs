@@ -11828,29 +11828,19 @@ impl<'a> Engine<'a> {
                     // and grows in step with the rows rather than being
                     // thrown away and rebuilt on the next key.
                     let mut pairs = match gathered_so_far { Value::Map(p) => p, _ => unreachable!() };
-                    let new_pairs = if *spread {
-                        // A namespace or a mapping of the program's own is
-                        // spread by the pairs it gives as a map, as `dict`
-                        // reads it.
+                    if *spread {
                         let spread = if matches!(next.contents(), Value::Fields(_) | Value::View(_)) {
                             self.builtin(Builtin::Dict, "dict", &mut vec![next])?
                         } else { next };
-                        // A `**` item takes any mapping, by the same
-                        // protocol the reference reads one, so a thing
-                        // of the program's own is spread as well.
-                        match self.mapping_entries(&spread)? {
-                            Some(pairs) => pairs,
-                            None => return Err(self.mapping_amiss(&spread).into()),
+                        if !self.merge_display_mapping(&mut pairs, &spread)? {
+                            return Err(self.mapping_amiss(&spread).into());
                         }
                     } else {
-                        match next.contents() {
-                            Value::Tie(p) => vec![(p.0.clone(), p.1.clone())],
-                            _ => return Err(self.mapping_amiss(&next).into()),
-                        }
-                    };
-                    for (key, value) in new_pairs {
-                        if let Some(told) = self.unkeyable(&key) { return Err(told.into()); }
-                        self.store_write(&mut pairs, key, value)?;
+                        let Value::Tie(pair) = next.contents() else {
+                            return Err(self.mapping_amiss(&next).into());
+                        };
+                        if let Some(told) = self.unkeyable(&pair.0) { return Err(told.into()); }
+                        self.store_write(&mut pairs, pair.0.clone(), pair.1.clone())?;
                     }
                     Value::Map(pairs)
                 } else {
@@ -18065,26 +18055,30 @@ impl<'a> Engine<'a> {
         Ok(Value::Map(Rc::new(pairs.into())))
     }
 
-    /// The pairs of a mapping offered to a `**` spread: a map's own
-    /// pairs, or the keys another thing's `keys` method hands over, each
-    /// read back by subscript. A thing answering to no such method is no
-    /// mapping, and is said of by its kind.
-    fn mapping_entries(&mut self, source: &Value) -> Res<Option<Vec<(Value, Value)>>> {
+    /// Insert each display entry before reading the next mapping value.
+    fn merge_display_mapping(&mut self, target: &mut Rc<KeyedPairs>, source: &Value) -> Res<bool> {
         let held = source.contents();
-        if let Value::Map(pairs) = &held { return Ok(Some(pairs.to_vec())); }
-        if let Some(worth) = Self::worth_of(source).map(|worth| worth.contents()) {
-            if let Value::Map(pairs) = &worth { return Ok(Some(pairs.to_vec())); }
-        }
-        if let Some(reader) = self.member_of(held.clone(), "keys")? {
+        let direct = match &held {
+            Value::Map(pairs) => Some(pairs.clone()),
+            _ => match Self::worth_of(source).map(|worth| worth.contents()) {
+                Some(Value::Map(pairs)) => Some(pairs),
+                _ => None,
+            },
+        };
+        if let Some(pairs) = direct {
+            for (key, value) in pairs.iter() {
+                if let Some(told) = self.unkeyable(key) { return Err(told); }
+                self.store_write(target, key.clone(), value.clone())?;
+            }
+        } else if let Some(reader) = self.member_of(held.clone(), "keys")? {
             let window = self.call_held(reader, Vec::new())?;
-            let mut entries = Vec::new();
             for key in self.core_members(&window)? {
                 let value = self.special_dyad(&Action::At, &held, &key)?;
-                entries.push((key, value));
+                if let Some(told) = self.unkeyable(&key) { return Err(told); }
+                self.store_write(target, key, value)?;
             }
-            return Ok(Some(entries));
-        }
-        Ok(None)
+        } else { return Ok(false); }
+        Ok(true)
     }
 
     /// The complaint a value that is no mapping draws: the label's two

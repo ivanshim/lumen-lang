@@ -14606,21 +14606,12 @@ impl<'a> Machine<'a> {
             converted = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(item))?;
             &converted
         } else { item };
-        let incoming = if expanded {
-            match self.mapping_pairs(item)? {
-                Some(pairs) => pairs,
-                None => return Err(self.mapping_amiss(item)),
-            }
-        } else {
-            match item.settled() {
-                Value::Couple(pair) => vec![pair.as_ref().clone()],
-                _ => return Err(self.mapping_amiss(item)),
-            }
-        };
-        for (key, value) in incoming {
-            if let Some(words) = self.cannot_key(&key) { return Err(words); }
-            self.store_write(prior, key, value)?;
+        if expanded {
+            return self.spread_into_dict(prior, item);
         }
+        let Value::Couple(pair) = item.settled() else { return Err(self.mapping_amiss(item)); };
+        if let Some(words) = self.cannot_key(&pair.0) { return Err(words); }
+        self.store_write(prior, pair.0.clone(), pair.1.clone())?;
         Ok(())
     }
 
@@ -17718,35 +17709,39 @@ impl<'a> Machine<'a> {
         Ok(Value::Dict(Rc::new(store)))
     }
 
-    /// The pairs of a mapping offered to a `**` spread: a dictionary's
-    /// own pairs, or the keys another thing's `keys` member hands over,
-    /// each read back by subscript. A thing answering to no such member
-    /// is no mapping at all.
-    fn mapping_pairs(&mut self, source: &Value) -> Result<Option<Vec<(Value, Value)>>, String> {
+    /// Merge display mappings in getter/insertion order, allowing overwrites.
+    fn spread_into_dict(&mut self, destination: &mut Rc<MapStore>, source: &Value) -> Result<(), String> {
         let candidate = match source.settled() {
             Value::Dict(_) => source.settled(),
             _ => Self::underlying(source).map(|under| under.settled()).unwrap_or_else(|| source.settled()),
         };
-        match candidate {
-            Value::Dict(entries) => Ok(Some(entries.to_vec())),
-            Value::Attributes(owner) => Ok(Some(self.attribute_entries(&owner))),
+        let ready = match candidate {
+            Value::Dict(entries) => entries.to_vec(),
+            Value::Attributes(owner) => self.attribute_entries(&owner),
             value @ Value::Thing(_) => {
-                let reader = match self.read_class_member(value.clone(), "keys", false) {
-                    Ok(method) => Some(method),
-                    Err(escaped) if self.missing_member_escape(&escaped) => { self.sought_in_vain = None; None },
+                let method = match self.read_class_member(value.clone(), "keys", false) {
+                    Ok(method) => method,
+                    Err(escaped) if self.missing_member_escape(&escaped) => {
+                        self.sought_in_vain = None;
+                        return Err(self.mapping_amiss(source));
+                    }
                     Err(escaped) => return Err(self.suspension_fault(escaped)),
                 };
-                let Some(reader) = reader else { return Ok(None); };
-                let keys = self.apply_class_member(reader, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
-                let mut pairs = Vec::new();
+                let keys = self.apply_class_member(method, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
                 for key in self.gathered_members(&keys)? {
                     let item = self.prim(Prim::At, "", &[value.clone(), key.clone()])?;
-                    pairs.push((key, item));
+                    if let Some(words) = self.cannot_key(&key) { return Err(words); }
+                    self.store_write(destination, key, item)?;
                 }
-                Ok(Some(pairs))
+                return Ok(());
             }
-            _ => Ok(None),
+            _ => return Err(self.mapping_amiss(source)),
+        };
+        for (key, item) in ready {
+            if let Some(words) = self.cannot_key(&key) { return Err(words); }
+            self.store_write(destination, key, item)?;
         }
+        Ok(())
     }
 
     /// The complaint a value that is no mapping draws: the label's two
@@ -19458,28 +19453,9 @@ impl<'a> Machine<'a> {
                     // than the one map it grows, so paying to clone it
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
-                    let spread_dict;
-                    let v1 = if expanded && matches!(v[1].settled(), Value::Attributes(_) | Value::Window(..)) {
-                        spread_dict = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(&v[1]))?;
-                        spread_dict.settled()
-                    } else { v[1].clone() };
-                    let incoming = if expanded {
-                        match self.mapping_pairs(&v1)? {
-                            Some(pairs) => pairs,
-                            None => return Err(self.mapping_amiss(&v1)),
-                        }
-                    } else {
-                        match &v1 {
-                            Value::Couple(pair) => vec![pair.as_ref().clone()],
-                            _ => return Err(self.mapping_amiss(&v1)),
-                        }
-                    };
-                    let mut combined = prior.to_vec();
-                    for (key, value) in incoming {
-                        if let Some(words) = self.cannot_key(&key) { return Err(words); }
-                        self.map_enter(&mut combined, key, value)?;
-                    }
-                    Value::Dict(Rc::new(combined.into()))
+                    let mut combined = prior.clone();
+                    self.extend_dict_grown(&mut combined, &v[1], expanded)?;
+                    Value::Dict(combined)
                 }
             }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
