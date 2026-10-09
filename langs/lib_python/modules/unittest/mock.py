@@ -15,7 +15,69 @@ class _Sentinel:
 DEFAULT = _Sentinel('DEFAULT')
 
 
+class _Call:
+    # The reference library records each call as the arguments it was
+    # given and the keywords it was given, and that pair also answers
+    # for the two by the names `args` and `kwargs`. The stand-in keeps
+    # the pair here so a test that asks either name reads it.
+    def __init__(self, args, kwargs):
+        self.args = tuple(args)
+        self.kwargs = kwargs
+
+    def __eq__(self, other):
+        if isinstance(other, _Call):
+            return self.args == other.args and self.kwargs == other.kwargs
+        return (self.args, self.kwargs) == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __getitem__(self, at):
+        return (self.args, self.kwargs)[at]
+
+    def __len__(self):
+        return 2
+
+    def __iter__(self):
+        return iter((self.args, self.kwargs))
+
+    def __repr__(self):
+        return repr((self.args, self.kwargs))
+# The double-underscore names the reference lets a test put on a stand-in:
+# a name here is put on the stand-in's own class, because the reader looks
+# such a name up on the class and never on the thing itself.
+_MAGIC_NUMERICS = ('add sub mul matmul truediv floordiv mod lshift rshift and xor or pow').split()
+_SETTABLE_MAGICS = frozenset(
+    ['__' + word + '__' for word in (
+        'lt gt le ge eq ne getitem setitem delitem len contains iter hash str '
+        'sizeof enter exit divmod rdivmod neg pos abs invert complex int float '
+        'index round trunc floor ceil bool next fspath aiter').split()]
+    + ['__' + word + '__' for word in _MAGIC_NUMERICS]
+    + ['__i' + word + '__' for word in _MAGIC_NUMERICS]
+    + ['__r' + word + '__' for word in _MAGIC_NUMERICS])
+
+
 class Mock:
+    def __new__(cls, *args, **kwargs):
+        # Each stand-in has a class of its own, so that a name put on it
+        # is seen by no other stand-in.
+        own = type(cls.__name__, (cls,), {'__doc__': cls.__doc__})
+        return object.__new__(own)
+
+    def __setattr__(self, name, value):
+        if name in _SETTABLE_MAGICS:
+            if isinstance(value, Mock):
+                # A stand-in is called as it stands, with no thing before
+                # the arguments the operation gives it.
+                setattr(type(self), name, value)
+            else:
+                function = value
+                def method(self, /, *args, **kwargs):
+                    return function(self, *args, **kwargs)
+                setattr(type(self), name, method)
+            return
+        object.__setattr__(self, name, value)
+
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
         self._mock_name = name
         self._mock_wraps = wraps
@@ -54,7 +116,7 @@ class Mock:
     def __call__(self, *args, **kwargs):
         self.called = True
         self.call_count += 1
-        self.call_args = (list(args), kwargs)
+        self.call_args = _Call(args, kwargs)
         self.call_args_list.append(self.call_args)
         effect = self.side_effect
         if effect is not None:
@@ -105,7 +167,7 @@ class Mock:
     def assert_called_with(self, *args, **kwargs):
         if not self.called:
             raise AssertionError('expected a call and there was none')
-        wanted = (list(args), kwargs)
+        wanted = (args, kwargs)
         if self.call_args != wanted:
             raise AssertionError('expected ' + repr(wanted) + ' and the last call was ' + repr(self.call_args))
 
@@ -114,7 +176,7 @@ class Mock:
         self.assert_called_with(*args, **kwargs)
 
     def assert_any_call(self, *args, **kwargs):
-        wanted = (list(args), kwargs)
+        wanted = (args, kwargs)
         for made in self.call_args_list:
             if made == wanted:
                 return
