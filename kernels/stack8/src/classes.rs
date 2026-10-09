@@ -981,8 +981,12 @@ impl<'a> Engine<'a> {
     /// so that two classes of one line naming the same slot keep two.
     fn furnish_slots(&mut self, c: &Rc<Class>) -> Flow<()> {
         if self.class_word("descriptor.get").is_empty() { return Ok(()); }
-        c.weak_storage.set(Some(self.weak_layout(c)));
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else {
+            // A class naming no slots of its own keeps a managed
+            // dictionary and weak reference over what it stands on. Its
+            // layout is settled here, before anything asks it again.
+            c.shared.borrow_mut().push(("\0layout".into(), self.instance_layout(c, None)));
+            c.weak_storage.set(Some(self.weak_layout(c)));
             if !self.lang.weak_refused.is_empty() && self.weak_layout(c) && !c.direct.iter().any(|base| self.weak_layout(base)) {
                 c.shared.borrow_mut().push(("__weakref__".into(), Self::adapter(16, vec![Value::text("__weakref__"), Value::Class(c.clone())])));
             }
@@ -1004,6 +1008,13 @@ impl<'a> Engine<'a> {
             Value::Set(v) => v.borrow().items(),
             single => vec![single],
         };
+        // A walk that named the slots is spent by the reading. The names
+        // it gave are kept for the layout and for the storage questions,
+        // so neither reads a spent walk again; the public __slots__ still
+        // keeps the walk the program wrote.
+        c.shared.borrow_mut().push(("\0slots".into(), Value::array(named.iter().map(|slot| Value::text(slot.plain().as_str())).collect())));
+        c.shared.borrow_mut().push(("\0layout".into(), self.instance_layout(c, Some(&named))));
+        c.weak_storage.set(Some(self.weak_layout(c)));
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
@@ -1050,6 +1061,54 @@ impl<'a> Engine<'a> {
             c.shared.borrow_mut().push((word.to_string(), Self::adapter(16, vec![Value::Text(word.clone()), Value::Class(c.clone())])));
         }
         Ok(())
+    }
+    /// The instance layout a class lays out: how wide a thing of it is,
+    /// where its dictionary sits and where its weak reference sits. A
+    /// class naming no slots keeps a managed dictionary and weak
+    /// reference over what it stands on; a class naming slots adds a
+    /// place for each, and takes a managed one only for a slot it names.
+    fn instance_layout(&self, c: &Rc<Class>, names: Option<&[Value]>) -> Value {
+        let (mut size, mut dictionary, mut weak) = c.base.as_ref()
+            .map(|base| Self::class_layout(base, self.exception_class(base)))
+            .unwrap_or((16, 0, 0));
+        match names {
+            None => {
+                if dictionary <= 0 { dictionary = -1; }
+                if weak == 0 { weak = -32; }
+            }
+            Some(names) => {
+                for name in names {
+                    match name.plain().as_str() {
+                        "__dict__" => dictionary = -1,
+                        "__weakref__" => weak = -32,
+                        _ => size += 8,
+                    }
+                }
+            }
+        }
+        Value::tuple(vec![Value::Small(size), Value::Small(dictionary), Value::Small(weak)])
+    }
+    /// The layout a class already keeps, or the one its kind lays out by
+    /// itself: a builtin's things are not heap things, and an exception
+    /// keeps a real dictionary where it stands.
+    fn class_layout(class: &Class, exceptional: bool) -> (i64, i64, i64) {
+        if let Some(held) = Self::own_class_value(class, "\0layout") {
+            if let Value::Tuple(parts) = held.contents() {
+                if let (Some(Value::Small(size)), Some(Value::Small(dictionary)), Some(Value::Small(weak))) = (parts.first(), parts.get(1), parts.get(2)) {
+                    return (*size, *dictionary, *weak);
+                }
+            }
+        }
+        if exceptional { (72, 16, 0) } else { (16, 0, 0) }
+    }
+    /// The slot names a class kept when its declaration was read: a walk
+    /// that handed them out one at a time is spent once it has.
+    fn stored_slot_names(c: &Class) -> Option<Vec<String>> {
+        let held = Self::own_class_value(c, "\0slots")?;
+        match held.contents() {
+            Value::Array(parts) | Value::Tuple(parts) => Some(parts.iter().map(|part| part.plain()).collect()),
+            _ => None,
+        }
     }
     /// Whether a slot's own name could follow `self.` in this language:
     /// not empty, opening on a letter or an underscore, and holding
@@ -4220,8 +4279,14 @@ impl<'a> Engine<'a> {
                         return Ok(Self::adapter(i,state));
                     }
                 }
-                if name == "__weakrefoffset__" { return Ok(Value::Small(if self.weak_layout(c) { 8 } else { 0 })); }
-                if name == "__dictoffset__" { return Ok(Value::Small(if self.slots_allow(c, self.class_word("namespace")) { -8 } else { 0 })); }
+                let weak_place = self.class_word("weakrefoffset");
+                if !weak_place.is_empty() && name == weak_place {
+                    return Ok(Value::Small(Self::class_layout(c, self.exception_class(c)).2));
+                }
+                let dict_place = self.class_word("dictoffset");
+                if !dict_place.is_empty() && name == dict_place {
+                    return Ok(Value::Small(Self::class_layout(c, self.exception_class(c)).1));
+                }
                 // Every class answers for the type parameters it declared,
                 // and a class that declared none answers with none, as
                 // the maker's own type parameter member does.
@@ -5635,6 +5700,9 @@ impl<'a> Engine<'a> {
         if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
         if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "set" | "frozenset"); }
         if c.direct.is_empty() { return false; }
+        if let Some(names) = Self::stored_slot_names(c) {
+            return names.iter().any(|name| name == "__weakref__") || c.direct.iter().any(|base| self.weak_layout(base));
+        }
         match Self::own_class_value(c, self.class_word("slots")) {
             None => true,
             Some(slots) => {
@@ -5667,6 +5735,10 @@ impl<'a> Engine<'a> {
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         if !self.lang.class_builder.is_empty() && self.class_root.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),c)) { return false; }
         if matches!(Self::own_kind(c).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
+        if let Some(names) = Self::stored_slot_names(c) {
+            let allows = names.iter().any(|slot| slot == name || slot == self.class_word("namespace"));
+            return allows || c.direct.iter().filter(|b| b.name != self.class_word("root")).any(|b| self.slots_allow(b, name));
+        }
         let own=Self::own_class_value(c,self.class_word("slots"));
         let Some(own)=own else{return Self::own_kind(c).map_or(true, |word| word == "module");};
         let slots=own.contents();

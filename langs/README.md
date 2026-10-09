@@ -5391,6 +5391,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.descriptor.name` | - | - | `__set_name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.set` | - | - | `__set__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.unbound` | - | - | `TypeError: unbound method ` `.` `() needs an argument` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.dictoffset` | - | - | `__dictoffset__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.flags` | - | - | `__flags__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
@@ -5444,6 +5445,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.type_params` | - | - | `__type_params__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.weakrefoffset` | - | - | `__weakrefoffset__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
 | `ext.stmt.class.finaliser` | - | - | `__del__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.format.amiss` | - | - | `TypeError: unsupported format string passed to ` `.__format__` | - | - | - | - | - | - | - |

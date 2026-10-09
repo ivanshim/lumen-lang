@@ -1043,8 +1043,12 @@ impl<'a> Machine<'a> {
     /// same slot keeps its own.
     fn name_slots(&mut self,class:&Rc<Blueprint>)->Result<(),Escape> {
         if !self.protocol_spelled(){return Ok(());}
-        class.weak_slot.set(Some(self.admits_weak(class)));
         let Some(declared)=Self::own_entry(class,self.detail("slots")) else {
+            // A class naming no slots of its own keeps a managed
+            // dictionary and weak reference over what it stands on. Its
+            // layout is settled here, before anything asks it again.
+            class.shared.borrow_mut().push(("\0layout".to_owned(), self.instance_layout(class, None)));
+            class.weak_slot.set(Some(self.admits_weak(class)));
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) && class.parents.iter().all(|parent| !self.admits_weak(parent)) {
                 let read = Self::wrap(32, vec![Value::text("__weakref__"), Value::Blueprint(class.clone())]);
                 class.shared.borrow_mut().push((String::from("__weakref__"), read));
@@ -1068,6 +1072,14 @@ impl<'a> Machine<'a> {
             // A set stands its members as the names, in its own order.
             Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
             alone=>vec![alone]};
+        // A walk that named the slots is spent by the reading. The names
+        // it gave are kept for the layout and for the storage questions,
+        // so neither reads a spent walk again; the public __slots__ still
+        // keeps the walk the program wrote.
+        let kept: Vec<Value> = words.iter().map(|word| Value::text(word.bare().as_str())).collect();
+        class.shared.borrow_mut().push(("\0slots".to_owned(), Value::Vector(crate::tuples::Sequence::plain(kept))));
+        class.shared.borrow_mut().push(("\0layout".to_owned(), self.instance_layout(class, Some(&words))));
+        class.weak_slot.set(Some(self.admits_weak(class)));
         let native = Self::native_beneath(class);
         if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {
             return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{}'", native.unwrap()).into());
@@ -1124,6 +1136,52 @@ impl<'a> Machine<'a> {
             _ => return false,
         }
         letters.all(|c|c=='_'||c.is_alphanumeric())
+    }
+    /// The instance layout a blueprint lays out: width, dictionary and
+    /// weak-reference places, in the reference's own measure. A class
+    /// naming no slots keeps a managed dictionary and weak reference
+    /// over what it stands on; a class naming slots adds a place for
+    /// each, and takes a managed one only for a slot it names.
+    fn instance_layout(&self, class: &Rc<Blueprint>, names: Option<&[Value]>) -> Value {
+        let (mut size, mut dictionary, mut weak) = class.under.as_ref()
+            .map(|parent| Self::kept_layout(parent, self.is_fault_kind(parent)))
+            .unwrap_or((16, 0, 0));
+        match names {
+            None => {
+                if dictionary <= 0 { dictionary = -1; }
+                if weak == 0 { weak = -32; }
+            }
+            Some(names) => {
+                for name in names {
+                    match name.bare().as_str() {
+                        "__dict__" => dictionary = -1,
+                        "__weakref__" => weak = -32,
+                        _ => size += 8,
+                    }
+                }
+            }
+        }
+        Value::tuple(vec![Value::Small(size), Value::Small(dictionary), Value::Small(weak)])
+    }
+    /// The layout a blueprint already keeps, or the one its kind lays out
+    /// by itself: a native's things are not heap things, and a fault
+    /// keeps a real dictionary where it stands.
+    fn kept_layout(class: &Blueprint, fault: bool) -> (i64, i64, i64) {
+        if let Some(Value::Tuple(parts)) = Self::own_entry(class, "\0layout").map(|held| held.settled()) {
+            if let (Some(Value::Small(size)), Some(Value::Small(dictionary)), Some(Value::Small(weak))) = (parts.first(), parts.get(1), parts.get(2)) {
+                return (*size, *dictionary, *weak);
+            }
+        }
+        if fault { (72, 16, 0) } else { (16, 0, 0) }
+    }
+    /// The slot names a blueprint kept when its declaration was read: a
+    /// walk that handed them out one at a time is spent once it has.
+    fn kept_slot_names(class: &Blueprint) -> Option<Vec<String>> {
+        let held = Self::own_entry(class, "\0slots")?;
+        match held.settled() {
+            Value::Vector(parts) | Value::Tuple(parts) => Some(parts.iter().map(|part| part.bare()).collect()),
+            _ => None,
+        }
     }
     /// The key a slot's worth is kept under in a thing. A thing not of
     /// the declaring blueprint's line has no such key, and is told so.
@@ -4803,8 +4861,14 @@ impl<'a> Machine<'a> {
                     return Ok(Self::wrap(tag,state));
                 }
             }
-            if key == "__weakrefoffset__" { return Ok(Value::Small(if self.admits_weak(b) { 8 } else { 0 })); }
-            if key == "__dictoffset__" { return Ok(Value::Small(if self.allowed_slot(b, self.detail("namespace")) { -8 } else { 0 })); }
+            let weak_place = self.detail("weakrefoffset");
+            if !weak_place.is_empty() && key == weak_place {
+                return Ok(Value::Small(Self::kept_layout(b, self.is_fault_kind(b)).2));
+            }
+            let dict_place = self.detail("dictoffset");
+            if !dict_place.is_empty() && key == dict_place {
+                return Ok(Value::Small(Self::kept_layout(b, self.is_fault_kind(b)).1));
+            }
             // Every class answers for the type parameters it declared, and
             // one that declared none answers with none, as the maker's own
             // type parameter entry does.
@@ -5299,6 +5363,9 @@ impl<'a> Machine<'a> {
             None if b.parents.is_empty() => return false,
             None => {}
         }
+        if let Some(names) = Self::kept_slot_names(b) {
+            return names.iter().any(|name| name == "__weakref__") || b.parents.iter().any(|parent| self.admits_weak(parent));
+        }
         let Some(storage) = Self::own_entry(b, self.detail("slots")) else { return true; };
         let has_slot = match storage.settled() {
             Value::Tuple(items) | Value::Vector(items) => items.iter().any(|v| matches!(v, Value::Text(s) if &**s == "__weakref__")),
@@ -5324,6 +5391,10 @@ impl<'a> Machine<'a> {
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
         if self.table.has_any("ext.stmt.class.builder") && self.ancestor.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),b)) { return false; }
         if matches!(Self::native_word(b).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
+        if let Some(names) = Self::kept_slot_names(b) {
+            let matching = names.iter().any(|slot| slot == key || slot == self.detail("namespace"));
+            return matching || b.parents.iter().any(|p| p.name != self.detail("root") && self.allowed_slot(p, key));
+        }
         let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
         let slots=declared.settled();
         let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
