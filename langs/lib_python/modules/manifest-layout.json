@@ -25,7 +25,8 @@
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
     "test.support.script_helper": "runtime_adapters/script_helper.py",
-    "test": "runtime_adapters/test_package.py"
+    "test": "runtime_adapters/test_package.py",
+    "codecs": "runtime_adapters/codecs.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",

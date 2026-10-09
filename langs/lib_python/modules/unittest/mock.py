@@ -1,9 +1,7 @@
 # A stand-in put in an attribute's place while a test runs, and taken
 # out again afterwards. Only the patching a test here asks for is
 # written: an attribute of a thing already in hand, replaced by a stand-in
-# that records its calls and answers what it was told to answer. The
-# wider library -- specs, autospeccing and unsupported magic methods --
-# refuses by name rather than standing in for itself.
+# that records calls, supports flat specs and class patch decoration.
 
 class _Sentinel:
     def __init__(self, word):
@@ -13,6 +11,20 @@ class _Sentinel:
         return 'sentinel.' + self.word
 
 DEFAULT = _Sentinel('DEFAULT')
+
+
+def _spec_names(spec):
+    # A spec narrows the names a stand-in answers. A list or tuple
+    # gives those names as it stands; anything else gives them as the
+    # names it answers to, read off it without reaching for any of
+    # their values, so naming a property never runs it. A stand-in's
+    # own child is an ordinary stand-in, not narrowed again: the
+    # recursive reading of a spec is autospeccing, which is separate.
+    if spec is None:
+        return None
+    if isinstance(spec, (list, tuple)):
+        return list(spec)
+    return dir(spec)
 
 
 class _Call:
@@ -78,9 +90,10 @@ class Mock:
             return
         object.__setattr__(self, name, value)
 
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
         self._mock_name = name
         self._mock_wraps = wraps
+        self._mock_methods = _spec_names(spec)
         self.return_value = return_value
         self._side_effect = None
         self.side_effect = side_effect
@@ -188,6 +201,8 @@ class Mock:
         # underscore is the runtime's own business and is not answered
         # for, so what looks inside a mock sees what is really there.
         if name[:1] == '_':
+            raise AttributeError(name)
+        if self._mock_methods is not None and name not in self._mock_methods:
             raise AttributeError(name)
         child = Mock(name=name)
         setattr(self, name, child)
@@ -340,9 +355,17 @@ class _Patch:
         self.stop()
         return False
 
+    def copy(self):
+        return _Patch(self.target, self.attribute, self.new, self.create, dict(self.made))
+
     def __call__(self, function):
         if isinstance(function, type):
-            raise 'NotImplementedError: standing over a whole class is not supported; put the patch on the test itself'
+            for name in dir(function):
+                if name[:4] == 'test':
+                    member = getattr(function, name)
+                    if callable(member):
+                        setattr(function, name, self.copy()(member))
+            return function
         patcher = self
         def patched(*args, **kwargs):
             fresh = patcher.start()
@@ -399,7 +422,7 @@ class _MultiplePatch:
         return False
 
 
-_TAKEN = ('wraps', 'return_value', 'side_effect')
+_TAKEN = ('wraps', 'return_value', 'side_effect', 'spec')
 
 # A dotted name is split at its last dot: what comes before is a chain
 # of modules and, where a plain attribute lookup does not reach that
@@ -447,6 +470,11 @@ class _Patcher:
         return _MultiplePatch(target, extra, create, new_callable)
 
 patch = _Patcher()
+
+
+def call(*args, **kwargs):
+    # Build the same argument record as a mock call.
+    return _Call(args, kwargs)
 
 
 def __getattr__(name):
