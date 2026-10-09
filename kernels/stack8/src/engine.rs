@@ -5869,10 +5869,13 @@ impl<'a> Engine<'a> {
         class
     }
 
-    fn locals_proxy(value: &Value) -> Option<Rc<Instance>> {
+    fn locals_proxy(&self, value: &Value) -> Option<Rc<Instance>> {
         let Value::Object(proxy) = value else { return None };
-        if proxy.class_now().name != "FrameLocalsProxy" { return None; }
-        Some(proxy.clone())
+        // The proxy is found by the very class it was made from, not by
+        // its name: an ordinary class a program calls FrameLocalsProxy
+        // is no proxy of ours and keeps its own members.
+        let known = self.locals_class.as_ref()?;
+        Rc::ptr_eq(known, &proxy.class_now()).then(|| proxy.clone())
     }
 
     fn locals_proxy_frame(proxy: &Rc<Instance>) -> Option<Rc<Instance>> {
@@ -6082,6 +6085,7 @@ impl<'a> Engine<'a> {
             "__getitem__" | "__contains__" => {
                 if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
                 match self.locals_find(proxy, &args[0])? {
+                    Some((_, _)) if operation == "__contains__" => Ok(Value::Flag(true)),
                     Some((_, value)) => Ok(value),
                     None if operation == "__contains__" => Ok(Value::Flag(false)),
                     None => Err(self.key_absent(&args[0])),
@@ -6133,7 +6137,7 @@ impl<'a> Engine<'a> {
                     let held = source.contents();
                     match &held {
                         Value::Map(map) => { for (key, value) in map.iter() { self.locals_assign(proxy, key, value.clone())?; } }
-                        Value::Object(other) if other.class_now().name == "FrameLocalsProxy" => {
+                        Value::Object(other) if self.locals_class.as_ref().is_some_and(|known| Rc::ptr_eq(known, &other.class_now())) => {
                             let other = other.clone();
                             for (key, value) in self.locals_live_pairs(&other) { self.locals_assign(proxy, &key, value)?; }
                         }
@@ -7903,7 +7907,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
-        if let Some(proxy) = Self::locals_proxy(value) {
+        if let Some(proxy) = self.locals_proxy(value) {
             self.locals_rebuild(&proxy);
             if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
@@ -9499,9 +9503,9 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
-        if let Some(proxy) = Self::locals_proxy(a).or_else(|| Self::locals_proxy(b)) { self.locals_rebuild(&proxy); }
+        if let Some(proxy) = self.locals_proxy(a).or_else(|| self.locals_proxy(b)) { self.locals_rebuild(&proxy); }
         if let (Action::SetWrite(0), true) = (op, self.lang.or_maps) {
-            if let Some(proxy) = Self::locals_proxy(a) {
+            if let Some(proxy) = self.locals_proxy(a) {
                 if let Value::Map(map) = b.contents() {
                     for (key, value) in map.iter() { self.locals_assign(&proxy, key, value.clone())?; }
                     return Ok(a.clone());
@@ -9509,12 +9513,12 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(op, Action::At) {
-            if let Some(proxy) = Self::locals_proxy(a) {
+            if let Some(proxy) = self.locals_proxy(a) {
                 return match self.locals_find(&proxy, b)? { Some((_, value)) => Ok(value), None => Err(self.key_absent(b)) };
             }
         }
         if matches!(op, Action::Contains | Action::Lacks) {
-            if let Some(proxy) = Self::locals_proxy(b) {
+            if let Some(proxy) = self.locals_proxy(b) {
                 let found = self.locals_find(&proxy, a)?.is_some();
                 return Ok(Value::Flag(found == matches!(op, Action::Contains)));
             }
@@ -10232,16 +10236,16 @@ impl<'a> Engine<'a> {
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         for value in args {
-            if let Some(proxy) = Self::locals_proxy(value) { self.locals_rebuild(&proxy); }
+            if let Some(proxy) = self.locals_proxy(value) { self.locals_rebuild(&proxy); }
         }
         if op == Builtin::Replace && args.len() == 3 {
-            if let Some(proxy) = Self::locals_proxy(&args[2]) { self.locals_assign(&proxy, &args[0], args[1].clone())?; return Ok(Some(args[2].clone())); }
+            if let Some(proxy) = self.locals_proxy(&args[2]) { self.locals_assign(&proxy, &args[0], args[1].clone())?; return Ok(Some(args[2].clone())); }
         }
         if op == Builtin::Erase && args.len() == 2 {
-            if let Some(proxy) = Self::locals_proxy(&args[0]) { self.locals_delete(&proxy, &args[1])?; return Ok(Some(Value::Null)); }
+            if let Some(proxy) = self.locals_proxy(&args[0]) { self.locals_delete(&proxy, &args[1])?; return Ok(Some(Value::Null)); }
         }
         if op == Builtin::Reversed && args.len() == 1 {
-            if let Some(proxy) = Self::locals_proxy(&args[0]) {
+            if let Some(proxy) = self.locals_proxy(&args[0]) {
                 let mut keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
                 keys.reverse();
                 return Ok(Some(Value::array(keys)));
@@ -11581,7 +11585,7 @@ impl<'a> Engine<'a> {
                     Some(self.class_get(singleton, name, false)?)
                 },
                 Action::Grab(name) if name.as_ref() == "__getformat__" && self.data.last().is_some_and(|value| matches!(value.contents(), Value::Real(_))) => { let value = self.drop_top()?; Some(self.class_get(value, name, false)?) },
-                Action::Grab(name) if self.data.last().is_some_and(|v| Self::locals_proxy(v).is_some()) => {
+                Action::Grab(name) if self.data.last().is_some_and(|v| self.locals_proxy(v).is_some()) => {
                     let v = self.drop_top()?;
                     if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name.as_ref()) {
                         Some(Value::ValueMethod(Rc::new((v, name.to_string()))))
@@ -11793,7 +11797,7 @@ impl<'a> Engine<'a> {
                 let named = self.drop_top()?;
                 let holder = self.data.last().cloned().ok_or_else(|| self.special_fault())?;
                 let target = holder.contents();
-                if let Some(proxy) = Self::locals_proxy(&target) {
+                if let Some(proxy) = self.locals_proxy(&target) {
                     self.drop_top()?;
                     self.locals_delete(&proxy, &named)?;
                     self.data.push(Value::Null);
@@ -17817,7 +17821,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
-        if let Some(proxy) = Self::locals_proxy(receiver) {
+        if let Some(proxy) = self.locals_proxy(receiver) {
             if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__len__", "__iter__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&operation) {
                 return self.locals_method(&proxy, operation, args, named);
             }

@@ -6569,6 +6569,7 @@ impl<'a> Machine<'a> {
             "__getitem__" | "__contains__" => {
                 if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
                 match self.locals_look(proxy, &arguments[0])? {
+                    Some((_, _)) if operation == "__contains__" => Ok(Value::Flag(true)),
                     Some((_, value)) => Ok(value),
                     None if operation == "__contains__" => Ok(Value::Flag(false)),
                     None => Err(self.absent_key(&arguments[0]).into()),
@@ -15375,13 +15376,19 @@ impl<'a> Machine<'a> {
     /// refresh rebuilds the same entries as fresh Rcs, so this tells
     /// such a refresh from a real write the comparison made.
     fn same_store(one: &crate::data::MapStore, other: &crate::data::MapStore) -> bool {
-        // A refresh rebuilds every name as a fresh text, so a key is the
-        // same key when it stands in the same place or spells the same
-        // name; a value is the same when it stands in the same place.
-        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| {
-            let named = |value: &Value| match value.settled() { Value::Text(word) => Some(word.clone()), _ => None };
-            let _ = (lv, rv);
-            left.bare() == right.bare() || match (named(left), named(right)) { (Some(a), Some(b)) => a == b, _ => false }
+        // A frame refresh rebuilds every name as a fresh text, so a text
+        // key is the same key when it spells the same name. Any other
+        // key is the same only when it is the very thing itself: two
+        // different objects that happen to print alike are not the same
+        // key, and treating them so would keep a position a key's own
+        // __eq__ had already moved.
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, _), (right, _))| {
+            let unwrap = |value: &Value| match value { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+            let (one_key, other_key) = (unwrap(left), unwrap(right));
+            match (one_key.settled(), other_key.settled()) {
+                (Value::Text(a), Value::Text(b)) => a == b,
+                _ => one_key.one_place(&other_key),
+            }
         })
     }
 

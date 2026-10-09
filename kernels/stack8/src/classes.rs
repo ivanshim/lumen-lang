@@ -3145,7 +3145,7 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
-        if Self::locals_proxy(&subject).is_some()
+        if self.locals_proxy(&subject).is_some()
             && ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
             return Ok(Value::ValueMethod(Rc::new((subject, name.to_string()))));
         }
