@@ -43,9 +43,41 @@ class _Call:
 
     def __repr__(self):
         return repr((self.args, self.kwargs))
+# The double-underscore names the reference lets a test put on a stand-in:
+# a name here is put on the stand-in's own class, because the reader looks
+# such a name up on the class and never on the thing itself.
+_MAGIC_NUMERICS = ('add sub mul matmul truediv floordiv mod lshift rshift and xor or pow').split()
+_SETTABLE_MAGICS = frozenset(
+    ['__' + word + '__' for word in (
+        'lt gt le ge eq ne getitem setitem delitem len contains iter hash str '
+        'sizeof enter exit divmod rdivmod neg pos abs invert complex int float '
+        'index round trunc floor ceil bool next fspath aiter').split()]
+    + ['__' + word + '__' for word in _MAGIC_NUMERICS]
+    + ['__i' + word + '__' for word in _MAGIC_NUMERICS]
+    + ['__r' + word + '__' for word in _MAGIC_NUMERICS])
 
 
 class Mock:
+    def __new__(cls, *args, **kwargs):
+        # Each stand-in has a class of its own, so that a name put on it
+        # is seen by no other stand-in.
+        own = type(cls.__name__, (cls,), {'__doc__': cls.__doc__})
+        return object.__new__(own)
+
+    def __setattr__(self, name, value):
+        if name in _SETTABLE_MAGICS:
+            if isinstance(value, Mock):
+                # A stand-in is called as it stands, with no thing before
+                # the arguments the operation gives it.
+                setattr(type(self), name, value)
+            else:
+                function = value
+                def method(self, /, *args, **kwargs):
+                    return function(self, *args, **kwargs)
+                setattr(type(self), name, method)
+            return
+        object.__setattr__(self, name, value)
+
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
         self._mock_name = name
         self._mock_wraps = wraps
