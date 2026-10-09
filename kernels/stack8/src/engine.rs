@@ -6847,6 +6847,15 @@ impl<'a> Engine<'a> {
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
         if let Value::Class(class) = value {
             let maker = Self::maker_beneath(class)?;
+            // A metaclass saying how its classes are equal, and nothing of their hash, has unhashable classes.
+            if place == 8 {
+                let (hash, equal) = (self.lang.class_special.get(8)?, self.lang.class_special.get(2)?);
+                for current in Self::class_order(&maker).iter().filter(|base| !self.is_metaclass_root(base)) {
+                    let speaks = |word: &String| current.methods.iter().any(|(n, _)| n == word) || current.shared.borrow().iter().any(|(n, _)| n == word);
+                    if speaks(hash) { break; }
+                    if speaks(equal) { return Some(Value::Null); }
+                }
+            }
             return self.class_value(&maker, self.lang.class_special.get(place)?).filter(|method| place != 8 || !matches!(method, Value::Adapter(slot) if slot.0 == 29));
         }
         let Value::Object(object) = value else { return None };
@@ -6967,6 +6976,15 @@ impl<'a> Engine<'a> {
             let mut names = vec!["start".to_string(), "step".to_string(), "stop".to_string()];
             if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
             names.sort();
+            return names;
+        }
+        // A mapping proxy answers to what a dictionary answers to, less the writing.
+        if matches!(sample, Value::View(proxy) if proxy.1 == "mapping") {
+            let mut names = self.kind_member_names(&Value::Map(Rc::new(Vec::new().into())));
+            names.retain(|name| !["clear", "fromkeys", "pop", "popitem", "setdefault", "update", "__setitem__", "__delitem__"].contains(&name.as_str()));
+            names.push("__class_getitem__".to_string());
+            names.sort();
+            names.dedup();
             return names;
         }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
@@ -7306,6 +7324,13 @@ impl<'a> Engine<'a> {
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
+            }
+
+        }
+        // The special methods a mapping proxy answers to work on what it reads.
+        if matches!(name, "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") {
+            if let Some(proxy @ Value::View(_)) = Self::view_in(value).filter(|view| matches!(view, Value::View(w) if w.1 == "mapping")) {
+                return Ok(Some(Value::ValueMethod(Rc::new((proxy, format!("mapping{name}"))))));
             }
         }
         if let Some(directory) = self.builtin_directory_method(value, name) { return Ok(Some(directory)); }
@@ -8882,10 +8907,16 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::Eq | Action::Ne | Action::Contains | Action::Lacks) {
+            let (left, right) = (Self::proxy_reading(a), Self::proxy_reading(b));
+            if left.is_some() || right.is_some() {
+                return self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
+            }
+        }
         if self.lang.or_maps && matches!(op, Action::BitEither | Action::SetWrite(0)) {
             fn mapping(value: &Value) -> Option<Value> {
                 match value {
-                    Value::View(view) if view.1 == "mapping" => Some(view.0.proxy_dictionary()),
+                    Value::View(view) if view.1 == "mapping" => Some(Engine::proxy_reading(value).unwrap_or_else(|| view.0.proxy_dictionary())),
                     Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => mapping(&cell.borrow()),
                     _ => None,
                 }
@@ -11838,6 +11869,10 @@ impl<'a> Engine<'a> {
                     // cell and takes the pairs of whatever mapping or
                     // row of pairs stands on the right, exactly as its
                     // own update would, and answers with itself.
+                    // A mapping proxy cannot be written through.
+                    None if matches!(**inner, Action::SetWrite(0)) && Self::proxy_reading(&held).is_some() => {
+                        return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".to_string().into());
+                    }
                     None if Self::native_writes_over(inner, &held) => {
                         self.dict_update(&held, vec![by], &[])?;
                         held
@@ -12319,6 +12354,10 @@ impl<'a> Engine<'a> {
                 Value::Slice(bounds) if self.slice_bound_named(name).is_some() => bounds[self.slice_bound_named(name).expect("the bound")].clone(),
                 // A counted row keeps its bounds rather than its places,
                 // and hands each of them over by name.
+                // The special methods a mapping proxy answers to work on what it reads.
+                proxy @ Value::View(_) if matches!(&proxy, Value::View(w) if w.1 == "mapping")
+                    && matches!(name.as_ref(), "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") =>
+                    Value::ValueMethod(Rc::new((proxy, format!("mapping{name}")))),
                 Value::Counted(row) if self.range_member_named(name).is_some() => match self.range_member_named(name).expect("the member") {
                     0 => Value::of_big(row.start.clone()),
                     1 => Value::of_big(row.stop.clone()),
@@ -12751,6 +12790,16 @@ impl<'a> Engine<'a> {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
                 let subject = if !self.lang.class_builder.is_empty() { self.what_it_spells(subject) } else { subject };
+                // A special method sent to a mapping proxy works on the mapping it reads.
+                if matches!(name.as_ref(), "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") {
+                    if let Some(proxy @ Value::View(_)) = Self::view_in(&subject).filter(|view| matches!(view, Value::View(w) if w.1 == "mapping")) {
+                        let positional: Vec<Value> = self.call_items(args)?.into_iter().map(|(_, value)| value).collect();
+                        let answer = self.value_method(&proxy, &format!("mapping{name}"), positional, Vec::new());
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        self.data.push(answer?);
+                        return Ok(());
+                    }
+                }
                 if let Value::Generator(held) = subject {
                     let opened = self.call_items(args)?;
                     if opened.iter().any(|(name, _)| name.is_some()) { return Err(self.lang.yield_unsupported[0].clone().into()); }
@@ -14331,7 +14380,7 @@ impl<'a> Engine<'a> {
         // another union; but at least one side must itself be a kind or
         // an already-built union; `None` on both sides is no union.
         if matches!(op, Action::BitEither) && self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-            return Ok(self.join_types(a, b));
+            return self.join_types(a, b).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
         }
         // Rows, tuples and text as a language of sequences works them:
         // adding joins two of one kind, multiplying repeats one a whole
@@ -16764,6 +16813,7 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        Self::unwrap_proxies(builtin, &mut args);
         if builtin == Builtin::ValueMethod && self.lang.float_getformat.iter().any(|word| word == name) {
             let class = Value::Native(Builtin::AsReal, Rc::from("float"));
             return self.value_method(&class, "float_getformat", args, named);
@@ -17086,11 +17136,39 @@ impl<'a> Engine<'a> {
                 Err(thrown) => { self.carried = Some(thrown); Err(String::new()) }
             };
         }
+        let spelled;
+        let operation = if matches!(receiver, Value::View(view) if view.1 == "mapping")
+            && matches!(operation, "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") {
+            spelled = format!("mapping{operation}");
+            spelled.as_str()
+        } else { operation };
         if let Value::View(view) = receiver {
+            if view.1 == "mapping" && operation.starts_with("mapping__") {
+                if operation == "mapping__ior__" { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
+                let mine = Self::proxy_reading(receiver).unwrap_or_else(|| receiver.clone());
+                let mut word = |builtin: Builtin, text: &str, mut given: Vec<Value>| self.builtin(builtin, text, &mut given);
+                match (operation, args.as_slice()) {
+                    ("mapping__len__", []) => return word(Builtin::Length, "len", vec![mine]),
+                    ("mapping__iter__", []) => return word(Builtin::Iter, "iter", vec![mine]),
+                    ("mapping__reversed__", []) => return word(Builtin::Reversed, "reversed", vec![mine]),
+                    ("mapping__getitem__", [key]) => return word(Builtin::Fetch, "getitem", vec![mine, key.clone()]),
+                    ("mapping__contains__", [key]) => return self.special_dyad(&Action::Contains, key, &mine),
+                    _ => {}
+                }
+                let [other] = args.as_slice() else { return Err(self.lang.method_errors["arguments"].clone()) };
+                let theirs = Self::proxy_reading(other).unwrap_or_else(|| other.clone());
+                return if operation == "mapping__or__" { self.special_dyad(&Action::BitEither, &mine, &theirs) } else { self.special_dyad(&Action::BitEither, &theirs, &mine) };
+            }
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&operation) {
                 if let Value::Class(_) = &view.0 {
                     if args.is_empty() && named.is_empty() && matches!(operation, "keys" | "values" | "items") { return Ok(Value::View(Rc::new((view.0.clone(), operation.to_string())))); }
                     return self.value_method(&view.0.proxy_dictionary(), operation, args, named);
+                }
+                // A mapping the program made answers with its own method, overridden or not.
+                if let Value::Object(_) = view.0.contents() {
+                    let thing = view.0.contents();
+                    let method = self.class_get(thing, operation, false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                    return self.class_apply(method, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
                 }
                 return self.value_method(&view.0, operation, args, named);
             }
@@ -19316,6 +19394,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        Self::unwrap_proxies(builtin, args);
         if builtin == Builtin::UnicodeDecomposition { return crate::sre::decompose(args); }
         // The labelled Unicode range permits an exact integer path without
         // building a big integer. Subclasses and unusual arguments fall through.
@@ -19548,6 +19627,43 @@ impl<'a> Engine<'a> {
                 *old = value;
             } else { pairs.push((key, value)); }
         } else { put_key(pairs, key, value); }
+    }
+
+    /// A mapping proxy over a mapping the program made is that mapping for what a builtin asks of it.
+    fn unwrap_proxies(builtin: Builtin, args: &mut [Value]) {
+        if matches!(builtin, Builtin::Length | Builtin::Iter | Builtin::List | Builtin::Tuple | Builtin::Sorted | Builtin::Set | Builtin::Frozen
+            | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::Bool | Builtin::Hash
+            | Builtin::Dict | Builtin::Fetch | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum | Builtin::Next) {
+            for value in args.iter_mut() {
+                if let Some(mapping) = Self::proxied_mapping(value) { *value = mapping; }
+            }
+        }
+        // Walked backwards, hashed or written out, a proxy is the dictionary it reads.
+        if matches!(builtin, Builtin::Reversed | Builtin::Hash | Builtin::ToText) {
+            for value in args.iter_mut() {
+                if let Some(mapping) = Self::proxy_reading(value) { *value = mapping; }
+            }
+        }
+    }
+
+    /// What a mapping proxy stands for in an operation: the mapping the program
+    /// made, or the dictionary under a plain one.
+    pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
+        match value {
+            Value::View(proxy) if proxy.1 == "mapping" => Some(Self::proxied_mapping(value).unwrap_or_else(|| proxy.0.proxy_dictionary())),
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::proxy_reading(&cell.borrow()),
+            _ => None,
+        }
+    }
+
+    /// The mapping a proxy reads, where the program made it (a dict subclass,
+    /// a chain of dictionaries): such a proxy answers for it in every question.
+    pub(super) fn proxied_mapping(value: &Value) -> Option<Value> {
+        match value {
+            Value::View(proxy) if proxy.1 == "mapping" => match proxy.0.contents() { thing @ Value::Object(_) => Some(thing), _ => None },
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::proxied_mapping(&cell.borrow()),
+            _ => None,
+        }
     }
 
     fn view_in(value: &Value) -> Option<Value> {

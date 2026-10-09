@@ -25,100 +25,8 @@ GenericAlias = type(list[int])
 
 # These kinds are the runtime's own; the names here are the kinds the
 # pure fallback in types.py reads off the same values.
-# A reading of a mapping that cannot be written through. Every question
-# goes to the mapping held, so a mapping's own methods keep their say.
-class MappingProxyType:
-    __slots__ = ('_mapping',)
-
-    def __init__(self, mapping):
-        if not hasattr(mapping, '__getitem__') or isinstance(mapping, (list, tuple)):
-            raise TypeError('mappingproxy() argument must be a mapping, not ' + type(mapping).__name__)
-        self._mapping = mapping
-
-    def __getitem__(self, key):
-        return self._mapping[key]
-
-    def __len__(self):
-        return len(self._mapping)
-
-    def __iter__(self):
-        return iter(self._mapping)
-
-    def __reversed__(self):
-        return reversed(self._mapping)
-
-    def __contains__(self, key):
-        return key in self._mapping
-
-    def __hash__(self):
-        return hash(self._mapping)
-
-    def get(self, key, default=None):
-        return self._mapping.get(key, default)
-
-    def keys(self):
-        return self._mapping.keys()
-
-    def values(self):
-        return self._mapping.values()
-
-    def items(self):
-        return self._mapping.items()
-
-    def copy(self):
-        return self._mapping.copy()
-
-    def __eq__(self, other):
-        return self._mapping == other
-
-    def __ne__(self, other):
-        return self._mapping != other
-
-    def __lt__(self, other):
-        return self._mapping < other
-
-    def __le__(self, other):
-        return self._mapping <= other
-
-    def __gt__(self, other):
-        return self._mapping > other
-
-    def __ge__(self, other):
-        return self._mapping >= other
-
-    # A reading stands for the mapping it reads when the union sign
-    # reaches it, on either side. A reading cannot be written through
-    # with the in-place sign.
-    def __or__(self, other):
-        right = other._mapping if isinstance(other, MappingProxyType) else other
-        return self._mapping | right
-
-    def __ror__(self, other):
-        left = other._mapping if isinstance(other, MappingProxyType) else other
-        return left | self._mapping
-
-    def __ior__(self, other):
-        raise TypeError("'|=' is not supported by mappingproxy; use '|' instead")
-
-    def __class_getitem__(cls, item):
-        return GenericAlias(cls, item)
-
-    def __str__(self):
-        return str(self._mapping)
-
-    def __repr__(self):
-        return 'mappingproxy(' + repr(self._mapping) + ')'
-
-    # The slot holding the mapping is no part of what a reading offers.
-    def __dir__(self):
-        return [name for name in object.__dir__(self) if name not in ('_mapping', '__module__', '__slots__')]
-
-
-# The reference names this kind mappingproxy, and types.MappingProxyType
-# is that kind, so the name a type prints is the reference's.
-MappingProxyType.__name__ = 'mappingproxy'
-MappingProxyType.__qualname__ = 'mappingproxy'
-MappingProxyType.__module__ = 'builtins'
+# The runtime's own mapping proxy: the kind class dictionaries are read through.
+MappingProxyType = type(type.__dict__)
 SimpleNamespace = type(sys.implementation)
 UnionType = type(int | str)
 
@@ -163,12 +71,62 @@ def _union_reduce(union):
     return (operator.getitem, (typing.Union, union.__args__))
 
 
+def _hash_parts(members):
+    hashable, unhashable = [], []
+    for member in members:
+        try:
+            hash(member)
+        except TypeError:
+            unhashable.append(member)
+        else:
+            hashable.append(member)
+    return hashable, unhashable
+
+
+def _union_args(members):
+    # The members of a union made from these, in order, with the repeats
+    # taken out: members that hash are alike when they compare equal among
+    # those hashing alike, the rest when they compare equal to one another.
+    kept, unhashable, seen = [], [], {}
+    for member in members:
+        try:
+            key = hash(member)
+        except TypeError:
+            for other in unhashable:
+                if other is member or other == member:
+                    break
+            else:
+                kept.append(member)
+                unhashable.append(member)
+            continue
+        bucket = seen.setdefault(key, [])
+        for other in bucket:
+            if other is member or other == member:
+                break
+        else:
+            bucket.append(member)
+            kept.append(member)
+    return tuple(kept), tuple(unhashable)
+
+
 def _union_eq(union, other):
     if type(other) is not type(union):
         return NotImplemented
-    mine, theirs = union.__args__, other.__args__
-    return (all([any([x == y for y in theirs]) for x in mine])
-            and all([any([y == x for x in mine]) for y in theirs]))
+    if union is other:
+        return True
+    mine, bad_mine = _hash_parts(union.__args__)
+    theirs, bad_theirs = _hash_parts(other.__args__)
+    if len(mine) != len(theirs) or len(bad_mine) != len(bad_theirs):
+        return False
+    if frozenset(mine) != frozenset(theirs):
+        return False
+    for member in bad_mine:
+        for candidate in bad_theirs:
+            if member is candidate or member == candidate:
+                break
+        else:
+            return False
+    return True
 
 
 def _union_new(cls, *args, **kwargs):
@@ -176,9 +134,12 @@ def _union_new(cls, *args, **kwargs):
 
 
 def _union_hash(union):
-    for member in union.__args__:
-        hash(member)
     return hash(frozenset(union.__args__))
+
+
+# mappingproxy[int], as a kind is subscripted.
+def _alias_of_class(cls, item):
+    return GenericAlias(cls, item)
 
 
 # What a subscripted kind (list[int]) answers when it is pickled or hashed.
@@ -229,16 +190,4 @@ try:
 except TypeError as _exc:
     TracebackType = type(_exc.__traceback__)
     FrameType = type(_exc.__traceback__.tb_frame)
-# The type of a C-API capsule. This runtime has no C API, so there is no
-# way to make a capsule; the type exists, as in the reference, and refuses
-# to be instantiated.
-class CapsuleType:
-    def __new__(cls, *args, **kwargs):
-        raise TypeError("cannot create 'PyCapsule' instances")
-
-
-CapsuleType.__name__ = 'PyCapsule'
-CapsuleType.__qualname__ = 'PyCapsule'
-CapsuleType.__module__ = 'builtins'
-
-__all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias', 'CapsuleType']
+__all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']

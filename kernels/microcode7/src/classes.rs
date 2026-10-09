@@ -75,15 +75,19 @@ impl<'a> Machine<'a> {
             protocols.push(("__or__".to_owned(), Self::wrap(206, vec![Value::Small(0)])));
             protocols.push(("__ror__".to_owned(), Self::wrap(206, vec![Value::Small(1)])));
         }
+        if word == "mappingproxy" {
+            protocols.push(("__class_getitem__".to_owned(), Self::wrap(205, vec![Value::text("_alias_of_class")])));
+        }
         if word == "Union" {
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
             // The reference builds a union by subscription; the folded
             // members are the very shape the class questions read.
             protocols.push(("__class_getitem__".to_owned(), Self::wrap(140, Vec::new())));
             protocols.push((self.detail("allocate").to_owned(), Self::wrap(205, vec![Value::text("_union_new")])));
+            protocols.push(("__hash__".to_owned(), Self::wrap(207, Vec::new())));
             // Subscripting, pickling and hashing a built union are done
             // by the support module, which reads the members.
-            protocols.extend(["_union_getitem", "_union_reduce", "_union_hash", "_union_eq"].iter().zip(["__getitem__", "__reduce__", "__hash__", "__eq__"])
+            protocols.extend(["_union_getitem", "_union_reduce", "_union_eq"].iter().zip(["__getitem__", "__reduce__", "__eq__"])
                 .map(|(helper, name)| (name.to_owned(), Self::wrap(205, vec![Value::text(helper)]))));
         }
         if word == "GenericAlias" {
@@ -507,7 +511,7 @@ impl<'a> Machine<'a> {
                 Value::Window(_, 'm') => {},
                 _ => match owner.settled() {
                 Value::Dict(_) | Value::Attributes(_) => {},
-                Value::Thing(_) if self.appointment(&owner, 11).is_some() => {},
+                Value::Thing(_) if self.appointment(&owner, 11).is_some() || Self::underlying(&owner.settled()).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) => {},
                 other => return Err(format!("TypeError: mappingproxy() argument must be a mapping, not {}", other.kind_word()).into()),
                 },
             }
@@ -1737,6 +1741,23 @@ impl<'a> Machine<'a> {
                         let (Some(me), Some(other)) = (values.first().cloned(), values.get(1).cloned()) else { return Err(self.class_unready()); };
                         let reflected = matches!(kept.first(), Some(Value::Small(1)));
                         self.union_of(if reflected { vec![other, me] } else { vec![me, other] })
+                    }
+                    207 => {
+                        // A union hashes by its members; one made while a member could not be hashed says so.
+                        let Some(Value::Thing(union)) = values.first().map(Value::settled) else { return Err(self.class_unready()); };
+                        let hidden = union.holds.borrow().iter().find(|entry| entry.0 == "\0unhashable").map(|entry| entry.1.clone());
+                        if let Some(Value::Tuple(row)) = hidden {
+                            for member in row.iter() {
+                                match self.prim(Prim::Hashed, "hash", std::slice::from_ref(member)) {
+                                    Ok(_) => {}
+                                    Err(words) => return Err(self.got_away.take().unwrap_or(Escape::Error(words))),
+                                }
+                            }
+                            return Err(format!("TypeError: union contains {} unhashable elements", row.len()).into());
+                        }
+                        let module = self.load_namespace("_types")?;
+                        let helper = self.read_class_member(module, "_union_hash", false)?;
+                        self.apply_class_member(helper, values)
                     }
                     205 => {
                         let module = self.load_namespace("_types")?;
@@ -2999,7 +3020,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 205 | 206, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 205 | 206 | 207, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -6621,7 +6642,9 @@ impl<'a> Machine<'a> {
 
 impl<'a> Machine<'a> {
     fn alias_action(&mut self, mode: &[Value], arguments: Vec<Value>) -> Res {
-        // Arguments written with a star are opened out first.
+        // Calling the alias hands its arguments, keywords and stars included, to the origin as written.
+        let raw = arguments.clone();
+        // Arguments written with a star are opened out for the rest.
         let (opened, _) = self.open_arguments(arguments)?;
         let mut values = opened.into_iter();
         let subject = values.next().ok_or_else(|| self.class_unready())?.settled();
@@ -6663,7 +6686,7 @@ impl<'a> Machine<'a> {
                 let entries = Rc::new(vec![unpacked]).into();
                 Ok(Self::cursor_value_walked(crate::data::IteratorKind::Stored { entries, next: 0 }, Some(Rc::from("generic_alias_iterator"))))
             }
-            2 => self.apply_class_member(parent, rest),
+            2 => self.apply_class_member(parent, raw[1..].to_vec()),
             3 if rest.len() == 1 => Ok(Value::tuple(vec![parent])),
             1 => {
                 let tuple = self.read_class_member(subject.clone(), "__args__", true)?;
@@ -6700,7 +6723,7 @@ impl<'a> Machine<'a> {
             6 | 7 if rest.len() == 1 => {
                 let other = rest.remove(0).settled();
                 if !self.union_member(&other) { return Ok(Value::Refusal(Rc::from("NotImplemented"))); }
-                Ok(if action == 6 { self.combined_types(&[subject, other]) } else { self.combined_types(&[other, subject]) })
+                if action == 6 { self.combined_types(&[subject, other]) } else { self.combined_types(&[other, subject]) }
             }
             _ => Err(self.class_unready()),
         }
@@ -6717,13 +6740,23 @@ impl<'a> Machine<'a> {
         let mut folded: Option<Value> = None;
         for member in members {
             let member = self.apply_class_member(check.clone(), vec![member, Value::text("Union[arg, ...]: each arg must be a type.")])?;
-            folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member]) });
+            folded = Some(match folded { None => member, Some(acc) => self.combined_types(&[acc, member])? });
         }
         Ok(folded.unwrap_or(Value::Nil))
     }
 
-    pub(super) fn combined_types(&mut self, pair: &[Value]) -> Value {
-        let mut row: Vec<Value> = Vec::new();
+    /// Whether a class was built by a metaclass that speaks for how its classes
+    /// hash or compare: joining such a class into a union is the support module's work.
+    fn builder_speaks(&self, member: &Value) -> bool {
+        let Value::Blueprint(class) = member else { return false };
+        let Some(maker) = Self::builder_over(class) else { return false };
+        Self::resolution_order(&maker).iter().filter(|base| !self.builds_classes(base)).any(|base| {
+            ["__eq__", "__hash__"].iter().any(|key| base.methods.iter().any(|(name, _)| name == key) || base.shared.borrow().iter().any(|(name, _)| name == key))
+        })
+    }
+
+    pub(super) fn combined_types(&mut self, pair: &[Value]) -> Res {
+        let mut all: Vec<Value> = Vec::new();
         for operand in pair {
             let mut additions = vec![operand.clone()];
             if let Value::Thing(t) = operand {
@@ -6731,17 +6764,33 @@ impl<'a> Machine<'a> {
                     if let Some((_, Value::Tuple(parts))) = t.holds.borrow().iter().find(|entry| entry.0 == "__args__") { additions = parts.to_vec(); }
                 }
             } else if matches!(operand, Value::Nil) { additions = vec![Value::Blueprint(self.native_kind("NoneType"))]; }
-            for candidate in additions { if row.iter().all(|held| !held.equals(&candidate)) { row.push(candidate); } }
+            all.extend(additions);
         }
-        match row.len() {
+        let (mut row, unhashable): (Vec<Value>, Vec<Value>) = if all.iter().any(|member| self.builder_speaks(member)) {
+            let module = self.load_namespace("_types")?;
+            let helper = self.read_class_member(module, "_union_args", false)?.settled();
+            match self.apply_class_member(helper, vec![Value::tuple(all)])?.settled() {
+                Value::Tuple(pair) if pair.len() == 2 => {
+                    let rows = |v: &Value| match v.settled() { Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+                    (rows(&pair[0]), rows(&pair[1]))
+                }
+                _ => return Err(self.class_unready()),
+            }
+        } else {
+            let mut row: Vec<Value> = Vec::new();
+            for candidate in all { if row.iter().all(|held| !held.equals(&candidate)) { row.push(candidate); } }
+            (row, Vec::new())
+        };
+        Ok(match row.len() {
             1 => row.remove(0),
             _ => {
                 self.made += 1;
                 let of = self.native_kind("Union");
-                Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made,
-                    holds: RefCell::new(vec![("__args__".to_owned(), Value::tuple(row))]) }))
+                let mut holds = vec![("__args__".to_owned(), Value::tuple(row))];
+                if !unhashable.is_empty() { holds.push(("\0unhashable".to_owned(), Value::tuple(unhashable))); }
+                Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made, holds: RefCell::new(holds) }))
             }
-        }
+        })
     }
 }
 

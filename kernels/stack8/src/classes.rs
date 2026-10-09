@@ -75,16 +75,20 @@ impl<'a> Engine<'a> {
             hooks.push(("__or__".into(), Self::adapter(206, vec![Value::Small(0)])));
             hooks.push(("__ror__".into(), Self::adapter(206, vec![Value::Small(1)])));
         }
+        if word == "mappingproxy" {
+            hooks.push(("__class_getitem__".into(), Self::adapter(205, vec![Value::text("_alias_of_class")])));
+        }
         if word == "Union" {
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
             // The reference builds a union by subscription, which the
             // special form's own item method does; the folded members
             // are the very shape the class questions read a union by.
             hooks.push(("__class_getitem__".into(), Self::adapter(140, Vec::new())));
+            hooks.push(("__hash__".into(), Self::adapter(207, Vec::new())));
             hooks.push((self.class_word("allocate").to_string(), Self::adapter(205, vec![Value::text("_union_new")])));
             // Subscripting, pickling and hashing a built union are worked
             // out by the support module, which reads the members.
-            for (name, helper) in [("__getitem__", "_union_getitem"), ("__reduce__", "_union_reduce"), ("__hash__", "_union_hash"), ("__eq__", "_union_eq")] {
+            for (name, helper) in [("__getitem__", "_union_getitem"), ("__reduce__", "_union_reduce"), ("__eq__", "_union_eq")] {
                 hooks.push((name.into(), Self::adapter(205, vec![Value::text(helper)])));
             }
         }
@@ -308,7 +312,7 @@ impl<'a> Engine<'a> {
             if entries.len() != 1 || entries[0].0.is_some() { return Err("TypeError: mappingproxy() takes exactly one argument".into()); }
             let mapping = entries[0].1.clone();
             let held = mapping.contents();
-            if !matches!(&mapping, Value::View(view) if view.1 == "mapping") && !matches!(held, Value::Map(_) | Value::Fields(_)) && !(matches!(held, Value::Object(_)) && self.special_value(&held, 11).is_some()) {
+            if !matches!(&mapping, Value::View(view) if view.1 == "mapping") && !matches!(held, Value::Map(_) | Value::Fields(_)) && !(matches!(held, Value::Object(_)) && (self.special_value(&held, 11).is_some() || Self::worth_of(&held).is_some_and(|worth| matches!(worth.contents(), Value::Map(_))))) {
                 return Err(format!("TypeError: mappingproxy() argument must be a mapping, not {}", held.core_kind()).into());
             }
             return Ok(Value::View(Rc::new((mapping, "mapping".to_string()))));
@@ -1789,7 +1793,7 @@ impl<'a> Engine<'a> {
                     let mut checked = Vec::new();
                     for entry in entries { checked.push(self.class_apply(check.clone(), vec![entry, Value::text("Union[arg, ...]: each arg must be a type.")])?); }
                     let mut result = checked.remove(0);
-                    for item in checked { result = self.join_types(&result, &item); }
+                    for item in checked { result = self.join_types(&result, &item)?; }
                     Ok(result)
                 }
                 77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
@@ -1800,6 +1804,23 @@ impl<'a> Engine<'a> {
                     let (Some(me), Some(other)) = (args.first().cloned(), args.get(1).cloned()) else { return Err(self.class_refusal()); };
                     let reflected = matches!(w.1.first(), Some(Value::Small(1)));
                     self.union_of(if reflected { vec![other, me] } else { vec![me, other] })
+                }
+                207 => {
+                    // A union hashes by its members; one made while a member could not be hashed says so.
+                    let Some(Value::Object(union)) = args.first().cloned() else { return Err(self.class_refusal()); };
+                    let hidden = union.fields.borrow().iter().find(|(key, _)| key == "\0unhashable").map(|(_, held)| held.clone());
+                    if let Some(Value::Tuple(row)) = hidden {
+                        for member in row.iter() {
+                            let mut one = vec![member.clone()];
+                            let hashed = self.builtin(Builtin::Hash, "hash", &mut one);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            hashed?;
+                        }
+                        return Err(format!("TypeError: union contains {} unhashable elements", row.len()).into());
+                    }
+                    let module = self.import_module("_types")?;
+                    let helper = self.class_get(module, "_union_hash", false)?;
+                    self.class_apply(helper, args)
                 }
                 205 => {
                     let module = self.import_module("_types")?;
@@ -3040,7 +3061,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 133 | 180 | 236 | 205 | 206 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 133 | 180 | 236 | 205 | 206 | 207 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -6417,7 +6438,9 @@ impl<'a> Engine<'a> {
 
 impl<'a> Engine<'a> {
     fn alias_work(&mut self, operation: i64, given: Vec<Value>) -> Flow<Value> {
-        // Arguments written with a star are opened out first.
+        // Calling the alias hands its arguments, keywords and stars included, to the origin as written.
+        let raw = given.clone();
+        // Arguments written with a star are opened out for the rest.
         let mut given: Vec<Value> = self.call_items(given)?.into_iter().map(|(_, value)| value).collect();
         if given.is_empty() { return Err(self.class_refusal()); }
         let receiver = given.remove(0);
@@ -6474,7 +6497,7 @@ impl<'a> Engine<'a> {
                 }
                 Ok(Self::core_cursor_walked(crate::value::CursorSource::Items(Rc::new(vec![alias]).into(), 0), Some(Rc::from("generic_alias_iterator"))))
             }
-            2 => self.class_apply(origin, given),
+            2 => self.class_apply(origin, raw[1..].to_vec()),
             3 if given.len() == 1 => Ok(Value::tuple(vec![origin])),
             4 if given.len() == 1 => {
                 if !matches!(given[0].contents(), Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias")) { return Ok(Value::Declined(Rc::from("NotImplemented"))); }
@@ -6489,7 +6512,7 @@ impl<'a> Engine<'a> {
             6 | 7 if given.len() == 1 => {
                 let other = given[0].contents();
                 if !self.union_member(&other) { return Ok(Value::Declined(Rc::from("NotImplemented"))); }
-                Ok(if operation == 6 { self.join_types(&receiver, &other) } else { self.join_types(&other, &receiver) })
+                if operation == 6 { self.join_types(&receiver, &other) } else { self.join_types(&other, &receiver) }
             }
             _ => Err(self.class_refusal()),
         }
@@ -6506,13 +6529,22 @@ impl<'a> Engine<'a> {
         let mut folded: Option<Value> = None;
         for member in members {
             let member = self.class_apply(check.clone(), vec![member, Value::text("Union[arg, ...]: each arg must be a type.")])?;
-            folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member) });
+            folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member)? });
         }
         Ok(folded.unwrap_or(Value::Null))
     }
 
-    pub(super) fn join_types(&mut self, left: &Value, right: &Value) -> Value {
-        let mut members = Vec::new();
+    /// Whether a class was made by a metaclass that speaks for how its classes hash
+    /// or compare: joining such a class into a union is the support module's work.
+    fn meta_speaks(&self, member: &Value) -> bool {
+        let Value::Class(class) = member else { return false };
+        let Some(maker) = Self::maker_beneath(class) else { return false };
+        Self::class_order(&maker).iter().filter(|base| !self.is_metaclass_root(base))
+            .any(|base| Self::own_class_value(base, "__eq__").is_some() || Self::own_class_value(base, "__hash__").is_some())
+    }
+
+    pub(super) fn join_types(&mut self, left: &Value, right: &Value) -> Flow<Value> {
+        let mut all = Vec::new();
         for given in [left, right] {
             let entries = match given {
                 Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union") => o.fields.borrow().iter()
@@ -6520,13 +6552,29 @@ impl<'a> Engine<'a> {
                 Value::Null => vec![Value::Class(self.kind_class("NoneType"))],
                 other => vec![other.clone()],
             };
-            for entry in entries { if !members.iter().any(|held: &Value| self.one_place(held, &entry)) { members.push(entry); } }
+            all.extend(entries);
         }
-        if members.len() == 1 { return members.remove(0); }
+        let (mut members, unhashable) = if all.iter().any(|member| self.meta_speaks(member)) {
+            let module = self.import_module("_types")?;
+            let helper = self.class_get(module, "_union_args", false)?.contents();
+            match self.class_apply(helper, vec![Value::tuple(all)])?.contents() {
+                Value::Tuple(pair) if pair.len() == 2 => {
+                    let rows = |v: &Value| match v.contents() { Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+                    (rows(&pair[0]), rows(&pair[1]))
+                }
+                _ => return Err(self.class_refusal()),
+            }
+        } else {
+            let mut members: Vec<Value> = Vec::new();
+            for entry in all { if !members.iter().any(|held: &Value| self.one_place(held, &entry)) { members.push(entry); } }
+            (members, Vec::new())
+        };
+        if members.len() == 1 { return Ok(members.remove(0)); }
         let class = self.kind_class("Union");
         self.made += 1;
-        Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
-            fields: RefCell::new(vec![("__args__".into(), Value::tuple(members))]) }))
+        let mut fields = vec![("__args__".into(), Value::tuple(members))];
+        if !unhashable.is_empty() { fields.push(("\0unhashable".into(), Value::tuple(unhashable))); }
+        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(fields) })))
     }
 }
 

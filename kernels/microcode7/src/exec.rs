@@ -8407,6 +8407,15 @@ impl<'a> Machine<'a> {
             entries.sort();
             return entries;
         }
+        // A mapping proxy answers to what a dictionary answers to, less the writing.
+        if matches!(sample, Value::Window(_, 'm')) {
+            let mut names = self.native_directory(&Value::Dict(Rc::new(Vec::new().into())));
+            names.retain(|name| !["clear", "fromkeys", "pop", "popitem", "setdefault", "update", "__setitem__", "__delitem__"].contains(&name.as_str()));
+            names.push(String::from("__class_getitem__"));
+            names.sort_unstable();
+            names.dedup();
+            return names;
+        }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let catalogue = (mark, sample.settled().kind_word().to_owned());
         if let Some(found) = self.member_inventories.borrow().get(&catalogue) { return found.to_vec(); }
@@ -9038,6 +9047,12 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        // The special methods a mapping proxy answers to work on what it reads.
+        if matches!(name, "__getitem__" | "__contains__" | "__iter__" | "__len__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") {
+            let mut seen = value.clone();
+            while let Value::Shared(cell) | Value::Mutable(cell, _) = seen.clone() { seen = cell.borrow().clone(); }
+            if matches!(seen, Value::Window(_, 'm')) { return Some(Value::Member(Rc::new(seen), format!("mapping{name}"))); }
+        }
         if name==self.detail("allocate") && matches!(value.settled(),Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
         if matches!(value, Value::Unpaired(_)) && crate::table::BUILTIN_LABELS.iter().any(|(label,operation)| *label==format!("ext.builtin.text.{name}") && matches!(operation,Prim::Textual(_))) {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
@@ -10024,6 +10039,20 @@ impl<'a> Machine<'a> {
             inputs.extend(arguments);
             return self.root_answers(&method, inputs);
         }
+        if let (Value::Window(_, 'm'), true) = (receiver, name.starts_with("mapping__")) {
+            if name == "mapping__ior__" { return Err(String::from("TypeError: '|=' is not supported by mappingproxy; use '|' instead").into()); }
+            let mine = Self::proxy_reading(receiver).unwrap_or_else(|| receiver.clone());
+            return match (name, arguments.as_slice()) {
+                ("mapping__len__", []) => self.prim(Prim::Length, "len", &[mine]).map_err(Escape::Error),
+                ("mapping__iter__", []) => self.prim(Prim::Iterator, "iter", &[mine]).map_err(Escape::Error),
+                ("mapping__reversed__", []) => self.prim(Prim::Backwards, "reversed", &[mine]).map_err(Escape::Error),
+                ("mapping__getitem__", [key]) => self.prim(Prim::At, "", &[mine, key.clone()]).map_err(Escape::Error),
+                ("mapping__contains__", [key]) => self.prim(Prim::Contains, "", &[key.clone(), mine]).map_err(Escape::Error),
+                ("mapping__or__", [other]) => { let other = Self::proxy_reading(other).unwrap_or_else(|| other.clone()); self.prim(Prim::BitsEither, "", &[mine, other]).map_err(Escape::Error) }
+                ("mapping__ror__", [other]) => { let other = Self::proxy_reading(other).unwrap_or_else(|| other.clone()); self.prim(Prim::BitsEither, "", &[other, mine]).map_err(Escape::Error) }
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
         if let Value::Window(owner, 'm') = receiver {
             if matches!(name, "get" | "keys" | "values" | "items" | "copy") {
                 if matches!(owner.as_ref(), Value::Blueprint(_)) {
@@ -10032,6 +10061,11 @@ impl<'a> Machine<'a> {
                         if let Some(portion) = portion { return Ok(Value::Window(owner.clone(), portion)); }
                     }
                     return self.value_member(&owner.proxy_pairs(), name, arguments, keywords);
+                }
+                // A mapping the program made answers with its own method, overridden or not.
+                if let Value::Thing(_) = owner.settled() {
+                    let method = self.read_class_member(owner.settled(), name, false)?;
+                    return self.apply_class_member(method, arguments).map_err(Into::into);
                 }
                 return self.value_member(owner, name, arguments, keywords);
             }
@@ -11418,6 +11452,7 @@ impl<'a> Machine<'a> {
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
     pub(super) fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
+        if let Some(unwrapped) = Self::unwrapped_proxies(op, positional) { *positional = unwrapped; }
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
@@ -14787,6 +14822,16 @@ impl<'a> Machine<'a> {
         let word = names.get(index)?;
         if let Value::Blueprint(class) = subject {
             let maker = Self::builder_over(class)?;
+            // A metaclass saying how its classes are equal, and nothing of their hash, has unhashable classes.
+            if index == 8 {
+                if let Some(equal) = names.get(2) {
+                    for current in Self::resolution_order(&maker).iter().filter(|base| !self.builds_classes(base)) {
+                        let speaks = |key: &str| current.methods.iter().any(|(name, _)| name == key) || current.shared.borrow().iter().any(|(name, _)| name == key);
+                        if speaks(word) { break; }
+                        if speaks(equal) { return Some(Value::Nil); }
+                    }
+                }
+            }
             return self.inherited_entry(&maker, word).filter(|entry| index != 8 || !matches!(entry, Value::Wrapped(60, _)));
         }
         let Value::Thing(thing) = subject else { return None };
@@ -16315,6 +16360,38 @@ impl<'a> Machine<'a> {
         if spec.is_empty() { return self.object_words(item, false); }
         let pieces = self.table.strings("ext.stmt.class.format.amiss");
         Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), item.kind_word(), pieces.get(1).map_or("", String::as_str)))
+    }
+
+    /// What a mapping proxy stands for in an operation: the mapping the program
+    /// made, or the pairs under a plain one.
+    pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
+        match value {
+            Value::Window(owner, 'm') => Some(Self::proxied_mapping(value).unwrap_or_else(|| owner.proxy_pairs())),
+            Value::Shared(cell) | Value::Mutable(cell, _) => Self::proxy_reading(&cell.borrow()),
+            _ => None,
+        }
+    }
+
+    /// The mapping a proxy reads, where the program made it (a dict subclass, a
+    /// chain of dictionaries): such a proxy answers for it in every question.
+    pub(super) fn proxied_mapping(value: &Value) -> Option<Value> {
+        match value {
+            Value::Window(owner, 'm') => match owner.settled() { thing @ Value::Thing(_) => Some(thing), _ => None },
+            Value::Shared(cell) | Value::Mutable(cell, _) => Self::proxied_mapping(&cell.borrow()),
+            _ => None,
+        }
+    }
+
+    /// A mapping proxy is that mapping for what a primitive asks of it.
+    fn unwrapped_proxies(op: Prim, v: &[Value]) -> Option<Vec<Value>> {
+        let made = matches!(op, Prim::Length | Prim::Iterator | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Dictionary
+            | Prim::SortedValues | Prim::Ordered | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue
+            | Prim::Least | Prim::Greatest | Prim::Total | Prim::Listed | Prim::Truthful | Prim::NextItem);
+        let read = matches!(op, Prim::Backwards | Prim::Hashed | Prim::AsText | Prim::Eq | Prim::Ne | Prim::Contains | Prim::Absent | Prim::At);
+        if !made && !read { return None; }
+        let swapped: Vec<Option<Value>> = v.iter().map(|value| if made { Self::proxied_mapping(value) } else { Self::proxy_reading(value) }).collect();
+        if swapped.iter().all(Option::is_none) { return None; }
+        Some(v.iter().zip(swapped).map(|(value, other)| other.unwrap_or_else(|| value.clone())).collect())
     }
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
@@ -18044,6 +18121,7 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if let Some(unwrapped) = Self::unwrapped_proxies(op, v) { return self.prim(op, name, &unwrapped); }
         if op == Prim::UnicodeDecomposition { return crate::sre::decompose(v); }
         // Exact machine integers need neither index hooks nor big-integer conversion.
         // Other receivers keep the normal argument and numeric protocol checks.
@@ -18067,7 +18145,7 @@ impl<'a> Machine<'a> {
         if self.rules.map_union && matches!(op, Prim::BitsEither | Prim::SetAssign(0)) {
             fn mapping(value: &Value) -> Option<Value> {
                 match value {
-                    Value::Window(owner, 'm') => Some(owner.proxy_pairs()),
+                    Value::Window(owner, 'm') => Some(Machine::proxy_reading(value).unwrap_or_else(|| owner.proxy_pairs())),
                     Value::Shared(cell) | Value::Mutable(cell, _) => mapping(&cell.borrow()),
                     _ => None,
                 }
@@ -18614,7 +18692,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
@@ -18641,7 +18719,7 @@ impl<'a> Machine<'a> {
         // no union.
         if let (Prim::BitsEither, [a, b]) = (op, v) {
             if self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-                return Ok(self.combined_types(v));
+                return self.combined_types(v).map_err(|fault| self.carried_native_fault(fault));
             }
         }
         // Rows, tuples and text as a language of sequences works them.
@@ -18710,6 +18788,10 @@ impl<'a> Machine<'a> {
                 // cell and takes the pairs of whatever mapping or row of
                 // pairs stands on the right, exactly as its update does,
                 // so a plain mapping joined with a UserDict stays a map.
+                // A mapping proxy cannot be written through.
+                if matches!(plain, Prim::SetAssign(0)) && Self::proxy_reading(held).is_some() {
+                    return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into());
+                }
                 if matches!(plain, Prim::SetAssign(0)) && Self::dict_cell(held).is_some() {
                     self.dict_update(held, vec![by.clone()], &[])?;
                     return Ok(held.clone());
