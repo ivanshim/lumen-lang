@@ -688,7 +688,11 @@ impl<'a> Engine<'a> {
         }
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
-        if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
+        // A shape is added by a kind the language keeps for its own
+        // values, or by slots of its own; a class of no extra storage
+        // takes the shape of what it stands on, however it is spelled.
+        let shaped = Self::own_kind(class).is_some_and(|word| self.lang.builtins.get(&word).is_some());
+        if shaped || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
         class.base.as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -905,8 +909,16 @@ impl<'a> Engine<'a> {
             return Ok(());
         };
         // The names may come from a row, a mapping's keys, a set's
-        // members or a single name, as the reference reads them.
-        let named: Vec<Value> = match slots.contents() {
+        // members, a single name, or any walk at all, as the reference
+        // reads them: a string stands for one name, never its letters,
+        // and every other value is taken through its own walk. What
+        // cannot be walked is refused by the walk itself.
+        let materialized = if matches!(slots.contents(), Value::Text(_)) {
+            slots.clone()
+        } else {
+            self.class_apply(Value::Native(Builtin::Tuple, Rc::from("tuple")), vec![slots.clone()])?
+        };
+        let named: Vec<Value> = match materialized.contents() {
             Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
             Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(),
             Value::Set(v) => v.borrow().items(),
@@ -3878,6 +3890,12 @@ impl<'a> Engine<'a> {
                         return Ok(Self::adapter(i,state));
                     }
                 }
+                if name == "__weakrefoffset__" { return Ok(Value::Small(if self.weak_layout(c) { 8 } else { 0 })); }
+                if name == "__dictoffset__" { return Ok(Value::Small(if self.slots_allow(c, self.class_word("namespace")) { -8 } else { 0 })); }
+                // Every class answers for the type parameters it declared,
+                // and a class that declared none answers with none, as
+                // the maker's own type parameter member does.
+                if name == self.class_word("type_params") { return Ok(Value::tuple(Vec::new())); }
                 if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }
             Value::Object(o) => {

@@ -3624,6 +3624,7 @@ impl<'a> Builder<'a> {
     /// after it rebind the name, taking the gathered values backwards.
     fn decorate(&mut self) -> Res<Form> {
         let mut forms = Vec::new();
+        let adorned_on = self.look().row;
         let mut decorators = Vec::new();
         loop {
             let mark = self.advance().lexeme;
@@ -3655,6 +3656,7 @@ impl<'a> Builder<'a> {
         let class_binding = self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit");
         if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
             named = self.glance(1).lexeme.clone();
+            self.declared_at = (adorned_on as u32).saturating_sub(self.before);
             let (definition, cannot) = self.class_with_receiver()?;
             if cannot { return Ok(self.class_not_ready()); }
             forms.push(definition);
@@ -5290,6 +5292,15 @@ impl<'a> Builder<'a> {
             self.parts().attributes.push("__type_params__".into());
             self.parts().held.push(prim_call(Prim::MakeTuple, values));
         }
+        // The line the class keeps as its first: the decorator it wears,
+        // where one stands, else the statement's own line. It is a member
+        // of the class, taken back when __module__ is written afresh.
+        if self.declared_at > 0 {
+            let first_line = self.declared_at as i64;
+            self.member_ranked("__firstlineno__");
+            self.parts().attributes.push("__firstlineno__".into());
+            self.parts().held.push(constant(Value::Small(first_line)));
+        }
         // Seed documentation only when the body starts with a docstring
         // and the second level of optimisation has not dropped it.
         if self.optimize < 2 {
@@ -5680,6 +5691,9 @@ impl<'a> Builder<'a> {
 
     fn class_decl(&mut self) -> Res<Form> {
         if self.table.flag("ext.stmt.class.this.explicit") {
+            // The class statement's own line, where the decorators above
+            // it, if any, have not already left a line to keep.
+            self.declared_at = (self.look().row as u32).saturating_sub(self.before);
             return self.class_with_receiver().map(|(form, _)| form);
         }
         let table = self.table;

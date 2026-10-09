@@ -3717,6 +3717,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
         let before_decorators = self.mark();
+        let adorned_on = self.look().row;
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -3736,6 +3737,7 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
+            self.declared_at = (adorned_on as u32).saturating_sub(self.before);
             if self.explicit_class()? {
                 self.piece().instrs.truncate(before_decorators);
                 self.class_cannot_run();
@@ -6659,6 +6661,15 @@ impl<'a> Compiler<'a> {
             let slot = self.gensym("class_parameters"); self.write(&slot);
             shared.push(("__type_params__".into(), slot));
         }
+        // The line the class keeps as its first: the decorator it wears,
+        // where one stands, else the statement's own line. It is a member
+        // of the class, taken back when __module__ is written afresh.
+        if self.declared_at > 0 {
+            self.constant(Value::Small(self.declared_at as i64));
+            let slot = self.gensym("class_line");
+            self.write(&slot);
+            shared.push(("__firstlineno__".into(), slot));
+        }
         self.class_names.push((self.pieces.len(), HashMap::new()));
         self.class_globals.push((self.pieces.len(), Vec::new()));
         self.class_seen.push(Vec::new());
@@ -7078,6 +7089,9 @@ impl<'a> Compiler<'a> {
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.explicit_this {
+            // The class statement's own line, where the decorators above
+            // it, if any, have not already left a line to keep.
+            self.declared_at = (self.look().row as u32).saturating_sub(self.before);
             return self.explicit_class().map(|_| ());
         }
         let word = self.take().lexeme;

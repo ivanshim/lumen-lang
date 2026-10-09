@@ -799,7 +799,11 @@ impl<'a> Machine<'a> {
         true
     }
     fn storage_ancestor(&self,blueprint:&Rc<Blueprint>)->Rc<Blueprint> {
-        if Self::native_word(blueprint).is_some()||self.builds_classes(blueprint){return blueprint.clone();}
+        // A shape of its own belongs to a native kind the table knows, or
+        // to a class keeping slots; a class of no extra storage takes the
+        // shape it stands on, however its name is spelled.
+        let shaped = Self::native_word(blueprint).is_some_and(|word| self.table.prims.contains_key(&word));
+        if shaped||self.builds_classes(blueprint){return blueprint.clone();}
         if blueprint.has_slot_storage {
             return blueprint.clone();
         }
@@ -1035,7 +1039,16 @@ impl<'a> Machine<'a> {
             }
             return Ok(());
         };
-        let words=match declared.settled(){
+        // A string stands for one name, never its letters; every other
+        // value is taken through its own walk, so a walk that hands slots
+        // out one at a time names them exactly as a row would. What
+        // cannot be walked is refused by the walk itself.
+        let taken = if matches!(declared.settled(), Value::Text(_)) {
+            declared.clone()
+        } else {
+            self.prim(Prim::Tupling, "tuple", &[declared.clone()])?
+        };
+        let words=match taken.settled(){
             Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),
             // A mapping stands a name at each key; the worth a key
             // holds is documentation for the slot, nothing a layout reads.
@@ -4479,6 +4492,12 @@ impl<'a> Machine<'a> {
                     return Ok(Self::wrap(tag,state));
                 }
             }
+            if key == "__weakrefoffset__" { return Ok(Value::Small(if self.admits_weak(b) { 8 } else { 0 })); }
+            if key == "__dictoffset__" { return Ok(Value::Small(if self.allowed_slot(b, self.detail("namespace")) { -8 } else { 0 })); }
+            // Every class answers for the type parameters it declared, and
+            // one that declared none answers with none, as the maker's own
+            // type parameter entry does.
+            if key == self.detail("type_params") { return Ok(Value::tuple(Vec::new())); }
             if let Some(root)=self.from_the_root(key,false,b){return Ok(root);}
         }else if let Value::Thing(t)=&value {
             if self.namespace_holding(&value).is_some() || Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
