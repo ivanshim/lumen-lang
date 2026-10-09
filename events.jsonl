@@ -9407,3 +9407,28 @@
 {"t":"2026-10-09T00:34:31Z","event":"handed-over","job":"kimi-generator-stop","to":"deepseek-flash","note":"Kimi month quota exhausted (403 monthly limit, exit 1 00:05:40Z); or-resume line held in held-resumes.txt until a DS Flash slot frees (9 running + 3 queued = 12)"}
 {"t":"2026-10-09T00:34:31Z","event":"checkin","status":"done","actions":"handed-over kimi-generator-stop -> DS Flash (held; Kimi month 100%); prune-merged 0MB; luna FINDINGS appended","notes":"Codex week 100% (resets 2026-10-14 03:28Z), codex-nostart stays: integrate-21g + reviews stdlib-inspect/dsflash-fileio + dsflash-descrtut-sol wait; Sol 11 running; DS Flash 9 running + 3 queued = 12, kimi-generator-stop/kimi-type-comments held; box load 6.3, 9.6 GB avail, disk 75%; Mac disk 87%; no open PR; luna gap -1.5 ok"}
 {"t":"2026-10-09T00:38:35Z","event":"resumed","job":"dsflash-pkgutil","model":"deepseek-flash","session":"session-c2a126e0-456c-447f-9e4e-3e2020df6392"}
+{"t":"2026-10-09T00:41:49Z","event":"exited","job":"stdlib-runpy","code":1}
+{"t":"2026-10-09T00:41:52Z","event":"exited","job":"stdlib-bytes","code":1}
+{"t":"2026-10-09T00:42:02Z","event":"exited","job":"dsflash-genericalias-sol","code":1}
+{"t":"2026-10-09T00:42:03Z","event":"exited","job":"stdlib-doctest","code":1}
+{"t":"2026-10-09T00:42:09Z","event":"exited","job":"dsflash-pyclbr-sol","code":1}
+{"t":"2026-10-09T00:42:11Z","event":"exited","job":"dsflash-univnewlines-sol","code":1}
+{"t":"2026-10-09T00:42:27Z","event":"exited","job":"stdlib-code","code":1}
+{"t":"2026-10-09T00:42:31Z","event":"exited","job":"stdlib-mailbox","code":1}
+{"t":"2026-10-09T00:42:41Z","event":"exited","job":"stdlib-compile","code":1}
+{"t":"2026-10-09T00:43:00Z","event":"exited","job":"stdlib-zipimport","code":1}
+{"t":"2026-10-09T00:43:36Z","event":"started","job":"dsflash-mathprop-bigaddr","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-09T00:48:37Z","event":"resumed","job":"dsflash-unpack-baseexc","model":"deepseek-flash","session":"session-c03923bc-76ba-4156-9d0e-eff7a5e46e66"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-runpy","model":"gpt-6.1-sol","line":"sol-resume stdlib-runpy","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-bytes","model":"gpt-6.1-sol","line":"sol-resume stdlib-bytes","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-doctest","model":"gpt-6.1-sol","line":"sol-resume stdlib-doctest","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-code","model":"gpt-6.1-sol","line":"sol-resume stdlib-code","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-mailbox","model":"gpt-6.1-sol","line":"sol-resume stdlib-mailbox","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-compile","model":"gpt-6.1-sol","line":"sol-resume stdlib-compile","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"stdlib-zipimport","model":"gpt-6.1-sol","line":"sol-resume stdlib-zipimport","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"dsflash-genericalias-sol","model":"gpt-6.1-sol","line":"sol-resume dsflash-genericalias-sol","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"dsflash-pyclbr-sol","model":"gpt-6.1-sol","line":"sol-resume dsflash-pyclbr-sol","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:12Z","event":"queued","job":"dsflash-univnewlines-sol","model":"gpt-6.1-sol","line":"sol-resume dsflash-univnewlines-sol","note":"stopped on OpenAI usage limit 00:42Z (Codex week 100%); resume waits on codex-nostart (reset 2026-10-14 03:28Z)"}
+{"t":"2026-10-09T00:54:37Z","event":"quota","codex_week_used":100,"codex_credits":0,"claude_week_used":15,"claude_5h_used":4,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":275.88}
+{"t":"2026-10-09T00:54:44Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":100,"expected":101.8,"gap":-1.8,"status":"ok"}
+{"t":"2026-10-09T00:54:54Z","event":"checkin","status":"done","actions":"10 Sol jobs stopped on OpenAI usage limit 00:42Z -> resume texts in returns/ + sol-resume queued behind codex-nostart; Ivan told (Telegram 8062); prune-merged 0MB; luna FINDINGS appended","notes":"Codex week 100% (reset 2026-10-14 03:28Z): Sol 1 running (stdlib-type-params), 11 slots idle; needs Ivan: spare reset or temporary reallocation; DS Flash 12/12 (kimi-generator-stop/kimi-type-comments held), DS Pro 1/1, Sonnet 1/1; box load 2.0, 12.4 GB avail, disk 75%; Mac disk 85%; no open PR; luna gap -1.8 ok"}
