@@ -9922,3 +9922,16 @@
 {"t":"2026-10-09T09:23:29Z","event":"review-queued","job":"dsflash-file","review":"review-auto-dsflash-file-0923"}
 {"t":"2026-10-09T09:23:33Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-09T09:23:36Z","event":"exited","job":"dsflash-zipapp","code":0}
+{"t":"2026-10-09T09:26:27Z","event":"resumed","job":"dsflash-reprlib","model":"deepseek-flash","session":"session-0d18c9c1-5cff-42a2-bab8-11b904fd784d"}
+{"t":"2026-10-09T09:28:39Z","event":"finished","job":"dsflash-zipapp","exit_time":"2026-10-09T09:23:36Z"}
+{"t":"2026-10-09T09:28:39Z","event":"review-queued","job":"dsflash-zipapp","review":"review-auto-dsflash-zipapp-0928"}
+{"t":"2026-10-09T09:28:42Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T09:31:30Z","event":"started","job":"dsflash-hmac","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-09T09:33:12Z","event":"returned","job":"dsflash-pyclbr-sol","review":"review-auto-dsflash-pyclbr-sol-0847","commit":"aacb8144e","round":1,"model":"gpt-6.1-sol","note":"(1st technical return at Sol; integrity ok; clean check 1196/0 gates ok; blocking: ast.py ';' suite/module separator + unmatched dedent regressions; test_types KERNELS DISAGREE stack8 102 vs mc7 106 (generic-base layout conflict, Union name)) -> returns/dsflash-pyclbr-sol.md + queue"}
+{"t":"2026-10-09T09:33:12Z","event":"queued","job":"dsflash-pyclbr-sol","model":"gpt-6.1-sol","line":"sol-resume dsflash-pyclbr-sol","note":"1st Sol return"}
+{"t":"2026-10-09T09:34:22Z","event":"quota","codex_week_used":27,"codex_credits":0,"claude_week_used":20,"claude_5h_used":3,"deepseek_usd":255.64}
+{"t":"2026-10-09T09:34:27Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":27,"expected":28.9,"gap":-1.9,"status":"ok"}
+{"t":"2026-10-09T09:34:34Z","event":"checkin","status":"done","actions":"RETURN dsflash-pyclbr-sol (1st technical at Sol; ast.py ';' separator + unmatched-dedent regressions; test_types KERNELS DISAGREE s8 102 vs mc7 106) -> returns/dsflash-pyclbr-sol.md + sol-resume queued; prune-merged 0MB; luna FINDINGS appended","notes":"PR #542 (21g) CI still in progress (1h20m), merge watcher running; DS Flash 10/12 running, 2 idle (small/medium pool exhausted, Ivan asked 07:57); Sol 10 running + 8 queued; DS Pro/Haiku/Sonnet/Astra 1/1 each; Codex week 27%; Claude 5h 3%/week 20%; box disk 78%, load 3.9/8, 12.3G avail; Mac disk 88%; luna gap -1.9 ok"}
+{"t":"2026-10-09T09:36:31Z","event":"review-started","job":"claude-urllib-sol","review":"review-auto-claude-urllib-sol-0923"}
+{"t":"2026-10-09T09:42:18Z","event":"exited","job":"review-auto-claude-urllib-sol-0923","code":0}
+{"t":"2026-10-09T09:43:34Z","event":"review-started","job":"dsflash-file","review":"review-auto-dsflash-file-0923"}
