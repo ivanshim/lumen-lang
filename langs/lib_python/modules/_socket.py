@@ -162,7 +162,37 @@ def gethostbyaddr(address):
             return (words[1], words[2:], [address])
     raise herror(1, 'Unknown host')
 
+# Validate a numeric IPv6 address and return its normalized address and scope.
+def _ipv6(host):
+    from ipaddress import IPv6Address
+    parts = host.split('%')
+    scope = 0
+    if len(parts) > 1:
+        # shortcut: interface-name scopes need native interface lookup; reject until provided.
+        if len(parts) != 2 or not parts[1] or any(c not in '0123456789' for c in parts[1]):
+            raise gaierror(-2, 'Name or service not known')
+        digits = parts[1].lstrip('0') or '0'
+        if len(digits) > 10:
+            raise gaierror(-2, 'Name or service not known')
+        scope = int(digits)
+        if scope > 4294967295:
+            raise gaierror(-2, 'Name or service not known')
+    try:
+        address = str(IPv6Address(parts[0]))
+    except ValueError:
+        raise gaierror(-2, 'Name or service not known') from None
+    return address, scope
+
+# Resolve supported local addresses with compatible family, type and protocol filters.
 def getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if flags & ~AI_PASSIVE:
+        raise gaierror(-1, 'Bad value for ai_flags')
+    if type not in (0, SOCK_STREAM, SOCK_DGRAM, SOCK_RAW):
+        raise gaierror(-7, 'ai_socktype not supported')
+    if type in (SOCK_STREAM, SOCK_DGRAM):
+        expected = IPPROTO_TCP if type == SOCK_STREAM else IPPROTO_UDP
+        if proto not in (0, expected):
+            raise gaierror(-7, 'ai_socktype not supported')
     if family not in (AF_UNSPEC, AF_INET, AF_INET6):
         raise gaierror(-6, 'ai_family not supported')
     if isinstance(host, bytes):
@@ -175,17 +205,23 @@ def getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if not port.isdigit():
             raise gaierror(-8, 'Servname not supported for ai_socktype')
         port = int(port)
+    if port and (type == SOCK_RAW or type == 0 and proto not in (0, IPPROTO_TCP, IPPROTO_UDP)):
+        raise gaierror(-8, 'Servname not supported for ai_socktype')
     wanted = (AF_INET, AF_INET6) if family == AF_UNSPEC else (family,)
+    scope = 0
     found = []
     if host is None:
         passive = flags & AI_PASSIVE
         names = {AF_INET: '0.0.0.0' if passive else '127.0.0.1', AF_INET6: '::' if passive else '::1'}
         order = (AF_INET, AF_INET6) if passive else (AF_INET6, AF_INET)
         found = [(f, names[f]) for f in order if f in wanted]
-    elif host == '' or ':' in host:
-        # An IPv6 literal is taken as written; nothing resolves it further.
-        if ':' in host and AF_INET6 in wanted:
-            found = [(AF_INET6, host)]
+    elif ':' in host:
+        address, scope = _ipv6(host)
+        if AF_INET6 not in wanted:
+            raise gaierror(-9, 'Address family for hostname not supported')
+        found = [(AF_INET6, address)]
+    elif host == '':
+        raise gaierror(-2, 'Name or service not known')
     elif AF_INET in wanted:
         found = [(AF_INET, gethostbyname(host))]
     elif _dotted(host):
@@ -193,12 +229,17 @@ def getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     if not found:
         raise gaierror(-2, 'Name or service not known')
     numbers = {SOCK_STREAM: IPPROTO_TCP, SOCK_DGRAM: IPPROTO_UDP, SOCK_RAW: 0}
-    kinds = [(type, numbers.get(type, 0))] if type else list(numbers.items())
+    if type:
+        kinds = [(type, proto or numbers[type])]
+    elif proto and proto not in (IPPROTO_TCP, IPPROTO_UDP):
+        kinds = [(SOCK_RAW, proto)]
+    else:
+        kinds = [(kind, number) for kind, number in numbers.items() if not proto or number == proto]
     records = []
     for f, address in found:
         for kind, number in kinds:
-            where = (address, port) if f == AF_INET else (address, port, 0, 0)
-            records.append((f, kind, proto or number, '', where))
+            where = (address, port) if f == AF_INET else (address, port, 0, scope)
+            records.append((f, kind, number, '', where))
     return records
 
 def htons(x):
