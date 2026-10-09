@@ -925,7 +925,7 @@ fn compile_pass(
     a.registry.top_level_coroutine = unit.generator;
     let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[]);
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, annotation_source: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -2058,7 +2058,7 @@ impl<'a> Compiler<'a> {
         let native_async = if name == "<genexpr>" { unit.asynchronous_walk } else { unit.asynchronous };
         code_flags |= if native_async { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
-        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, annotation_source: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_text(&self, start: usize, end: usize) -> String {
@@ -9970,7 +9970,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() && word == "<" && self.look_ahead(1).spelling() == ">"
             && self.look_ahead(1).row == self.look().row
             && self.look_ahead(1).column == self.look().end_column {
-            if !self.flufl {
+            if !self.barry_as_flufl {
                 let far = self.look_ahead(1).clone();
                 self.registry.stopped_end = if far.end_column != 0 { far.end_column } else { far.column + far.lexeme.chars().count() };
                 self.registry.stopped_end_row = far.end_row.max(far.row);
