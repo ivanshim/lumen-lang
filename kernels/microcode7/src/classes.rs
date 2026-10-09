@@ -2432,8 +2432,8 @@ impl<'a> Machine<'a> {
                             }
                         }
                         if of_own_kind && (word == "member_descriptor" || word == "getset_descriptor") {
-                            let writing = entry == self.detail("descriptor.set") || entry == self.detail("descriptor.delete");
-                            if writing {
+                            let protocol = entry == self.detail("descriptor.get") || entry == self.detail("descriptor.set") || entry == self.detail("descriptor.delete");
+                            if protocol {
                                 let method = self.read_class_member(subject, &entry, true)?;
                                 return self.apply_class_member(method, values);
                             }

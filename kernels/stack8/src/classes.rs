@@ -2333,7 +2333,7 @@ impl<'a> Engine<'a> {
                         return self.class_get(subject, &attribute, true);
                     }
                     if of_own_kind && matches!(word.as_str(), "getset_descriptor" | "member_descriptor")
-                        && ["descriptor.set", "descriptor.delete"].iter().any(|part| member == self.class_word(part)) {
+                        && ["descriptor.get", "descriptor.set", "descriptor.delete"].iter().any(|part| member == self.class_word(part)) {
                         let operation = self.class_get(subject, &member, true)?;
                         return self.class_apply(operation, args);
                     }
