@@ -5745,7 +5745,7 @@ impl<'a> Engine<'a> {
 
     fn inspect_instructions(&self, target: &Value) -> Res<Value> {
         if let Value::Object(object) = target.contents() {
-            if let Some((_, retained)) = object.fields.borrow().iter().find(|(name, _)| name == "\0compiled") {
+            if let Some((_, retained)) = object.fields.borrow().iter().find(|(name, _)| matches!(name.as_str(), "\0native_code" | "\0compiled")) {
                 return self.inspect_instructions(retained);
             }
         }

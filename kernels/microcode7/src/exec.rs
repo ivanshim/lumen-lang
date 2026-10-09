@@ -24661,7 +24661,7 @@ impl<'a> Machine<'a> {
                 }
             }
             let row = match target {
-                Value::Vector(values) | Value::Tuple(values) => values.as_ref().clone(),
+                Value::Vector(values) | Value::Tuple(values) => values,
                 _ => return Err(self.span_complaint("unsupported")),
             };
             let (_, picked, _) = self.span_selection(bounds, row.len())?;
@@ -30339,7 +30339,7 @@ impl Machine<'_> {
                             Value::Wrapped(7, data) => match &data[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
                             Value::Thing(object) => {
                                 let values = object.holds.borrow();
-                                let retained = values.iter().find_map(|(name, value)| if name == "\0compiled" { Some(value) } else { None });
+                                let retained = values.iter().find_map(|(name, value)| (name == "\0native_code" || name == "\0compiled").then_some(value));
                                 match retained {
                                     Some(Value::Wrapped(7, parts)) => match &parts[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
                                     _ => return Err("TypeError: expected a function or code object".into()),

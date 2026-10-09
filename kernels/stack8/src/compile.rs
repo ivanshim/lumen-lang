@@ -2688,6 +2688,15 @@ impl<'a> Compiler<'a> {
         None
     }
 
+    fn statement_line(&self) -> u32 {
+        let mut start = self.pos;
+        if !self.lang.trace_native.is_empty() {
+            while self.tokens[start].lexeme == "(" && self.tokens.get(start + 1).is_some_and(|next| next.lexeme != ")") { start += 1; }
+        }
+        let token = &self.tokens[start];
+        ast_line((token.row as u32).saturating_sub(self.before), token.column)
+    }
+
     fn stmt(&mut self) -> Res<()> {
         if self.omitted_docs.remove(&self.pos) {
             while self.look().shape == Shape::Quote { self.take(); }
@@ -2703,7 +2712,7 @@ impl<'a> Compiler<'a> {
         // do for a complaint's line, and the statement reader marks none
         // of this one's again.
         if self.lang.signals_between_statements && self.look().row as u32 > self.before {
-            let row = ast_line(self.look().row as u32 - self.before, self.look().column);
+            let row = self.statement_line();
             self.piece().line = row;
             self.put(Instr::Line(row));
         }
@@ -3271,7 +3280,7 @@ impl<'a> Compiler<'a> {
             self.in_program = true;
         }
         if (lang.tells_place || lang.marks_lines) && self.look().row as u32 > self.before {
-            let row = ast_line(self.look().row as u32 - self.before, self.look().column);
+            let row = self.statement_line();
             if self.piece().line != row {
                 self.piece().line = row;
                 self.put(Instr::Line(row));
@@ -13949,12 +13958,23 @@ fn same_constant(left: &Value, right: &Value) -> bool {
     }
 }
 
+// Bucket routine constants without serializing their complete compilation images.
+fn constant_bucket(value: &Value) -> Option<i64> {
+    if let Value::Routine(body) = value {
+        use std::hash::{Hash, Hasher};
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        (&body.ident, body.declared_on, body.source_end).hash(&mut key);
+        return Some(key.finish() as i64);
+    }
+    Value::code_field_hash(value)
+}
+
 fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], function: bool) -> (Vec<Value>, Vec<String>) {
     let mut constants: Vec<Value> = doc.as_ref().map(|text| Value::text(text)).into_iter().collect();
     let mut names = Vec::new();
     let mut constant_buckets: HashMap<i64, Vec<usize>> = HashMap::new();
     for (at, value) in constants.iter().enumerate() {
-        if let Some(hash) = Value::code_field_hash(value) { constant_buckets.entry(hash).or_default().push(at); }
+        if let Some(hash) = constant_bucket(value) { constant_buckets.entry(hash).or_default().push(at); }
     }
     let mut live = vec![false; words.len()];
     let mut pending = vec![0];
@@ -13994,11 +14014,11 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], funct
                 if let Value::Routine(r) = value {
                     if let Some(a) = &r.annotation {
                         let annotation = Value::Routine(a.clone());
-                        if let Some(hash) = Value::code_field_hash(&annotation) { constant_buckets.entry(hash).or_default().push(constants.len()); }
+                        if let Some(hash) = constant_bucket(&annotation) { constant_buckets.entry(hash).or_default().push(constants.len()); }
                         constants.push(annotation);
                     }
                 }
-                let hash = Value::code_field_hash(value);
+                let hash = constant_bucket(value);
                 let found = match hash {
                     Some(key) => constant_buckets.get(&key).is_some_and(|indices| indices.iter().any(|at| same_constant(&constants[*at], value))),
                     None => constants.iter().any(|old| same_constant(old, value)),

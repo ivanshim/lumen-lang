@@ -1664,30 +1664,31 @@ class _Tok:
         self.cs_col = 0
 
 def _adv(source, i, count, row, col):
-    for _ in range(count):
-        if source[i] == '\n':
+    for character in source[i:i + count]:
+        if character == '\n':
             row += 1
             col = 0
         else:
-            col += len(source[i].encode('utf-8'))
-        i += 1
-    return (i, row, col)
+            col += len(character.encode('utf-8'))
+    return (i + count, row, col)
 
-def _string_skip(source, i):
+def _string_skip(source, i, characters=None):
     # i at a quote; answers the index just past the closing quote.
-    n = len(source)
-    q = source[i]
-    if source[i:i + 3] == q * 3:
+    if characters is None:
+        characters = list(source)
+    n = len(characters)
+    q = characters[i]
+    if ''.join(characters[i:i + 3]) == q * 3:
         closer = q * 3
         i += 3
     else:
         closer = q
         i += 1
     while i < n:
-        if source[i] == '\\':
+        if characters[i] == '\\':
             i += 2
             continue
-        if source[i:i + len(closer)] == closer:
+        if ''.join(characters[i:i + len(closer)]) == closer:
             return i + len(closer)
         i += 1
     _syntax('unterminated string literal')
@@ -1698,44 +1699,46 @@ def _string_skip_pos(source, i, row, col):
     _, row, col = _adv(source, start, i - start, row, col)
     return (i, row, col)
 
-def _fstring_end(source, i):
+def _fstring_end(source, i, characters=None):
     # i at the opening quote of an f-string literal; answers the index
     # just past the closing quote, the quote and the closing quote's
     # index. Inside a replacement field every brace is structural; only
     # in the text between them are {{ and }} escapes.
-    n = len(source)
-    q = source[i]
-    if source[i:i + 3] == q * 3:
+    if characters is None:
+        characters = list(source)
+    n = len(characters)
+    q = characters[i]
+    if ''.join(characters[i:i + 3]) == q * 3:
         quote = q * 3
     else:
         quote = q
     i += len(quote)
     depth = 0
     while i < n:
-        c = source[i]
+        c = characters[i]
         if c == '\\':
             i += 2
             continue
-        if depth == 0 and source[i:i + len(quote)] == quote:
+        if depth == 0 and ''.join(characters[i:i + len(quote)]) == quote:
             return (i + len(quote), quote, i)
         if depth == 0 and c == '\n' and len(quote) == 1:
             _syntax('f-string: unterminated string')
         if c == '{':
-            if depth == 0 and source[i + 1:i + 2] == '{':
+            if depth == 0 and ''.join(characters[i + 1:i + 2]) == '{':
                 i += 2
                 continue
             depth += 1
             i += 1
             continue
         if c == '}':
-            if depth == 0 and source[i + 1:i + 2] == '}':
+            if depth == 0 and ''.join(characters[i + 1:i + 2]) == '}':
                 i += 2
                 continue
             depth -= 1
             i += 1
             continue
         if depth > 0 and (c == '"' or c == "'"):
-            i = _string_skip(source, i)
+            i = _string_skip(source, i, characters)
             continue
         i += 1
     _syntax('unterminated f-string literal')
@@ -1815,7 +1818,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             lowered = word.lower()
             if j < end and characters[j] in '\'"' and lowered in _STRING_PREFIXES:
                 if 'f' in lowered or 't' in lowered:
-                    lit_end, quote, content_end = _fstring_end(source, j)
+                    lit_end, quote, content_end = _fstring_end(source, j, characters)
                     ci, crow, ccol = _adv(source, i, (j - i) + len(quote), row, col)
                     i2, erow, ecol = _adv(source, ci, lit_end - ci, crow, ccol)
                     tok = _Tok('tstr' if 't' in lowered else 'fstr', ''.join(characters[i:lit_end]), srow, scol, erow, ecol)
@@ -1828,8 +1831,10 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                     toks.append(tok)
                     i, row, col = i2, erow, ecol
                     continue
-                value, after = _read_string(source, j, lowered)
-                _check_single_line(source, j, after)
+                after = _string_skip(source, j, characters)
+                fragment = ''.join(characters[j:after])
+                value, _ = _read_string(fragment, 0, lowered)
+                _check_single_line(fragment, 0, len(fragment))
                 _, erow, ecol = _adv(source, i, after - i, row, col)
                 tok = _Tok('str', ''.join(characters[i:after]), srow, scol, erow, ecol)
                 tok.value = value
@@ -1842,8 +1847,10 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             i = j
             continue
         if c == '"' or c == "'":
-            value, after = _read_string(source, i, '')
-            _check_single_line(source, i, after)
+            after = _string_skip(source, i, characters)
+            fragment = ''.join(characters[i:after])
+            value, _ = _read_string(fragment, 0, '')
+            _check_single_line(fragment, 0, len(fragment))
             _, erow, ecol = _adv(source, i, after - i, row, col)
             tok = _Tok('str', ''.join(characters[i:after]), srow, scol, erow, ecol)
             tok.value = value
@@ -2577,6 +2584,8 @@ class _Parser:
             if indent <= first.scol:
                 raise IndentationError('expected an indented block')
             cases = []
+            self.indent_stack.append(self.indent_col(self.peek()))
+            self.alt_stack.append(self.alt_indent_col(self.peek()))
             while self.at_name('case') and self.peek().scol == indent:
                 header = self.pop()
                 value, vs, ve = self.parse_or()
@@ -2594,6 +2603,8 @@ class _Parser:
                 cases.append(match_case(pattern=pattern, guard=guard, body=body))
                 while self.peek().kind == 'newline':
                     self.pop()
+            self.indent_stack.pop()
+            self.alt_stack.pop()
             if not cases:
                 _syntax('invalid syntax')
             return self.located(Match, first, cases[-1].body[-1], subject=subject, cases=cases)
@@ -3586,9 +3597,21 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         parser = _Parser(source, toks)
         parser.expect_op('(')
         argtypes = []
+        starred = False
+        keywords = False
         while not parser.at_op(')'):
-            if parser.at_op('*') or parser.at_op('**'):
+            if keywords:
+                _syntax('invalid syntax')
+            if parser.at_op('**'):
+                keywords = True
                 parser.pop()
+            elif parser.at_op('*'):
+                if starred:
+                    _syntax('invalid syntax')
+                starred = True
+                parser.pop()
+            elif starred:
+                _syntax('invalid syntax')
             argtype, ls, le = parser.parse_expr(False)
             argtypes.append(argtype)
             if not parser.at_op(','):
@@ -4198,6 +4221,8 @@ def _check_features(tree, version):
             minimum = 14
         elif isinstance(node, (AsyncFunctionDef, AsyncFor, AsyncWith, Await)):
             minimum = 5
+        elif isinstance(node, comprehension) and node.is_async:
+            minimum = 6
         if isinstance(node, type_param) and node.default_value is not None:
             minimum = 13
         if version < minimum:

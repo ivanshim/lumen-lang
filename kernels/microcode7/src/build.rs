@@ -3063,7 +3063,15 @@ impl<'a> Builder<'a> {
             self.past_library = true;
         }
         if self.tells_place && self.look().row > self.before {
-            let row = tree_row(self.look().row - self.before, self.look().column);
+            let mut token = self.look();
+            if self.table.has_any("ext.builtin.trace_native") {
+                let mut ahead = 0;
+                while token.lexeme == "(" && self.glance(ahead + 1).lexeme != ")" {
+                    ahead += 1;
+                    token = self.glance(ahead);
+                }
+            }
+            let row = tree_row(token.row.saturating_sub(self.before), token.column);
             let while_loop = self.table.has_any("ext.builtin.trace_native") && self.key("stmt.while");
             let made = self.plain_or_kind()?;
             return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
@@ -4011,7 +4019,7 @@ impl<'a> Builder<'a> {
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
                 if asynchronous && table.flag("ext.syntax.call.bind_names") { steps.push(Form::Release(manager)); }
-                value = if table.flag("ext.syntax.call.bind_names") { Form::Take(entered) } else { Form::Read(entered) };
+                value = if table.flag("ext.syntax.call.bind_names") { Form::Release(entered) } else { Form::Read(entered) };
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
@@ -13141,10 +13149,21 @@ fn metadata_stops(node: &Form) -> bool {
     }
 }
 
+// The equality check still resolves collisions; code images need no eager hash.
+fn literal_index(value: &Value) -> Option<i64> {
+    match value {
+        Value::Routine(routine) => {
+            let label = Value::text(&routine.ident).hash_number()?;
+            Some(label.wrapping_mul(31).wrapping_add(i64::from(routine.declared_on)).wrapping_mul(31).wrapping_add(routine.body_boundary as i64))
+        }
+        other => Value::code_worth_hash(other),
+    }
+}
+
 fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
     let mut indexed: HashMap<i64, Vec<usize>> = HashMap::new();
     for at in 0..constants.len() {
-        if let Some(key) = Value::code_worth_hash(&constants[at]) { indexed.entry(key).or_default().push(at); }
+        if let Some(key) = literal_index(&constants[at]) { indexed.entry(key).or_default().push(at); }
     }
     inspect_indexed_form(form, locals, constants, names, suspension, &mut indexed);
 }
@@ -13156,7 +13175,7 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
             if p.frameless { return; }
             if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants, indexed); }
         }
-        if let Some(key) = Value::code_worth_hash(value) {
+        if let Some(key) = literal_index(value) {
             let positions = indexed.entry(key).or_default();
             if positions.iter().any(|index| constant_key_matches(&constants[*index], value)) { return; }
             positions.push(constants.len());
