@@ -1157,29 +1157,36 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 file = Some("-m".to_owned());
                 module_source = Some(format!("import runpy\nrunpy._run_module_as_main({})\n", python_string_literal(&module)));
-                language = Some(Language::Named("python".to_string()));
+                language.get_or_insert_with(|| Language::Named("python".to_string()));
                 rest = &rest[used..];
                 break;
+            }
+            Some(flag @ ("-c" | "-E" | "-")) if file.is_none()
+                && !language.as_ref().map_or_else(|| {
+                    python.is_some() || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")
+                }, |selected| selected.name() == "python") => {
+                eprintln!("Error: {flag} requires the Python language");
+                process::exit(2);
             }
             Some("-c") if file.is_none() => {
                 python_safe_path = false;
                 if rest.len() < 2 { usage(program); }
                 file = Some("<string>".to_owned());
                 module_source = Some(said(&rest[1]));
-                language = Some(Language::Named("python".to_owned()));
+                language.get_or_insert_with(|| Language::Named("python".to_owned()));
                 rest = &rest[2..];
                 break;
             }
             Some("-E") if file.is_none() => {
                 python_safe_path = false;
                 python_ignore_environment = true;
-                language = Some(Language::Named("python".to_string()));
+                language.get_or_insert_with(|| Language::Named("python".to_string()));
                 rest = &rest[1..];
             }
             Some("-") if file.is_none() => {
                 python_safe_path = false;
                 file = Some("-".to_string());
-                language = Some(Language::Named("python".to_string()));
+                language.get_or_insert_with(|| Language::Named("python".to_string()));
                 rest = &rest[1..];
                 break;
             }
@@ -1304,8 +1311,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     }
 
-    if python_development && language.name() != "python" {
-        eprintln!("Error: -X dev requires the Python language");
+    if (python_development || python_ignore_environment) && language.name() != "python" {
+        eprintln!("Error: {} requires the Python language", if python_ignore_environment { "-E" } else { "-X dev" });
         process::exit(2);
     }
     let mut language = language;

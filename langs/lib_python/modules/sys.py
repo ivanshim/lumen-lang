@@ -41,11 +41,12 @@ _ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
 _python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
     _search_paths = []
-    for _entry in _python_path.split(':') + path:
+    for _entry in _python_path.split(':'):
         _entry = _absolute_search_entry(_entry, _path_host[0])
         if _entry not in _search_paths:
             _search_paths.append(_entry)
-    path = _search_paths
+    _environment_at = 0 if _safe_path else 1
+    path[_environment_at:_environment_at] = _search_paths
 maxsize = 9223372036854775807
 # Where a written bytecode cache would live, and whether one is
 # written: the reference reads both while naming a cache file.
