@@ -301,6 +301,80 @@ class MagicMock(Mock):
         return self._magic['__exit__'](kind, value, traceback)
 
 
+def _async_stand_in_step(*args, **kwargs):
+    return None
+
+# The flags the reference gives the code object of an asynchronous
+# stand-in: a coroutine that takes arguments of any kind.
+_ASYNC_CODE = _async_stand_in_step.__code__.replace(co_flags=128 | 4 | 8)
+
+
+class _AwaitAnswer:
+    # What a call on an asynchronous stand-in hands back. Awaiting it
+    # records the await beside the call and answers with the stand-in's
+    # own answer, as the reference's asynchronous stand-in does.
+    def __init__(self, owner, args, kwargs, answer):
+        self.owner = owner
+        self.answer = answer
+        self.args = args
+        self.kwargs = kwargs
+
+    def __await__(self):
+        # The await is counted where it happens, not where the call was
+        # made, so a call left unawaited leaves the count alone.
+        owner = self.owner
+        owner._mock_await_count += 1
+        owner._mock_await_args = _Call(self.args, self.kwargs)
+        owner._mock_await_args_list.append(owner._mock_await_args)
+        if False:
+            yield None
+        return self.answer
+
+
+class AsyncMock(MagicMock):
+    # A stand-in for something awaited. It answers the same questions a
+    # MagicMock answers, and beside them keeps how many times it was
+    # awaited and the arguments of the last await. Its own code stands
+    # for a coroutine, so a reader asking whether it is an asynchronous
+    # callable is told yes; its calls hand back something to await.
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+        MagicMock.__init__(self, name, return_value, side_effect, wraps)
+        self.__dict__['_mock_await_count'] = 0
+        self.__dict__['_mock_await_args'] = None
+        self.__dict__['_mock_await_args_list'] = []
+        self.__dict__['__name__'] = 'AsyncMock'
+        self.__dict__['__code__'] = _ASYNC_CODE
+        self.__dict__['__defaults__'] = ()
+        self.__dict__['__kwdefaults__'] = {}
+
+    def __repr__(self):
+        if self._mock_name is None:
+            return '<AsyncMock>'
+        return '<AsyncMock ' + str(self._mock_name) + '>'
+
+    @property
+    def await_count(self):
+        return self._mock_await_count
+
+    @property
+    def await_args(self):
+        return self._mock_await_args
+
+    @property
+    def await_args_list(self):
+        return self._mock_await_args_list
+
+    def __call__(self, *args, **kwargs):
+        answer = Mock.__call__(self, *args, **kwargs)
+        return _AwaitAnswer(self, args, kwargs, answer)
+
+    def reset_mock(self, *args, **kwargs):
+        Mock.reset_mock(self)
+        self.__dict__['_mock_await_count'] = 0
+        self.__dict__['_mock_await_args'] = None
+        self.__dict__['_mock_await_args_list'] = []
+
+
 class _Patch:
     def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=Mock):
         if new_callable is not None and new is not DEFAULT:

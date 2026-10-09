@@ -99,10 +99,16 @@ impl<'a> Machine<'a> {
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared: crate::data::BlueprintEntries::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
-        if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
+        if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=11))) {
             kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
             if self.table.prims.get(word) == Some(&Prim::ClassWork(9)) {
                 kind.shared.borrow_mut().push((self.detail("call").to_owned(), Self::wrap(79, Vec::new())));
+            }
+            // The property kind also carries the two writing hooks, as
+            // the reference's property type keeps them beside its reader.
+            if self.table.prims.get(word) == Some(&Prim::ClassWork(11)) {
+                kind.shared.borrow_mut().push((self.detail("descriptor.set").to_owned(), Self::wrap(78, Vec::new())));
+                kind.shared.borrow_mut().push((self.detail("descriptor.delete").to_owned(), Self::wrap(78, Vec::new())));
             }
         }
         if word == "classmethod_descriptor" && self.protocol_spelled() {
@@ -130,6 +136,16 @@ impl<'a> Machine<'a> {
                 "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor" => {
                     let reader = self.detail("descriptor.get").to_string();
                     kind.shared.borrow_mut().push((reader.clone(), self.kind_entry(word, &reader)));
+                    // The reading kinds that also write carry those hooks
+                    // on the kind, the way the reference's own types do.
+                    if matches!(word, "getset_descriptor" | "member_descriptor") {
+                        for part in ["descriptor.set", "descriptor.delete"] {
+                            let hook = self.detail(part).to_string();
+                            if !hook.is_empty() {
+                                kind.shared.borrow_mut().push((hook.clone(), self.kind_entry(word, &hook)));
+                            }
+                        }
+                    }
                 }
                 _ => (),
             }
@@ -6384,7 +6400,14 @@ impl<'a> Machine<'a> {
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
         if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), class_only); }
-        if let Value::Intrinsic(_, word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), choice, class_only); }
+        // Only an intrinsic that names a kind stands for the kind's
+        // blueprint; a native function is a thing of its own kind and is
+        // left to answer by the kind it already reports.
+        if let Value::Intrinsic(op, word) = subject {
+            if Self::names_a_kind(op) {
+                return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), choice, class_only);
+            }
+        }
         // The property and the two method wrappers name a class of
         // their own where they are asked after as one: a wrapper of
         // their kind, or a class built upon them, answers to them.
@@ -6438,7 +6461,15 @@ impl<'a> Machine<'a> {
                 }
                 match (class_only, subject, Self::native_word(c)) {
                     (false, Value::Thing(_), _) => {},
-                    (false, _, Some(word)) => return Ok(subject.kind_word()==word),
+                    (false, _, Some(word)) => {
+                        // A native text method's dotted word names the
+                        // method descriptor kind rather than the general
+                        // native kind, just as the value's own type is told.
+                        if matches!(subject, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) {
+                            return Ok(word == "method_descriptor");
+                        }
+                        return Ok(subject.kind_word()==word);
+                    },
                     _ => {},
                 }
                 if !class_only {

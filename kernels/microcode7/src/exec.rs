@@ -9039,7 +9039,13 @@ impl<'a> Machine<'a> {
         }
         if self.names_in_calls && self.detail("descriptor.get") == name {
             if word == "function" { return Some(Value::Wrapped(31, Rc::new(Vec::new()).into())); }
-            if matches!(word.as_str(), "classmethod" | "staticmethod") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+            if matches!(word.as_str(), "classmethod" | "staticmethod" | "property") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+        }
+        // A property also writes and deletes; those hooks stand beside
+        // the reader on the kind.
+        if self.names_in_calls && word == "property"
+            && (self.detail("descriptor.set") == name || self.detail("descriptor.delete") == name) {
+            return Some(Value::Wrapped(78, Rc::new(Vec::new()).into()));
         }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));
@@ -16457,7 +16463,7 @@ impl<'a> Machine<'a> {
     fn awaited_walk(&mut self, subject: Value) -> Res<Value> {
         match subject {
             Value::Generator(ref body) if !self.is_async_generator(&subject)
-                && body.try_borrow().is_ok_and(|held| held.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) => Ok(subject),
+                && body.try_borrow().is_ok_and(|held| held.of.as_ref().is_some_and(|program| program.flags & (128 | 256) != 0)) => Ok(subject),
             Value::Wrapped(62, _) => self.await_iterator(subject),
             Value::Thing(_) => {
                 let name = self.rules.words_ext_stmt_async_generator_methods[3].clone();

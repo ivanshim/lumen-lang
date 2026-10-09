@@ -119,7 +119,7 @@ pub struct Engine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     delegated_tokens: std::collections::HashSet<usize>,
-    frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
+    frame_codes: HashMap<(usize, i64), Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
     class_maker: Option<Rc<Class>>,
@@ -5667,7 +5667,10 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
-        let key = Rc::as_ptr(&program.instrs) as usize;
+        // The instructions are shared by every routine compiled from the
+        // same source, so the flags must be part of the key: two of them
+        // can carry the same program and disagree about their kind.
+        let key = (Rc::as_ptr(&program.instrs) as usize, program.code_flags);
         if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
             return Value::Adapter(handle);
         }
@@ -7412,9 +7415,15 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && name == self.class_word("descriptor.get") {
             match word.as_ref() {
                 "function" => return Some(Self::adapter(15, vec![])),
-                "staticmethod" | "classmethod" => return Some(Self::adapter(79, vec![])),
+                "staticmethod" | "classmethod" | "property" => return Some(Self::adapter(79, vec![])),
                 _ => {},
             }
+        }
+        // A property also writes and deletes, and says so through the
+        // two hooks its kind carries beside the reader.
+        if self.lang.bind_names && word.as_ref() == "property"
+            && [self.class_word("descriptor.set"), self.class_word("descriptor.delete")].contains(&name) {
+            return Some(Self::adapter(79, vec![]));
         }
         if word.as_ref() == "function" && [self.class_word("code"), self.class_word("globals")].contains(&name) {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
@@ -10447,7 +10456,7 @@ impl<'a> Engine<'a> {
     fn awaited_walk(&mut self, subject: Value) -> Flow<Value> {
         match subject {
             Value::Generator(ref body) if !self.is_async_generator(&subject)
-                && body.try_borrow().is_ok_and(|body| body.program.as_ref().is_some_and(|program| program.code_flags & 128 != 0)) => Ok(subject),
+                && body.try_borrow().is_ok_and(|body| body.program.as_ref().is_some_and(|program| program.code_flags & (128 | 256) != 0)) => Ok(subject),
             Value::Adapter(ref parts) if parts.0 == 32 => self.await_iterator(subject),
             Value::Object(_) => {
                 let name = self.lang.async_generator_methods[3].clone();

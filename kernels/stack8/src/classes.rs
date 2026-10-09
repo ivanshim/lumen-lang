@@ -97,10 +97,17 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: RefCell::new(ancestry), base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: crate::value::ClassMembers::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
-        if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
+        if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=11))) {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
             if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(9)) {
                 c.shared.borrow_mut().push((self.class_word("call").to_string(), Self::adapter(80, vec![])));
+            }
+            // The property kind writes as well as reads, so it carries
+            // the two writing hooks beside the reading one, as the
+            // reference's own property type does.
+            if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(11)) {
+                c.shared.borrow_mut().push((self.class_word("descriptor.set").to_string(), Self::adapter(79, vec![])));
+                c.shared.borrow_mut().push((self.class_word("descriptor.delete").to_string(), Self::adapter(79, vec![])));
             }
         }
         if word == "classmethod_descriptor" && !self.class_word("descriptor.get").is_empty() {
@@ -124,6 +131,18 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && matches!(word, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
             let get = self.class_word("descriptor.get").to_owned();
             c.shared.borrow_mut().push((get.clone(), self.held_kind_descriptor(word, &get)));
+            // A member or a getset kind also writes, and says so on its
+            // own type: that is how the reference separates a data
+            // descriptor from a method descriptor.
+            if matches!(word, "getset_descriptor" | "member_descriptor") {
+                for part in ["descriptor.set", "descriptor.delete"] {
+                    let hook = self.class_word(part).to_owned();
+                    if !hook.is_empty() {
+                        let entry = self.held_kind_descriptor(word, &hook);
+                        c.shared.borrow_mut().push((hook, entry));
+                    }
+                }
+            }
         }
         self.kind_classes.push((word.to_string(), c.clone()));
         if matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type" | "NoneType") {
@@ -5443,7 +5462,7 @@ impl<'a> Engine<'a> {
                     }
                     let assigned = if name == self.class_word("code") { value.clone() } else { None };
                     let now=self.routine_rewritten(f,name,value)?;
-                    let body_address = Rc::as_ptr(&now.instrs) as usize;
+                    let body_address = (Rc::as_ptr(&now.instrs) as usize, now.code_flags);
                     *f.revised.borrow_mut()=Some(Rc::new(now));
                     // Keep the assigned immutable code apart from the function's name and defaults.
                     if let Some(code) = assigned {
@@ -6091,7 +6110,14 @@ impl<'a> Engine<'a> {
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
-        if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
+        // Only a word that names a kind stands for the class it names;
+        // a native function or method is a thing of its own kind and is
+        // left to answer by the kind it already reports.
+        if let Value::Native(operation, word) = value {
+            if Self::kind_builtin(operation) {
+                return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass);
+            }
+        }
         // The property and the two method wrappers name a class of
         // their own where they are asked after as one: a wrapper of
         // their kind, or a class written upon them, answers to them.
@@ -6145,7 +6171,15 @@ impl<'a> Engine<'a> {
             // kind, whatever class a module keeps for its members.
             if Self::own_kind(c).as_deref()==Some("module") && self.module_holding(value).is_some(){return Ok(true);}
             if !subclass && !matches!(value, Value::Object(_)) {
-                if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
+                if let Some(word)=Self::own_kind(c) {
+                    // A native text method's dotted word names the method
+                    // descriptor kind rather than the general native kind,
+                    // just as the value's own type is told.
+                    if matches!(value, Value::Native(Builtin::Text(_), name) if name.contains('.')) {
+                        return Ok(word == "method_descriptor");
+                    }
+                    return Ok(value.core_kind()==word);
+                }
             }
             if !subclass {
                 if let Value::Class(held) = value {
