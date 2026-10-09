@@ -335,6 +335,10 @@ pub struct Builder<'a> {
     /// ahead of the reading, and any the text itself has imported.
     future_bits: i64,
     annotation_sites: Vec<(String, usize)>,
+    /// Where a var-positional parameter's annotation begins with a
+    /// spread: the reference takes such an annotation apart into one
+    /// value rather than reading it as an ordinary expression.
+    starred_annotations: Vec<usize>,
     module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
     declarations: Vec<(usize, String, bool)>,
@@ -675,7 +679,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -2137,7 +2141,16 @@ impl<'a> Builder<'a> {
                 b.pos = at;
                 let outer = b.annotation_lookup;
                 b.annotation_lookup = true;
-                let expression = b.expr_at(0, false)?;
+                let expression = if b.starred_annotations.contains(&at) {
+                    // `*args: *Ts`: the reference reads the operand and
+                    // takes exactly one value out of it.
+                    b.advance();
+                    let operand = b.expr_at(0, false)?;
+                    if b.annotations_as_strings { operand } else {
+                        let one = prim_call(Prim::Partition(1, None), vec![operand]);
+                        prim_call(Prim::Apart, vec![one, constant(Value::Small(0))])
+                    }
+                } else { b.expr_at(0, false)? };
                 b.annotation_lookup = outer;
                 let expression = if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(at, b.pos))) } else { expression };
                 if module {
@@ -3983,23 +3996,60 @@ impl<'a> Builder<'a> {
                 if self.table.has_any("ext.stmt.class.special") && self.table.has_any("ext.op.index.slice") {
                     let end = self.table.single("op.index.close").unwrap().to_owned();
                     let separator = self.table.single("syntax.call.separator").map(str::to_owned);
-                    let mut keys = vec![self.bracket_part(&end, separator.as_deref())?];
-                    let mut several = false;
-                    while separator.as_ref().map_or(false, |word| self.sign(word)) {
-                        several = true;
-                        self.advance();
-                        if self.sign(&end) { break; }
-                        keys.push(self.bracket_part(&end, separator.as_deref())?);
-                    }
-                    self.need_sign(&end, "after the index")?;
-                    // Places written with commas between are one key
-                    // holding them all, where the table has slice
-                    // values; elsewhere no such place can be written to.
-                    let key = if several && self.table.has_any("ext.builtin.slice") {
-                        prim_call(Prim::MakeTuple, keys)
+                    let key = if self.table.has_any("ext.syntax.array.spread") {
+                        // A row with a starred place becomes a tuple, as
+                        // it does when the row is only read; the
+                        // expression reader itself steps over a
+                        // lambda's parameter commas.
+                        if self.on_any("ext.syntax.array.spread") {
+                            let mut row = prim_call(Prim::MakeArray, vec![]);
+                            loop {
+                                let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
+                                row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                                if separator.as_ref().map_or(false, |word| self.sign(word)) {
+                                    self.advance();
+                                    if self.sign(&end) { break; }
+                                } else { break; }
+                            }
+                            self.need_sign(&end, "after the index")?;
+                            prim_call(Prim::Tupling, vec![row])
+                        } else {
+                            let first = self.bracket_part(&end, separator.as_deref())?;
+                            if separator.as_ref().map_or(false, |word| self.sign(word)) {
+                                let mut row = prim_call(Prim::MakeArray, vec![first]);
+                                loop {
+                                    self.advance();
+                                    if self.sign(&end) { break; }
+                                    let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
+                                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                                    if !separator.as_ref().map_or(false, |word| self.sign(word)) { break; }
+                                }
+                                self.need_sign(&end, "after the index")?;
+                                prim_call(Prim::Tupling, vec![row])
+                            } else {
+                                self.need_sign(&end, "after the index")?;
+                                first
+                            }
+                        }
                     } else {
-                        if several { self.unsupported_place = true; }
-                        keys.swap_remove(0)
+                        let mut keys = vec![self.bracket_part(&end, separator.as_deref())?];
+                        let mut several = false;
+                        while separator.as_ref().map_or(false, |word| self.sign(word)) {
+                            several = true;
+                            self.advance();
+                            if self.sign(&end) { break; }
+                            keys.push(self.bracket_part(&end, separator.as_deref())?);
+                        }
+                        self.need_sign(&end, "after the index")?;
+                        // Places written with commas between are one key
+                        // holding them all, where the table has slice
+                        // values; elsewhere no such place can be written to.
+                        if several && self.table.has_any("ext.builtin.slice") {
+                            prim_call(Prim::MakeTuple, keys)
+                        } else {
+                            if several { self.unsupported_place = true; }
+                            keys.swap_remove(0)
+                        }
                     };
                     place = prim_call(Prim::At, vec![place, key]);
                     continue;
@@ -7273,6 +7323,7 @@ impl<'a> Builder<'a> {
         let mut said: Vec<Form> = Vec::new();
         while !self.sign(&close) && !self.exhausted() {
             let mut manner = if beyond { 'n' } else { 'b' };
+            let mut starred_annotation = false;
             if bind {
                 if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { wrong() }); }
                 let word = self.look().lexeme.clone();
@@ -7358,6 +7409,8 @@ impl<'a> Builder<'a> {
                         && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
                         return Err("SyntaxError: invalid syntax".to_owned());
                     }
+                    starred_annotation = manner == 'v' && self.on_any("ext.syntax.array.spread");
+                    if starred_annotation { self.starred_annotations.push(self.pos); }
                     self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().spelling()) {
@@ -7381,6 +7434,7 @@ impl<'a> Builder<'a> {
                 }
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => {
+                        if starred_annotation { return Err("SyntaxError: invalid syntax".to_owned()); }
                         let kind = if manner == 'v' { "var-positional" } else { "var-keyword" };
                         return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { wrong() });
                     }
@@ -11101,6 +11155,17 @@ impl<'a> Builder<'a> {
         Ok(node)
     }
 
+    /// One place in a subscript row, with whether it began with a
+    /// spread: a starred expression is answered as the array of what
+    /// it yields, every other place as a slice or expression.
+    fn bracket_item(&mut self, close: &str, comma: Option<&str>) -> Res<(Form, bool)> {
+        if self.on_any("ext.syntax.array.spread") {
+            self.advance();
+            return Ok((self.expr(0)?, true));
+        }
+        Ok((self.bracket_part(close, comma)?, false))
+    }
+
     fn bracket_part(&mut self, close: &str, comma: Option<&str>) -> Res<Form> {
         if self.on_any("ext.syntax.array.spread") {
             self.advance();
@@ -11174,19 +11239,52 @@ impl<'a> Builder<'a> {
                 if incomplete || slice_in_group { return Err(String::from("SyntaxError: Invalid star expression")); }
             }
             let separator = self.table.single("syntax.call.separator");
-            let mut keys = vec![self.bracket_part(close, separator)?];
-            let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));
-            if several {
-                while separator.map_or(false, |word| self.sign(word)) {
-                    self.advance();
-                    if self.sign(close) { break; }
-                    keys.push(self.bracket_part(close, separator)?);
+            let key = if self.table.has_any("ext.syntax.array.spread") {
+                // A row with a starred place becomes a tuple; one place
+                // and no star stays that place. Each place is read by
+                // the expression reader itself, so a comma within a
+                // lambda's parameter list is no separator and a star
+                // within one is no starred place.
+                if self.on_any("ext.syntax.array.spread") {
+                    let mut row = prim_call(Prim::MakeArray, vec![]);
+                    loop {
+                        let (part, spread) = self.bracket_item(close, separator)?;
+                        row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                        if separator.map_or(false, |word| self.sign(word)) {
+                            self.advance();
+                            if self.sign(close) { break; }
+                        } else { break; }
+                    }
+                    prim_call(Prim::Tupling, vec![row])
+                } else {
+                    let first = self.bracket_part(close, separator)?;
+                    if separator.map_or(false, |word| self.sign(word)) {
+                        let mut row = prim_call(Prim::MakeArray, vec![first]);
+                        loop {
+                            self.advance();
+                            if self.sign(close) { break; }
+                            let (part, spread) = self.bracket_item(close, separator)?;
+                            row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                            if !separator.map_or(false, |word| self.sign(word)) { break; }
+                        }
+                        prim_call(Prim::Tupling, vec![row])
+                    } else { first }
                 }
-            }
-            let key = match (several, self.table.has_any("ext.builtin.slice")) {
-                (true, true) => prim_call(Prim::MakeTuple, keys),
-                (true, false) => prim_call(Prim::SliceRefused, keys),
-                _ => keys.pop().expect("one key"),
+            } else {
+                let mut keys = vec![self.bracket_part(close, separator)?];
+                let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));
+                if several {
+                    while separator.map_or(false, |word| self.sign(word)) {
+                        self.advance();
+                        if self.sign(close) { break; }
+                        keys.push(self.bracket_part(close, separator)?);
+                    }
+                }
+                match (several, self.table.has_any("ext.builtin.slice")) {
+                    (true, true) => prim_call(Prim::MakeTuple, keys),
+                    (true, false) => prim_call(Prim::SliceRefused, keys),
+                    _ => keys.pop().expect("one key"),
+                }
             };
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
