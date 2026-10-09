@@ -85,6 +85,8 @@ impl Layout<'_> {
     }
 
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
+        if let Value::Window(mapping, 'm') = item { let content = self.quote(&mapping.proxy_pairs(), escaped)?; return Ok(format!("mappingproxy({content})")); }
+
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
             // A text is quoted by the hand that quotes it everywhere
