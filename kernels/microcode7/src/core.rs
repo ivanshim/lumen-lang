@@ -4,7 +4,101 @@
 use crate::data::{Among, IteratorKind, Value};
 use num_traits::{Signed, ToPrimitive};
 use num_bigint::BigInt;
-use std::hash::{Hasher, Hash};
+/// What this run hashes its text and octets under, fixed once. The
+/// `PYTHONHASHSEED` setting decides it as the reference decides it: a
+/// whole number feeds a little rolling generator, nought stills the
+/// scattering, and an absent setting or `random` takes fresh bytes from
+/// the system. Both halves are read little-endian.
+static HASH_SEED_KEYS: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
+
+fn py_seed_keys() -> [u64; 2] {
+    *HASH_SEED_KEYS.get_or_init(|| {
+        let mut pool = [0u8; 16];
+        let setting = std::env::var("PYTHONHASHSEED").ok();
+        match setting.as_deref() {
+            Some(word) if word != "random" => {
+                let start = word.parse::<u32>().unwrap_or(0);
+                if start != 0 {
+                    let mut rolling = start;
+                    for slot in pool.iter_mut() {
+                        rolling = rolling.wrapping_mul(214_013).wrapping_add(2_531_011);
+                        *slot = ((rolling >> 16) & 0xff) as u8;
+                    }
+                }
+            }
+            _ => {
+                use std::io::Read;
+                let filled = std::fs::File::open("/dev/urandom")
+                    .and_then(|mut source| source.read_exact(&mut pool)).is_ok();
+                if !filled {
+                    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                        .map_or(1_143_007_147_850_746_901, |d| d.as_nanos() as u64);
+                    pool[..8].copy_from_slice(&stamp.to_le_bytes());
+                    pool[8..].copy_from_slice(&stamp.rotate_left(31).to_le_bytes());
+                }
+            }
+        }
+        [u64::from_le_bytes(pool[0..8].try_into().unwrap()), u64::from_le_bytes(pool[8..16].try_into().unwrap())]
+    })
+}
+
+/// A run of octets, hashed with SipHash-1-3 as the reference hashes it;
+/// nothing hashes to nought, and -1 gives way to -2.
+fn py_digest_octets(octets: &[u8]) -> i64 {
+    if octets.is_empty() { return 0; }
+    let keys = py_seed_keys();
+    let folded = sip_fold(keys[0], keys[1], octets) as i64;
+    if folded == -1 { -2 } else { folded }
+}
+
+/// Text hashed as the reference keeps it: a byte a point under 256, two
+/// little-endian bytes a point under 65536, four otherwise.
+fn py_digest_codes(points: impl Iterator<Item = u32>) -> i64 {
+    let row: Vec<u32> = points.collect();
+    let ceiling = row.iter().copied().max().unwrap_or(0);
+    let mut octets = Vec::new();
+    if ceiling < 0x100 {
+        octets.extend(row.iter().map(|&point| point as u8));
+    } else if ceiling < 0x10000 {
+        for &point in &row { octets.extend_from_slice(&u16::to_le_bytes(point as u16)); }
+    } else {
+        for &point in &row { octets.extend_from_slice(&u32::to_le_bytes(point)); }
+    }
+    py_digest_octets(&octets)
+}
+
+fn sip_once(a: &mut u64, b: &mut u64, c: &mut u64, d: &mut u64) {
+    *a = a.wrapping_add(*b); *c = c.wrapping_add(*d);
+    *b = b.rotate_left(13) ^ *a; *d = d.rotate_left(16) ^ *c;
+    *a = a.rotate_left(32); *c = c.wrapping_add(*b);
+    *a = a.wrapping_add(*d); *b = b.rotate_left(17) ^ *c;
+    *d = d.rotate_left(21) ^ *a; *c = c.rotate_left(32);
+}
+
+fn sip_fold(first: u64, second: u64, octets: &[u8]) -> u64 {
+    let mut a = first ^ 0x736F_6D65_7073_6575;
+    let mut b = second ^ 0x646F_7261_6E64_6F6D;
+    let mut c = first ^ 0x6C79_6765_6E65_7261;
+    let mut d = second ^ 0x7465_6462_7974_6573;
+    let whole = octets.len() / 8;
+    for index in 0..whole {
+        let word = u64::from_le_bytes(octets[index * 8..index * 8 + 8].try_into().unwrap());
+        d ^= word;
+        sip_once(&mut a, &mut b, &mut c, &mut d);
+        a ^= word;
+    }
+    let mut last = [0u8; 8];
+    last[..octets.len() - whole * 8].copy_from_slice(&octets[whole * 8..]);
+    let close = ((octets.len() as u64) << 56) | u64::from_le_bytes(last);
+    d ^= close;
+    sip_once(&mut a, &mut b, &mut c, &mut d);
+    a ^= close;
+    c ^= 0xff;
+    sip_once(&mut a, &mut b, &mut c, &mut d);
+    sip_once(&mut a, &mut b, &mut c, &mut d);
+    sip_once(&mut a, &mut b, &mut c, &mut d);
+    (a ^ b) ^ (c ^ d)
+}
 
 impl Value {
     /// The word for a value of a kind, as CPython has it; a kind value
@@ -72,6 +166,9 @@ impl Value {
             Self::Member(_, operation) if operation == "classmethod_get" => "method-wrapper",
             Self::Member(receiver, operation) if Self::loose_member_descriptor(&receiver.kind_word(), operation).map(|entry| entry.1) == Some("wrapper_descriptor") => "method-wrapper",
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Wrapped(184, _) => "builtin_function_or_method",
+            Self::Wrapped(185, parts) => if matches!(parts.last(), Some(Self::Thing(_))) { "method-wrapper" } else { "wrapper_descriptor" },
+            Self::Wrapped(186, _) => "method-wrapper",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
             Self::Wrapped(130, _) => "function",
@@ -217,27 +314,27 @@ impl Value {
 
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
+            Self::Wrapped(185, contents) => {
+                match (contents.first(), contents.last()) {
+                    (Some(Self::Blueprint(class)), Some(Self::Thing(instance))) => {
+                        let initial = std::rc::Rc::as_ptr(class) as usize / 16;
+                        let called = match contents.get(1) { Some(Self::Text(word)) => word.as_ref(), _ => "__init__" };
+                        let signature = called.bytes().fold(initial, |part, byte| part.rotate_left(5) ^ usize::from(byte));
+                        (signature ^ (std::rc::Rc::as_ptr(instance) as usize / 16)) as i64
+                    }
+                    _ => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
+                }
+            }
             Self::Complex(pair) => {
                 if pair.0.is_nan() || pair.1.is_nan() { return Some((std::rc::Rc::as_ptr(pair) as usize / 16) as i64); }
                 let real = crate::complex::decimal_value(pair.0).hash_number()?;
                 let imaginary = crate::complex::decimal_value(pair.1).hash_number()?;
                 real.wrapping_add(1_000_003i64.wrapping_mul(imaginary))
             }
-            Self::Unpaired(numbers) => {
-                let mut code = 0_i64;
-                for &n in numbers.iter() { code = code.wrapping_mul(1_000_003) ^ i64::from(n); }
-                code
-            }
+            Self::Unpaired(numbers) => py_digest_codes(numbers.iter().copied()),
             Self::Text(chars) if chars.is_empty() => 0,
-            Self::Text(chars) => {
-                let mut state = std::collections::hash_map::DefaultHasher::new();
-                chars.hash(&mut state);
-                state.finish() as i64
-            }
-            Self::Octets { cell, changeable: false, .. } => {
-                let letters = cell.borrow().iter().copied().map(char::from).collect::<String>();
-                return Self::text(&letters).hash_number();
-            }
+            Self::Text(chars) => py_digest_codes(chars.chars().map(|c| c as u32)),
+            Self::Octets { cell, changeable: false, .. } => return Some(py_digest_octets(&cell.borrow())),
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
             Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
@@ -347,6 +444,10 @@ impl Value {
                 }
                 code
             }
+            // An iterator is known by where it lies, as the reference
+            // hashes one by its place, so two names for the same walk
+            // give back the same number.
+            Self::Iterator(cell) => (std::rc::Rc::as_ptr(cell) as usize / 16) as i64,
             _ => return None,
         };
         Some(if raw == -1 { -2 } else { raw })

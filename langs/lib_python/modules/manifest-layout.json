@@ -20,7 +20,8 @@
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
-    "abc": "runtime_adapters/abc.py"
+    "abc": "runtime_adapters/abc.py",
+    "codecs": "runtime_adapters/codecs.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",

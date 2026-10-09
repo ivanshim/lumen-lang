@@ -34,11 +34,36 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_flufl.py` | `Lib/test/test_flufl.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_tabnanny.py` | `Lib/test/test_tabnanny.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_strftime.py` | [python/cpython](https://github.com/python/cpython) `Lib/test/test_strftime.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_except_star.py` | `Lib/test/test_except_star.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_strptime.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_raise.py`, `test_property.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_hash.py` | `Lib/test/test_hash.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_getpass.py` | `Lib/test/test_getpass.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/getpass.py` | `Lib/getpass.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_iterlen.py` | `Lib/test/test_iterlen.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_xml_dom_minicompat.py` | `Lib/test/test_xml_dom_minicompat.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_metaclass.py` | `Lib/test/test_metaclass.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_sundry.py` | `Lib/test/test_sundry.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/xml/` | [python/cpython](https://github.com/python/cpython) `Lib/xml/__init__.py`, `Lib/xml/dom/__init__.py`, `Lib/xml/dom/domreg.py`, `Lib/xml/dom/minicompat.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_copyreg.py`, `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test/test_copyreg.py` and the pickle support classes it imports, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_tomllib/` | [python/cpython](https://github.com/python/cpython) `Lib/test/test_tomllib`: `__init__.py`, `__main__.py`, `burntsushi.py`, `test_data.py`, `test_error.py`, `test_misc.py` and the `data/` tree of `.toml`/`.json` fixtures | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/tomllib/` | [python/cpython](https://github.com/python/cpython) `Lib/tomllib`: `__init__.py`, `_parser.py`, `_re.py`, `_types.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_email/`, `langs/lib_python/modules/test/test_email/` | `Lib/test/test_email/`: every Python source and `data/` fixture, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/socket.py`: `getfqdn` function | `Lib/socket.py`: unchanged function in the native adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/support/__init__.py`: `patch` | `Lib/test/support/__init__.py`: helper function copied unchanged into the existing runtime adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/email/` | `Lib/email/`: every Python source, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/codecs.py`, `stringprep.py`, `encodings/` | `Lib/codecs.py`, `Lib/stringprep.py`, and all 115 `Lib/encodings/` wrapper bodies, copied byte for byte; reused from the signed codec port | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
 modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
+The copyreg test's support (`test/pickletester.py`, `test/picklecommon.py`) and the
+library modules it reaches (`pickletools.py`, `dbm/{__init__,dumb}.py`,
+`http/cookies.py`, `test/pickletester.py`, `test/picklecommon.py`) are v3.14.8
+bodies under PSF provenance headers.
 The suite also holds `test_ordered_dict.py` and `test_defaultdict.py`,
 copied byte for byte from `v3.14.8`; the support they import
 (`test/mapping_tests.py` and `test/support/import_helper.py`) was already
@@ -181,7 +206,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `os.py` | runtime adapter / implementation | `a2d7473b7b5a05e296b58980790ccfc38feeab6a93039187725e3c18517ab827` | `976bdb3e24925f2fb3ce43a4d788de6dcbb88a7cc8604c60ae690fbdd6507546` |
 | `os/path.py` | runtime adapter / implementation | `bf2ce27e89674f859c937b52bac276b34002f1b34c2c1f7a11c39ede20235275` | `8a5bc2b6674e76efe0f507b873a41d746beba466a191153ed18a7580ef6e08e1` |
 | `pdb.py` | runtime adapter / implementation | `1a058afea49ceca837b238c1bc0f6aa5cc04119ff283f7935b198946b7023d50` | `50d5e0f9dab1f4e2d114c6e6d62577d8c76018c8732443a48bf783671179317f` |
-| `pickle.py` | runtime adapter / implementation | `5347a713d3192ff3044178d5e04e9e5dc0701d17cfc477d6fefac03293c8c16f` | `c9998751cf3b94536b4c2cffd6bb719fa1ee6027bd1bd37235d597c9ecf9f98c` |
+| `pickle.py` | runtime adapter / implementation | `5347a713d3192ff3044178d5e04e9e5dc0701d17cfc477d6fefac03293c8c16f` | `8e0aa6be0b8232bf352f086696da1c6e1d55e3eb27f0af5f472f466d0dbd9848` |
 | `platform.py` | runtime adapter / implementation | `061d8bc521d94f27fca5064a9665a0198292902c2be200783e6b49d9cfab3c45` | `240eba74565cd0dc4f99f182f7afc32bbea0593016ddb34165b529b5bcb6be0a` |
 | `posixpath.py` | runtime adapter / implementation | `5545d954ca2362c9643e439abe5ed18d9da7a04ab3923e1cabbff807caeece10` | `8a5bc2b6674e76efe0f507b873a41d746beba466a191153ed18a7580ef6e08e1` |
 | `pprint.py` | runtime adapter / implementation | `352a0d6b5353b6328c6b1860dc651694b0d29ce26e1d3a5581de6ec50affe169` | `0b807d4a62c4292ead5b64e1b455f98b0ba225667ff3ee74bd7e0b873620402d` |
@@ -223,7 +248,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `test/support/script_helper.py` | runtime adapter / implementation | `4ce0a8771b3aaf48ffc2fd01a00b423c24b281f6f849a38df65603344b6a7e55` | `d94c1502c2b7a3f1e57deb1c8913e1890049c73979261f205fc2f7e96fc03677` |
 | `test/support/testcase.py` | restored release copy | `69683bb4a66f7abfb91c5726b0e6c2434a2e1bd2d7ddda5b88b602b1577be12c` | `69683bb4a66f7abfb91c5726b0e6c2434a2e1bd2d7ddda5b88b602b1577be12c` |
 | `test/support/threading_helper.py` | runtime adapter / implementation | `32b013b39f834663bd1f253ca11cc18e99a5cdb558178e1a35b8ada372442f76` | `93976321a0592dda85d769089d443f7ce6f0742911852d3d875de5f03a8d7471` |
-| `test/support/warnings_helper.py` | runtime adapter / implementation | `065324aee43a5c679cf698c0155583b064960153f7f37ae83589b01fdfbf2807` | `fc02de4d91bae3988079e3fb3fec3da96ae467fd548295745c2846af179f3870` |
+| `test/support/warnings_helper.py` | runtime adapter / implementation | `065324aee43a5c679cf698c0155583b064960153f7f37ae83589b01fdfbf2807` | `90576deca30ac0986cb2bdd0dc715363dfe90ed770382991d0674e6533c1ca46` |
 | `test/test_iter.py` | unchanged release copy | `2255bb4dac0165fd5f9bcc56112ec938722d425b819099749efdd24b9193887e` | `2255bb4dac0165fd5f9bcc56112ec938722d425b819099749efdd24b9193887e` |
 | `test/test_math.py` | runtime adapter / implementation | `1f352896629e30e7e6f6d2efab100e559a6864d003dab0638cd9db3c2476e711` | `17a9b4e60bcf3e0ac185d0b4f4d97ab1ea91c4f94069c3032ba56d7994930b03` |
 | `test/typinganndata/__init__.py` | unchanged release copy | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
@@ -243,6 +268,10 @@ source exists. Full working measurements are in ignored `probe/`.
 | `wave.py` | unchanged release copy | `9b2249d6e3d0d1b2cbc183f59ca301cdfeb34f1b022f8712bf0318c2618a4edd` | `9b2249d6e3d0d1b2cbc183f59ca301cdfeb34f1b022f8712bf0318c2618a4edd` |
 | `warnings.py` | runtime adapter / implementation | `ee0bf5d9c33be43a8deec328c8970c4570ef75c9496979a7abeed64aafbfad6b` | `142225786de63c593f1c9abdacf5b4fc0b05dd847f6bed0ebb4b4aa2d4d93b02` |
 | `weakref.py` | runtime adapter / implementation | `e080fe0eeefbc2018cfe0a90f71d159599c4b225e4c319289f3896dec7383728` | `5e5f727a19a858cb4c56dbaf3e0a138ded02fb954a9a58a840a0764216ae9522` |
+| `xml/__init__.py` | unchanged release copy | `34296f728e7fe68cccb97a9f6edbf3bf3a686f44044c744fe85f207a92ed4811` | `34296f728e7fe68cccb97a9f6edbf3bf3a686f44044c744fe85f207a92ed4811` |
+| `xml/dom/__init__.py` | unchanged release copy | `e7139ed583a7f60fbbc750044df4f1e3655371d8b8c4f80a43bff4aa3ba97857` | `e7139ed583a7f60fbbc750044df4f1e3655371d8b8c4f80a43bff4aa3ba97857` |
+| `xml/dom/domreg.py` | unchanged release copy | `826b02a803930834b96b1086cbee7db1d21c684f65dd3073706dc7bb5ba1a3e8` | `826b02a803930834b96b1086cbee7db1d21c684f65dd3073706dc7bb5ba1a3e8` |
+| `xml/dom/minicompat.py` | unchanged release copy | `42974c4c67803dfe80b016ff8aeea0d1e5c751703ab3aec5be765f4e534367be` | `42974c4c67803dfe80b016ff8aeea0d1e5c751703ab3aec5be765f4e534367be` |
 
 ### Reference measurements
 
@@ -340,3 +369,15 @@ while retaining byte-for-byte v3.14.8 library files at the upstream paths.
 An existing `adapters` overlay still follows a replacement body. The ten source
 moves preserve the registered interpreter source bytes, including the single
 async-aware `test.support.subTests` binding and coroutine recognition.
+The email charset dependency reuses the signed codec port at
+`ecee70ec399ce9338ba6267d06aab481206c43f5`. The released sources in the
+provenance table stay unchanged. `_codecs.py`, `_codec_runtime.py`,
+`unicodedata.py`, and the multibyte family modules are native runtime adapters.
+Mapping data provenance is recorded in `langs/lib_python/data/multibyte/README.md`
+and `langs/lib_python/data/unicode/README.md`.
+
+## Batch21g source fidelity
+
+All complete library copies introduced in this batch match CPython `v3.14.8`
+byte for byte, including original line numbers. Release provenance is retained
+in the table above; runtime changes remain in kernels and explicit adapters.

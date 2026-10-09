@@ -15,7 +15,7 @@ pub struct Layout<'a> {
 /// and nothing at all where the layout is to lay the value out itself.
 pub trait Elsewhere {
     fn field_member(&mut self, _item: &Value, _key: &Value, _bracket: bool) -> Result<Option<Value>, String> { Ok(None) }
-    fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String>;
+    fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<Value>, String>;
     fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String>;
     fn value_numbered(&mut self, _item: &Value, _code: char) -> Result<NumberAnswer, String> { Ok(NumberAnswer::Missing(String::new())) }
 }
@@ -213,6 +213,34 @@ impl Layout<'_> {
         Ok(shape)
     }
 
+    pub fn escaped_value(&self, text: &Value) -> Value {
+        let codes = text.settled().character_numbers().unwrap();
+        let spelling: String = codes.into_iter().map(|number| {
+            if number < 128 { char::from_u32(number).unwrap().to_string() }
+            else if number < 256 { format!("\\x{:02x}", number) }
+            else if number < 0x10000 { format!("\\u{:04x}", number) }
+            else { format!("\\U{:08x}", number) }
+        }).collect();
+        Value::text(&spelling)
+    }
+
+    pub fn presented_value(&self, item: &Value, pattern: &str, convert: &str) -> Result<Value, String> {
+        let plain = item.settled();
+        if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(plain, Value::Unpaired(_)) && (convert.is_empty() || convert == "s") {
+            self.present(&Value::text(""), pattern, "")?;
+            let shape = self.description(pattern, &Value::text(""))?;
+            let numbers = plain.character_numbers().unwrap();
+            let kept = shape.digits.unwrap_or(numbers.len()).min(numbers.len());
+            let padding = shape.extent.saturating_sub(kept);
+            let leading = match shape.justify { Some('^') => padding / 2, Some('>') => padding, _ => 0 };
+            let answer = std::iter::repeat_n(shape.padding as u32, leading)
+                .chain(numbers.into_iter().take(kept))
+                .chain(std::iter::repeat_n(shape.padding as u32, padding - leading)).collect();
+            return Ok(Value::characters(answer));
+        }
+        self.present(&plain, pattern, convert).map(|word| Value::text(&word))
+    }
+
     pub fn present(&self, item: &Value, pattern: &str, convert: &str) -> Answer {
         if let Value::Shared(held) | Value::Mutable(held, _) = item { return self.present(&held.borrow(), pattern, convert); }
         if !convert.is_empty() {
@@ -344,18 +372,18 @@ impl Layout<'_> {
         }
     }
 
-    pub fn interpolate(&self, pattern: &str, positions: &[Value], names: &[(String, Value)], asked: &mut dyn Elsewhere) -> Answer {
+    pub fn interpolate(&self, pattern: &str, positions: &[Value], names: &[(String, Value)], asked: &mut dyn Elsewhere) -> Result<Value, String> {
         self.weave(pattern, positions, names, &mut 0, 2, asked)
     }
 
-    fn weave(&self, mut rest: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64, allowance: i32, asked: &mut dyn Elsewhere) -> Answer {
+    fn weave(&self, mut rest: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64, allowance: i32, asked: &mut dyn Elsewhere) -> Result<Value, String> {
         if allowance < 0 { return Err(self.complain("ext.text.format.recursion", &[])); }
-        let mut finished = String::new();
+        let mut finished: Vec<u32> = Vec::new();
         while let Some(start) = rest.find(['{', '}']) {
-            finished.push_str(&rest[..start]);
+            finished.extend(rest[..start].chars().map(u32::from));
             rest = &rest[start..];
             if rest.starts_with("{{") || rest.starts_with("}}") {
-                finished.push(rest.chars().next().unwrap()); rest = &rest[2..]; continue;
+                finished.push(rest.chars().next().unwrap() as u32); rest = &rest[2..]; continue;
             }
             if rest.starts_with('}') { return Err(self.complain("ext.text.format.brace.close", &[])); }
             if allowance == 0 { return Err(self.complain("ext.text.format.recursion", &[])); }
@@ -411,19 +439,19 @@ impl Layout<'_> {
                     }
                     None
                 }).ok_or_else(|| self.complain("ext.text.format.brace.open", &[]))?;
-                let spec = self.weave(&rest[..end], positions, names, numbering, allowance - 1, asked)?;
+                let spec = self.weave(&rest[..end], positions, names, numbering, allowance - 1, asked)?.bare();
                 rest = &rest[end..]; spec
             } else { String::new() };
             if !rest.starts_with('}') { return Err(self.complain("ext.text.format.brace.open", &[])); }
             let laid = match asked.field_laid(&value, &specification, &conversion)? {
                 Some(ready) => ready,
-                None => self.present(&value, &specification, &conversion)?,
+                None => self.presented_value(&value, &specification, &conversion)?,
             };
-            finished.push_str(&laid);
+            finished.extend(laid.character_numbers().ok_or_else(|| self.refused())?);
             rest = &rest[1..];
         }
-        finished.push_str(rest);
-        Ok(finished)
+        finished.extend(rest.chars().map(|c| c as u32));
+        Ok(Value::characters(finished))
     }
 
     fn select(&self, field: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64, access: &mut dyn Elsewhere) -> Result<Value, String> {
