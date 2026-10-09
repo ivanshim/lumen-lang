@@ -10233,6 +10233,13 @@ impl<'a> Machine<'a> {
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if name == "classmethod_get" { return self.get_native_classmethod(receiver, arguments, keywords); }
+        if self.table.flag("ext.stmt.type_parameters") && name == "__typing_subst__" {
+            if !keywords.is_empty() { return Err(String::from("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments").into()); }
+            match arguments.len() {
+                1 => return Err(String::from("TypeError: Substitution of bare TypeVarTuple is not supported").into()),
+                supplied => return Err(format!("TypeError: TypeVarTuple.__typing_subst__() takes exactly one argument ({supplied} given)").into()),
+            }
+        }
         if name == "callable_reduce_ex" {
             if arguments.len() != 1 || !keywords.is_empty() { return Err("TypeError: __reduce_ex__() takes exactly one argument".to_owned().into()); }
             self.check_reduction_protocol(&arguments[0])?;
@@ -15362,7 +15369,7 @@ impl<'a> Machine<'a> {
         self.table.strings("ext.stmt.class.special.amiss").first().map(String::as_str).unwrap_or("").to_owned()
     }
 
-    fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+    pub(super) fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
         if let Value::Blueprint(class) = subject {
             let factory = Self::builder_over(class);
             if let Some(factory) = factory {
@@ -27093,7 +27100,7 @@ impl<'a> Machine<'a> {
 
     /// The dictionary the program now running reads its world names
     /// through: the namespace it was built beside, where its maker    /// passed one in; failing that, the world's own standing one.
-    fn standing_world(&mut self) -> Rc<RefCell<Value>> {
+    pub(super) fn standing_world(&mut self) -> Rc<RefCell<Value>> {
         let made_beside = self.frames_named.last().and_then(|program| program.globe.clone());
         match made_beside {
             Some(Value::Shared(cell)) | Some(Value::Mutable(cell, _)) => cell,
@@ -27478,7 +27485,7 @@ impl<'a> Machine<'a> {
     /// its blueprint does not. A key neither carries answers with
     /// nothing, as a plain dictionary answers a key it has not;
     /// anything else the reading raises goes uncaught.
-    fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
+    pub(super) fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
         match held {
             Value::Mutable(cell, _) | Value::Shared(cell) => { let value = cell.borrow().clone(); self.mapping_read(&value, name) },
             Value::Dict(entries) => Ok(entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, v)| v.clone())),
