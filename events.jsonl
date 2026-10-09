@@ -10490,3 +10490,13 @@
 {"t":"2026-10-09T20:39:31Z","event":"resumed","job":"dsflash-pyclbr-sol","model":"gpt-6.1-sol"}
 {"t":"2026-10-09T20:44:31Z","event":"review-started","job":"dsflash-frame-dspro","review":"review-auto-dsflash-frame-dspro-2036"}
 {"t":"2026-10-09T20:47:06Z","event":"exited","job":"review-auto-dsflash-frame-dspro-2036","code":0}
+{"t":"2026-10-09T20:53:36Z","event":"queued","job":"dsflash-frame-dspro","model":"deepseek-v4-pro","line":"or-resume dsflash-frame-dspro deepseek-v4-pro session-c375bd43-be45-436e-87c6-53c8ee45d6eb","note":"review-2036 = no-op: 20:34 resume died at once (26398ef2 is a dsh subagent session, not the worker's); not counted as a return; same 1st DS Pro return text, requeued with the main session-c375bd43"}
+{"t":"2026-10-09T20:53:36Z","event":"note","text":"review-auto-dsflash-frame-dspro-2036 read (RETURN, unchanged HEAD a076731f1 after failed resume) - handled as resume failure, not a 2nd DS Pro return"}
+{"t":"2026-10-09T20:54:01Z","event":"quota","codex_week_used":66,"codex_credits":0,"claude_week_used":24,"claude_5h_used":6,"deepseek_usd":241.78}
+{"t":"2026-10-09T20:54:07Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":66,"expected":69.3,"gap":-3.3,"status":"ok"}
+{"t":"2026-10-09T20:54:33Z","event":"resumed","job":"dsflash-frame-dspro","model":"deepseek-v4-pro","session":"session-c375bd43-be45-436e-87c6-53c8ee45d6eb"}
+{"t":"2026-10-09T20:54:39Z","event":"checkin","status":"done","actions":"review-2036 dsflash-frame-dspro: failed resume (subagent dsh session 26398ef2), not counted as a return - or-resume requeued with main session-c375bd43 (same 1st DS Pro return text); prune-merged freed 0MB","notes":"DS Flash 7/12, 5 idle: no Flash-sized subject or follow-up left (zoneinfo/ast/typing residuals Sol-sized); DS Pro frame-dspro requeued; Haiku hmac-haiku; Sonnet struct-sonnet; Sol 11/11 non-review incl integrate-21h; Astra doctest-astra, genericalias-astra held; box load 4.9/8, 12.8G avail, disk 77%; Mac disk 86%; Codex week 66%; Claude 5h 6%/week 24%; luna gap -3.3 ok, no new alerts; no open PR"}
+{"t":"2026-10-09T21:03:39Z","event":"exited","job":"stdlib-doctest-astra","code":0}
+{"t":"2026-10-09T21:07:31Z","event":"finished","job":"stdlib-doctest-astra","exit_time":"2026-10-09T21:03:39Z"}
+{"t":"2026-10-09T21:07:31Z","event":"review-queued","job":"stdlib-doctest-astra","review":"review-auto-stdlib-doctest-astra-2107"}
+{"t":"2026-10-09T21:07:34Z","event":"review-started","job":"stdlib-doctest-astra","review":"review-auto-stdlib-doctest-astra-2107"}
