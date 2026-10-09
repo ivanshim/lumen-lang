@@ -68,6 +68,11 @@ def _attach_native_spec(module):
     origin = getattr(module, '__file__', None)
     loader = _bootstrap_external.SourceFileLoader(name, origin) if origin is not None else None
     spec = _bootstrap.ModuleSpec(name, loader, origin=origin)
+    if origin is not None:
+        # A spec whose origin is a file answers `has_location`, as one
+        # built by spec_from_file_location does, so the module's repr
+        # stays "<module 'name' from 'file'>".
+        spec.has_location = True
     search = getattr(module, '__path__', None)
     if search is not None:
         spec.submodule_search_locations = list(search)
