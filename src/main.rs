@@ -666,9 +666,23 @@ fn main() {
     // it complains, which wants more of the machine's stack than a run
     // is given by default; the whole run is therefore made on a thread
     // with room for it.
+    // The waiting host thread must not take signals meant for the interpreter.
+    let previous_mask = unsafe {
+        let mut blocked = std::mem::zeroed();
+        let mut previous = std::mem::zeroed();
+        libc::sigemptyset(&mut blocked);
+        libc::sigaddset(&mut blocked, libc::SIGINT);
+        let error = libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut previous);
+        if error != 0 { panic!("Failed to set signal mask: {}", std::io::Error::from_raw_os_error(error)); }
+        previous
+    };
     let roomy = std::thread::Builder::new()
         .stack_size(1 << 30)
-        .spawn(run_all)
+        .spawn(move || {
+            let error = unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &previous_mask, std::ptr::null_mut()) };
+            if error != 0 { panic!("Failed to restore signal mask: {}", std::io::Error::from_raw_os_error(error)); }
+            run_all();
+        })
         .expect("a thread for the run");
     match roomy.join() {
         Ok(()) => {}
