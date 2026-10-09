@@ -98,7 +98,9 @@ class socket:
     def getblocking(self):
         return self._timeout != 0.0
     def setsockopt(self, level, name, value, optlen=None):
-        return None
+        if self._fd == -1:
+            raise OSError(9, 'Bad file descriptor')
+        raise OSError(95, 'setsockopt is not supported')
     def close(self):
         fd = self._fd
         if fd != -1:
@@ -161,10 +163,43 @@ def gethostbyaddr(address):
     raise herror(1, 'Unknown host')
 
 def getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if family not in (AF_UNSPEC, AF_INET, AF_INET6):
+        raise gaierror(-6, 'ai_family not supported')
+    if isinstance(host, bytes):
+        host = host.decode()
+    if isinstance(port, bytes):
+        port = port.decode()
+    if port is None:
+        port = 0
+    elif isinstance(port, str):
+        if not port.isdigit():
+            raise gaierror(-8, 'Servname not supported for ai_socktype')
+        port = int(port)
+    wanted = (AF_INET, AF_INET6) if family == AF_UNSPEC else (family,)
+    found = []
     if host is None:
-        host = '127.0.0.1'
-    address = gethostbyname(host.decode() if isinstance(host, bytes) else host)
-    return [(AF_INET, type or SOCK_STREAM, proto, '', (address, int(port or 0)))]
+        passive = flags & AI_PASSIVE
+        names = {AF_INET: '0.0.0.0' if passive else '127.0.0.1', AF_INET6: '::' if passive else '::1'}
+        order = (AF_INET, AF_INET6) if passive else (AF_INET6, AF_INET)
+        found = [(f, names[f]) for f in order if f in wanted]
+    elif host == '' or ':' in host:
+        # An IPv6 literal is taken as written; nothing resolves it further.
+        if ':' in host and AF_INET6 in wanted:
+            found = [(AF_INET6, host)]
+    elif AF_INET in wanted:
+        found = [(AF_INET, gethostbyname(host))]
+    elif _dotted(host):
+        raise gaierror(-9, 'Address family for hostname not supported')
+    if not found:
+        raise gaierror(-2, 'Name or service not known')
+    numbers = {SOCK_STREAM: IPPROTO_TCP, SOCK_DGRAM: IPPROTO_UDP, SOCK_RAW: 0}
+    kinds = [(type, numbers.get(type, 0))] if type else list(numbers.items())
+    records = []
+    for f, address in found:
+        for kind, number in kinds:
+            where = (address, port) if f == AF_INET else (address, port, 0, 0)
+            records.append((f, kind, proto or number, '', where))
+    return records
 
 def htons(x):
     return ((x & 0xff) << 8) | ((x >> 8) & 0xff)
