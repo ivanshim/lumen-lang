@@ -2108,7 +2108,7 @@ pub struct Class {
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
     pub lineage: RefCell<Vec<Rc<Class>>>,
-    pub direct: Vec<Rc<Class>>,
+    pub direct: RefCell<Vec<Rc<Class>>>,
     pub outline: Option<String>,
     pub name: String,
     pub base: Option<Rc<Class>>,

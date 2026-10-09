@@ -2015,7 +2015,7 @@ pub struct Blueprint {
     /// The mutable names of a Python class, outside its dictionary.
     pub type_names: RefCell<Option<TypeNames>>,
     pub ancestry: RefCell<Vec<Rc<Blueprint>>>,
-    pub parents: Vec<Rc<Blueprint>>,
+    pub parents: std::cell::RefCell<Vec<Rc<Blueprint>>>,
     pub presentation: Option<String>,
     pub name: String,
     pub under: Option<Rc<Blueprint>>,
