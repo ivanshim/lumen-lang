@@ -71,7 +71,7 @@ def _replace_operator_functions():
         import operator as module
     replacements = {}
     for name in list(getattr(module, '__all__', ())):
-        if name == 'index':
+        if name in ('index', 'add'):
             continue
         value = getattr(module, name, None)
         if value is None or isinstance(value, type) or not callable(value):
@@ -85,9 +85,10 @@ def _replace_operator_functions():
         wrapper = replacements.get(id(member))
         if wrapper is not None:
             setattr(module, name, wrapper)
+    module.add = add
+    module.__add__ = add
 
 
-_replace_operator_functions()
 
 
 def _get_add():
@@ -168,3 +169,5 @@ class _Addition:
         return 'add'
 
 add = _Addition()
+
+_replace_operator_functions()

@@ -820,13 +820,29 @@ class DocTestCase(_NamedCase):
         return '<DocTestCase ' + self._dt_test.name + '>'
 
 
+def _normalize_module(module, depth=2):
+    if isinstance(module, types.ModuleType):
+        return module
+    if isinstance(module, str):
+        return __load_module(module)
+    if module is not None:
+        raise TypeError('Expected a module, string, or None')
+    try:
+        try:
+            name = sys._getframemodulename(depth)
+        except AttributeError:
+            name = sys._getframe(depth).f_globals['__name__']
+        return sys.modules[name]
+    except KeyError:
+        return None
+
+
 def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
                  **options):
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
-    if module is None:
-        module = sys.modules[__program_namespace(1).f_globals['__name__']]
+    module = _normalize_module(module)
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
@@ -842,7 +858,7 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 def DocFileSuite(*paths, **options):
     if options.get('module_relative', True) and options.get('package') is None:
-        options['package'] = sys.modules[sys._getframe(1).f_globals['__name__']]
+        options['package'] = _normalize_module(None, 2)
     suite = unittest.TestSuite()
     for path in paths:
         suite.addTest(DocFileTest(path, **options))
@@ -855,7 +871,7 @@ def _load_testfile(filename, package, module_relative, encoding):
         if isinstance(package, str):
             package = __load_module(package)
         elif package is None:
-            package = sys.modules[sys._getframe(2).f_globals['__name__']]
+            package = _normalize_module(None, 3)
         elif not isinstance(package, types.ModuleType):
             raise TypeError('Expected a module, string, or None')
         if filename.startswith('/'):
