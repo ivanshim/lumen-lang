@@ -2857,7 +2857,7 @@ impl<'a> Engine<'a> {
             else if name==self.class_word("remove") {12}
             else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
             else {return None};
-        Some(if hook == 1 { self.root_allocator() } else if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else if (10..=12).contains(&hook) && !self.lang.class_builder.is_empty() { Self::adapter(hook, vec![Value::text(self.class_word("root"))]) } else { Self::adapter(hook, vec![]) })
+        Some(if hook == 1 { self.root_allocator() } else if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else if (10..=12).contains(&hook) && !self.lang.class_builder.is_empty() { Self::adapter(hook, vec![Value::text(self.class_word("root"))]) } else { Self::adapter(hook, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] }) })
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
@@ -4739,8 +4739,8 @@ impl<'a> Engine<'a> {
                 // Only the members a value of the kind answers to are read
                 // here; the class's own names stay the class's own.
                 let directory = self.default_directory(&Value::Class(class.clone()));
-                let answers = matches!(&directory, Value::Array(items) if items.iter().any(|entry| entry.plain() == name));
-                if answers {
+                let answers = matches!(&directory.contents(), Value::Array(items) if items.iter().any(|entry| entry.plain() == name));
+                if answers || self.root_member(name, Some(&class)).is_some() {
                     match self.class_get(Value::Class(class.clone()), name, true) {
                         Ok(member) => {
                             // The initialiser told to subclasses binds the
