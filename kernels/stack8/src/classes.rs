@@ -6888,7 +6888,6 @@ impl<'a> Engine<'a> {
                     if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
                 }
             }
-            if self.exception_class(class) && name == self.class_word("allocate") { return Ok(Some(Self::adapter(1, Vec::new()))); }
             if self.exception_class(class) && self.exception_method_named(name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((receiver.clone(), name.to_string())))));
             }
