@@ -305,9 +305,9 @@ pub struct Traceback {
 }
 
 #[derive(Debug)]
-pub struct MethodStamp;
+pub struct MethodStamp { pub callback_held: std::cell::Cell<bool> }
 impl Drop for MethodStamp {
-    fn drop(&mut self) { crate::faint::plain_departing(); }
+    fn drop(&mut self) { if self.callback_held.get() { crate::faint::plain_departing(); } }
 }
 
 #[derive(Debug, Clone)]
@@ -899,7 +899,7 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
 }
 
 impl Value {
-    pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
+    pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp { callback_held: std::cell::Cell::new(false) })) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
 
@@ -1610,6 +1610,15 @@ impl Value {
                 (Some(Value::Bond(x) | Value::Binding(x)), Some(Value::Bond(y) | Value::Binding(y))) => Rc::ptr_eq(x, y),
                 _ => Rc::ptr_eq(a, b),
             },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 183 && b.0 == 183 => {
+                match (a.1.first(), b.1.first(), a.1.last(), b.1.last()) {
+                    (Some(Value::Class(x)), Some(Value::Class(y)), Some(Value::Object(left)), Some(Value::Object(right))) => {
+                        let same_code = match (a.1.get(1), b.1.get(1)) { (Some(Value::Text(one)), Some(Value::Text(two))) => one == two, (Some(Value::Object(_)), Some(Value::Object(_))) => true, _ => false };
+                        Rc::ptr_eq(x, y) && Rc::ptr_eq(left, right) && same_code
+                    }
+                    _ => Rc::ptr_eq(a, b),
+                }
+            },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
         }
@@ -2099,6 +2108,63 @@ pub enum Reach {
 /// No program can spell it.
 pub const MAKER_MEMBER: &str = "\0metaclass";
 
+thread_local! { static MEMBERS_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// Ordered class storage with a lazily built index of names, never values.
+/// Every mutable borrow discards the index, including writes through a view.
+#[derive(Debug)]
+pub struct ClassMembers {
+    rows: RefCell<Vec<(String, Value)>>,
+    absent: RefCell<(u64, std::collections::HashSet<String, FxBuildHasher>)>,
+    offsets: RefCell<Option<std::collections::HashMap<String, usize, FxBuildHasher>>>,
+}
+
+impl ClassMembers {
+    pub fn new(rows: Vec<(String, Value)>) -> Self {
+        Self { rows: RefCell::new(rows), offsets: RefCell::new(None), absent: RefCell::new((u64::MAX, std::collections::HashSet::with_hasher(FxBuildHasher::default()))) }
+    }
+    pub fn borrow(&self) -> std::cell::Ref<'_, Vec<(String, Value)>> { self.rows.borrow() }
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<(String, Value)>> {
+        MEMBERS_REVISION.with(|revision| revision.set(revision.get().wrapping_add(1)));
+        self.offsets.borrow_mut().take();
+        self.rows.borrow_mut()
+    }
+    pub fn try_borrow(&self) -> Result<std::cell::Ref<'_, Vec<(String, Value)>>, std::cell::BorrowError> { self.rows.try_borrow() }
+    pub fn try_borrow_mut(&self) -> Result<std::cell::RefMut<'_, Vec<(String, Value)>>, std::cell::BorrowMutError> {
+        let entries = self.rows.try_borrow_mut()?;
+        MEMBERS_REVISION.with(|revision| revision.set(revision.get().wrapping_add(1)));
+        self.offsets.borrow_mut().take();
+        Ok(entries)
+    }
+    pub(super) fn mro_misses(&self, name: &str) -> bool {
+        let version = MEMBERS_REVISION.with(|revision| revision.get());
+        let mut saved = self.absent.borrow_mut();
+        if saved.0 != version { saved.1.clear(); saved.0 = version; }
+        saved.1.contains(name)
+    }
+    pub(super) fn retain_mro_miss(&self, name: &str) {
+        let generation = MEMBERS_REVISION.with(|revision| revision.get());
+        let mut missing = self.absent.borrow_mut();
+        if missing.0 != generation || missing.1.len() == 128 {
+            missing.1.clear(); missing.0 = generation;
+        }
+        missing.1.insert(name.to_owned());
+    }
+    pub(super) fn read(&self, name: &str, indexed: bool) -> Option<Value> {
+        let rows = self.rows.borrow();
+        if !indexed || rows.len() < 12 {
+            return rows.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone());
+        }
+        let mut offsets = self.offsets.borrow_mut();
+        let table = offsets.get_or_insert_with(|| {
+            let mut table = std::collections::HashMap::with_hasher(FxBuildHasher::default());
+            for (slot, (key, _)) in rows.iter().enumerate() { table.entry(key.clone()).or_insert(slot); }
+            table
+        });
+        table.get(name).map(|slot| rows[*slot].1.clone())
+    }
+}
+
 /// A class: what it is called, what it stands on, the properties an
 /// object of it begins with, the programs it answers to, its constants
 /// and the values it keeps for itself.
@@ -2119,7 +2185,7 @@ pub struct Class {
     pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
-    pub shared: RefCell<Vec<(String, Value)>>,
+    pub shared: ClassMembers,
     /// The weak-reference layout fixed when a Python class is created.
     /// Namespace writes cannot change an already allocated layout.
     pub weak_storage: std::cell::Cell<Option<bool>>,
@@ -2175,7 +2241,7 @@ impl Class {
 
     /// The class holding a value of that name for itself.
     pub fn holder(&self, name: &str) -> Option<&Class> {
-        if self.shared.borrow().iter().any(|(n, _)| n == name) {
+        if self.shared.read(name, self.python_names.borrow().is_some()).is_some() {
             return Some(self);
         }
         self.base.as_ref().and_then(|b| b.holder(name))

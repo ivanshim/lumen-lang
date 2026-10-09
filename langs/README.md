@@ -3610,6 +3610,9 @@ only. The extension labels so far, all from PHP:
   `.make` allocates and interns native weak references; `.get` also exposes
   their callback state, cached hash, referent equality, reference list,
   proxy dereference and conditional dead-reference dictionary removal.
+  Its allocator, initializer and operation modes supply native reference
+  constructor, hash and comparison slots with argument validation, subtype
+  checks and descriptor binding.
   The last finds the
   rounds of values holding one another that nothing else reaches, runs
   their finalisers, breaks them so that counting frees them, and answers

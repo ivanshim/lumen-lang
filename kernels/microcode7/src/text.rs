@@ -258,8 +258,11 @@ fn split_unpaired(input: &[Value], from_end: bool, table: &Table) -> Result<Valu
 }
 
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
-    let settled: Vec<Value> = input.iter().map(Value::settled).collect();
-    let input = settled.as_slice();
+    let settled;
+    let input = if input.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Shared(_) | Value::Window(..))) {
+        settled = input.iter().map(Value::settled).collect::<Vec<_>>();
+        settled.as_slice()
+    } else { input };
 
     use Work::*;
     if work==MAKETRANS {

@@ -3752,19 +3752,20 @@ impl<'a> Builder<'a> {
                     leaving
                 } else {
                     value = prim_call(Prim::StartContext, vec![manager_read]);
-                    manager
+                    manager.clone()
                 };
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
-                value = Form::Read(entered);
+                if asynchronous && table.flag("ext.syntax.call.bind_names") { steps.push(Form::Release(manager)); }
+                value = if table.flag("ext.syntax.call.bind_names") { Form::Take(entered) } else { Form::Read(entered) };
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
-                steps.push(Form::Write(place, Box::new(value)));
+                steps.push(Form::Write(place.clone(), Box::new(value)));
                 let start = self.pos;
                 let mut boundary = start;
                 let mut closing = Vec::new();
@@ -3783,6 +3784,7 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: cannot assign to expression"));
                 }
                 steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
+                if table.flag("ext.syntax.call.bind_names") { steps.push(Form::Release(place)); }
                 self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
@@ -9845,7 +9847,7 @@ impl<'a> Builder<'a> {
             && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
             self.advance();
             let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
-                name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
+                name: t.lexeme.clone(), under: None, methods: vec![], shared: crate::data::BlueprintEntries::new(vec![]),
                 fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None),
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));

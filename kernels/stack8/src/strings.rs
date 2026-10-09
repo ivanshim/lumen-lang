@@ -584,13 +584,21 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 if matches!(op, Index | Rindex) { return Err(fault(lang, "missing")); }
                 return Ok(Value::Small(-1));
             }
-            let chars: Vec<usize>=s.char_indices().map(|(i,_)|i).chain(std::iter::once(s.len())).collect();
-            let length=chars.len()-1;
+            // A plain ASCII text answers its bounds with byte positions,
+            // which are its own character positions too, so the selected
+            // slice is taken straight; only a text with a wide character
+            // walks for a row of them. Startswith and endswith, whose
+            // windows the fast path above does not take, are covered here.
+            let narrow=s.is_ascii();
+            let length=if narrow {s.len()} else {s.chars().count()};
             let adjust=|n:i64| if n<0 {(length as i64).saturating_add(n).max(0) as usize} else {n as usize};
             let start=adjust(match params.get(1) {Some(Value::Null)|None=>0,Some(v)=>integer(v,lang)?});
             let stop=adjust(match params.get(2) {Some(Value::Null)|None=>length as i64,Some(v)=>integer(v,lang)?}).min(length);
             let valid=start<=stop && start<=length;
-            let window=if valid {&s[chars[start]..chars[stop]]} else {""};
+            let window=if !valid {""} else if narrow {&s[start..stop]} else {
+                let chars: Vec<usize>=s.char_indices().map(|(i,_)|i).chain(std::iter::once(s.len())).collect();
+                &s[chars[start]..chars[stop]]
+            };
             if op==Startswith || op==Endswith {
                 let choices=match &params[0] {
                     Value::Tuple(v)=>v.as_ref().clone(), Value::Words(v,true)=>v.iter().map(|s|Value::text(s)).collect(),
