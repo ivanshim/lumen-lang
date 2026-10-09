@@ -2623,7 +2623,7 @@ impl<'a> Machine<'a> {
                 layers.insert(0, frame);
             }
             let mut free: Vec<_> = fresh.reaching.iter().collect();
-            free.sort_by(|left, right| left.ident.cmp(&right.ident));
+            free.sort_by_key(|address| Self::capture_title(&address.ident));
             for (address, cell) in free.into_iter().zip(closure.iter()) {
                 let Value::Wrapped(35, items) = cell.settled() else { return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()); };
                 let held = match self.cell_place(&items) {

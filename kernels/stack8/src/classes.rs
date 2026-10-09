@@ -2469,8 +2469,9 @@ impl<'a> Engine<'a> {
                 _ => return Err("TypeError: arg 5 (closure) must be tuple".into()),
             };
             if closure.len() != made.enclosing.len() { return Err("ValueError: function requires a closure of the right length".into()); }
+            made.enclosed.clear();
             let mut free = made.enclosing.clone();
-            free.sort_by(|(one, _), (two, _)| made.idents[*one].cmp(&made.idents[*two]));
+            free.sort_by_key(|(slot, _)| Self::closure_title(&made.idents[*slot]));
             for ((at, _), cell) in free.iter().zip(closure.iter()) {
                 let Value::Adapter(wrapped) = cell.contents() else { return Err("TypeError: arg 5 (closure) must contain cells".into()); };
                 if wrapped.0 != 31 { return Err("TypeError: arg 5 (closure) must contain cells".into()); }
