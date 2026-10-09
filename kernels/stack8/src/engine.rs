@@ -26838,6 +26838,9 @@ impl Engine<'_> {
     /// Text checked ahead of time and kept as a code value, with the
     /// file and the manner it is to be read in.
     fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
+        if bytes.contains(&0) {
+            return Err(self.text_syntax(0, "SyntaxError: source code string cannot contain null bytes".into(), filename, 0, 0, None, ""));
+        }
         let bom = bytes.starts_with(&[239, 187, 191]);
         let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
         let mut spelling: Option<String> = None;

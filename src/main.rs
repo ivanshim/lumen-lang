@@ -370,6 +370,10 @@ fn utf8_fault_piece(bytes: &[u8]) -> Option<(usize, usize)> {
 /// stand only where nothing decodes them is read as far as it goes,
 /// for the reader to fault on.
 fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, given: &str) -> String {
+    if bytes.contains(&0) {
+        eprintln!("SyntaxError: source code cannot contain null bytes");
+        process::exit(1);
+    }
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_owned();
     }

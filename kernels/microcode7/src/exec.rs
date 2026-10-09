@@ -27215,6 +27215,9 @@ impl<'a> Machine<'a> {
     /// Text checked ahead of time and kept as a code value with the
     /// file it stands in and the manner it is to be read in.
     fn decode_program(&mut self, raw: &[u8], file: &str) -> Result<Rc<str>, String> {
+        if raw.iter().any(|byte| *byte == 0) {
+            return Err(self.text_unreadable_at(0, "SyntaxError: source code string cannot contain null bytes".to_owned(), file, 0, 0, None, ""));
+        }
         let has_bom = raw.starts_with(b"\xef\xbb\xbf");
         let raw = if has_bom { &raw[3..] } else { raw };
         let mut found: Option<String> = None;

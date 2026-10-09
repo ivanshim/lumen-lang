@@ -3001,7 +3001,30 @@ impl<'a> Builder<'a> {
             whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(if self.table.has_any("ext.builtin.tuple") { prim_call(Prim::Tupling, vec![whole]) } else { whole })
+        Ok(if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(whole) } else { whole })
+    }
+
+    fn folded_pair(&self, action: Prim, left: Form, right: Form) -> Form {
+        if self.table.has_any("ext.builtin.compile.modes") {
+            let plain = |form: &Form| match form { Form::Const(value) => Some(value.clone()), _ => None };
+            if let (Some(a), Some(b)) = (plain(&left), plain(&right)) {
+                let calc = match action { Prim::Plus => Some(math::Calc::Plus), Prim::Minus => Some(math::Calc::Minus), Prim::Times => Some(math::Calc::Times), _ => None };
+                let bounded = action != Prim::Times || ![&a, &b].iter().any(|v| matches!(v, Value::Huge(n) if n.bits() > 64));
+                if let Some(calc) = calc.filter(|_| bounded) {
+                    if let Some(Ok(value)) = math::binary_work(calc, &a, &b).or_else(|| math::compute(calc, &a, &b)) {
+                        return constant(at_language_width(value, self.table));
+                    }
+                }
+            }
+        }
+        prim_call(action, vec![left, right])
+    }
+
+    fn literal_tuple(&self, body: Form) -> Form {
+        if self.table.has_any("ext.builtin.compile.modes") {
+            if let Some(items) = tuple_literals(&body) { return constant(Value::tuple(items)); }
+        }
+        prim_call(Prim::Tupling, vec![body])
     }
 
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
@@ -3019,7 +3042,7 @@ impl<'a> Builder<'a> {
             value = prim_call(Prim::TupleJoined, vec![value, segment]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(if self.table.has_any("ext.builtin.tuple") { prim_call(Prim::Tupling, vec![value]) } else { value })
+        Ok(if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(value) } else { value })
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
@@ -9709,7 +9732,7 @@ impl<'a> Builder<'a> {
                             let operand = if self.table.has_any("ext.stmt.class.special") { Form::Release(by) } else { Form::Read(by) };
                             sequence(vec![set, prim_call(other, vec![now, operand])])
                         }
-                        None => prim_call(other, vec![left, right]),
+                        None => self.folded_pair(other, left, right),
                     }
                 }
             };
@@ -9762,7 +9785,10 @@ impl<'a> Builder<'a> {
     /// side is the cell this link filled, so no middle is read twice.
     fn comparison_tail(&mut self, near: Address, operation: Prim, level: u32, words: usize) -> Res<Form> {
         for _ in 0..words { self.advance(); }
-        let side = self.expr(level + 1)?;
+        let mut side = self.expr(level + 1)?;
+        if self.table.has_any("ext.builtin.compile.modes") && matches!(operation, Prim::Contains | Prim::Absent) {
+            if let Some(set) = frozen_display(&side, self.table) { side = constant(set); }
+        }
         let far = self.gensym("next");
         let put = Form::Write(far.clone(), Box::new(side));
         let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
@@ -12850,6 +12876,11 @@ fn constant_key_matches(a: &Value, b: &Value) -> bool {
         (Value::Tuple(x), Value::Tuple(y)) => {
             x.len() == y.len() && x.iter().enumerate().all(|(at, value)| constant_key_matches(value, &y[at]))
         }
+        (Value::Set(x), Value::Set(y)) if x.borrow().sealed && y.borrow().sealed => {
+            let left = x.borrow();
+            let right = y.borrow();
+            left.entries.len() == right.entries.len() && left.entries.iter().all(|(_, v)| right.entries.iter().any(|(_, w)| constant_key_matches(v, w)))
+        }
         _ => a.equals(b),
     }
 }
@@ -12930,4 +12961,68 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
         _ => {}
     }
     for child in children { inspect_indexed_form(child, locals, constants, names, suspension, indexed); }
+}
+
+
+// Walk tuple display forms iteratively, retaining each immutable value's type.
+fn tuple_literals(root: &Form) -> Option<Vec<Value>> {
+    let mut pending = vec![root];
+    let mut result = Vec::new();
+    while let Some(node) = pending.pop() {
+        match node {
+            Form::Located(_, _, child) | Form::OnLine(_, _, child) => pending.push(child),
+            Form::Apply(Callee::Prim(Prim::TupleJoined, name), children) if name.is_empty() => pending.extend(children.iter().rev()),
+            Form::Apply(Callee::Prim(Prim::MakeArray, name), children) if name.is_empty() => {
+                for child in children {
+                    let mut literal = child;
+                    while let Form::Located(_, _, next) | Form::OnLine(_, _, next) = literal { literal = next; }
+                    let Form::Const(value) = literal else { return None; };
+                    if !constant_inert(value) { return None; }
+                    result.push(value.clone());
+                }
+            }
+            Form::Const(Value::Tuple(items)) if items.iter().all(constant_inert) => result.extend(items.iter().cloned()),
+            _ => return None,
+        }
+    }
+    Some(result)
+}
+
+
+fn frozen_display(expression: &Form, table: &Table) -> Option<Value> {
+    fn bare(mut form: &Form) -> &Form {
+        while let Form::Located(_, _, child) | Form::OnLine(_, _, child) = form { form = child; }
+        form
+    }
+    let Form::Apply(Callee::Prim(Prim::Seq, _), statements) = bare(expression) else { return None; };
+    let (initial, rest) = statements.split_first()?;
+    let Form::Write(slot, value) = bare(initial) else { return None; };
+    if !matches!(bare(value), Form::Apply(Callee::Prim(Prim::EmptySet, _), args) if args.is_empty()) { return None; }
+    let mut store = crate::data::SetStore::new(table.single("ext.builtin.frozenset")?, true);
+    for (index, step) in rest.iter().enumerate() {
+        if index + 1 == rest.len() {
+            let result = match bare(step) {
+                Form::Apply(Callee::Prim(Prim::DistinctObjects, _), children) if children.len() == 1 => bare(&children[0]),
+                other => other,
+            };
+            if !matches!(result, Form::Release(last) if last.ident == slot.ident) { return None; }
+        } else {
+            let Form::Write(target, addition) = bare(step) else { return None; };
+            if target.ident != slot.ident { return None; }
+            let Form::Apply(Callee::Prim(Prim::ExtendLiteral(false, false), _), arguments) = bare(addition) else { return None; };
+            if arguments.len() != 2 || !matches!(bare(&arguments[0]), Form::Take(previous) if previous.ident == slot.ident) { return None; }
+            let Form::Const(item) = bare(&arguments[1]) else { return None; };
+            if !constant_inert(item) { return None; }
+            store.put(item.hash_address().ok()?, item.clone());
+        }
+    }
+    Some(Value::Set(Rc::new(std::cell::RefCell::new(store))))
+}
+
+fn constant_inert(value: &Value) -> bool {
+    match value {
+        Value::Tuple(items) => items.iter().all(constant_inert),
+        Value::Nil | Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Octets { .. } | Value::Ellipsis => true,
+        _ => false,
+    }
 }

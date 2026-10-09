@@ -8323,6 +8323,7 @@ impl<'a> Compiler<'a> {
     fn tuple_value(&mut self) -> Res<()> { self.tuple_read(true) }
 
     fn tuple_read(&mut self, writable: bool) -> Res<()> {
+        let beginning = self.mark();
         let first_spreads = self.tuple_piece(writable)?;
         if !self.on_any(&self.lang.tuple_marks) {
             if first_spreads { return Err(self.lang.unpack_amiss.clone().unwrap_or_default()); }
@@ -8343,7 +8344,15 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece(writable)? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
-        if self.lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
+        if self.lang.builtins.values().any(|b| *b == Builtin::Tuple) {
+            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+            if !self.lang.compile_modes.is_empty() {
+                if let Some(value) = constant_tuple(&self.piece().instrs[beginning..]) {
+                    self.piece().instrs.truncate(beginning);
+                    self.constant(value);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -10048,7 +10057,11 @@ impl<'a> Compiler<'a> {
                         }
                         None => {}
                     }
-                    self.act(op, 2);
+                    let folded = if !lang.compile_modes.is_empty() { literal_dyad(lang, &op, &self.piece().instrs[from..]) } else { None };
+                    if let Some(value) = folded {
+                        self.piece().instrs.truncate(from);
+                        self.constant(value);
+                    } else { self.act(op, 2); }
                 }
             }
         }
@@ -10106,7 +10119,15 @@ impl<'a> Compiler<'a> {
         let mut exits = Vec::new();
         loop {
             for _ in 0..width { self.take(); }
+            let rhs = self.mark();
+            let language = self.lang;
             self.expr(tier + 1)?;
+            if matches!(op, Action::Contains | Action::Lacks) && !self.lang.compile_modes.is_empty() {
+                if let Some(value) = constant_members(&self.piece().instrs[rhs..], language) {
+                    self.piece().instrs.truncate(rhs);
+                    self.constant(value);
+                }
+            }
             self.write(&far);
             // Each side is moved out of its temporary at its last use, so
             // that the temporaries hold nothing once the link is judged:
@@ -13617,6 +13638,10 @@ fn same_constant(left: &Value, right: &Value) -> bool {
         (Value::Real(a), Value::Real(b)) => a.below == b.below && left.equals(right),
         (Value::Complex(a), Value::Complex(b)) => a.real.to_bits() == b.real.to_bits() && a.imag.to_bits() == b.imag.to_bits(),
         (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| same_constant(x, y)),
+        (Value::Set(a), Value::Set(b)) if a.borrow().fixed && b.borrow().fixed => {
+            let (a, b) = (a.borrow().items(), b.borrow().items());
+            a.len() == b.len() && a.iter().all(|item| b.iter().any(|other| same_constant(item, other)))
+        },
         _ => std::mem::discriminant(left) == std::mem::discriminant(right) && left.equals(right),
     }
 }
@@ -13660,4 +13685,83 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
         }
     }
     (constants, names)
+}
+
+
+// Evaluate only literal tuple assembly; mutable members remain runtime expressions.
+fn constant_tuple(words: &[Instr]) -> Option<Value> {
+    enum Part { Value(Value), Row(Vec<Value>) }
+    fn row(part: Part) -> Option<Vec<Value>> {
+        match part { Part::Row(items) => Some(items), Part::Value(Value::Tuple(items)) => Some(items.as_ref().clone()), _ => None }
+    }
+    let mut values = Vec::new();
+    for word in words {
+        match word {
+            Instr::Line(_) | Instr::Location(..) => {},
+            Instr::Const(value) if literal_immutable(value) => values.push(Part::Value(value.clone())),
+            Instr::Act(Action::MakeArray, count) => {
+                let start = values.len().checked_sub(*count)?;
+                let items = values.drain(start..).map(|part| match part { Part::Value(value) => Some(value), _ => None }).collect::<Option<Vec<_>>>()?;
+                values.push(Part::Row(items));
+            }
+            Instr::Act(Action::TupleJoin, 2) => {
+                let right = row(values.pop()?)?;
+                let mut left = row(values.pop()?)?;
+                left.extend(right);
+                values.push(Part::Row(left));
+            }
+            Instr::Act(Action::Builtin(Builtin::Tuple, name), 1) if name.is_empty() => {
+                let items = row(values.pop()?)?;
+                values.push(Part::Value(Value::tuple(items)));
+            }
+            _ => return None,
+        }
+    }
+    match values.pop()? { Part::Value(value @ Value::Tuple(_)) if values.is_empty() => Some(value), _ => None }
+}
+
+
+fn constant_members(words: &[Instr], lang: &Lang) -> Option<Value> {
+    let spelling = lang.set_words.get("ext.builtin.frozenset")?.first()?.clone();
+    let mut members = crate::value::Members::empty(spelling, true);
+    let mut pending = None;
+    let mut started = false;
+    for word in words {
+        match word {
+            Instr::Line(_) | Instr::Location(..) => {},
+            Instr::Act(Action::MakeSet, 0) if !started => started = true,
+            Instr::Const(value) if started && pending.is_none() && literal_immutable(value) => { pending = Some(value.clone()); }
+            Instr::Act(Action::GatherItem { map: false, spread: false }, 2) if started => {
+                let value = pending.take()?;
+                members.insert(value.member_key().ok()?, value);
+            }
+            Instr::Act(Action::SettleObjects, 1) if started && pending.is_none() => {},
+            _ => return None,
+        }
+    }
+    (started && pending.is_none()).then(|| Value::Set(Rc::new(std::cell::RefCell::new(members))))
+}
+
+fn literal_immutable(value: &Value) -> bool {
+    match value {
+        Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Bytes(..) | Value::Flag(_) | Value::Null | Value::Ellipsis => true,
+        Value::Tuple(items) => items.iter().all(literal_immutable),
+        _ => false,
+    }
+}
+
+fn literal_dyad(lang: &Lang, operation: &Action, words: &[Instr]) -> Option<Value> {
+    if words.len() > 8 { return None; }
+    let mut operands = words.iter().filter(|word| !matches!(word, Instr::Line(_) | Instr::Location(..)));
+    let (Instr::Const(a), Instr::Const(b)) = (operands.next()?, operands.next()?) else { return None; };
+    if operands.next().is_some() { return None; }
+    let calculation = match operation {
+        Action::Add => arith::Operation::Plus,
+        Action::Sub => arith::Operation::Minus,
+        Action::Mul => arith::Operation::Times,
+        _ => return None,
+    };
+    if matches!(operation, Action::Mul) && [a, b].iter().any(|v| matches!(v, Value::Huge(n) if n.bits() > 64)) { return None; }
+    let result = arith::binary_work(calculation, a, b).or_else(|| arith::calculate(calculation, a, b))?.ok()?;
+    Some(within_width(result, lang))
 }
