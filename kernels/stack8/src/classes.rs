@@ -3435,6 +3435,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if name.starts_with("co_") && name != "co_optimize" {
+            if let Value::Object(object) = &subject {
+                if self.code_class.as_ref().is_some_and(|class| Rc::ptr_eq(class, &object.class_now())) {
+                    let native = object.fields.borrow().iter().find(|(key, _)| key == "\0native_code").map(|(_, value)| value.clone());
+                    if let Some(native) = native { return self.class_get(native, name, plain); }
+                }
+            }
+        }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &subject {
                 let class = instance.class_now();
@@ -4577,11 +4585,10 @@ impl<'a> Engine<'a> {
                     }
                     if name == "co_lnotab" { return self.code_metadata_call("lnotab", vec![subject.clone()]); }
                     if name == "co_stacksize" {
-                        return f.declared_stack.map(Value::Small).ok_or_else(|| Fault::Note("NotImplementedError: native operand-stack bounds are not retained".into()));
+                        return Ok(Value::Small(f.stack_bound()));
                     }
-                    if name == "co_code" || name == "co_exceptiontable" {
-                        return Err("NotImplementedError: native code has no CPython bytecode or exception table".into());
-                    }
+                    if name == "co_code" { return Ok(self.byte_make(f.native_image(), false)); }
+                    if name == "co_exceptiontable" { return Ok(self.byte_make(f.handler_image(), false)); }
                     if let Some(field) = self.lang.class_details.get("code.fields").and_then(|v| v.iter().position(|s| s == name)) {
                         let number = |n: usize| Value::Small(n as i64);
                         let words = |v: &[String]| Value::tuple(v.iter().map(|s| Value::text(s)).collect());

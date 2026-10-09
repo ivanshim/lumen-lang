@@ -3981,6 +3981,14 @@ impl<'a> Machine<'a> {
                 if let Some(code) = forwarded { return self.read_class_member(code, key, false); }
             }
         }
+        if key.starts_with("co_") && key != "co_optimize" {
+            if let Value::Thing(instance) = &value {
+                if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())) {
+                    let retained = instance.holds.borrow().iter().find_map(|(name, item)| (name == "\0native_code").then(|| item.clone()));
+                    if let Some(retained) = retained { return self.read_class_member(retained, key, direct); }
+                }
+            }
+        }
         if self.names_in_calls && !key.starts_with("__") {
             let slot = match &value {
                 Value::Thing(thing) => {
@@ -5253,11 +5261,9 @@ impl<'a> Machine<'a> {
                             None => self.code_metadata_call("location_table", vec![value.clone()]),
                         },
                         "co_lnotab" => return self.code_metadata_call("lnotab", vec![value.clone()]),
-                        "co_stacksize" => return match p.stack_bound {
-                            Some(bound) => Ok(Value::Small(bound)),
-                            None => Err(String::from("NotImplementedError: native operand-stack bounds are not retained").into()),
-                        },
-                        "co_code" | "co_exceptiontable" => return Err(String::from("NotImplementedError: native code has no CPython bytecode or exception table").into()),
+                        "co_stacksize" => return Ok(Value::Small(self.native_stack_bound(p))),
+                        "co_code" => return Ok(self.octets(p.body_image(), false)),
+                        "co_exceptiontable" => return Ok(self.octets(self.code_handler_image(p), false)),
                         _ => {}
                     }
                     let fields = self.rules.words_ext_stmt_class_detail_code_fields;

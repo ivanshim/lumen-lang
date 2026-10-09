@@ -584,6 +584,8 @@ enum Chooser {
     Leaves(Vec<Value>),
 }
 
+include!("native_code.rs");
+
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String], root: &Rc<Class>) -> HashMap<String, Value> {
@@ -4319,6 +4321,10 @@ impl<'a> Engine<'a> {
         if self.data.len() < n {
             return Err("Stack underflow".to_string().into());
         }
+        if let Some(opcode) = program.invalid_native_opcode() {
+            self.data.truncate(self.data.len().saturating_sub(n));
+            return Err(format!("SystemError: unknown opcode {opcode}").into());
+        }
         let at = self.data.len() - n;
         let memoized = program.returns_value && self.memo_cell.map_or(false, |s| matches!(self.world[s], Value::Flag(true)));
         let key = memoized.then(|| {
@@ -6317,6 +6323,16 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Attempt(plan) => {
+                    if matches!(&program.exception_image, Some(Value::Bytes(bytes, ..)) if bytes.borrow().is_empty()) {
+                        let progress = self.run_portion(program, frame, instrs, plan.body, suspended.as_deref_mut())?;
+                        if !matches!(progress, Passage::Along(_)) { return Ok(progress); }
+                        for part in [plan.otherwise, plan.last].into_iter().flatten() {
+                            let progress = self.run_portion(program, frame, instrs, part, suspended.as_deref_mut())?;
+                            if !matches!(progress, Passage::Along(_)) { return Ok(progress); }
+                        }
+                        pc = plan.after;
+                        continue;
+                    }
                     // A gathered clause cannot yet keep the pieces of a
                     // group it has parted while a body sleeps.
                     if suspended.is_some() && plan.clauses.iter().any(|arm| arm.grouped)
@@ -17390,6 +17406,14 @@ impl<'a> Engine<'a> {
                 if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
                     if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
                     let mut fields = object.fields.borrow().clone();
+                    let cached = fields.iter().find(|(name, _)| name == "\0native_code").map(|(_, value)| value.clone());
+                    if named.iter().any(|(key, _)| key != "co_consts") {
+                        if let Some(cached) = cached.as_ref() { return self.value_method(cached, operation, args, named); }
+                    }
+                    if let Some(cached) = cached {
+                        let revised = self.value_method(&cached, operation, Vec::new(), named.clone())?;
+                        fields.iter_mut().find(|(name, _)| name == "\0native_code").expect("cached code").1 = revised;
+                    }
                     for (key, value) in named {
                         if key != "co_consts" { return Err(format!("NotImplementedError: compiled source replacement of {key} is unavailable")); }
                         let Value::Tuple(constants) = value.contents() else { return Err("TypeError: co_consts must be tuple".into()); };
@@ -17483,7 +17507,25 @@ impl<'a> Engine<'a> {
                         if !labels.starts_with(&original.code_names) { return Err("NotImplementedError: renaming native global and attribute operands is unavailable".into()); }
                         changed.code_names = labels;
                     }
-                    ("co_code" | "co_exceptiontable", _) => return Err("NotImplementedError: replacing CPython bytecode or exception tables is unavailable".into()),
+                    ("co_code", image @ Value::Bytes(..)) => {
+                        if image.equals(&self.byte_make(changed.native_image(), false)) { continue; }
+                        let loaded = self.native_code_load(&image)?;
+                        let body = Self::native_code_subject(&loaded)?;
+                        let adopted = body.replacing_constants(&changed.code_constants)?;
+                        changed.instrs = adopted.instrs.clone();
+                        changed.source_tokens = body.source_tokens.clone();
+                        changed.source_end = body.source_end;
+                        changed.image_origin = body.image_origin.clone();
+                        changed.instruction_image = body.instruction_image.clone();
+                    }
+                    ("co_exceptiontable", table @ Value::Bytes(..)) => {
+                        let Value::Bytes(bytes, ..) = &table else { unreachable!() };
+                        if *bytes.borrow() == changed.handler_image() { continue; }
+                        if !bytes.borrow().is_empty() {
+                            return Err("ValueError: unsupported native exception table layout".into());
+                        }
+                        changed.exception_image = Some(table);
+                    }
                     _ => return Err(self.special_fault()),
                 }
             }
@@ -24868,6 +24910,8 @@ impl Engine<'_> {
                     Value::Small(0) => self.trace_hook.clone(),
                     Value::Small(1) if args.len() == 2 => { self.trace_hook = args[1].clone(); Value::Null },
                     Value::Small(2) if args.len() == 2 => self.inspect_instructions(&args[1])?,
+                    Value::Small(3) if args.len() == 2 => self.native_code_analysis(&args[1])?,
+                    Value::Small(4) if args.len() == 2 => self.native_code_load(&args[1])?,
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }
@@ -28064,12 +28108,18 @@ impl Engine<'_> {
 
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
-        let bits = (if trial.top_level_coroutine { 128 } else { 0 }) | trial.future_bits;
+        let bits = (if trial.top_level_coroutine { 128 } else { 0 }) | checked.future_bits;
         let constants = Value::tuple(checked.code_constants.iter().map(|v| match v {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
-        let retained = self.routine_code(&checked);
-        let fields = vec![("co_consts".to_string(), constants), ("\0optimization".into(), Value::Small(optimization.max(0))), ("\0compiled".into(), retained)];
+        let mut metadata = (*checked).clone();
+        metadata.ident = "<module>".into();
+        metadata.qualified = "<module>".into();
+        metadata.declared_on = 1;
+        metadata.code_flags = bits;
+        let fields = vec![("co_consts".to_string(), constants),
+            ("\0optimization".into(), Value::Small(optimization.max(0))),
+            ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata)))];
         let mut fields = fields;
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1)), ("co_optimize".to_string(), Value::Small(optimization))];
         fields.splice(0..0, source_fields);
@@ -28212,7 +28262,13 @@ impl Engine<'_> {
                             self.call_held(Value::Routine(Rc::new(working)), Vec::new())?;
                             return Ok(Value::Null);
                         }
-                        self.call_held(Value::Routine(original.clone()), Vec::new())?;
+                        if original.image_origin.0 == 0 {
+                            self.native_root_run(original, &args)?;
+                            return Ok(Value::Null);
+                        }
+                        let mut working = (**original).clone();
+                        working.globe = args.get(1).filter(|value| !matches!(value.contents(), Value::Null)).cloned();
+                        self.call_held(Value::Routine(Rc::new(working)), Vec::new())?;
                         return Ok(Value::Null);
                     }
                 }

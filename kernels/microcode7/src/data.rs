@@ -1312,6 +1312,8 @@ impl Value {
             Value::text(&program.ident), Value::Small(program.declared_on.into()),
             Value::Small(program.flags | program.future_bits), Value::Flag(program.lineless),
             program.locations.clone().unwrap_or(Value::Nil),
+            Value::Octets { cell: Rc::new(RefCell::new(program.body_image())), changeable: false, lead: Rc::from("bytes") },
+            program.encoded_handlers.clone().unwrap_or(Value::Nil),
             names(&program.formals), Value::tuple(kinds),
             program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
             names(&program.referenced), names(&program.locals), names(&program.idents),
