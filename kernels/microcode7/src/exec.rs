@@ -2266,8 +2266,10 @@ impl<'a> Machine<'a> {
         // rather than settled into a copy, so a member the body adds is
         // reached in its turn and one the body takes away is passed over.
         if matches!(op, Prim::Walked) && self.rules.suspends {
-            if let Some(living @ IteratorKind::Living(..)) = v.first().and_then(|value| self.live_walk(value)) {
-                return Ok(Self::cursor_value(living));
+            if let Some(anchor) = v.first() {
+                if let Some(living @ IteratorKind::Living(..)) = self.live_walk(anchor) {
+                    return Ok(Self::cursor_value_walked(living, Self::walk_named(anchor)));
+                }
             }
         }
         if self.names_in_calls && v.iter().any(|x| matches!(x, Value::Shared(_))) {
@@ -7843,12 +7845,21 @@ impl<'a> Machine<'a> {
                         if matches!(f.cells.borrow()[i].settled(), Value::Octets { .. }) && matches!(value.settled(), Value::Thing(_)) {
                             if let Some(bytes) = self.buffer_exported(&value)? { value = self.octets(bytes, false); }
                         }
+                        // A bound named by a thing is read before the
+                        // row's cell is lent out, for reading it may run
+                        // the program's code and change that very row.
+                        let mut bounds = bounds.to_vec();
+                        for bound in bounds.iter_mut() {
+                            if !matches!(bound, Value::Nil | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                                if let Some(number) = self.stood_for_whole(bound)? { *bound = number; }
+                            }
+                        }
                         match self.value_cell(&f, i) {
                             Some(cell) => {
                                 let mut row = cell.borrow_mut();
-                                self.span_written(&mut row, bounds, &value)?;
+                                self.span_written(&mut row, &bounds, &value)?;
                             }
-                            None => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
+                            None => self.span_written(&mut f.cells.borrow_mut()[i], &bounds, &value)?,
                         }
                         if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                         return Ok(Value::Nil);
@@ -7863,7 +7874,8 @@ impl<'a> Machine<'a> {
                                 // read, so a value whose __index__ shrinks
                                 // the row is refused by the place, and the
                                 // bounds are checked again after it ran.
-                                let place = self.octet_at(&index, cell.borrow().len(), changeable)?;
+                                let named = match self.stood_for_whole(&index)? { Some(number) => number, None => index.clone() };
+                                let place = self.octet_at(&named, cell.borrow().len(), changeable)?;
                                 let byte = self.octet_index(&value, false)?;
                                 let mut held = cell.borrow_mut();
                                 if place >= held.len() { drop(held); return Err(self.octet_error("index").into()); }
@@ -7975,7 +7987,11 @@ impl<'a> Machine<'a> {
                     // into a copy: it goes on in its own cell, so the walk
                     // reaches what the body adds and misses what it takes.
                     if *op == Prim::Iterated && self.rules.suspends {
-                        if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(|value| self.live_walk(value)) { return Ok(Self::cursor_value(living)); }
+                        if let Some(anchor) = values.first() {
+                            if let Some(living @ IteratorKind::Living(..)) = self.live_walk(anchor) {
+                                return Ok(Self::cursor_value_walked(living, Self::walk_named(anchor)));
+                            }
+                        }
                     }
                     // The property builtin takes its accessors by name; making the property sorts them out.
                     if *op == Prim::ClassWork(13) { return self.work_on_class(13, values); }
@@ -8625,7 +8641,7 @@ impl<'a> Machine<'a> {
             // A walk answers a guess at how many members it has left,
             // where the table keeps one for a walk of its own kind.
             78 | 80 => mark == 'w',
-            79 | 81 => matches!(mark, 'w' | 'p' | 'e' | 'E'),
+            79 | 81 => matches!(mark, 'w' | 'p' | 'e' | 'E' | 'B'),
             _ => false,
         }
     }
@@ -8690,6 +8706,21 @@ impl<'a> Machine<'a> {
 
     pub(super) fn native_member(&self, value: &Value, name: &str) -> bool {
         self.native_place(value, name).is_some() || self.directory_attribute(value, name).is_some()
+            || Self::octet_plain_member(value, name)
+    }
+
+    /// The few names a run of octets answers in Python that its kind's
+    /// plain table keeps no special place for: the fixed kind reads
+    /// itself out unchanged, and the changeable one is built afresh
+    /// where it stands and tells how much room it keeps.
+    fn octet_plain_member(value: &Value, name: &str) -> bool {
+        let bare = Self::underlying(value).map(|held| held.settled()).unwrap_or_else(|| value.settled());
+        match bare {
+            Value::Octets { changeable: true, .. } => matches!(name, "__alloc__" | "__init__"),
+            Value::Octets { changeable: false, .. } => name == "__bytes__",
+            Value::Intrinsic(Prim::Octets(1), _) => name == "__init__",
+            _ => false,
+        }
     }
 
     /// The cell a native holder's names share, followed through however
@@ -8850,8 +8881,12 @@ impl<'a> Machine<'a> {
                 IteratorKind::Stored { entries, next } => return Ok(Value::Small(entries.len().saturating_sub(*next) as i64)),
                 IteratorKind::Living(storage, position) => {
                     if held.done { return Ok(Value::Small(0)); }
-                    let Value::Vector(items) = storage.borrow().clone() else { return Ok(Value::Small(0)); };
-                    return Ok(Value::Small(items.len().saturating_sub(*position) as i64));
+                    let extent = match storage.borrow().clone() {
+                        Value::Vector(items) => items.len(),
+                        Value::Octets { cell, .. } => cell.borrow().len(),
+                        _ => return Ok(Value::Small(0)),
+                    };
+                    return Ok(Value::Small(extent.saturating_sub(*position) as i64));
                 }
                 IteratorKind::Stepping(walk, at) => {
                     let left = walk.count() - at;
@@ -8966,6 +9001,17 @@ impl<'a> Machine<'a> {
             66 => (Prim::BitsOne, false), 71 => (Prim::BitsOne, true),
             _ => return Err(self.method_fault("arguments").into()),
         };
+        // The reference answers a reflected `%` for a run of octets
+        // only when the other side is a run of the very same kind.
+        if about && matches!(work, Prim::Mod) {
+            if let Value::Octets { changeable, .. } = receiver.settled() {
+                let kin = matches!(arguments[0].settled(), Value::Octets { changeable: theirs, .. } if theirs == changeable);
+                if !kin {
+                    let word = self.rules.words_ext_stmt_class_special_declined.first().map_or("NotImplemented", String::as_str);
+                    return Ok(Value::Refusal(Rc::from(word)));
+                }
+            }
+        }
         let pair = if about { [arguments[0].clone(), receiver.clone()] } else { [receiver.clone(), arguments[0].clone()] };
         self.native_working(work, name, pair.to_vec())
     }
@@ -9964,7 +10010,9 @@ impl<'a> Machine<'a> {
         }
         // A word several kinds of value share is the method of only some
         // of them: a plain kind that does not keep it has no such member.
-        let plain_kind = matches!(receiver.settled(), Value::Nil) || crate::members::lists_members(&receiver.settled());
+        let plain_kind = matches!(receiver.settled(), Value::Nil)
+            || crate::members::lists_members(&receiver.settled())
+            || matches!(receiver.settled(), Value::Octets { .. });
         if plain_kind && !crate::members::answers_to(&receiver.settled(), operation) {
             let spelled = self.member_spelling(operation);
             if self.attribute(&receiver, &spelled).is_none() { return Err(self.member_missing(&receiver, &spelled).into()); }
@@ -10069,6 +10117,51 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "__alloc__" || name == "__bytes__" {
+            let bare = Self::underlying(receiver).map(|held| held.settled()).unwrap_or_else(|| receiver.settled());
+            if let Value::Octets { cell, changeable, .. } = bare {
+                if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                if name == "__alloc__" {
+                    if !changeable { return Err(self.method_fault("arguments").into()); }
+                    return Ok(Value::Small(cell.borrow().len() as i64 + 1));
+                }
+                if changeable { return Err(self.method_fault("arguments").into()); }
+                return Ok(self.octets(cell.borrow().clone(), false));
+            }
+        }
+        if name == "__init__" {
+            // Building a changeable run afresh reads the very words the
+            // constructor reads, so every source it takes works here.
+            // Every other kind's __init__ runs on through the plain road.
+            let bare = Self::underlying(receiver).map(|held| held.settled()).unwrap_or_else(|| receiver.settled());
+            let on_the_class = matches!(bare, Value::Intrinsic(Prim::Octets(1), _));
+            if on_the_class || matches!(bare, Value::Octets { changeable: true, .. }) {
+                // Read off the class, the first given word is the run to
+                // build; read off a run, it is that run itself.
+                let (target, given) = if on_the_class {
+                    let mut handed = arguments.iter();
+                    let Some(target) = handed.next() else { return Err(self.method_fault("arguments").into()); };
+                    (target.clone(), handed.cloned().collect::<Vec<Value>>())
+                } else {
+                    (receiver.clone(), arguments)
+                };
+                let held = Self::underlying(&target).map(|value| value.settled()).unwrap_or_else(|| target.settled());
+                let Value::Octets { cell, .. } = held else { return Err(self.method_fault("arguments").into()); };
+                let mut slots: [Option<Value>; 3] = [given.first().cloned(), given.get(1).cloned(), given.get(2).cloned()];
+                for (key, supplied) in keywords {
+                    let at = match key.as_str() { "source" => 0, "encoding" => 1, "errors" => 2,
+                        _ => return Err(format!("TypeError: bytearray() got an unexpected keyword argument '{key}'").into()) };
+                    if slots[at].replace(supplied).is_some() {
+                        return Err(format!("TypeError: argument for bytearray() given by name ('{key}') and position ({})", at + 1).into());
+                    }
+                }
+                let inputs: Vec<Value> = slots.into_iter().flatten().collect();
+                let made = self.prim_values(Prim::Octets(1), "bytearray", &inputs).map_err(Escape::from)?;
+                let Value::Octets { cell: fresh, .. } = made.settled() else { return Err(String::from("TypeError: bytearray.__init__ is unready").into()); };
+                *cell.borrow_mut() = fresh.borrow().clone();
+                return Ok(Value::Nil);
+            }
+        }
         if name == "classmethod_get" { return self.get_native_classmethod(receiver, arguments, keywords); }
         if name == "callable_reduce_ex" {
             if arguments.len() != 1 || !keywords.is_empty() { return Err("TypeError: __reduce_ex__() takes exactly one argument".to_owned().into()); }
@@ -13180,11 +13273,14 @@ impl<'a> Machine<'a> {
         };
         let mark = match arguments.first() {
             None | Some(Value::Unset) => String::new(),
-            Some(Value::Text(_)) | Some(Value::Octets { .. }) => {
+            Some(Value::Text(_)) | Some(Value::Octets { .. }) | Some(Value::Thing(_)) => {
                 let between: String = match &arguments[0] {
                     Value::Text(text) => text.to_string(),
                     Value::Octets { cell, .. } => cell.borrow().iter().copied().map(char::from).collect(),
-                    _ => unreachable!(),
+                    other => match Self::underlying(other).map(|held| held.settled()) {
+                        Some(Value::Octets { cell, .. }) => cell.borrow().iter().copied().map(char::from).collect(),
+                        _ => return Err(format!("TypeError: object of type '{}' has no len()", other.kind_word())),
+                    },
                 };
                 if between.chars().count() != 1 { return Err(String::from("ValueError: sep must be length 1.")); }
                 if !between.is_ascii() { return Err(String::from("ValueError: sep must be ASCII.")); }
@@ -14430,7 +14526,19 @@ impl<'a> Machine<'a> {
                 let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(wrong()) };
                 match operation {
                     52 => { counted(1)?; let byte = self.octet_index(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
-                    53 => { counted(1)?; let more = self.octet_lengthening(&rest[0])?; if !more.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
+                    53 => {
+                        counted(1)?;
+                        // An argument that will not be walked names its
+                        // own kind in this one refusal, as extend alone
+                        // reaches for a walk without a plain fallback.
+                        let more = match self.octet_lengthening(&rest[0]) {
+                            Ok(more) => more,
+                            Err(words) if words.contains("not iterable") => return Err(format!("TypeError: can't extend bytearray with {}", rest[0].kind_word())),
+                            Err(words) => return Err(words),
+                        };
+                        if !more.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                        cell.borrow_mut().extend(more);
+                    }
                     54 => {
                         counted(2)?;
                         let asked = self.octet_place(&rest[0])?;
@@ -14583,7 +14691,21 @@ impl<'a> Machine<'a> {
             let result;
             match operation {
                 3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
-                4 if args.len() <= 2 => return self.octets_in_hex(&content, args),
+                4 if args.len() <= 2 => {
+                    // The count of a separator of a kind this kernel
+                    // does not know is read first, and reading it may
+                    // run the program's code and change the row; a row
+                    // changed out from under that reading is refused
+                    // rather than read as stale bytes.
+                    if let Some(sep) = args.first() {
+                        if matches!(sep.settled(), Value::Thing(_)) {
+                            let before = cell.borrow().len();
+                            if let Err(away) = self.ask_special(sep, 10, &[]) { self.got_away = Some(Escape::Error(away)); return Err(String::new()); }
+                            if cell.borrow().len() != before { return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized")); }
+                        }
+                    }
+                    return self.octets_in_hex(&content, args);
+                }
                 6 | 7 if args.is_empty() => {
                     result = if operation == 6 { content.to_ascii_uppercase() } else { content.to_ascii_lowercase() };
                 }
@@ -20644,7 +20766,8 @@ impl<'a> Machine<'a> {
                 match &standing {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
-                        let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
+                        let named = match self.stood_for_whole(&v[1])? { Some(number) => number, None => v[1].clone() };
+                        let index = self.octet_at(&named, cell.borrow().len(), *changeable)?;
                         let byte = self.octet_index(&v[2], false)?;
                         let mut held = cell.borrow_mut();
                         if index >= held.len() { drop(held); return Err(self.octet_error("index")); }
@@ -24498,8 +24621,13 @@ impl<'a> Machine<'a> {
                 if OctetLease::held(cell) && range.len() != incoming.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 cell.borrow_mut().splice(range, incoming);
             }
+            else if positions.len() != incoming.len() {
+                // The refusal while bytes are held out comes before the
+                // count of places is complained of, as the reference has it.
+                if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                return Err(self.octet_error("arguments"));
+            }
             else {
-                if positions.len() != incoming.len() { return Err(self.octet_error("arguments")); }
                 for (index, byte) in positions.into_iter().zip(incoming) { cell.borrow_mut()[index] = byte; }
             }
             return Ok(());
@@ -29016,6 +29144,7 @@ impl Machine<'_> {
     }
     pub(super) fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
         let subtype = match subject { Value::Thing(instance) => Some(Value::Blueprint(instance.blueprint().clone())), _ => None };
+        let whole = subject.clone();
         let underlying = Self::underlying(subject).map(|held| held.settled());
         let subject = underlying.as_ref().unwrap_or(subject);
         fn tuple(values: Vec<Value>) -> Value { Value::tuple(values) }
@@ -29026,6 +29155,14 @@ impl Machine<'_> {
         if let Value::Progression(row) = subject {
             let bounds = vec![Value::from_big(row.first.clone()), Value::from_big(row.limit.clone()), Value::from_big(row.stride.clone())];
             return Ok(tuple(vec![builtin(Prim::Span), tuple(bounds)]));
+        }
+        // A changeable run of octets reduces through its own class and
+        // its content read byte by byte, as the reference writes that
+        // reduction; what a subclass keeps besides is the state.
+        if let Value::Octets { cell, changeable: true, .. } = subject {
+            let maker = subtype.clone().unwrap_or_else(|| self.kind_named_after(subject));
+            let text = Value::text(&cell.borrow().iter().map(|b| char::from(*b)).collect::<String>());
+            return Ok(tuple(vec![maker, tuple(vec![text, Value::text("latin-1")]), Self::held_as_state(&whole)]));
         }
         if let Value::Generator(handle) = subject {
             let frame = handle.borrow();
@@ -29091,9 +29228,20 @@ impl Machine<'_> {
                         Value::Vector(crate::tuples::Sequence::plain(Vec::new()))
                     }
                     Some("list_iterator") => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                    // A run of octets walked completely out keeps no
+                    // trace of its kind and hands over an empty tuple;
+                    // one whose source began empty keeps its empty kind.
+                    Some("bytes_iterator" | "bytearray_iterator") if snapshot.done => tuple(Vec::new()),
+                    Some("bytes_iterator") => self.octets(Vec::new(), false),
+                    Some("bytearray_iterator") => self.octets(Vec::new(), true),
                     _ => tuple(Vec::new()),
                 }),
-                IteratorKind::Living(..) => Some(Value::Vector(crate::tuples::Sequence::plain(Vec::new()))),
+                IteratorKind::Living(home, _) => Some(match home.borrow().settled() {
+                    // Only a run walked completely out reaches here, so
+                    // it keeps nothing of the kind it walked.
+                    Value::Octets { .. } => tuple(Vec::new()),
+                    _ => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                }),
                 IteratorKind::Placed(..) | IteratorKind::Summoned { .. } => Some(tuple(Vec::new())),
                 IteratorKind::PlacedBack(..) => {
                     constructor = reversed.clone();
@@ -29194,7 +29342,11 @@ impl Machine<'_> {
             match &mut current.kind {
                 IteratorKind::Stepping(range, offset) => *offset = positive.min(range.count()),
                 IteratorKind::Living(home, offset) => {
-                    let extent = match home.borrow().settled() { Value::Vector(items) => items.len(), _ => 0 };
+                    let extent = match home.borrow().settled() {
+                        Value::Vector(items) => items.len(),
+                        Value::Octets { cell, .. } => cell.borrow().len(),
+                        _ => 0,
+                    };
                     *offset = positive.to_usize().unwrap_or(extent).min(extent);
                 }
                 IteratorKind::Placed(_, offset) => *offset = positive,
@@ -29343,7 +29495,7 @@ impl Machine<'_> {
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
         if self.rules.suspends {
-            if let Some(kind) = self.live_walk(source) { return Ok(Self::cursor_value(kind)); }
+            if let Some(kind) = self.live_walk(source) { return Ok(Self::cursor_value_walked(kind, Self::walk_named(source))); }
         }
         if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
         if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
@@ -29526,7 +29678,11 @@ impl Machine<'_> {
                     return Ok(item);
                 }
                 IteratorKind::Living(home, at) => {
-                    let item = match home.borrow().settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    let item = match home.borrow().settled() {
+                        Value::Vector(items) => items.get(*at).cloned(),
+                        Value::Octets { cell, .. } => cell.borrow().get(*at).copied().map(|b| Value::Small(i64::from(b))),
+                        _ => None,
+                    };
                     if item.is_some() { *at += 1; }
                     held.done = item.is_none();
                     return Ok(item);
@@ -29555,7 +29711,11 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Living(home, at) => {
-                    let item = match home.borrow().settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    let item = match home.borrow().settled() {
+                        Value::Vector(items) => items.get(*at).cloned(),
+                        Value::Octets { cell, .. } => cell.borrow().get(*at).copied().map(|b| Value::Small(i64::from(b))),
+                        _ => None,
+                    };
                     if item.is_some() { *at += 1; }
                     Ok(item)
                 }
@@ -29739,6 +29899,9 @@ impl Machine<'_> {
             Value::Window(..) => Some(IteratorKind::Watching { window: value.clone(), at: 0, size: Self::window_extent(value) }),
             Value::Shared(cell) => match &*cell.borrow() {
                 Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
+                // A run of octets that can change is read where it is
+                // kept, so steps see what later writes put there.
+                Value::Octets { changeable: true, .. } => Some(IteratorKind::Living(cell.clone(), 0)),
                 // A map in a name's cell is walked keys-first through a
                 // window on the cell, so a change made while the walk
                 // runs is refused rather than passed over.
@@ -29751,12 +29914,14 @@ impl Machine<'_> {
             },
             Value::Mutable(cell, _) => match &*cell.borrow() {
                 Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
+                Value::Octets { changeable: true, .. } => Some(IteratorKind::Living(cell.clone(), 0)),
                 Value::Dict(_) if self.table.has_any("ext.builtin.core.dict.changed") => {
                     let window = Value::Window(Rc::new(value.clone()), 'k');
                     Some(IteratorKind::Watching { window: window.clone(), at: 0, size: Self::window_extent(&window) })
                 }
                 _ => None,
             },
+            Value::Octets { changeable: true, .. } => Some(IteratorKind::Living(Rc::new(RefCell::new(value.clone())), 0)),
             _ => None,
         }
     }
@@ -30423,7 +30588,7 @@ impl Machine<'_> {
                     let sentinel = input.get(1).cloned().unwrap_or(Value::Nil);
                     return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: sentinel, stop_exception: iter_stop_exception.clone() }));
                 }
-                match live { Some(kind) => Ok(Self::cursor_value(kind)), None => self.iterated_value(&input[0]) }
+                match live { Some(kind) => Ok(Self::cursor_value_walked(kind, Self::walk_named(&input[0]))), None => self.iterated_value(&input[0]) }
             }
             NextItem => {
                 require(1, 2)?;

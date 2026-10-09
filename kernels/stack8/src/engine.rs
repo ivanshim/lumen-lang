@@ -7685,7 +7685,7 @@ impl<'a> Engine<'a> {
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
             78 | 80 => matches!(family, Kindred::Walk),
-            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted | Kindred::Set(_)),
+            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted | Kindred::Set(_) | Kindred::Bytes(true)),
             _ => false,
         }
     }
@@ -7744,6 +7744,24 @@ impl<'a> Engine<'a> {
 
     pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
         self.native_place(subject, name).is_some() || self.builtin_directory_method(subject, name).is_some()
+            || Self::octet_plain_member(subject, name)
+    }
+
+    /// The few names a run of octets answers in Python that its kind's
+    /// plain table keeps no special slot for: the fixed kind reads
+    /// itself out as the same fixed kind, and the changeable one is
+    /// built afresh in place and says how much room it has.
+    fn octet_plain_member(subject: &Value, name: &str) -> bool {
+        let bare = match subject {
+            Value::Binding(cell) => cell.borrow().contents(),
+            other => Self::worth_of(other).unwrap_or_else(|| other.contents()),
+        };
+        match bare {
+            Value::Bytes(_, true, _) => matches!(name, "__alloc__" | "__init__"),
+            Value::Bytes(_, false, _) => name == "__bytes__",
+            Value::Native(Builtin::Bytes(1), _) => name == "__init__",
+            _ => false,
+        }
     }
 
     /// The cell a container's name stands for, followed through however
@@ -7916,7 +7934,11 @@ impl<'a> Engine<'a> {
             let indexed_back = { let held = cell.borrow(); match &held.source {
                 CursorSource::Items(items, at) => return Ok(Value::Small(items.len().saturating_sub(*at) as i64)),
                 CursorSource::Living(values, at) => {
-                    let size = match &*values.borrow() { Value::Array(row) => row.len(), _ => 0 };
+                    let size = match &*values.borrow() {
+                        Value::Array(row) => row.len(),
+                        Value::Bytes(row, _, _) => row.borrow().len(),
+                        _ => 0,
+                    };
                     return Ok(Value::Small(if held.finished { 0 } else { size.saturating_sub(*at) } as i64));
                 }
                 CursorSource::Counted(row, at) => {
@@ -8057,6 +8079,18 @@ impl<'a> Engine<'a> {
             66 => (Action::BitOne, false), 71 => (Action::BitOne, true),
             _ => return Err(self.lang.method_errors["arguments"].clone()),
         };
+        // The reference answers a reflected `%` for a run of octets
+        // only when the other side is a run of the very same kind; a
+        // text or the other kind of run leaves the `%` to that side.
+        if turned && matches!(sign, Action::Mod) {
+            if let Value::Bytes(_, changeable, _) = receiver.contents() {
+                let kin = matches!(args[0].contents(), Value::Bytes(_, theirs, _) if theirs == changeable);
+                if !kin {
+                    let word = self.lang.special_declined.first().cloned().unwrap_or_default();
+                    return Ok(Value::Declined(Rc::from(word.as_str())));
+                }
+            }
+        }
         let other = if (2..=7).contains(&place) && Self::sequence_row(&args[0]).is_some() {
             args[0].clone()
         } else { args[0].contents() };
@@ -10999,7 +11033,7 @@ impl<'a> Engine<'a> {
                 // the method of only some of them: a value whose kind
                 // keeps no such member has no such member to hand over.
                 let judged = matches!(Self::native_family(&target), Some(Kindred::Nothing | Kindred::Whole | Kindred::Real | Kindred::Ratio
-                    | Kindred::Complex | Kindred::Text | Kindred::Row | Kindred::Tuple | Kindred::Map | Kindred::Counted));
+                    | Kindred::Complex | Kindred::Text | Kindred::Row | Kindred::Tuple | Kindred::Map | Kindred::Counted | Kindred::Bytes(_)));
                 if judged && !crate::methods::answered(&target, operation) {
                     let word = self.spelled_member(operation);
                     if self.builtin_member(&target, &word)?.is_none() { return Err(self.member_amiss(&target, &word).into()); }
@@ -15933,11 +15967,25 @@ impl<'a> Engine<'a> {
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
             let replacement = self.byte_taken(&given)?;
-            let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
-            if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
+            // A bound named by a thing is read before the row's cell is
+            // lent out, since reading it may run the program's code.
+            let mut bounds = [parts[0].clone(), parts[1].clone(), parts[2].clone()];
+            for bound in bounds.iter_mut() {
+                if !matches!(bound, Value::Null | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Some(number) = self.special_index(bound)? { *bound = number; }
+                }
+            }
+            let (start, stop, step, places) = self.slice_places(&bounds, row.borrow().len())?;
             if step == 1 {
                 if ByteExport::active(row) && stop - start != replacement.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 row.borrow_mut().splice(start..stop, replacement);
+            }
+            else if places.len() != replacement.len() {
+                // A run that would change the row's size is refused while
+                // anything still holds the row's bytes out, and that
+                // refusal is heard before the count is complained of.
+                if ByteExport::active(row) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                return Err(self.byte_fault("arguments"));
             }
             else { for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; } }
             return Ok(target);
@@ -17161,6 +17209,46 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "__alloc__" {
+            let bare = Self::worth_of(receiver).unwrap_or_else(|| receiver.contents());
+            if let Value::Bytes(row, true, _) = bare {
+                if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                return Ok(Value::Small(row.borrow().len() as i64 + 1));
+            }
+        }
+        if operation == "__bytes__" {
+            let bare = Self::worth_of(receiver).unwrap_or_else(|| receiver.contents());
+            if let Value::Bytes(row, false, _) = bare {
+                if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                return Ok(self.byte_make(row.borrow().clone(), false));
+            }
+        }
+        if operation == "__init__" {
+            // Building a changeable run afresh reads the very words the
+            // constructor reads, so every source it takes works here.
+            // Every other kind's __init__ runs on through the plain road.
+            let bare = Self::worth_of(receiver).unwrap_or_else(|| receiver.contents());
+            let on_the_class = matches!(bare, Value::Native(Builtin::Bytes(1), _));
+            if on_the_class || matches!(bare, Value::Bytes(_, true, _)) {
+                // Read off the class, the first given word is the run
+                // to build; read off a run, it is the run itself.
+                let (target, given) = if on_the_class {
+                    let mut handed = args.into_iter();
+                    let Some(target) = handed.next() else { return Err(self.lang.method_errors["arguments"].clone()); };
+                    (target, handed.collect::<Vec<Value>>())
+                } else {
+                    (receiver.clone(), args)
+                };
+                let held = Self::worth_of(&target).unwrap_or_else(|| target.contents());
+                let Value::Bytes(row, true, _) = held else { return Err(self.lang.method_errors["arguments"].clone()); };
+                let mut items: Vec<(Option<String>, Value)> = given.into_iter().map(|value| (None, value)).collect();
+                items.extend(named.into_iter().map(|(key, value)| (Some(key), value)));
+                let made = self.builtin_call(Builtin::Bytes(1), "bytearray", items)?;
+                let Value::Bytes(fresh, true, _) = made.contents() else { return Err("TypeError: bytearray.__init__ is unready".into()); };
+                *row.borrow_mut() = fresh.borrow().clone();
+                return Ok(Value::Null);
+            }
+        }
         if operation == "classmethod_bind" {
             return match self.explicit_classmethod(receiver, args, named) {
                 Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
@@ -18230,11 +18318,14 @@ impl<'a> Engine<'a> {
         };
         let mark = match given.first() {
             None | Some(Value::Blank) => String::new(),
-            Some(Value::Text(_)) | Some(Value::Bytes(..)) => {
+            Some(Value::Text(_)) | Some(Value::Bytes(..)) | Some(Value::Object(_)) => {
                 let text: String = match &given[0] {
                     Value::Text(s) => s.to_string(),
                     Value::Bytes(content, ..) => content.borrow().iter().copied().map(char::from).collect(),
-                    _ => unreachable!(),
+                    other => match Self::worth_of(other).map(|worth| worth.contents()) {
+                        Some(Value::Bytes(content, ..)) => content.borrow().iter().copied().map(char::from).collect(),
+                        _ => return Err(format!("TypeError: object of type '{}' has no len()", other.core_kind())),
+                    },
                 };
                 if text.chars().count() != 1 { return Err("ValueError: sep must be length 1.".to_string()); }
                 if !text.is_ascii() { return Err("ValueError: sep must be ASCII.".to_string()); }
@@ -19446,7 +19537,19 @@ impl<'a> Engine<'a> {
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
             match task {
                 52 => { counted(1)?; let byte = self.byte_index(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
-                53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
+                53 => {
+                    counted(1)?;
+                    // The reference words an uniterable argument with
+                    // the name of its kind rather than the plain walk
+                    // refusal, since extend alone walks it this way.
+                    let more = match self.byte_taken(&rest[0]) {
+                        Ok(more) => more,
+                        Err(words) if words.contains("not iterable") => return Err(format!("TypeError: can't extend bytearray with {}", rest[0].core_kind())),
+                        Err(words) => return Err(words),
+                    };
+                    if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                    cell.borrow_mut().extend(more);
+                }
                 54 => {
                     counted(2)?;
                     let asked = self.byte_whole(&rest[0])?;
@@ -19628,7 +19731,19 @@ impl<'a> Engine<'a> {
             let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
             let result = match task {
                 3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
-                4 if given.len() <= 2 => return self.byte_hex(&row, given),
+                4 if given.len() <= 2 => {
+                    // The count of a separator of a kind this kernel
+                    // does not know is read first, and reading it may
+                    // run the program's code and change the row; a row
+                    // changed out from under that reading is refused
+                    // rather than read as stale bytes.
+                    if let Some(sep @ Value::Object(_)) = given.first() {
+                        let before = cell.borrow().len();
+                        self.builtin_call(Builtin::Length, "len", vec![(None, sep.clone())])?;
+                        if cell.borrow().len() != before { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                    }
+                    return self.byte_hex(&row, given);
+                }
                 6 | 7 if given.is_empty() => row.iter().map(|b| if task == 6 { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() }).collect(),
                 8 if given.len() <= 2 => {
                     let limit = count(given.get(1))?;
@@ -22749,7 +22864,11 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
-                    let index = self.byte_position(&at, row.borrow().len(), *mutable)?;
+                    // A place named by a thing is read before the row's
+                    // own cell is lent out, since reading it may run
+                    // the program's code and change that very row.
+                    let place = match self.special_index(&at)? { Some(number) => number, None => at.clone() };
+                    let index = self.byte_position(&place, row.borrow().len(), *mutable)?;
                     let byte = self.byte_index(&v, false)?;
                     let mut held = row.borrow_mut();
                     if index >= held.len() { drop(held); return Err(self.byte_fault("index")); }
@@ -23691,6 +23810,7 @@ impl Engine<'_> {
     }
     pub(super) fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
         let subclass = match value { Value::Object(object) => Some(Value::Class(object.class_now().clone())), _ => None };
+        let whole = value.clone();
         let underlying = Self::worth_of(value).map(|worth| worth.contents());
         let value = underlying.as_ref().unwrap_or(value);
         let pack = |parts: Vec<Value>| Value::tuple(parts);
@@ -23698,6 +23818,18 @@ impl Engine<'_> {
             let word = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op).map(|(word, _)| word.clone()).unwrap_or_default();
             Value::Native(op, Rc::from(word))
         };
+        // A changeable run of octets reduces through its own class and
+        // its content read one byte to one character, as the
+        // reference's own reduction spells it; anything a subclass
+        // keeps besides travels as the reduction's state.
+        if let Value::Bytes(row, true, _) = value {
+            let maker = subclass.clone().unwrap_or(Value::Class(self.kind_class("bytearray")));
+            let text = Value::text(&row.borrow().iter().map(|byte| char::from(*byte)).collect::<String>());
+            let state = self.root_state(&whole);
+            let mut parts = vec![maker, pack(vec![text, Value::text("latin-1")])];
+            if !matches!(state, Value::Null) { parts.push(state); }
+            return Ok(pack(parts));
+        }
         // The constructor a reduction names is read out of the
         // builtins in force here, the very way CPython's
         // list_iterator.__reduce__ asks for its `iter` through
@@ -23770,11 +23902,26 @@ impl Engine<'_> {
                         Some("str_iterator" | "str_ascii_iterator") => Value::text(""),
                         Some("list_reverseiterator" | "reversed") => return Ok(pack(vec![reverse.clone(), pack(vec![Value::array(Vec::new())])])),
                         Some("list_iterator") => Value::array(Vec::new()),
+                        // A bytes walk already run out keeps nothing of
+                        // its kind and hands over an empty tuple; one
+                        // whose source was empty from the first step
+                        // keeps the empty source, as the reference does.
+                        Some("bytes_iterator" | "bytearray_iterator") if saved.finished => pack(Vec::new()),
+                        Some("bytes_iterator") => self.byte_make(Vec::new(), false),
+                        Some("bytearray_iterator") => self.byte_make(Vec::new(), true),
                         _ => pack(Vec::new()),
                     };
                     return Ok(pack(vec![iter, pack(vec![empty])]));
                 }
-                CursorSource::Living(..) => return Ok(pack(vec![iter, pack(vec![Value::array(Vec::new())])])),
+                CursorSource::Living(home, _) => {
+                    let empty = match home.borrow().contents() {
+                        // Only a run walked completely out reaches here,
+                        // and such a walk keeps nothing of its kind.
+                        Value::Bytes(..) => pack(Vec::new()),
+                        _ => Value::array(Vec::new()),
+                    };
+                    return Ok(pack(vec![iter, pack(vec![empty])]));
+                }
                 CursorSource::Called(..) | CursorSource::Indexed(..) => return Ok(pack(vec![iter, pack(vec![pack(Vec::new())])])),
                 CursorSource::IndexedBack(..) => {
                     let empty = if saved.walked.as_deref() == Some("list_reverseiterator") { Value::array(Vec::new()) } else { pack(Vec::new()) };
@@ -23863,7 +24010,11 @@ impl Engine<'_> {
                     else { nonnegative.to_usize().unwrap_or(items.len()).min(items.len()) };
             }
             CursorSource::Living(home, at) => {
-                let size = match home.borrow().contents() { Value::Array(items) => items.len(), _ => 0 };
+                let size = match home.borrow().contents() {
+                    Value::Array(items) => items.len(),
+                    Value::Bytes(octets, _, _) => octets.borrow().len(),
+                    _ => 0,
+                };
                 *at = nonnegative.to_usize().unwrap_or(size).min(size);
             }
             _ => return Err("TypeError: iterator has no integer state".into()),
@@ -23989,7 +24140,13 @@ impl Engine<'_> {
     /// the members loses which kind of thing they were gathered from.
     /// Nothing where the walk already says what it walks.
     fn walk_called(source: &Value) -> Option<Rc<str>> {
-        Some(Rc::from(match &source.contents() {
+        // A name bound in a cell reaches its value through the cell;
+        // the word a walk keeps must look through it the same way.
+        let bare = match source {
+            Value::Binding(cell) => cell.borrow().contents(),
+            _ => source.contents(),
+        };
+        Some(Rc::from(match &bare {
             Value::Array(_) | Value::Words(..) => "list_iterator",
             Value::Tuple(_) => "tuple_iterator",
             Value::Text(s) => if s.is_ascii() { "str_ascii_iterator" } else { "str_iterator" },
@@ -24004,7 +24161,13 @@ impl Engine<'_> {
 
     pub(super) fn core_iterator(&mut self, source: &Value) -> Res<Value> {
         if self.lang.yield_suspends {
-            if let Some(live) = self.living_source(source) { return Ok(Self::core_cursor(live)); }
+            if let Some(live) = self.living_source(source) {
+                let walk = Self::core_cursor(live);
+                if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) {
+                    state.borrow_mut().walked = Some(word);
+                }
+                return Ok(walk);
+            }
         }
         if self.is_async_generator(source) { return Err(self.core_fault("core.uniterable", &source.core_kind())); }
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
@@ -24142,7 +24305,11 @@ impl Engine<'_> {
                     return Ok(found);
                 }
                 CursorSource::Living(home, place) => {
-                    let found = match home.borrow().contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    let found = match home.borrow().contents() {
+                        Value::Array(items) => items.get(*place).cloned(),
+                        Value::Bytes(octets, _, _) => octets.borrow().get(*place).map(|byte| Value::Small(i64::from(*byte))),
+                        _ => None,
+                    };
                     if found.is_some() { *place += 1; } else { state.finished = true; }
                     return Ok(found);
                 }
@@ -24169,7 +24336,11 @@ impl Engine<'_> {
                 Ok(found)
             }
             CursorSource::Living(home, place) => {
-                let found = match home.borrow().contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                let found = match home.borrow().contents() {
+                        Value::Array(items) => items.get(*place).cloned(),
+                        Value::Bytes(octets, _, _) => octets.borrow().get(*place).map(|byte| Value::Small(i64::from(*byte))),
+                        _ => None,
+                    };
                 if found.is_some() { *place += 1; }
                 Ok(found)
             }
@@ -24349,6 +24520,10 @@ impl Engine<'_> {
             Value::View(_) => Some(CursorSource::Viewed(value.clone(), 0, Self::window_size(value))),
             Value::Bond(cell) | Value::Binding(cell) => match &*cell.borrow() {
                 Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
+                // A run of octets that can still change is walked
+                // through the very cell its name lives in, so a member
+                // put in or taken out while the walk runs is seen.
+                Value::Bytes(_, true, _) => Some(CursorSource::Living(cell.clone(), 0)),
                 // A map in a name's cell is walked keys-first through a
                 // window upon the cell, so a change made while the walk
                 // runs is refused rather than passed over.
@@ -24362,6 +24537,7 @@ impl Engine<'_> {
             },
             Value::Collection(cell, _) => match &*cell.borrow() {
                 Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
+                Value::Bytes(_, true, _) => Some(CursorSource::Living(cell.clone(), 0)),
                 Value::Map(_) if self.lang.core_words.contains_key("core.dict.changed") => {
                     let window = Value::View(Rc::new((value.clone(), "keys".to_string())));
                     let size = Self::window_size(&window);
@@ -24369,6 +24545,10 @@ impl Engine<'_> {
                 }
                 _ => None,
             },
+            // A bytearray standing in no cell at all is wrapped in one
+            // of its own, so the walk reads the octets themselves
+            // rather than a copy taken when the walk began.
+            Value::Bytes(_, true, _) => Some(CursorSource::Living(Rc::new(RefCell::new(value.clone())), 0)),
             _ => None,
         }
     }
@@ -25022,7 +25202,16 @@ impl Engine<'_> {
                     return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), sentinel, iter_stop_exception.clone())));
                 }
                 if matches!(args[0], Value::Cursor(_)) { return Ok(args[0].clone()); }
-                match living { Some(source) => Self::core_cursor(source), None => self.core_iterator(&args[0])? }
+                match living {
+                    Some(source) => {
+                        let walk = Self::core_cursor(source);
+                        if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(&args[0])) {
+                            state.borrow_mut().walked = Some(word);
+                        }
+                        walk
+                    }
+                    None => self.core_iterator(&args[0])?,
+                }
             }
             Builtin::Next => {
                 arity(1, 2)?;
