@@ -14550,7 +14550,7 @@ impl<'a> Machine<'a> {
         self.table.strings("ext.stmt.class.special.amiss").first().map(String::as_str).unwrap_or("").to_owned()
     }
 
-    fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+    pub(super) fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
         if let Value::Blueprint(class) = subject {
             let factory = Self::builder_over(class);
             if let Some(factory) = factory {

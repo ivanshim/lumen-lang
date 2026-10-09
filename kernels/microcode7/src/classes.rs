@@ -88,10 +88,14 @@ impl<'a> Machine<'a> {
                 (name.to_string(), Self::wrap(123, vec![Value::Small(operation as i64)]))));
             protocols.push(("__hash__".into(), Value::Nil));
         }
-        let title = match word { "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => format!("typing.{word}"), "SimpleNamespace" | "GenericAlias" => format!("types.{word}"), "Union" => String::from("typing.Union"), _ => word.to_owned() };
+        if word == "_ConstEvaluator" {
+            protocols.push(("__module__".to_owned(), Value::text("_typing")));
+            for (mode, method) in ["__call__", "__repr__"].iter().enumerate() { protocols.push((method.to_string(), Self::wrap(48, vec![Value::Flag(mode != 0)]))); }
+        }
+        let title = match word { "_ConstEvaluator" => "_typing._ConstEvaluator".to_owned(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => format!("typing.{word}"), "SimpleNamespace" | "GenericAlias" => format!("types.{word}"), "Union" => String::from("typing.Union"), _ => word.to_owned() };
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),has_slot_storage: word == "_ConstEvaluator", sealed:Cell::new(word == "_ConstEvaluator"), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
             kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
             if self.table.prims.get(word) == Some(&Prim::ClassWork(9)) {
@@ -1730,14 +1734,36 @@ impl<'a> Machine<'a> {
                         Ok(Value::Blueprint(self.native_kind("Generic")))
                     }
                     48 => {
-                        if values.len() != 1 { return Err(String::from("TypeError: constevaluator.__call__() takes exactly 1 argument (0 given)").into()); }
-                        let string_format = self.prim(Prim::Eq, "", &[values[0].clone(), Value::Small(4)])?.is_true();
-                        let answer = kept[0].clone();
-                        if string_format {
-                            let spelling = answer.bare();
-                            return Ok(Value::text(spelling.trim_start_matches("<class '").trim_end_matches("'>")));
+                        let Some(Value::Thing(instance)) = values.first().map(Value::settled) else { return Err(self.class_unready()); };
+                        let stored = instance.holds.borrow().iter().find(|entry| entry.0 == "\0constant").map(|entry| entry.1.clone()).ok_or_else(|| self.class_unready())?;
+                        if kept[0].is_true() {
+                            let shown = self.module_wording(&stored, true)?;
+                            return Ok(Value::text(&format!("<constevaluator {shown}>")));
                         }
-                        Ok(answer)
+                        if values.len() != 2 { return Err(format!("TypeError: constevaluator.__call__() takes exactly 1 argument ({} given)", values.len() - 1).into()); }
+                        let raw = values[1].settled();
+                        let integer = match raw {
+                            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => raw,
+                            _ => self.ask_special(&raw, 43, &[]).map_err(Escape::Error)?.ok_or_else(|| Escape::Error(format!("TypeError: '{}' object cannot be interpreted as an integer", Self::type_argument_kind(&raw))))?,
+                        };
+                        let number = match integer.settled() {
+                            Value::Flag(flag) => Some(if flag { 1 } else { 0 }),
+                            Value::Huge(big) => big.to_i32(),
+                            Value::Small(n) => i32::try_from(n).ok(),
+                            other => return Err(format!("TypeError: __index__ returned non-int (type {})", Self::type_argument_kind(&other)).into()),
+                        }.ok_or_else(|| Escape::Error("OverflowError: Python int too large to convert to C long".to_owned()))?;
+                        if number != 4 { return Ok(stored); }
+                        let namespace = self.load_namespace("annotationlib")?;
+                        let formatter = self.read_class_member(namespace, "type_repr", false)?;
+                        let display = match stored.settled() {
+                            Value::Tuple(parts) => {
+                                let mut words = Vec::with_capacity(parts.len());
+                                for part in parts.iter() { words.push(self.apply_class_member(formatter.clone(), vec![part.clone()])?.bare()); }
+                                format!("({})", words.join(", "))
+                            }
+                            _ => self.apply_class_member(formatter, vec![stored])?.bare(),
+                        };
+                        Ok(Value::text(&display))
                     }
                     47 => {
                         if values.len() > 1 { return Err(String::from("TypeError: evaluator takes at most one argument").into()); }
@@ -2459,7 +2485,14 @@ impl<'a> Machine<'a> {
         }
         Ok(alias)
     }
+    fn fixed_evaluator(&mut self, stored: Value) -> Value {
+        self.made += 1;
+        let of = self.native_kind("_ConstEvaluator");
+        let holds = RefCell::new(vec![(String::from("\0constant"), stored)]);
+        Value::Thing(Rc::new(Thing { of, holds, turn: self.made, reclassified: RefCell::new(None) }))
+    }
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if Self::native_word(&class).as_deref() == Some("_ConstEvaluator") { return Err(String::from("TypeError: cannot create '_typing._ConstEvaluator' instances").into()); }
         if self.has_class_order() && Self::parent_kind_descended(&class) { return self.parent_constructed(class, given); }
         if Self::native_word(&class).is_some() && matches!(class.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.make_type_parameter(class, given, false);
@@ -2888,7 +2921,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(48 | 133 | 136 | 60 | 120 | 123 | 124 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -3265,7 +3298,7 @@ impl<'a> Machine<'a> {
                         Value::Small(_) | Value::Huge(_) | Value::Flag(_) => argument,
                         _ => self.ask_special(&argument, 43, &[])?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", argument.kind_word()))?,
                     };
-                    whole.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?
+                    whole.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C long"))?
                 };
                 if which == Some(12) {
                     if let Some(reduction) = self.ask_special(&first, 79, &[])? { return Ok(reduction); }
@@ -4421,11 +4454,11 @@ impl<'a> Machine<'a> {
                         let tuple = attributes.iter().any(|entry| entry.0 == "\0constraints-syntax" && entry.1.is_true());
                         if (property == "__constraints__") == tuple { attributes.iter().find(|entry| entry.0 == "\0deferred-bound").map(|entry| entry.1.clone()) } else { None }
                     } else { None });
-                if let Some(source) = source { return Ok(Self::wrap(47, vec![source])); }
+                if let Some(source) = source { return Ok(source); }
                 if let Some(entry) = attributes.iter().find(|entry| entry.0 == property) {
                     let absent = matches!(&entry.1, Value::Nil) || matches!(&entry.1, Value::Tuple(items) if items.is_empty());
                     if absent && (property == "__bound__" || property == "__constraints__") { return Ok(Value::Nil); }
-                    return Ok(Self::wrap(48, vec![entry.1.clone()]));
+                    return Ok(self.fixed_evaluator(entry.1.clone()));
                 }
             }
             if key == "__bound__" || key == "__constraints__" {
@@ -5247,7 +5280,7 @@ impl<'a> Machine<'a> {
                 // A class the seal marked unchangeable takes no write to
                 // a member of it, setting one and taking one off alike.
                 if Self::sealed(b) || b.constants.iter().any(|(label, _)| label == "\0native-name") || (b.type_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|part| !self.detail(part).is_empty() && key == self.detail(part))) {
-                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", b.name).into());
+                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", if Self::native_word(b).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &b.name }).into());
                 }
                 // The kinds of the two named singletons take no entry
                 // of their own and give none up, as the reference fixes them.

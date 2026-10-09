@@ -2229,6 +2229,28 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn type_evaluator(&mut self, name: &str, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let previous_rules = self.parameter_rules.replace(vec![1]);
+        let built = self.routine(name, vec![".format".into()], 0, true, |compiler| {
+            compiler.carrying.push(0);
+            body(compiler)
+        });
+        self.parameter_rules = previous_rules;
+        built.map(|code| {
+            let mut function = (*code).clone();
+            function.checks_annotation_format = true;
+            function.formals[0] = "format".into();
+            function.idents[0] = "format".into();
+            if let Some(parameter) = function.local_names.iter_mut().find(|word| word.as_str() == ".format") { *parameter = "format".into(); }
+            Rc::new(function)
+        })
+    }
+    fn put_type_evaluator(&mut self, evaluator: Rc<Routine>) {
+        self.constant(Value::Small(1));
+        self.constant(Value::Routine(evaluator));
+        self.act(Action::Close, 2);
+    }
+
     fn create_type_parameters(&mut self) -> Res<Vec<String>> {
         let lang = self.lang;
         self.take();
@@ -2257,7 +2279,7 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
-                let bound = self.routine("#type bound", Vec::new(), 0, true, |compiler| {
+                let bound = self.type_evaluator("#type bound", |compiler| {
                     let previous = std::mem::replace(&mut compiler.reading_annotation, true);
                     compiler.expr_at(0, false)?;
                     compiler.reading_annotation = previous;
@@ -2265,11 +2287,11 @@ impl<'a> Compiler<'a> {
                     compiler.piece().result_touched = true;
                     Ok(())
                 })?;
-                self.constant(Value::Routine(bound));
+                self.put_type_evaluator(bound);
             } else { self.constant(Value::Null); }
             if self.on_assign() {
                 self.take();
-                let default = self.routine("#type default", Vec::new(), 0, true, |compiler| {
+                let default = self.type_evaluator("#type default", |compiler| {
                     let previous = std::mem::replace(&mut compiler.reading_annotation, true);
                     let unpacked = kind == "TypeVarTuple" && compiler.at_symbol("*");
                     if unpacked { compiler.take(); }
@@ -2283,7 +2305,7 @@ impl<'a> Compiler<'a> {
                     compiler.piece().result_touched = true;
                     Ok(())
                 })?;
-                self.constant(Value::Routine(default));
+                self.put_type_evaluator(default);
             } else { self.constant(Value::Null); }
             self.constant(Value::Flag(constrained));
             self.constant(Value::Adapter(Rc::new((46, Vec::new()))));
@@ -2972,7 +2994,7 @@ impl<'a> Compiler<'a> {
                 let scope = self.routine("#type parameters", Vec::new(), 0, true, |compiler| {
                     let parameters = compiler.create_type_parameters()?;
                     compiler.expect_assign("after the type alias")?;
-                    let value = compiler.routine(&alias, Vec::new(), 0, true, |inner| {
+                    let value = compiler.type_evaluator(&alias, |inner| {
                         let outside = std::mem::replace(&mut inner.reading_annotation, true);
                         inner.scope_value()?;
                         inner.reading_annotation = outside;
@@ -2980,7 +3002,7 @@ impl<'a> Compiler<'a> {
                         inner.piece().result_touched = true;
                         Ok(())
                     })?;
-                    compiler.constant(Value::Routine(value));
+                    compiler.put_type_evaluator(value);
                     for parameter in &parameters { compiler.read(parameter); }
                     compiler.act(Action::MakeArray, parameters.len());
                     compiler.act(Action::Builtin(Builtin::Tuple, Rc::from("tuple")), 1);
@@ -3002,7 +3024,7 @@ impl<'a> Compiler<'a> {
             // What the alias stands for is worked out only when it is
             // asked for, as names in it may not stand for anything yet:
             // the name is bound to a routine answering it.
-            let made = self.routine(&alias, Vec::new(), 0, true, |a| {
+            let made = self.type_evaluator(&alias, |a| {
                 let outside = std::mem::replace(&mut a.reading_annotation, true);
                 a.scope_value()?;
                 a.reading_annotation = outside;
@@ -3011,7 +3033,7 @@ impl<'a> Compiler<'a> {
                 Ok(())
             });
             self.forbids_await = old_rule;
-            self.constant(Value::Routine(made?));
+            self.put_type_evaluator(made?);
             self.constant(Value::Adapter(Rc::new((45, Vec::new()))));
             self.act(Action::Invoke(Rc::from("type alias")), 2);
             self.write(&alias);
@@ -12972,6 +12994,8 @@ fn same_cell(a: &Cell, b: &Cell) -> bool {
 fn operand_of(w: &Instr) -> Option<Operand> {
     match w {
         Instr::Read(s) if !s.moving => Some(Operand::Cell(s.clone())),
+        // Loading a routine binds its captures and creation namespace.
+        Instr::Const(Value::Routine(_)) => None,
         Instr::Const(v) => Some(Operand::Const(v.clone())),
         _ => None,
     }

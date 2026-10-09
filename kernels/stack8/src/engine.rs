@@ -4129,12 +4129,6 @@ impl<'a> Engine<'a> {
             self.data.extend(bound);
             count
         } else { n };
-        if program.checks_annotation_format && n == 1 {
-            self.data.push(self.data.last().expect("annotation format").clone());
-            self.data.push(Value::Small(2));
-            self.perform(&Action::Gt, 2)?;
-            if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
-        }
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
         let most = if self.lang.spare_args || program.rest_at.is_some() { usize::MAX } else { program.formals.len() };
@@ -4201,6 +4195,11 @@ impl<'a> Engine<'a> {
             if program.parameter_rules.is_none() || *slot >= program.formals.len() || matches!(frame[*slot], Value::Blank) {
                 frame[*slot] = held.clone();
             }
+        }
+        if program.checks_annotation_format {
+            self.data.extend([frame[0].contents(), Value::Small(2)]);
+            self.perform(&Action::Gt, 2)?;
+            if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
         }
         if self.lang.closes_over {
             // Each local owns a binding cell; mutable values inside it
@@ -8339,7 +8338,7 @@ impl<'a> Engine<'a> {
     /// The whole number a thing stands for, by its index method: none
     /// where it has no such method, and a complaint naming the kind
     /// where the method answered with something else.
-    fn special_index(&mut self, value: &Value) -> Res<Option<Value>> {
+    pub(super) fn special_index(&mut self, value: &Value) -> Res<Option<Value>> {
         Ok(match self.special_call(value, 43, Vec::new())? {
             None => Self::worth_of(value).map(|inner| inner.contents())
                 .filter(|inner| matches!(inner, Value::Small(_) | Value::Huge(_) | Value::Flag(_))),
@@ -10543,7 +10542,7 @@ impl<'a> Engine<'a> {
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
-                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
+                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     if *builtin == Builtin::SortOf {
                         let class = self.class_type(supplied)?; self.data.push(class); return Ok(());
@@ -21751,7 +21750,7 @@ impl<'a> Engine<'a> {
                 };
             }
             Builtin::SortOf => {
-                if self.fuller_classes() && args.len() != 1 {
+                if self.fuller_classes() && (args.len() != 1 || args.first().is_some_and(|value| matches!(value.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)))) {
                     return self.class_type(args.clone()).map_err(|fault| match fault {
                         Fault::Note(message) => message,
                         raised => { self.carried = Some(raised); String::new() },

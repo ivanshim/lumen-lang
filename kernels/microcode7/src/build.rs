@@ -560,6 +560,19 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
             if nesting == 0 && table.spells("block.intro", &part.spelling()) { colon = Some(offset); break; }
         }
         let Some(mark) = colon else { continue };
+        let start = (mark + 1..input.len()).find(|&i| input[i].shape != Shape::LineEnd).unwrap_or(input.len());
+        let block = input.get(start).map_or(false, |t| t.shape == Shape::Open);
+        let mut level = 0i32;
+        let mut stop = input.len();
+        for (i, item) in input.iter().enumerate().skip(start) {
+            if item.shape == Shape::Open { level += 1; }
+            if item.shape == Shape::Close { level -= 1; }
+            if (item.shape == Shape::Close && level <= 0) || item.shape == Shape::Finish
+                || (!block && item.shape == Shape::LineEnd) { stop = i; break; }
+        }
+        suites.push((index, mark, start, stop, class.lexeme.as_str()));
+    }
+    for (index, mark, begin, end, owner) in suites {
         if input.get(index + 2).map_or(false, |part| part.lexeme == "[") {
             let mut type_words = HashSet::new();
             let mut depth = 0i32;
@@ -573,23 +586,11 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
             }
             for position in index + 2..mark {
                 if input[position].shape == Shape::Bare && type_words.contains(input[position].lexeme.as_str()) {
-                    output[position].lexeme = member_spelling(&class.lexeme, &input[position].lexeme);
+                    output[position].lexeme = member_spelling(owner, &input[position].lexeme);
                 }
             }
         }
-        let start = (mark + 1..input.len()).find(|&i| input[i].shape != Shape::LineEnd).unwrap_or(input.len());
-        let block = input.get(start).map_or(false, |t| t.shape == Shape::Open);
-        let mut level = 0i32;
-        let mut stop = input.len();
-        for (i, item) in input.iter().enumerate().skip(start) {
-            if item.shape == Shape::Open { level += 1; }
-            if item.shape == Shape::Close { level -= 1; }
-            if (item.shape == Shape::Close && level <= 0) || item.shape == Shape::Finish
-                || (!block && item.shape == Shape::LineEnd) { stop = i; break; }
-        }
-        suites.push((start, stop, class.lexeme.as_str()));
-    }
-    for (begin, end, owner) in suites {
+
         let mut in_pattern = false;
         let mut pattern_nesting = 0i32;
         for offset in begin..end {
@@ -3275,7 +3276,7 @@ impl<'a> Builder<'a> {
                     let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
                         let (mut forms, names) = reader.declare_type_objects()?;
                         reader.need_assign("after the type alias")?;
-                        let value = reader.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |inner| {
+                        let value = reader.parameter_evaluator(&alias, |inner| {
                             let outer = inner.annotation_lookup;
                             inner.annotation_lookup = true;
                             let value = if inner.table.has_any("ext.op.tuple") { inner.comma_value() } else { inner.expr(0) };
@@ -3298,7 +3299,7 @@ impl<'a> Builder<'a> {
                 // What the alias stands for is worked out only when it
                 // is asked for, since names in it need not mean anything
                 // yet: the name is bound to a routine answering it.
-                let made = self.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+                let made = self.parameter_evaluator(&alias, |b| {
                     let outer = b.annotation_lookup;
                     b.annotation_lookup = true;
                     let worth = if b.table.has_any("ext.op.tuple") { b.comma_value()? } else { b.expr(0)? };
@@ -7010,6 +7011,25 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn parameter_evaluator(&mut self, ident: &str, parse: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        let outer_modes = self.taking.replace(vec!['p']);
+        let outcome = self.routine(ident, Holds::Every, Traps::Yields, vec![".format".to_owned()], 0, |reader| {
+            reader.carrying.push(0);
+            parse(reader)
+        });
+        self.taking = outer_modes;
+        let Form::Const(Value::Routine(code)) = outcome? else { unreachable!() };
+        let mut generated = (*code).clone();
+        generated.annotation_protocol = true;
+        generated.local_defaults.push(0);
+        generated.formals[0] = String::from("format");
+        generated.idents[0] = String::from("format");
+        for word in &mut generated.locals {
+            if word == ".format" { *word = String::from("format"); }
+        }
+        Ok(prim_call(Prim::Carry, vec![constant(Value::Routine(Rc::new(generated))), constant(Value::Small(1))]))
+    }
+
     fn declare_type_objects(&mut self) -> Res<(Vec<Form>, Vec<String>)> {
         self.advance();
         let mut setup = Vec::new();
@@ -7036,7 +7056,7 @@ impl<'a> Builder<'a> {
                         }
                     }
                 }
-                self.routine("<type bound>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
+                self.parameter_evaluator("<type bound>", |reader| {
                     let outer = reader.annotation_lookup;
                     reader.annotation_lookup = true;
                     let expression = reader.expr_at(0, false);
@@ -7046,7 +7066,7 @@ impl<'a> Builder<'a> {
             } else { constant(Value::Nil) };
             let fallback = if self.on_assign() {
                 self.advance();
-                self.routine("<type default>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
+                self.parameter_evaluator("<type default>", |reader| {
                     let outer = reader.annotation_lookup;
                     reader.annotation_lookup = true;
                     let starred = kind == "TypeVarTuple" && reader.sign("*");

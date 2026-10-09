@@ -91,10 +91,13 @@ impl<'a> Engine<'a> {
         if word == "super" {
             hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(236, Vec::new())));
         }
-        let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
+        if word == "_ConstEvaluator" {
+            hooks.extend([("__call__".into(), Self::adapter(48, vec![Value::Small(0)])), ("__repr__".into(), Self::adapter(48, vec![Value::Small(1)])), ("__module__".into(), Value::text("_typing"))]);
+        }
+        let public = if word == "_ConstEvaluator" { String::from("_typing._ConstEvaluator") } else if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: RefCell::new(ancestry), base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: word == "_ConstEvaluator", sealed: std::cell::Cell::new(word == "_ConstEvaluator"), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
         if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
             if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(9)) {
@@ -1298,19 +1301,19 @@ impl<'a> Engine<'a> {
             Value::Small(n) => n,
             Value::Flag(flag) => i64::from(flag),
             Value::Huge(_) => match self.special_index(value)? {
-                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
-                _ => return Err("OverflowError: Python int too large to convert to C int".into()),
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C long".to_string())?,
+                _ => return Err("OverflowError: Python int too large to convert to C long".into()),
             },
             Value::Object(_) => match self.special_index(value)? {
                 Some(Value::Small(n)) => n,
-                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C long".to_string())?,
                 Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.core_kind()).into()),
                 None => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.core_kind()).into()),
             },
             other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
         };
         if number < i32::MIN as i64 || number > i32::MAX as i64 {
-            return Err("OverflowError: Python int too large to convert to C int".into());
+            return Err("OverflowError: Python int too large to convert to C long".into());
         }
         Ok(number)
     }
@@ -1792,15 +1795,26 @@ impl<'a> Engine<'a> {
                     Ok(Value::Class(self.kind_class("Generic")))
                 }
                 48 => {
-                    if args.len() != 1 { return Err("TypeError: constevaluator.__call__() takes exactly 1 argument (0 given)".into()); }
-                    self.data.extend([args[0].clone(), Value::Small(4)]);
-                    self.perform(&Action::Eq, 2)?;
-                    if self.drop_top()?.is_true() {
-                        let shown = w.1[0].plain();
-                        let text = shown.strip_prefix("<class '").and_then(|s| s.strip_suffix("'>")).unwrap_or(&shown);
-                        return Ok(Value::text(text));
+                    let Some(Value::Object(object)) = args.first().map(Value::contents) else { return Err(self.class_refusal()); };
+                    let payload = object.fields.borrow().iter().find(|(key, _)| key == "\0constant").map(|(_, value)| value.clone()).ok_or_else(|| self.class_refusal())?;
+                    if w.1[0].is_true() {
+                        return Ok(Value::text(&format!("<constevaluator {}>", self.special_text(&payload, true).map_err(Fault::Note)?)));
                     }
-                    Ok(w.1[0].clone())
+                    if args.len() != 2 { return Err(format!("TypeError: constevaluator.__call__() takes exactly 1 argument ({} given)", args.len() - 1).into()); }
+                    let integer = match args[1].contents() {
+                        whole @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => whole,
+                        other => self.special_index(&other).map_err(Fault::Note)?.ok_or_else(|| Fault::Note(format!("TypeError: '{}' object cannot be interpreted as an integer", if matches!(other, Value::Null) { "NoneType".to_owned() } else { Self::format_given_kind(&other) })))?,
+                    };
+                    let format = match integer { Value::Small(number) => i32::try_from(number).ok(), Value::Huge(number) => number.to_i32(), Value::Flag(flag) => Some(i32::from(flag)), _ => None }.ok_or_else(|| Fault::Note("OverflowError: Python int too large to convert to C long".into()))?;
+                    if format != 4 { return Ok(payload); }
+                    let module = self.import_module("annotationlib")?;
+                    let render = self.class_get(module, "type_repr", false)?;
+                    let text = if let Value::Tuple(items) = payload.contents() {
+                        let mut names = Vec::new();
+                        for item in items.iter() { names.push(self.class_apply(render.clone(), vec![item.clone()])?.plain()); }
+                        format!("({})", names.join(", "))
+                    } else { self.class_apply(render, vec![payload])?.plain() };
+                    Ok(Value::text(&text))
                 }
                 47 => {
                     if args.len() > 1 { return Err("TypeError: evaluator takes at most one argument".into()); }
@@ -2333,8 +2347,14 @@ impl<'a> Engine<'a> {
         }
         Ok(alias)
     }
+    fn constant_evaluator(&mut self, value: Value) -> Value {
+        let class = self.kind_class("_ConstEvaluator");
+        self.made += 1;
+        Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(vec![("\0constant".into(), value)]), mark: self.made }))
+    }
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         self.validate_class_spreads(&c, &args)?;
+        if Self::own_kind(&c).as_deref() == Some("_ConstEvaluator") { return Err("TypeError: cannot create '_typing._ConstEvaluator' instances".into()); }
         if self.lang.fuller_classes && Self::super_descended(&c) { return self.super_made(c, args); }
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
             return self.typing_instance(c, args, false);
@@ -2653,7 +2673,7 @@ impl<'a> Engine<'a> {
                         number @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => number,
                         _ => self.special_index(&args[1]).map_err(Fault::Note)?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", args[1].core_kind()))?,
                     };
-                    indexed.as_big().map_err(Fault::Note)?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?
+                    indexed.as_big().map_err(Fault::Note)?.to_i32().ok_or("OverflowError: Python int too large to convert to C long")?
                 };
                 if place == 12 {
                     if let Some(answer) = self.special_call(&subject, 79, Vec::new()).map_err(Fault::Note)? { return Ok(answer); }
@@ -2942,7 +2962,7 @@ impl<'a> Engine<'a> {
             }
             return match w.0 {
                 2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 133 | 180 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 48 | 122 | 124 | 126 | 133 | 180 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -3872,10 +3892,10 @@ impl<'a> Engine<'a> {
                             let constrained = fields.iter().any(|(key, value)| key == "\0type_constraints" && value.is_true());
                             if (attribute == "__constraints__") == constrained { fields.iter().find(|(key, _)| key == "\0type_bound").map(|(_, source)| source.clone()) } else { None }
                         } else { None });
-                    if let Some(source) = source { return Ok(Self::adapter(47, vec![source])); }
+                    if let Some(source) = source { return Ok(source); }
                     if let Some((_, held)) = fields.iter().find(|(key, _)| key == attribute) {
                         if matches!(attribute, "__bound__" | "__constraints__") && (matches!(held, Value::Null) || matches!(held, Value::Tuple(items) if items.is_empty())) { return Ok(Value::Null); }
-                        return Ok(Self::adapter(48, vec![held.clone()]));
+                        return Ok(self.constant_evaluator(held.clone()));
                     }
                 }
                 if matches!(name, "__bound__" | "__constraints__") {
@@ -4916,7 +4936,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if Self::class_sealed(c) || c.constants.iter().any(|(key, _)| key == "\0native-name") || (c.python_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|key| !self.class_word(key).is_empty() && name == self.class_word(key))) {
-                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
+                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", if Self::own_kind(c).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &c.name }).into());
                 }
                 // The kinds of the two named singletons are fixed the
                 // way the reference fixes them: nothing is written onto
