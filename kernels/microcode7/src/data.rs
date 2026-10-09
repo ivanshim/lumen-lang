@@ -316,11 +316,16 @@ pub struct SetStore {
     /// out once however often it is wanted; a store of stores would
     /// otherwise fold every level beneath it over again each time.
     pub reckoned: std::cell::Cell<Option<i64>>,
+    /// How many of the entries are things kept beside their hashes:
+    /// the count that tells a plain value, addressed by its worth
+    /// alone, whether an agreeing thing could still stand among the
+    /// entries and is to be asked for before the value joins them.
+    pub instances: usize,
 }
 
 impl SetStore {
     pub fn new(spelling: &str, sealed: bool) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None) }
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None), instances: 0 }
     }
 
     /// The address the whole store takes where a set holds it: the
@@ -341,14 +346,19 @@ impl SetStore {
 
     pub fn put(&mut self, address: String, item: Value) {
         self.reckoned.set(None);
-        if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
+        if self.keys.insert(address.clone()) {
+            if matches!(item, Value::Keyed(..)) { self.instances += 1; }
+            self.entries.push((address, item));
+        }
     }
 
     pub fn take(&mut self, address: &str) -> Option<Value> {
         self.reckoned.set(None);
         if !self.keys.remove(address) { return None; }
         let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
-        Some(self.entries.remove(place).1)
+        let held = self.entries.remove(place).1;
+        if matches!(held, Value::Keyed(..)) { self.instances -= 1; }
+        Some(held)
     }
 
     /// The entries as they are read out. A thing kept beside its hash
@@ -1144,6 +1154,29 @@ impl Value {
         }
     }
 
+    /// Keep a small recency list of exact scalar-text properties.
+    /// Discarding dead weak owners also discards their stored flags.
+    pub fn ascii_letters(word: &Rc<str>) -> bool {
+        if word.len() < 256 { return word.is_ascii(); }
+        thread_local! {
+            static TEXT_PROPERTIES: RefCell<Vec<(std::rc::Weak<str>, bool)>> = RefCell::new(Vec::new());
+        }
+        TEXT_PROPERTIES.with(|cell| {
+            let mut notes = cell.borrow_mut();
+            notes.retain(|note| note.0.upgrade().is_some());
+            let found = notes.iter().position(|note| note.0.upgrade().is_some_and(|owner| Rc::ptr_eq(&owner, word)));
+            let note = if let Some(index) = found {
+                notes.remove(index)
+            } else {
+                (Rc::downgrade(word), word.is_ascii())
+            };
+            let flag = note.1;
+            if notes.len() == 16 { notes.remove(0); }
+            notes.push(note);
+            flag
+        })
+    }
+
     pub fn character_numbers(&self) -> Option<Vec<u32>> {
         match self {
             Value::Unpaired(numbers) => Some(numbers.to_vec()),
@@ -1466,6 +1499,17 @@ impl Value {
                 ([Value::Shared(a)], [Value::Shared(b)]) => Rc::ptr_eq(a, b),
                 ([Value::Bound(p, r), Value::Small(i), ..], [Value::Bound(q, s), Value::Small(j), ..]) => Rc::ptr_eq(p, q) && Rc::ptr_eq(r, s) && i == j,
                 _ => Rc::ptr_eq(x, y),
+            },
+            (Value::Wrapped(185, one), Value::Wrapped(185, two)) => {
+                let same_call = match (one.get(1), two.get(1)) {
+                    (Some(Value::Text(a)), Some(Value::Text(b))) => a == b,
+                    (Some(Value::Thing(_)), Some(Value::Thing(_))) => true,
+                    _ => false,
+                };
+                match (one.first(), two.first(), one.last(), two.last()) {
+                    (Some(Value::Blueprint(a)), Some(Value::Blueprint(b)), Some(Value::Thing(x)), Some(Value::Thing(y))) => same_call && Rc::ptr_eq(a, b) && Rc::ptr_eq(x, y),
+                    _ => Rc::ptr_eq(one, two),
+                }
             },
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
@@ -1990,6 +2034,62 @@ pub struct TypeNames {
     pub declared: Value,
 }
 
+thread_local! { static NAMESPACE_CHANGE: Cell<u64> = const { Cell::new(1) }; }
+
+/// Namespace slots stay ordered; Python lookup may index their spellings.
+/// Mutation invalidates all slot positions before the caller can edit rows.
+#[derive(Debug)]
+pub struct BlueprintEntries {
+    values: RefCell<Vec<(String, Value)>>,
+    missing: RefCell<std::collections::HashMap<String, u64, crate::table::FxBuildHasher>>,
+    positions: RefCell<Option<std::collections::HashMap<String, usize, crate::table::FxBuildHasher>>>,
+}
+
+impl BlueprintEntries {
+    pub fn new(entries: Vec<(String, Value)>) -> Self {
+        Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())) }
+    }
+    pub fn borrow(&self) -> std::cell::Ref<'_, Vec<(String, Value)>> { self.values.borrow() }
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<(String, Value)>> {
+        NAMESPACE_CHANGE.with(|stamp| stamp.set(stamp.get().wrapping_add(1)));
+        *self.positions.borrow_mut() = None;
+        self.values.borrow_mut()
+    }
+    pub fn try_borrow(&self) -> Result<std::cell::Ref<'_, Vec<(String, Value)>>, std::cell::BorrowError> { self.values.try_borrow() }
+    pub fn try_borrow_mut(&self) -> Result<std::cell::RefMut<'_, Vec<(String, Value)>>, std::cell::BorrowMutError> {
+        let entries = self.values.try_borrow_mut()?;
+        NAMESPACE_CHANGE.with(|stamp| stamp.set(stamp.get().wrapping_add(1)));
+        self.positions.borrow_mut().take();
+        Ok(entries)
+    }
+    pub(super) fn absent_in_lineage(&self, word: &str) -> bool {
+        let current = NAMESPACE_CHANGE.with(|stamp| stamp.get());
+        self.missing.borrow().get(word).is_some_and(|stamp| *stamp == current)
+    }
+    pub(super) fn note_absence(&self, word: &str) {
+        let now = NAMESPACE_CHANGE.with(|stamp| stamp.get());
+        let mut table = self.missing.borrow_mut();
+        if table.len() >= 128 { table.retain(|_, stamp| *stamp == now); }
+        if table.len() >= 128 { table.clear(); }
+        table.insert(word.to_string(), now);
+    }
+    pub(super) fn named(&self, word: &str, python: bool) -> Option<Value> {
+        let entries = self.values.borrow();
+        if python && entries.len() >= 12 {
+            let mut saved = self.positions.borrow_mut();
+            if saved.is_none() {
+                let mut slots = std::collections::HashMap::with_capacity_and_hasher(entries.len(), crate::table::FxBuildHasher::default());
+                for (at, entry) in entries.iter().enumerate() {
+                    slots.entry(entry.0.clone()).or_insert(at);
+                }
+                *saved = Some(slots);
+            }
+            return saved.as_ref()?.get(word).map(|at| entries[*at].1.clone());
+        }
+        entries.iter().find_map(|entry| (entry.0 == word).then(|| entry.1.clone()))
+    }
+}
+
 #[derive(Debug)]
 pub struct Blueprint {
     /// The mutable names of a Python class, outside its dictionary.
@@ -2006,7 +2106,7 @@ pub struct Blueprint {
     pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
-    pub shared: RefCell<Vec<(String, Value)>>,
+    pub shared: BlueprintEntries,
     /// Set from the declared layout before class-creation hooks run;
     /// subsequent edits to members do not add or remove weak storage.
     pub weak_slot: Cell<Option<bool>>,
@@ -2058,7 +2158,7 @@ impl Blueprint {
 
     /// The class along the line that keeps a value of that name.
     pub fn keeper(&self, name: &str) -> Option<&Blueprint> {
-        if self.shared.borrow().iter().any(|(n, _)| n == name) {
+        if self.shared.named(name, self.type_names.borrow().is_some()).is_some() {
             return Some(self);
         }
         self.under.as_ref().and_then(|u| u.keeper(name))
@@ -2164,7 +2264,7 @@ impl Thing {
     pub fn entries_shown(&self) -> Value {
         let holds = self.holds.borrow();
         let mut pairs: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0'))
+            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0') && !name.ends_with('\0'))
             .map(|(name, v)| (Value::text(name), v.clone())).collect();
         // Keys of any other kind are kept beside the names under the
         // hidden name `\0keys` and shown with them.

@@ -2650,3 +2650,58 @@ test_datetime now completes whole (499/553, 870 s timeout → 725 s) and test_st
 the final commit agrees on 1195 scratch programs with no mismatch, passes every gate, and shows no regression, length
 change, broken progress line or kernel disagreement; kernel independence reports no problem. Still timing out in
 parts: decimal, bytes, tokenize, io and microcode7 calendar's CommandLineTestCase.
+
+### 1bi. Batch 21e merged as #540; batch 21f: dataclasses, functools, filecmp, mimetypes, structseq, genericclass, strftime
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, Kimi K3 and Claude Sonnet 5.5 workers.
+
+- fix/kimi-numtower (numeric tower; Fraction dispatch and cross-kind set lookup), fix/dsflash-dataclasses
+  (dataclasses), fix/dsflash-mimetypes (mimetypes), fix/kimi-filecmp (filecmp), fix/dsflash-subclassinit
+  (__init_subclass__ and __set_name__), fix/dsflash-genericclass (__class_getitem__ and metaclass priority),
+  fix/dsflash-structseq (struct sequences), fix/claude-functools (functools; partial repr, annotation scopes, tuple
+  hash caching), fix/dsflash-builtin (builtins), fix/dsflash-flufl (the Barry-as-FLUFL future via the existing
+  per-compiler future state), fix/dsflash-tabnanny (tabnanny), fix/dsflash-strftime (strftime).
+
+Two integration fixes followed the merges: microcode7 annotation calls no longer replace module globals (with a
+regression fixture), and child processes keep the interpreter launcher identity (the tabnanny driver passes 20/20 on
+both kernels).
+
+Measured: 11468 (stack8) of 12612 and 11388 (microcode7) of 12522, over 156 files, from 11260 of 12451 and 11180 of
+12361 over 147. New files: test_filecmp 16/16, test_flufl 4/4, test_genericclass 21/22, test_mimetypes 41/44,
+test_numeric_tower 9/9, test_strftime 4/4, test_structseq 25/25, test_subclassinit 17/17, test_tabnanny 0/0 (its
+driver 20/20). test_builtin 113 -> 115, test_dataclasses 246 -> 270, test_decimal 84/286 -> 105/306 (more of the file
+now runs), test_enum 1069 -> 1070, test_functools 176 -> 198, test_reprlib 29 -> 30 on both kernels. The full check of
+the final commit agrees on 1196 scratch programs with no mismatch, passes every gate, and shows no regression, broken
+progress line or kernel disagreement; the only length change is decimal's coverage gain; kernel independence reports
+no problem. Known cost: stack8 test_glob takes 178 s instead of 136 s (a follow-up). Still timing out in parts:
+decimal, bytes, tokenize, io and calendar's CommandLineTestCase.
+
+### 1bj. Batch 21f merged as #541; batch 21g: except*, hash, getpass, iterlen, tomllib, UserString, metaclass, email, strptime
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, Kimi K3, Claude Sonnet 5.5 and GPT-6.1 Sol workers.
+
+- fix/dsflash-exceptstar (except* grouping, reraise and projection), fix/dsflash-hash (SipHash-1-3, PYTHONHASHSEED
+  randomization, implicit __hash__ = None), fix/dsflash-getpass (getpass; flat name-list mock specs), fix/dsflash-iterlen
+  (length hints), fix/dsflash-minicompat (xml.dom.minicompat), fix/dsflash-copyreg (copyreg on main's canonical
+  pickle), fix/dsflash-tomllib (tomllib and -m entry context), fix/dsflash-userstring (faster UserString/UserDict/
+  UserList and str paths), fix/kimi-metaclass (metaclass doctests; metaclass-owned mro()), fix/stdlib-email (email),
+  fix/claude-strptime (strptime with a faithful platform libc lookup), fix/dsflash-sundry (sundry).
+
+Integration corrections followed the merges: complete descriptor encoding, native exception-group allocation and the
+codec buffer bridge restored, surrogate-backed subclasses kept through encoding, exact release bytes for the complete
+CPython copies, byte-subclass class methods through indexed lookup, and unused import-index work removed (restoring
+calendar timing). One canonical test.support subTests awaits coroutine tests; failing async tests and async partials
+fail on both kernels.
+
+Measured: 11764 (stack8) of 12914 and 11666 (microcode7) of 12818, over 166 files, from 11468 of 12612 and 11388 of
+12522 over 156. New files: test_except_star 60/60, test_getpass 16/24, test_hash 30/30, test_iterlen 22/22,
+test_metaclass 1/1, test_strptime 45/57, test_sundry 1/1, test_tomllib 18/18, test_userstring 69/71 (was a timeout),
+test_xml_dom_minicompat 11/11; test_email 1800/1810 by class aggregation (the whole file still times out).
+test_builtin 115/133 -> 116/134, test_dataclasses 270 -> 271, test_difflib 56 -> 57 on both kernels; test_io 495 -> 509
+(stack8) and 429 -> 431 (microcode7); stack8 test_tokenize 126 -> 132 (its roundtrip class now completes). The full
+check of the final commit agrees on 1196 scratch programs with no mismatch, passes every gate, and shows no
+regression, broken progress line or kernel disagreement; the only length changes are builtin's new doctest and
+tokenize's coverage gain; kernel independence reports no problem. Still timing out in parts: decimal, bytes,
+tokenize (microcode7), io's TextIOWrapper classes and email as a whole file.
