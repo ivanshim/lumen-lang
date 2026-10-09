@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/cp273.py; PSF License.
 """ Python Character Mapping Codec cp273 generated from 'python-mappings/CP273.TXT' with gencodec.py.
 
 """#"

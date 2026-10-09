@@ -442,6 +442,7 @@ def escape_decode(*args, **kwargs):
     return decoded, consumed
 
 
+# Buffer protocol bridge retained beside the complete upstream codec API.
 def _escape_buffer(source):
     import builtins
     try:

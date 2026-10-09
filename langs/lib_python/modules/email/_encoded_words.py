@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/_encoded_words.py; PSF License.
 """ Routines for manipulating RFC2047 encoded words.
 
 This is currently a package-private API, but will be considered for promotion

@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/cp949.py; PSF License.
 #
 # cp949.py: Python Unicode Codec for CP949
 #

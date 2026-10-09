@@ -23,6 +23,25 @@ def index(a):
 
 
 
+def _get_add():
+    return add
+
+
+class _AddBridge:
+    """Callable bridge with the non-binding behavior of a C builtin."""
+    __module__ = '_operator'
+    __name__ = 'add'
+
+    def __call__(self, a, b, /):
+        return a + b
+
+    def __reduce__(self):
+        return (_get_add, ())
+
+
+add = _AddBridge()
+
+
 _native_compare = __crypto
 
 class _DigestComparison:

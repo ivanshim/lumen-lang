@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/_policybase.py; PSF License.
 """Policy framework for the email package.
 
 Allows fine grained feature control of how the package parses and emits data.

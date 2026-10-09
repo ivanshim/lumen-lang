@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/koi8_t.py; PSF License.
 """ Python Character Mapping Codec koi8_t
 """
 # http://ru.wikipedia.org/wiki/КОИ-8

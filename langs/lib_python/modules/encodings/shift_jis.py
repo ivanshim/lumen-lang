@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/shift_jis.py; PSF License.
 #
 # shift_jis.py: Python Unicode Codec for SHIFT_JIS
 #

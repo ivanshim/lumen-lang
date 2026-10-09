@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/punycode.py; PSF License.
 """ Codec for the Punycode encoding, as specified in RFC 3492
 
 Written by Martin v. Löwis.

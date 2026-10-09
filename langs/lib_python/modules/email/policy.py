@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/policy.py; PSF License.
 """This will be the home for the policy that hooks in the new
 code that adds all the email6 features.
 """

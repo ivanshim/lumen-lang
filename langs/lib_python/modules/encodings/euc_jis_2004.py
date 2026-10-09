@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/euc_jis_2004.py; PSF License.
 #
 # euc_jis_2004.py: Python Unicode Codec for EUC_JIS_2004
 #

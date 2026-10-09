@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/iso8859_9.py; PSF License.
 """ Python Character Mapping Codec iso8859_9 generated from 'MAPPINGS/ISO8859/8859-9.TXT' with gencodec.py.
 
 """#"

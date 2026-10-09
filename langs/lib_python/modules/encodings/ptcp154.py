@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/ptcp154.py; PSF License.
 """ Python Character Mapping Codec generated from 'PTCP154.txt' with gencodec.py.
 
 Written by Marc-Andre Lemburg (mal@lemburg.com).

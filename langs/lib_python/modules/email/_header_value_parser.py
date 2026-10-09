@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/_header_value_parser.py; PSF License.
 """Header value parser implementing various email-related RFC parsing rules.
 
 The parsing methods defined in this module implement various email related
