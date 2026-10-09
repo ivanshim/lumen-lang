@@ -15464,6 +15464,7 @@ impl<'a> Machine<'a> {
     }
 
     fn converted_string(&mut self, subject: &Value, representation: bool) -> Result<Value, String> {
+        if Self::proxy_reading(subject).is_some() { return self.object_words(subject, representation).map(|word| Value::text(&word)); }
         if !representation && matches!(subject.settled(), Value::Unpaired(_)) { return Ok(subject.settled()); }
         if !representation && self.appointment(subject, 0).is_none() {
             if let Some(text @ (Value::Text(_) | Value::Unpaired(_))) = Self::underlying(subject) {
@@ -15496,6 +15497,10 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if let Some(mapping) = Self::proxy_reading(subject) {
+            let text = self.converted_string(&mapping, quoted)?.bare();
+            return Ok(if quoted { format!("mappingproxy({text})") } else { text });
+        }
         if let Value::Intrinsic(Prim::UnicodeDecomposition, _) = subject {
             if let Some(title) = self.table.strings("ext.builtin.unicodedata.decomposition.metadata").first() {
                 return Ok(Value::Intrinsic(Prim::UnicodeDecomposition, Rc::from(title.as_str())).repr(&self.wording()));
@@ -17361,7 +17366,7 @@ impl<'a> Machine<'a> {
                 };
                 self.thing_in_spec(item, &spec)?
             }
-            (Prim::RenderField, [item, spec, conversion]) if self.carries_instance(item) => {
+            (Prim::RenderField, [item, spec, conversion]) if self.carries_instance(item) || Self::proxy_reading(item).is_some() => {
                 let (spec, conversion) = (spec.bare(), conversion.bare());
                 let shown = if conversion.is_empty() { self.thing_in_spec(item, &spec)? } else {
                     let mut text = self.converted_string(item, conversion != "s")?;
@@ -19144,7 +19149,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Landing(_) | Prim::SetAssign(_) | Prim::Quoted | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField);
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Landing(_) | Prim::SetAssign(_) | Prim::Quoted | Prim::Asciied | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField | Prim::Mod);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
@@ -29875,6 +29880,7 @@ impl Machine<'_> {
                 }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
+                if matches!(op, Prim::Quoted | Prim::Asciied) && Self::proxy_reading(item).is_some() { continue; }
                 let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };
                 if !lazy_input { *item = item.settled(); }
             }
@@ -30869,8 +30875,9 @@ impl crate::formatting::Elsewhere for Machine<'_> {
     }
 
     fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<Value>, String> {
-        let held = item.settled();
-        if !self.speaks_for(&held) { return Ok(None); }
+        let proxy = Self::proxy_reading(item).is_some();
+        let held = if proxy { item.clone() } else { item.settled() };
+        if !proxy && !self.speaks_for(&held) { return Ok(None); }
         if convert.is_empty() { return self.thing_in_spec(&held, pattern).map(Some); }
         let mut said = self.converted_string(&held, convert != "s")?;
         said = Self::underlying(&said).unwrap_or(said);
@@ -30880,8 +30887,9 @@ impl crate::formatting::Elsewhere for Machine<'_> {
     }
 
     fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String> {
-        let held = item.settled();
-        if !self.speaks_for(&held) { return Ok(None); }
+        let proxy = Self::proxy_reading(item).is_some();
+        let held = if proxy { item.clone() } else { item.settled() };
+        if !proxy && !self.speaks_for(&held) { return Ok(None); }
         self.object_words(&held, quoted).map(Some)
     }
 

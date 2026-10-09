@@ -229,6 +229,11 @@ impl Layout<'_> {
     }
 
     pub fn presented_value(&self, item: &Value, pattern: &str, convert: &str) -> Result<Value, String> {
+        match item {
+            Value::Shared(cell) | Value::Mutable(cell, _) => return self.presented_value(&cell.borrow(), pattern, convert),
+            Value::Window(_, 'm') => return self.present(item, pattern, convert).map(|text| Value::text(&text)),
+            _ => (),
+        }
         let plain = item.settled();
         if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(plain, Value::Unpaired(_)) && (convert.is_empty() || convert == "s") {
             self.present(&Value::text(""), pattern, "")?;
@@ -506,7 +511,13 @@ impl Layout<'_> {
     /// keyed mark's name among keys that are rows of bytes, and a
     /// character mark holds one byte alone.
     pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Answer {
-        let mut stored = supplied.settled();
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = supplied {
+            let held = cell.borrow().clone();
+            return self.remainder(pattern, &held, asked, of_bytes);
+        }
+        let proxy = matches!(supplied, Value::Window(_, 'm'));
+        let original = supplied;
+        let mut stored = if proxy { supplied.proxy_pairs() } else { supplied.settled() };
         if let Value::Thing(object) = &stored {
             let contents = object.holds.borrow().iter().find_map(|(key, item)| {
                 if key != "\0underlying" { return None; }
@@ -515,7 +526,7 @@ impl Layout<'_> {
             if let Some(row) = contents { stored = row; }
         }
         let supplied = &stored;
-        let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
+        let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(if proxy { original } else { supplied }) };
         let mut used = 0usize;
         let mut named_seen = false;
         let mut input = pattern.chars().peekable();

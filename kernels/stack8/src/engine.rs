@@ -3083,7 +3083,7 @@ impl<'a> Engine<'a> {
                 if matches!(&found, Err(message) if message.starts_with("Undefined variable:")) {
                     if let Some((names, _)) = self.annotation_scope() { return self.unresolved_annotation_name(&names, &slot.ident); }
                 }
-                return found.map(|v| match v.contents() { target @ (Value::Object(_) | Value::Class(_)) => target, _ => v });
+                return found.map(|v| if Self::proxy_reading(&v).is_some() { v } else { match v.contents() { target @ (Value::Object(_) | Value::Class(_)) => target, _ => v } });
             }
         }
         // A module's cell that holds nothing -- a name never bound, or
@@ -8311,6 +8311,7 @@ impl<'a> Engine<'a> {
     }
 
     fn string_conversion(&mut self, value: &Value, repr: bool) -> Res<Value> {
+        if Self::proxy_reading(value).is_some() { return self.special_text(value, repr).map(|text| Value::text(&text)); }
         if !repr && matches!(value.contents(), Value::Codepoints(_)) { return Ok(value.contents()); }
         // str inherits its text conversion even when a subclass replaces repr.
         if !repr && self.special_value(value, 0).is_none() {
@@ -13726,8 +13727,8 @@ impl<'a> Engine<'a> {
                 // fillers already do, so a set of things in a field
                 // shows each by its own `__repr__` rather than the
                 // plain address every other reader of a set is given.
-                if Self::holds_object(&value.contents()) && !self.lang.class_special.is_empty() {
-                    let thing = value.contents();
+                if (Self::holds_object(&value.contents()) || Self::proxy_reading(&value).is_some()) && !self.lang.class_special.is_empty() {
+                    let thing = if Self::proxy_reading(&value).is_some() { value.clone() } else { value.contents() };
                     let shown = if conversion.is_empty() { self.special_format(&thing, &specification)? } else {
                         let mut text = self.string_conversion(&thing, conversion != "s")?;
                         text = Self::worth_of(&text).unwrap_or(text);
@@ -13886,8 +13887,9 @@ impl<'a> Engine<'a> {
                 FieldRequest::Item(key) => return self.special_dyad(&Action::At, value, &key).map(Some),
                 FieldRequest::Render(spec, conversion) => (spec, conversion),
             };
-            let thing = value.contents();
-            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
+            let proxy = Self::proxy_reading(value).is_some();
+            let thing = if proxy { value.clone() } else { value.contents() };
+            if self.lang.class_special.is_empty() || (!proxy && !Self::holds_object(&thing)) { return Ok(None); }
             if conversion.is_empty() { return self.special_format(&thing, spec).map(Some); }
             let mut said = self.string_conversion(&thing, conversion != "s")?;
             said = Self::worth_of(&said).unwrap_or(said);
@@ -13952,8 +13954,9 @@ impl<'a> Engine<'a> {
             }
             let spec = self.mapping_format(spec, mapping, depth + 1)?;
             let words = self.wording();
-            let thing = value.contents();
-            if !self.lang.class_special.is_empty() && Self::holds_object(&thing) {
+            let proxy = Self::proxy_reading(&value).is_some();
+            let thing = if proxy { value.clone() } else { value.contents() };
+            if !self.lang.class_special.is_empty() && (proxy || Self::holds_object(&thing)) {
                 // The program's own class says its own words, as in `.format`.
                 let text = if conversion.is_empty() { self.special_format(&thing, &spec)?.plain() } else {
                     let said = self.special_text(&thing, conversion != "s")?;
@@ -14002,8 +14005,9 @@ impl<'a> Engine<'a> {
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
         let mut asked = |value: &Value, code: char, numbering: bool| -> Res<crate::formatting::Answer> {
             use crate::formatting::Answer;
-            let thing = value.contents();
-            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) {
+            let proxy = Self::proxy_reading(value).is_some();
+            let thing = if proxy { value.clone() } else { value.contents() };
+            if self.lang.class_special.is_empty() || (!proxy && !Self::holds_object(&thing)) {
                 return Ok(if numbering { Answer::Missing(String::new()) } else { Answer::Unsaid });
             }
             if !numbering { return self.special_text(&thing, code != 's').map(Answer::Said); }
@@ -24671,7 +24675,7 @@ impl Engine<'_> {
                     && matches!(value.contents(), Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) { continue; }
                 let lazy_source = match b { Builtin::Enumerate => position == 0, Builtin::Zip => true, Builtin::Map => position != 0, Builtin::Filter => position == 1, _ => false };
                 // A mapping proxy is quoted as the proxy it is.
-                if b == Builtin::Repr && Self::proxy_reading(value).is_some() { continue; }
+                if matches!(b, Builtin::Repr | Builtin::Ascii) && Self::proxy_reading(value).is_some() { continue; }
                 if !lazy_source { *value = value.contents(); }
             }
         }

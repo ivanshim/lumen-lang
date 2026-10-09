@@ -207,6 +207,7 @@ impl Writer<'_> {
     }
 
     pub fn field_value(&self, value: &Value, spec: &str, conversion: &str) -> Result<Value> {
+        if Self::proxied(value).is_some() { return self.field(value, spec, conversion).map(|s| Value::text(&s)); }
         let held = value.contents();
         if self.lang.python_numbers && matches!(held, Value::Codepoints(_)) && matches!(conversion, "" | "s") {
             // Read the same string specification as the scalar-text path.
@@ -594,6 +595,7 @@ impl Writer<'_> {
     /// it seeks a keyed mark's name among keys that are rows of bytes,
     /// and a character mark holds one byte alone.
     pub fn percent(&self, text: &str, argument: &Value, asked: &mut Ask<'_>, of_bytes: bool) -> Result<String> {
+        let proxy_argument = Self::proxied(argument).map(|_| argument.clone());
         let settled = argument.contents();
         let tuple_worth = match &settled {
             Value::Object(instance) => instance.fields.borrow().iter()
@@ -602,7 +604,7 @@ impl Writer<'_> {
             _ => None,
         };
         let argument = tuple_worth.as_ref().unwrap_or(&settled);
-        let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
+        let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![proxy_argument.as_ref().unwrap_or(one)] };
         let mut used = 0;
         let mut at = 0;
         let chars: Vec<char> = text.chars().collect();
