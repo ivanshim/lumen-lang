@@ -631,6 +631,12 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
 }
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
+    // A name the language reserves may not be written to: `async = 1`
+    // and `await = 1` are syntax errors wherever they stand, before the
+    // text is otherwise read.
+    let reserved_assignment = tokens.windows(2).any(|adjacent| adjacent[0].shape == Shape::Bare
+        && adjacent[1].lexeme == "=" && ["ext.stmt.async", "ext.op.await"].iter().any(|label| table.spells(label, adjacent[0].spelling())));
+    if reserved_assignment { return Err(String::from("SyntaxError: invalid syntax")); }
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
