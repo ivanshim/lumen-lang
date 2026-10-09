@@ -308,8 +308,6 @@ class DocTestFinder:
 
     def find(self, obj, name=None, module=None, globs=None, extraglobs=None):
         names = _namespace_of(obj)
-        if obj is None and globs is not None:
-            names = globs
         if callable(obj) and not isinstance(obj, type):
             if name is None:
                 name = getattr(obj, "__name__", "<callable>")
@@ -797,12 +795,9 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
-    caller_name = None
-    if module is None and globs is None:
-        globs = _copy_dict(__program_namespace(1).f_globals)
-    if module is None and globs is not None:
-        caller_name = globs.get('__name__')
-    tests = test_finder.find(module, caller_name, None, globs, extraglobs)
+    if module is None:
+        module = sys.modules[__program_namespace(1).f_globals['__name__']]
+    tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
     setUp = options.get('setUp')
