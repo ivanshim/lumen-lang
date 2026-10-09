@@ -721,31 +721,50 @@ class IncrementalNewlineDecoder:
         return self._impl.newlines
 
 class FileIO(_RawIOBase):
+    _fd = -1
+    _closefd = True
+    _readable = False
+    _writable = False
+    _created = False
+    _appending = False
+    _closed = True
+    _finalizing_state = False
+
     def _dealloc_warn(self, source):
         if getattr(self, '_fd', -1) >= 0 and self._closefd and not self.closed:
             import warnings
             warnings.warn('unclosed file ' + repr(self), ResourceWarning, stacklevel=2, source=source)
+
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:
             self.close()
-        self._fd = -1
+        self._closefd = bool(closefd)
         self._closed = True
+        self._fd = -1
+        self._readable = False
+        self._writable = False
+        self._created = False
+        self._appending = False
+        self._finalizing_state = False
+        if isinstance(file, float):
+            raise TypeError('integer argument expected, got float')
+        if isinstance(file, bool):
+            import warnings
+            warnings.warn('bool is used as a file descriptor',
+                          RuntimeWarning, stacklevel=2)
+            file = int(file)
         if not isinstance(mode, str):
-            raise TypeError('mode must be a string')
-        if any(letter not in 'rwax+b' for letter in mode):
-            raise ValueError('invalid mode: ' + mode)
+            raise TypeError('invalid mode: %r' % (mode,))
+        if not set(mode) <= set('xrwab+'):
+            raise ValueError('invalid mode: %s' % (mode,))
         base = [letter for letter in mode if letter in 'rwax']
         if len(base) != 1 or mode.count('+') > 1:
             raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         self._readable = base[0] == 'r' or '+' in mode
         self._writable = base[0] != 'r' or '+' in mode
-        self._closefd = bool(closefd)
-        self._fd = -1
-        self._closed = True
-        self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb') + ('+' if '+' in mode else '')
-        if isinstance(file, float):
-            raise TypeError('integer argument expected, got float')
+        self._created = base[0] == 'x'
+        self._appending = base[0] == 'a'
         owned = False
         fd = -1
         try:
@@ -810,9 +829,61 @@ class FileIO(_RawIOBase):
             import warnings
             warnings.warn('unclosed file ' + repr(source), ResourceWarning,
                           stacklevel=2, source=self)
+
+    @property
+    def _finalizing(self):
+        return self._finalizing_state
+
+    @_finalizing.setter
+    def _finalizing(self, value):
+        if not isinstance(value, bool):
+            raise TypeError('attribute value type must be bool')
+        self._finalizing_state = value
+
+    @_finalizing.deleter
+    def _finalizing(self):
+        raise TypeError("can't delete numeric/char attribute")
+
+    @property
+    def _blksize(self):
+        import os
+        try:
+            st = os.fstat(self._fd)
+        except OSError:
+            return DEFAULT_BUFFER_SIZE
+        blksize = getattr(st, 'st_blksize', 0)
+        if not blksize:
+            return DEFAULT_BUFFER_SIZE
+        return blksize
+
     @property
     def closefd(self):
         return self._closefd
+
+    @property
+    def mode(self):
+        if self._created:
+            return 'xb+' if self._readable else 'xb'
+        if self._appending:
+            return 'ab+' if self._readable else 'ab'
+        if self._readable:
+            return 'rb+' if self._writable else 'rb'
+        return 'wb'
+
+    def __repr__(self):
+        class_name = '%s.%s' % (self.__class__.__module__,
+                                self.__class__.__qualname__)
+        if self.closed:
+            return '<%s [closed]>' % class_name
+        try:
+            name = self.name
+        except AttributeError:
+            return ('<%s fd=%d mode=%r closefd=%r>' %
+                    (class_name, self._fd, self.mode, self._closefd))
+        else:
+            return ('<%s name=%r mode=%r closefd=%r>' %
+                    (class_name, name, self.mode, self._closefd))
+
     def fileno(self):
         self._checkClosed()
         return self._fd
@@ -820,7 +891,7 @@ class FileIO(_RawIOBase):
         if not self.closed:
             import os
             try:
-                if self._closefd:
+                if self._closefd and self._fd >= 0:
                     os.close(self._fd)
             finally:
                 self._fd = -1
@@ -1069,14 +1140,16 @@ class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
         if not isinstance(mode, str):
-            raise TypeError('open() argument 2 must be str, not ' + type(mode).__name__)
-        letters = set(mode)
-        if not letters <= set('axrwb+t') or len(mode) != len(letters):
-            raise ValueError('invalid mode: ' + repr(mode))
-        if 't' in letters and 'b' in letters:
+            raise TypeError('invalid mode: %r' % (mode,))
+        modes = set(mode)
+        if modes - set('axrwb+t') or len(mode) > len(modes):
+            raise ValueError('invalid mode: %r' % mode)
+        if 't' in modes and 'b' in modes:
             raise ValueError("can't have text and binary mode at once")
-        if len(letters & set('axrw')) != 1:
-            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+        if sum(letter in modes for letter in 'xrwa') > 1:
+            raise ValueError("can't have read/write/append mode at once")
+        if not modes & set('xrwa'):
+            raise ValueError('must have exactly one read/write/append mode')
         if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode:
             if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
                 import os
