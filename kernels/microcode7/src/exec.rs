@@ -3665,7 +3665,7 @@ impl<'a> Machine<'a> {
             (named, under)
         });
         let caller_future = self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits);
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[], caller_future, 0) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, 0, &[], caller_future) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -7003,13 +7003,30 @@ impl<'a> Machine<'a> {
             }
         };
         let callee = self.env_for(&p, env, args, frame)?;
+        let mut chosen = Self::explicit_globals(&p);
+        let paused_names = if self.armed_names.is_none() && !self.annotation_scopes.is_empty() {
+            if p.globe.is_none() {
+                let names = self.annotation_scopes.last().unwrap().1.clone();
+                self.frames_named.push(p.clone());
+                let home = self.space_book_of();
+                self.frames_named.pop();
+                chosen = home.or_else(|| match self.read_class_member(names, "globals", true).ok()? {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell),
+                    _ => None,
+                }).or(chosen);
+            }
+            Some(std::mem::take(&mut self.annotation_scopes))
+        } else { None };
         let suspended_reading = self.reading_now;
         if p.globe.is_none() { self.reading_now = None; }
         let previous = self.enter_function_globals(&p);
+        let annotation_world = chosen.map(|book| self.world_book.replace(book));
         let outcome = if p.generator && self.rules.suspends {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
+        if let Some(world) = annotation_world { self.world_book = world; }
         self.leave_function_globals(previous);
+        if let Some(scopes) = paused_names { self.annotation_scopes = scopes; }
         self.reading_now = suspended_reading;
         outcome
     }
@@ -13300,9 +13317,39 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let resumed_reading = if program.globe.is_none() { self.reading_now.take() } else { self.reading_now };
+        let mut handed = match Self::explicit_globals(&program) {
+            Some(namespace) => Some(namespace),
+            None if self.armed_names.is_some() => match &program.globe {
+                Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
+                Some(dictionary @ Value::Dict(_)) => Some(Rc::new(RefCell::new(dictionary.clone()))),
+                _ => None,
+            },
+            None => None,
+        };
+        let caller_scope = self.annotation_scopes.last().filter(|(_, _, _, pointer)| {
+            self.frames_named.last().is_some_and(|caller| Rc::as_ptr(caller) as usize == *pointer)
+        }).map(|(_, names, _, _)| names.clone());
+        if !program.frameless && program.globe.is_none() && self.armed_names.is_none() {
+            if let Some(names) = caller_scope {
+                self.frames_named.push(program.clone());
+                let original = self.space_book_of();
+                self.frames_named.pop();
+                handed = original.or_else(|| {
+                    match self.read_class_member(names, "globals", true).ok()? {
+                        Value::Shared(cell) | Value::Mutable(cell, _) => Some(cell),
+                        _ => None,
+                    }
+                }).or(handed);
+            }
+        }
+        let resumed_reading = match (&program.globe, &handed) {
+            (None, None) => self.reading_now.take(),
+            _ => self.reading_now,
+        };
         let namespace = self.enter_function_globals(&program);
+        let saved_world = handed.map(|book| self.world_book.replace(book));
         let result = self.invoke_body(program, env, args);
+        if let Some(world) = saved_world { self.world_book = world; }
         self.leave_function_globals(namespace);
         self.reading_now = resumed_reading;
         result
@@ -17584,6 +17631,15 @@ impl<'a> Machine<'a> {
             let joining_kinds = operation == Prim::BitsEither
                 && self.union_member(left) && self.union_member(right)
                 && (self.union_anchor(left) || self.union_anchor(right));
+            // An arithmetic working every side's own methods answered
+            // was not theirs to give, with no side standing on a native
+            // kind that could, has no working at all: the reference
+            // names the sign and both kinds rather than reading the
+            // worth beneath.
+            if forward >= 18 && !joining_kinds && declined && !native_side {
+                let sign = self.written_as(&operation);
+                return Err(self.operands_refused(&sign, left, right));
+            }
             if forward >= 18 && !joining_kinds && (bare(left) || bare(right)) {
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));
@@ -23248,7 +23304,30 @@ impl<'a> Machine<'a> {
                             let entries = hay.borrow().entries.clone();
                             self.set_address(&entries, item)?
                         } else { self.hash_for_set(item)? };
-                        hay.borrow().keys.contains(&address)
+                        if hay.borrow().keys.contains(&address) { true } else {
+                            // A plain item may still agree with a thing
+                            // kept beside its hash: met by the hash they
+                            // share, once the worth road has answered no.
+                            let alike: Vec<Value> = {
+                                let store = hay.borrow();
+                                match store.instances {
+                                    0 => Vec::new(),
+                                    _ if Self::needs_set_methods(item) => Vec::new(),
+                                    _ => match item.hash_number() {
+                                        Some(number) => {
+                                            let opening = format!("instance:{}:", Value::Small(number).bare());
+                                            store.entries.iter().filter(|(kept, _)| kept.starts_with(&opening)).map(|(_, held)| held.clone()).collect()
+                                        }
+                                        None => Vec::new(),
+                                    },
+                                }
+                            };
+                            let mut found = false;
+                            for held in alike {
+                                if self.keys_agree(&held, item)? { found = true; break; }
+                            }
+                            found
+                        }
                     }
                     (item, Value::Octets { cell, .. }) => {
                         let numbers = cell.borrow();
@@ -23344,9 +23423,14 @@ impl<'a> Machine<'a> {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
                 // Resolve inherited user hooks before the native fallback.
                 if let Some(entry) = self.inherited_entry(class, self.rules.detail_getitem) {
-                    if matches!(entry.settled(), Value::Nil) && self.is_fault_kind(class) {
-                        let name = &class.name;
-                        return Err(format!("TypeError: type '{name}' is not subscriptable").into());
+                    // A class-getitem left as nothing leaves the class
+                    // unsubscriptable, whether it is a fault kind or not;
+                    // a text standing in that place is no callable at
+                    // all. Each is refused by the kind the value has.
+                    match entry.settled() {
+                        Value::Nil => return Err(format!("TypeError: type '{}' is not subscriptable", class.name).into()),
+                        Value::Text(_) => return Err(String::from("TypeError: 'str' object is not callable").into()),
+                        _ => {}
                     }
                     let asked = match entry {
                         method @ Value::Wrapped(5, _) => {
@@ -24825,6 +24909,9 @@ impl<'a> Machine<'a> {
                 let (_,places,_)=self.span_selection(bounds,values.len())?;
                 Value::tuple(places.into_iter().map(|i|values[i].clone()).collect())
             }else{
+                // A flag reads as a place only where a language works
+                // sequences; anywhere else the key is refused by kind.
+                if matches!(at, Value::Flag(_)) && !self.works_sequences() { return Err(as_index(at).unwrap_err()); }
                 let index=at.as_big()?;let index=if index<BigInt::from(0){index+values.len()}else{index};
                 let beyond = || match self.works_sequences() {
                     true => format!("\0{}", self.place_beyond(target)),
@@ -25193,12 +25280,30 @@ impl<'a> Machine<'a> {
     }
 
     fn set_address(&mut self, entries: &[(String, Value)], item: &Value) -> Result<String, String> {
-        if !Self::needs_set_methods(item) { return self.hash_for_set(item); }
+        if !Self::needs_set_methods(item) {
+            let address = self.hash_for_set(item)?;
+            // A plain item may still meet an agreeing thing among the
+            // entries: where things are kept beside their hashes at
+            // all, the one sharing this item's hash is asked, and an
+            // agreeing one is where the item stands.
+            if !entries.iter().any(|(kept, _)| kept == &address) && entries.iter().any(|(_, held)| matches!(held, Value::Keyed(..))) {
+                if let Some(number) = item.hash_number() {
+                    let opening = format!("instance:{}:", Value::Small(number).bare());
+                    for (kept, held) in entries {
+                        if kept.starts_with(&opening) && self.keys_agree(held, &item)? { return Ok(kept.clone()); }
+                    }
+                }
+            }
+            return Ok(address);
+        }
         let keyed = self.hash_key(item)?;
         let hash = match &keyed { Value::Keyed(_, hash) => hash.bare(), _ => String::new() };
         let opening = format!("instance:{hash}:");
         for (address, held) in entries {
-            if !address.starts_with(&opening) { continue; }
+            // A thing hashing alike is asked, and so is every entry
+            // addressed by its worth alone, whose own hash the asking
+            // itself reckons; a thing hashing otherwise is passed over.
+            if !address.starts_with(&opening) && matches!(held, Value::Keyed(..)) { continue; }
             if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
         }
         let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Wrapped(7, body) => Rc::as_ptr(body) as usize, _ => 0 }, _ => 0 };
@@ -25215,6 +25320,25 @@ impl<'a> Machine<'a> {
         // for that alone and a store is gathered in a single pass
         // rather than in one pass for every entry it gains.
         if !Self::needs_set_methods(&item) {
+            // A store holding things beside their hashes may already
+            // hold one agreeing with this plain item: met by the hash
+            // they share, the entry already there is the one kept.
+            let alike: Vec<Value> = {
+                let held = store.borrow();
+                match held.instances {
+                    0 => Vec::new(),
+                    _ => match item.hash_number() {
+                        Some(number) => {
+                            let opening = format!("instance:{}:", Value::Small(number).bare());
+                            held.entries.iter().filter(|(address, _)| address.starts_with(&opening)).map(|(_, entry)| entry.clone()).collect()
+                        }
+                        None => Vec::new(),
+                    },
+                }
+            };
+            for entry in alike {
+                if self.keys_agree(&entry, &item)? { return Ok(()); }
+            }
             let address = self.hash_for_set(&item)?;
             store.borrow_mut().put(address, item);
             return Ok(());
@@ -25262,7 +25386,19 @@ impl<'a> Machine<'a> {
             }
             return Ok(false);
         }
-        Ok(other.keys.contains(&self.hash_for_set(item)?))
+        if other.keys.contains(&self.hash_for_set(item)?) { return Ok(true); }
+        // Among entries kept beside their hashes, one may still agree
+        // with this plain item: it is met by the hash they share.
+        if other.instances > 0 {
+            if let Some(number) = item.hash_number() {
+                let opening = format!("instance:{}:", Value::Small(number).bare());
+                for (address, held) in &other.entries {
+                    if !address.starts_with(&opening) { continue; }
+                    if self.keys_agree(held, item)? { return Ok(true); }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether every entry of the one store is found among the other's,
@@ -25417,6 +25553,7 @@ impl<'a> Machine<'a> {
                 let mut contents = target.borrow_mut();
                 contents.entries.clear();
                 contents.keys.clear();
+                contents.instances = 0;
                 Ok(Value::Nil)
             }
             _ => {
@@ -28662,7 +28799,7 @@ impl<'a> Machine<'a> {
                 piece.row = last_row; piece.column = last_col; piece.end_row = last_row; piece.end_column = last_col;
             }
         }
-        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0, 0);
+        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0, self.text_future_bits.get());
         let (said, row, cols) = match built {
             Ok(_) => return Some(Self::spent_place(source)),
             Err(fault) => fault,
@@ -28788,7 +28925,7 @@ impl<'a> Machine<'a> {
                 return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source));
             }
         };
-        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, future_bits, settling) {
+        let built = match crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, settling, future_bits) {
             Ok(built) => built,
             Err((said, row, cols)) => {
                 if incomplete_ok && mode != 0 && !Self::beyond_reading_complaint(&said) {
@@ -29186,7 +29323,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing, self.text_future_bits.get(), settling) {
+        let mut built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), settling, &aliasing, self.text_future_bits.get()) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -29275,7 +29412,7 @@ impl<'a> Machine<'a> {
     /// text leaves is to be written out.
     fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, settle: i64) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, self.text_future_bits.get(), settle)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, settle, self.text_future_bits.get())
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 

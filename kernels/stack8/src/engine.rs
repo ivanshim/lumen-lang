@@ -4260,7 +4260,26 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        // Function attributes are separate from the globals captured by code.
+        let mut annotation_namespace = program.globe.as_ref().and_then(|book| match book { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Some(cell.clone()), Value::Map(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }).or_else(|| {
+            self.armed_names.as_ref()?;
+            match program.globe.as_ref() {
+                Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) => Some(cell.clone()),
+                Some(value @ Value::Map(_)) => Some(Rc::new(RefCell::new(value.clone()))),
+                _ => None,
+            }
+        });
+        // A helper called by an isolated annotator keeps its original globals.
+        if program.globe.is_none() && self.armed_names.is_none() {
+            if let Some((names, _)) = self.annotation_scope() {
+                annotation_namespace = self.module_book_of(program).or_else(|| {
+                    let original = self.class_get(names, "globals", true).ok()?;
+                    match original {
+                        Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Some(cell),
+                        _ => None,
+                    }
+                }).or(annotation_namespace);
+            }
+        }
         let reading = self.reading_in;
         if program.globe.is_none() { self.reading_in = None; }
         let namespace = program.globe.as_ref().and_then(|globals| match globals {
@@ -4275,7 +4294,9 @@ impl<'a> Engine<'a> {
             Some(std::mem::replace(&mut self.outer_book, next))
         } else { None };
         if supplied { self.function_books.push(earlier.clone().flatten()); }
+        let annotation_prior = annotation_namespace.map(|book| self.outer_book.replace(book));
         let answer = self.invoke_top_body(program, n);
+        if let Some(book) = annotation_prior { self.outer_book = book; }
         if supplied { self.function_books.pop(); }
         if let Some(saved) = earlier { self.outer_book = saved; }
         self.reading_in = reading;
@@ -9788,9 +9809,21 @@ impl<'a> Engine<'a> {
         // method is bound to the class first, a plain routine is given
         // the class before the key.
         if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
-            if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
-                if self.exception_class(c) && matches!(hook.contents(), Value::Null) {
-                    return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
+            // A metaclass that reads by key governs the class's
+            // subscription: where it answers, its own item method is
+            // reached through the places below and the class-getitem
+            // here is not asked at all.
+            if self.special_value(a, 11).is_some() {
+                // The metaclass's own item method answers below.
+            } else if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
+                match hook.contents() {
+                    // A class-getitem standing as nothing marks the
+                    // class unsubscriptable, whether a fault kind or not.
+                    Value::Null => return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into()),
+                    // A text standing where a callable belongs is of the
+                    // wrong kind and is refused by that kind's own name.
+                    Value::Text(_) => return Err("TypeError: 'str' object is not callable".into()),
+                    _ => {}
                 }
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
@@ -9800,10 +9833,9 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words)) => Err(words),
                     Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
                 };
-            }
-            // A group class is parameterisable, as the reference's is;
-            // the other fault kinds are not subscriptable at all.
-            if self.exception_class(c) {
+            } else if self.exception_class(c) {
+                // A group class is parameterisable, as the reference's is;
+                // the other fault kinds are not subscriptable at all.
                 if c.has_public_field("\0group") {
                     let module = match self.import_module("types") {
                         Ok(module) => module,
@@ -9901,6 +9933,15 @@ impl<'a> Engine<'a> {
             let joining_kinds = matches!(op, Action::BitEither)
                 && self.union_member(a) && self.union_member(b)
                 && (self.union_anchor(a) || self.union_anchor(b));
+            // An arithmetic working every side's own methods answered
+            // was not theirs to give, with no side standing on a native
+            // kind that could, has no working at all: the reference
+            // names the sign and both kinds rather than reading the
+            // worth beneath.
+            if direct >= 18 && !joining_kinds && declined && !native_side {
+                let sign = self.sign_of(op);
+                return Err(self.operands_complaint(&sign, a, b));
+            }
             if direct >= 18 && !joining_kinds && (Self::plain_thing(a) || Self::plain_thing(b)) {
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
@@ -9927,7 +9968,28 @@ impl<'a> Engine<'a> {
             // is: by its own hash and its own equality, the members
             // standing in the set as the gathering put them there.
             if let Value::Set(cell) = b {
-                if !Self::set_needs_protocol(a) { return self.dyadic(op, a, b); }
+                if !Self::set_needs_protocol(a) {
+                    // A plain value sought among the members may still
+                    // meet an equal thing kept beside its hash: met by
+                    // the hash they share before the worth road answers.
+                    let alike: Vec<Value> = {
+                        let set = cell.borrow();
+                        match set.protocol {
+                            0 => Vec::new(),
+                            _ => match a.core_hash() {
+                                Some(hash) => {
+                                    let opening = format!("object:{hash}:");
+                                    set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
+                                }
+                                None => Vec::new(),
+                            },
+                        }
+                    };
+                    for held in alike {
+                        if self.special_keys_equal(&held, a)? { return Ok(Value::Flag(matches!(op, Action::Contains))); }
+                    }
+                    return self.dyadic(op, a, b);
+                }
                 if let Value::Set(needle) = self.set_lookup_value(a) {
                     let found = cell.borrow().held.contains_key(&needle.borrow().address());
                     return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
@@ -16413,6 +16475,9 @@ impl<'a> Engine<'a> {
             }
             let index = match at {
                 Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                // A flag stands for the whole number it counts as only
+                // where the language counts its places the Python way.
+                Value::Flag(flag) if self.lang.sequence_values => Some(usize::from(*flag)),
                 _ => as_index(at).ok(),
             };
             return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| match self.lang.sequence_values {
@@ -16821,12 +16886,30 @@ impl<'a> Engine<'a> {
     }
 
     fn set_place(&mut self, members: &[(String, Value)], value: &Value) -> Res<String> {
-        if !Self::set_needs_protocol(value) { return self.set_key(value); }
+        if !Self::set_needs_protocol(value) {
+            let key = self.set_key(value)?;
+            // A plain value may still meet an equal thing among the
+            // members: where things are kept beside their hashes at
+            // all, the one sharing this value's hash is asked, and an
+            // equal one is where the value stands.
+            if !members.iter().any(|(kept, _)| kept == &key) && members.iter().any(|(_, held)| matches!(held, Value::Hashed(_))) {
+                if let Some(hash) = value.core_hash() {
+                    let opening = format!("object:{hash}:");
+                    for (kept, held) in members {
+                        if kept.starts_with(&opening) && self.special_keys_equal(held, value)? { return Ok(kept.clone()); }
+                    }
+                }
+            }
+            return Ok(key);
+        }
         let wanted = self.special_key(value)?;
         let hash = match &wanted { Value::Hashed(pair) => pair.1.plain(), _ => String::new() };
         let opening = format!("object:{hash}:");
         for (key, held) in members {
-            if !key.starts_with(&opening) { continue; }
+            // A thing hashing alike is asked, and so is every member
+            // addressed by its worth alone, whose own hash the asking
+            // itself reckons; a thing hashing otherwise is passed over.
+            if !key.starts_with(&opening) && matches!(held, Value::Hashed(_)) { continue; }
             if self.special_keys_equal(held, &wanted)? { return Ok(key.clone()); }
         }
         let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Object(o) => Rc::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Adapter(parts) if parts.0 == 7 => Rc::as_ptr(parts) as usize, _ => 0 }, _ => 0 };
@@ -16846,7 +16929,19 @@ impl<'a> Engine<'a> {
             }
             return Ok(false);
         }
-        Ok(other.held.contains_key(&self.set_key(value)?))
+        if other.held.contains_key(&self.set_key(value)?) { return Ok(true); }
+        // Among members kept beside their hashes, one may still equal
+        // this plain value: it is met by the hash they share.
+        if other.protocol > 0 {
+            if let Some(hash) = value.core_hash() {
+                let opening = format!("object:{hash}:");
+                for key in &other.row {
+                    if !key.starts_with(&opening) { continue; }
+                    if self.special_keys_equal(&other.held[key], value)? { return Ok(true); }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether every member of the one set is found among the other's,
@@ -16917,6 +17012,25 @@ impl<'a> Engine<'a> {
         // for it alone and a set is gathered in one pass and not in as
         // many passes as it has members.
         if !Self::set_needs_protocol(&value) {
+            // A set holding things beside their hashes may already
+            // hold one equal to this plain value: met by the hash they
+            // share, the member already there is the one kept.
+            let alike: Vec<Value> = {
+                let set = cell.borrow();
+                match set.protocol {
+                    0 => Vec::new(),
+                    _ => match value.core_hash() {
+                        Some(hash) => {
+                            let opening = format!("object:{hash}:");
+                            set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
+                        }
+                        None => Vec::new(),
+                    },
+                }
+            };
+            for held in alike {
+                if self.special_keys_equal(&held, &value)? { return Ok(()); }
+            }
             let key = self.set_key(&value)?;
             cell.borrow_mut().insert(key, value);
             return Ok(());
@@ -17029,6 +17143,7 @@ impl<'a> Engine<'a> {
             let mut set = cell.borrow_mut();
             set.row.clear();
             set.held.clear();
+            set.protocol = 0;
             return Ok(Value::Null);
         }
         if op == SetUpdate {
@@ -28232,7 +28347,6 @@ impl Engine<'_> {
         trial.allow_top_level_await = allow_top_await;
         trial.future_bits = future_bits;
         trial.optimize = optimization;
-        trial.allow_flufl = flags & 0x400000 != 0;
         let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => {

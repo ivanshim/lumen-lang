@@ -992,7 +992,19 @@ impl<'a> Machine<'a> {
             let entries_now=class.shared.borrow().clone();
             for (key,held) in entries_now {
                 if let Some(hook)=self.protocol_entry(&held,"descriptor.name") {
-                    self.through_descriptor(&held,hook,vec![Value::Blueprint(class.clone()),Value::text(&key)])?;
+                    if let Err(raised)=self.through_descriptor(&held,hook,vec![Value::Blueprint(class.clone()),Value::text(&key)]) {
+                        let note=format!("Error calling __set_name__ on '{}' instance '{}' in '{}'",Self::type_argument_kind(&held),key,class.name);
+                        let escape=match self.got_away.take().unwrap_or(raised) {
+                            Escape::Thrown(value)=>{self.attach_note(&value,&note);Escape::Thrown(value)}
+                            Escape::Error(words)=>match self.as_raised(&words) {
+                                Some(value)=>{self.attach_note(&value,&note);Escape::Thrown(value)}
+                                None=>Escape::Error(words),
+                            },
+                            other=>other,
+                        };
+                        self.got_away=Some(escape);
+                        return Err(self.bad_answer().into());
+                    }
                 }
             }
         }
@@ -2067,6 +2079,11 @@ impl<'a> Machine<'a> {
                     // thing of, then what the kind's primitive takes.
                     233 if values.len()==1=>self.display_clock_record(&values[0]),
                     234 if values.len()==1=>self.reduce_clock_record(&values[0]),
+                    237=>self.replace_clock_record(values),
+                    238 if values.len() == 2 => {
+                        let row = Self::underlying(&values[0]).ok_or_else(|| String::from("TypeError: invalid struct_time receiver"))?;
+                        Ok(self.prim(Prim::At, "", &[row, values[1].clone()])?)
+                    },
                     14 if !values.is_empty()=>{
                         let target = values.remove(0);
                         let word=kept[0].bare();
@@ -2962,7 +2979,7 @@ impl<'a> Machine<'a> {
             // property, is tied to it; a kept accessor reads at once.
 
             Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 233..=235,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            Value::Wrapped(36 | 50..=57 | 78..=79 | 200..=203 | 233..=235 | 237 | 238,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
@@ -3660,10 +3677,11 @@ impl<'a> Machine<'a> {
         for (spelling, class) in &self.native_kinds { if spelling == "struct_time" { return class.clone(); } }
         let parent=self.native_kind("tuple");
         let mut ranks=parent.ancestry.borrow().clone(); ranks.insert(0,parent.clone());
-        let mut members=vec![("__module__".to_string(),Value::text("time")),("__new__".to_string(),self.native_allocation("struct_time"))];
-        for (name, tag) in [("__repr__",233),("__str__",233),("__reduce__",234)] { members.push((name.into(),Self::wrap(tag,Vec::new()))); }
+        let mut members=vec![("__module__".to_string(),Value::text("time")),("__getitem__".into(),Self::wrap(238,Vec::new())),("__new__".to_string(),self.native_allocation("struct_time"))];
+        for (name, tag) in [("__repr__",233),("__str__",233),("__reduce__",234),("__replace__",237)] { members.push((name.into(),Self::wrap(tag,Vec::new()))); }
         for (name, count) in [("n_sequence_fields",9),("n_fields",11),("n_unnamed_fields",0)] { members.push((name.into(),Value::Small(count))); }
-        let result=Rc::new(Blueprint { name:String::from("struct_time"),presentation:Some(String::from("<class 'time.struct_time'>")),under:Some(parent.clone()),parents:vec![parent],ancestry:RefCell::new(ranks),answers:Vec::new(),fields:Vec::new(),reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".into(),Value::text("struct_time"))],shared:RefCell::new(members),weak_slot:Cell::new(None),has_slot_storage:true,sealed:Cell::new(true),order_supplied:Cell::new(false),supplied_order:RefCell::new(Vec::new()),type_names:RefCell::new(None) });
+        members.push(("__match_args__".into(), Value::tuple(["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst"].into_iter().map(Value::text).collect())));
+        let result=Rc::new(Blueprint { name:String::from("struct_time"),presentation:Some(String::from("<class 'time.struct_time'>")),under:Some(parent.clone()),parents:vec![parent],ancestry:RefCell::new(ranks),answers:Vec::new(),fields:Vec::new(),reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".into(),Value::text("struct_time"))],shared:RefCell::new(members),weak_slot:Cell::new(None),has_slot_storage:true,sealed:Cell::new(false),order_supplied:Cell::new(false),supplied_order:RefCell::new(Vec::new()),type_names:RefCell::new(None) });
         self.native_kinds.push(("struct_time".into(),result.clone())); result
     }
     pub(super) fn clock_record(&mut self, target:Value, parameters:Vec<Value>) -> Res {
@@ -3680,6 +3698,8 @@ impl<'a> Machine<'a> {
         let attributes=Self::underlying(&attributes).unwrap_or(attributes).settled();
         let Value::Dict(attributes)=attributes else{return Err("TypeError: time.struct_time() takes a dict as second arg, if any".to_owned().into())};
         let words=["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"];
+        let used = words[row.len()..].iter().filter(|name| attributes.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == **name))).count();
+        if attributes.len() != used { return Err("TypeError: time.struct_time() got duplicate or unexpected field name(s)".to_owned().into()); }
         for name in &words[row.len()..] {row.push(attributes.iter().find_map(|(key,value)|matches!(key,Value::Text(text) if text.as_ref()==*name).then(||value.clone())).unwrap_or(Value::Nil));}
         let mut holds=vec![("\0underlying".to_owned(),Value::tuple(row[..9].to_vec()))];
         holds.extend(words.into_iter().zip(row).map(|(name,held)|(name.into(),held)));
@@ -3690,6 +3710,20 @@ impl<'a> Machine<'a> {
         let mut text=String::from("time.struct_time(");
         for name in keys {if !text.ends_with('('){text.push_str(", ");}text.push_str(name);text.push('=');let value=self.read_class_member(instance.clone(),name,false)?;text.push_str(&self.object_words(&value,true)?);}
         text.push(')');Ok(Value::text(&text))
+    }
+    // Rebuild the native clock record with only the requested fields changed.
+    fn replace_clock_record(&mut self, parameters: Vec<Value>) -> Res {
+        let (ordered, named) = self.open_arguments(parameters)?;
+        if ordered.len() != 1 { return Err("TypeError: __replace__() takes one positional argument".to_owned().into()); }
+        let keys = ["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"];
+        if named.iter().any(|(name, _)| !keys.contains(&name.as_str())) { return Err("TypeError: Got unexpected field name(s)".to_owned().into()); }
+        let mut fields = Vec::new();
+        for key in keys {
+            let value = match named.iter().find(|(name, _)| name == key) { Some((_, value)) => value.clone(), None => self.read_class_member(ordered[0].clone(), key, false)? };
+            fields.push(value);
+        }
+        let target = Value::Blueprint(self.clock_record_type());
+        self.clock_record(target, vec![Value::tuple(fields)])
     }
     fn reduce_clock_record(&mut self, instance:&Value) -> Res {
         let entries=Self::underlying(instance).ok_or_else(||String::from("TypeError: invalid struct_time receiver"))?;
@@ -4826,7 +4860,15 @@ impl<'a> Machine<'a> {
                 // handed; one the program wrote answers the outermost
                 // dictionary of the run it was written in.
                 if let Some(globe)=&code.globe { return Ok(globe.clone()); }
-                if code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
+                if code.written_in.is_none() {
+                    if let Some(book) = code.globe.as_ref().and_then(|book| match book { Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_)) => Some(cell.clone()), Value::Dict(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }) { return Ok(Value::Shared(book)); }
+                    if let Some(Value::Thing(main)) = self.imported.get(self.detail("main")) {
+                        if let Some((_, dictionary)) = main.holds.borrow().iter().find(|(name, _)| name == "\0dictionary") {
+                            return Ok(dictionary.clone());
+                        }
+                    }
+                    return Ok(Value::Shared(self.book_about(true)));
+                }
             }
             // The builtins a routine reaches its unbound names through.
             if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key) {
@@ -7039,6 +7081,9 @@ impl<'a> Machine<'a> {
         for base in &lookup_order {
             if passed {
                 if key == self.detail("allocate") {
+                    if Self::native_word(base).as_deref() == Some("GenericAlias") {
+                        if let Some(entry) = Self::own_entry(base, key) { return Ok(Some(self.member_binding(entry, None, actual.clone())?)); }
+                    }
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                         return Ok(Some(match Self::own_entry(base, key) {
                             Some(allocator) => allocator,

@@ -93,13 +93,6 @@ impl Value {
             },
             Self::Wrapped(235, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
-            // A slot's own descriptor is a member; the two layout names
-            // it never is, __weakref__ and __dict__, read as attributes.
-            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
-            Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
-                Some("__dict__" | "__weakref__") => "getset_descriptor",
-                _ => "member_descriptor",
-            },
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",

@@ -109,6 +109,17 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 for (key, val) in std::env::vars_os() { entries.push((octets(key.as_bytes()), octets(val.as_bytes()))); }
                 Ok(Value::Dict(Rc::new(entries.into())))
             }
+            "times" => {
+                let mut ledger: libc::tms = std::mem::zeroed();
+                let span = libc::times(&mut ledger);
+                if span == -1 { Err(errno()) } else {
+                    let hertz = libc::sysconf(libc::_SC_CLK_TCK) as f64;
+                    let hertz = if hertz < 1.0 { 100.0 } else { hertz };
+                    let share = |clock: libc::clock_t| crate::data::worth_of_binary(clock as f64 / hertz, 17);
+                    Ok(Value::tuple(vec![share(ledger.tms_utime), share(ledger.tms_stime),
+                        share(ledger.tms_cutime), share(ledger.tms_cstime), share(span)]))
+                }
+            }
             "cwd" => {
                 use std::os::unix::ffi::OsStrExt as _;
                 std::env::current_dir().map(|here| octets(here.as_os_str().as_bytes())).map_err(|err| err.raw_os_error().unwrap_or(libc::EIO))
