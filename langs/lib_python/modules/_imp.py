@@ -67,7 +67,7 @@ class _NativeLoader:
     @staticmethod
     def exec_module(module):
         # Creation already ran the body; preserve its deletions after bootstrap adds metadata.
-        missing = module.__spec__.loader_state
+        missing = module.__spec__.loader_state or ()
         for name in missing:
             if hasattr(module, name):
                 delattr(module, name)
