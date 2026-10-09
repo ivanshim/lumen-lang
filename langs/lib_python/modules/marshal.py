@@ -308,7 +308,6 @@ def load(file):
     raise 'NotImplementedError: marshal.load needs a file this runtime cannot read'
 
 
+# Report absent globals so callers can continue looking in other modules.
 def __getattr__(name):
-    if name.startswith('__') and name.endswith('__'):
-        raise AttributeError("module 'marshal' has no attribute '" + name + "'")
-    raise 'NotImplementedError: marshal.' + name + ' is not supported'
+    raise AttributeError("module 'marshal' has no attribute '" + name + "'")
