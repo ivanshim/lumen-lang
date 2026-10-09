@@ -5883,7 +5883,16 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         if let Some(owner) = concrete_module { return Value::Blueprint(owner); }
-        let word=if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
+        // A slot a class declares is a data member carried by the class,
+        // named as the reference names it, so that a reader asking
+        // whether a field has a default finds a descriptor, not a value.
+        let slot_word = match value {
+            Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) => {
+                Some(if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" })
+            }
+            _ => None,
+        };
+        let word=if let Some(slot)=slot_word { slot.to_owned() } else if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.

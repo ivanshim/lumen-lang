@@ -10638,6 +10638,10 @@ impl<'a> Machine<'a> {
             Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_string()),
             Value::OctetKind { changeable, .. } => Some(self.octet_kind_word(*changeable).to_string()),
             Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),
+            // A slot a class declares answers to the descriptor kind the
+            // reference names it by, so a claim made for that kind holds.
+            Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) =>
+                Some((if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" }).to_string()),
             other => self.kind_spelling(other).map(|word| word.to_string()),
         }
     }
@@ -18424,9 +18428,14 @@ impl<'a> Machine<'a> {
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
                 let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry.borrow().iter().any(|parent| parent.name == class.name));
+                // A slot a class declares is a data member, and answers
+                // to the descriptor kind the reference gives it even
+                // though it is carried as a wrapper rather than a thing.
+                let slot = matches!(one, Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_)))
+                    && if matches!(fields.get(2), Some(Value::Small(-2))) { class.name == "getset_descriptor" } else { class.name == "member_descriptor" });
                 // The run's own module objects answer to the native module kind.
                 let module = Self::native_beneath(class).as_deref() == Some("module") && self.namespace_holding(one).is_some();
-                Value::Flag(named || module)
+                Value::Flag(named || slot || module)
             }
             (Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
             _ => return Ok(None),
@@ -20919,7 +20928,18 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
-            Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
+            Prim::IsInstance => {
+                n(2)?;
+                let direct = belongs_to(&v[0], &v[1]);
+                // A value carried as a wrapper still answers for the kind
+                // the reference would name it by, so a claim made for
+                // that very kind is honoured.
+                let by_kind = !direct && match (&self.kind_named_after(&v[0]), &v[1]) {
+                    (Value::Blueprint(own), Value::Blueprint(wanted)) => own.name == wanted.name,
+                    _ => false,
+                };
+                Value::Flag(direct || by_kind)
+            }
             Prim::HasMember => {
                 if self.has_class_order() && v.len() == 2 && v[1].bare() == self.detail("allocate") && matches!(v[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
                     return Ok(Value::Flag(true));
@@ -29461,6 +29481,15 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
     match kind {
         Value::Vector(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
         Value::Blueprint(class) => {
+            // A slot a class declares is a data member carried as a
+            // wrapper, and answers to the descriptor kind the
+            // reference names it by.
+            if let Value::Wrapped(32, fields) = worth {
+                if matches!(fields.get(1), Some(Value::Blueprint(_))) {
+                    let kind_name = if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" };
+                    if class.name == kind_name { return true; }
+                }
+            }
             let Value::Thing(object) = worth else { return false };
             let mut current = object.blueprint().clone();
             loop {

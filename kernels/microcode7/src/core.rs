@@ -115,6 +115,10 @@ impl Value {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
                 _ => "object".to_owned(),
             },
+            // A slot a class declares is a data member, named as the
+            // reference names the descriptor carrying it.
+            Self::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) =>
+                if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" },
             _ => "object",
         };
         word.to_owned()
