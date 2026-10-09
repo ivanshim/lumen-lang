@@ -11196,14 +11196,14 @@ impl<'a> Builder<'a> {
             }
             return self.gather_comprehension(next, &closing, mapped);
         }
-        // A long literal must not become one form hung beneath the
-        // last for every member: reading such a form back nests as
-        // deep as the literal is long, and a literal long enough runs
-        // the stack out. Members of a row or set literal wait in a
-        // plain gathering of their own and join the whole through a
-        // single prim; only a spread interrupts the wait, each one
-        // costing a join of its own. A map literal keeps a join for
-        // every pair, its keys being weighed as each pair joins.
+        // A long row literal must not become one form hung beneath the
+        // last for every member: reading such a form back nests as deep
+        // as the row is long, and a row long enough runs the stack out.
+        // Members of a row wait in a plain gathering of their own and
+        // join the whole through a single prim; only a spread interrupts
+        // the wait, each one costing a join of its own. A set or map
+        // literal keeps the join it has always had for every member, so
+        // each element joins as it is read.
         let seed = || prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, Vec::new());
         let mut whole: Option<Form> = None;
         let mut waiting: Vec<Form> = Vec::new();
@@ -11238,7 +11238,7 @@ impl<'a> Builder<'a> {
                 self.pos = beginning;
                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
             }
-            if !mapped && !spreading {
+            if !mapped && family != "map" && !spreading {
                 waiting.push(item);
             } else {
                 let mut so_far = whole.take().unwrap_or_else(|| seed());
@@ -11259,13 +11259,7 @@ impl<'a> Builder<'a> {
                 prim_call(Prim::ExtendLiteral(false, true), vec![so_far, run])
             }
             (None, true) => seed(),
-            (None, false) => {
-                if family == "map" && !mapped {
-                    prim_call(Prim::ExtendLiteral(false, true), vec![seed(), prim_call(Prim::MakeArray, waiting)])
-                } else {
-                    prim_call(if mapped { Prim::MakeMap } else { Prim::MakeArray }, waiting)
-                }
-            }
+            (None, false) => prim_call(Prim::MakeArray, waiting),
         };
         if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { value = prim_call(Prim::DistinctObjects, vec![value]); }
         Ok(value)
