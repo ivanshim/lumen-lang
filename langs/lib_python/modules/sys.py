@@ -516,3 +516,34 @@ def settrace(trace):
     __trace_native__(1, trace)
 def getdefaultencoding():
     return "utf-8"
+
+# Resolve path entries lazily so bootstrap imports can use the native source reader.
+def _zip_path_hook(path):
+    from zipimport import zipimporter
+    return zipimporter(path)
+
+# Build the source finder only when an ordinary directory is first searched.
+def _file_path_hook(path):
+    from importlib._bootstrap_external import FileFinder, SourceFileLoader, SOURCE_SUFFIXES
+    return FileFinder.path_hook((SourceFileLoader, SOURCE_SUFFIXES))(path)
+
+# Delegate path searching to the upstream finder and its importer cache.
+class _PathFinder:
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        from importlib._bootstrap_external import PathFinder
+        return PathFinder.find_spec(fullname, path, target)
+
+    @classmethod
+    def invalidate_caches(cls):
+        from importlib._bootstrap_external import _NamespacePath
+        for path, finder in list(path_importer_cache.items()):
+            if finder is None or not path.startswith('/'):
+                del path_importer_cache[path]
+            elif hasattr(finder, 'invalidate_caches'):
+                finder.invalidate_caches()
+        _NamespacePath._epoch += 1
+
+path_importer_cache = {}
+path_hooks = [_zip_path_hook, _file_path_hook]
+meta_path = [_PathFinder]

@@ -20,7 +20,8 @@
     "annotationlib": "runtime_adapters/annotationlib.py",
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
-    "abc": "runtime_adapters/abc.py"
+    "abc": "runtime_adapters/abc.py",
+    "zipimport": "runtime_adapters/zipimport.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
@@ -33,5 +34,8 @@
     "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
     "warnings": "runtime_adapters/native_warnings.py"
+  },
+  "preludes": {
+    "zipimport": "runtime_adapters/zipimport_bootstrap.py"
   }
 }

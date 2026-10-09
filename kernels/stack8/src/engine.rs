@@ -17248,7 +17248,7 @@ impl<'a> Engine<'a> {
                 if self.sequence_equal_item(&item, &args[0])? {
                     if operation == "index" { return Ok(Value::Small(at as i64)); }
                     if operation == "remove" {
-                        if let Value::Collection(cell, _) = receiver {
+                        if let Some(cell) = Self::holding_cell(receiver) {
                             if let Value::Array(row) = &mut *cell.borrow_mut() {
                                 if at < row.len() { Rc::make_mut(row).remove(at); }
                             }
@@ -24706,14 +24706,25 @@ impl Engine<'_> {
         Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", Self::shown_kind(&path), Self::shown_kind(&answer)))
     }
 
-    fn import_path(&self, written: &str) -> Res<String> {
+    fn import_path(&mut self, written: &str) -> Flow<String> {
         if !written.starts_with('.') { return Ok(written.to_string()); }
-        let Some((_, owner)) = self.module_slots.get(&self.source) else {
-            return Err(self.lang.import_relative_unready.clone());
+        let globals = self.running_outer();
+        let declared = self.book_get(&globals, "__package__")?.map(|value| value.contents());
+        let package = match declared {
+            Some(Value::Text(package)) => {
+                if package.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+                package.to_string()
+            },
+            None | Some(Value::Null) | Some(Value::Blank) => {
+                let Some((_, owner)) = self.module_slots.get(&self.source) else {
+                    return Err(self.lang.import_relative_unready.clone().into());
+                };
+                let is_package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
+                if is_package { owner.clone() } else { owner.rsplit_once('.').map_or("", |(parent, _)| parent).to_string() }
+            },
+            _ => return Err("TypeError: package must be a string".into()),
         };
-        let is_package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
-        let mut components: Vec<&str> = owner.split('.').collect();
-        if !is_package { components.pop(); }
+        let mut components: Vec<&str> = package.split('.').collect();
         let levels = written.chars().take_while(|c| *c == '.').count();
         if components.len() < levels { return Err("ImportError: attempted relative import beyond top-level package".into()); }
         components.truncate(components.len() - levels + 1);
@@ -24753,10 +24764,12 @@ impl Engine<'_> {
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
         let parent = path.rsplit_once('.');
+        let mut package_module = None;
         let mut registering_alias = false;
         if let Some(word) = self.lang.module_path.clone() {
             if let Some((above, _)) = parent {
                 let owner = self.import_module(above)?;
+                package_module = Some(owner.clone());
                 if let Some(cached) = self.module_cache_value(path) {
                     if matches!(cached, Value::Null) { return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into()); }
                     return Ok(cached);
@@ -24772,6 +24785,37 @@ impl Engine<'_> {
                         return Err(format!("{}{opening}{above}{closing}", Self::named_fault(&self.lang.import_missing, path)).into());
                     }
                 }
+            }
+        }
+        let search_namespace = package_module.as_ref().or_else(|| self.modules.get("sys"));
+        let search_word = if parent.is_some() { "__path__" } else { "path" };
+        let archive_path = search_namespace.is_some_and(|namespace| self.namespace_has_file_path(namespace, search_word));
+        let bridge_ready = self.modules.contains_key("_zipimport_path") && !self.importing.contains("_zipimport_path");
+        let library_initializing = self.importing.iter().any(|name| self.embedded_names.contains(name));
+        // Path hooks may supply archive or namespace loaders before a disk file.
+        if self.lang.module_path.is_some() && self.modules.contains_key("sys")
+            && (!self.module_sources.contains_key(path) || archive_path) && !self.importing.contains("\0path-hooks") && !self.importing.contains("sys") && (bridge_ready || !library_initializing) {
+            self.importing.insert("\0path-hooks".to_owned());
+            let hooked: Flow<(Value, Value)> = (|| {
+                let bridge = self.import_module("_zipimport_path")?;
+                let resolve = self.class_get(bridge.clone(), "find", false)?;
+                let search = match parent {
+                    Some(_) => self.class_get(package_module.clone().unwrap(), "__path__", false)?,
+                    None => Value::Null,
+                };
+                let spec = self.call_held(resolve, vec![Value::text(path), search])
+                    .map_err(|message| self.carried.take().unwrap_or_else(|| Fault::Note(message)))?;
+                Ok((bridge, spec))
+            })();
+            self.importing.remove("\0path-hooks");
+            let (bridge, spec) = hooked?;
+            if !matches!(spec.contents(), Value::Null) {
+                let load = self.class_get(bridge, "load", false)?;
+                let loaded = self.call_held(load, vec![spec])
+                    .map_err(|message| self.carried.take().unwrap_or_else(|| Fault::Note(message)))?;
+                self.modules.insert(path.to_owned(), loaded.clone());
+                self.module_addresses_ready.set(false);
+                return Ok(loaded);
             }
         }
         let from_disk = self.sys_path_source(path);
@@ -24974,6 +25018,19 @@ impl Engine<'_> {
         Ok(module)
     }
 
+    /// Recognize archive paths, including directories below a file entry.
+    fn namespace_has_file_path(&self, namespace: &Value, word: &str) -> bool {
+        let Value::Object(space) = namespace else { return false };
+        let entries = space.fields.borrow().iter().find(|(key, _)| key == word).map(|(_, value)| value.contents());
+        match entries {
+            Some(Value::Array(items)) | Some(Value::Tuple(items)) => items.iter().any(|item| {
+                let Value::Text(directory) = item else { return false };
+                std::path::Path::new(directory.as_ref()).ancestors().any(|part| part.is_file())
+            }),
+            _ => false,
+        }
+    }
+
     /// Search sys.path for a root module, or the parent package path for
     /// a child. Initializer directories and file names are made absolute.
     fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
@@ -25050,11 +25107,13 @@ impl Engine<'_> {
     /// Whether a value on the stack is the kernel's own module standing
     /// under this path: read in by the import itself, and not a value the
     /// program's own __import__ answered with.
-    fn is_builtin_module(&self, module: &Value, _path: &str) -> bool {
-        self.modules.values().any(|known| match (known, module) {
+    fn is_builtin_module(&self, module: &Value, path: &str) -> bool {
+        let same_module = |known: &Value| match (known, module) {
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             _ => false,
-        })
+        };
+        self.modules.values().any(same_module)
+            || self.module_cache_value(path).as_ref().is_some_and(same_module)
     }
 
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
@@ -25080,6 +25139,16 @@ impl Engine<'_> {
         }
         let child = format!("{path}.{name}");
         if (self.lang.module_path.is_none() && self.module_sources.contains_key(&child)) || self.sys_path_source(&child).is_some() || (self.modules.contains_key(&child) && self.module_cache_names(&child)) { return self.import_module(&child); }
+        let package = self.lang.module_path.as_ref().is_some_and(|word| {
+            matches!(module, Value::Object(space) if space.fields.borrow().iter().any(|(name, _)| name == word))
+        });
+        if package {
+            match self.import_module(&child) {
+                Ok(value) => return Ok(value),
+                Err(Fault::Note(ref text)) if self.lang.import_missing.first().is_some_and(|head| text.starts_with(head)) && self.absent_import(text).as_deref() == Some(child.as_str()) => {},
+                Err(fault) => return Err(fault),
+            }
+        }
         Err(self.import_member_fault(path, name).into())
     }
 

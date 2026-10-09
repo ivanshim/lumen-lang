@@ -27,7 +27,7 @@ def extension_suffixes():
     return []
 
 # Bytecode marker from the pinned CPython pycore_magic_number.h.
-pyc_magic_number_token = 168627833
+pyc_magic_number_token = 168627755
 check_hash_based_pycs = 'default'
 
 _import_lock_depth = 0

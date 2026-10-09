@@ -10315,7 +10315,7 @@ impl<'a> Machine<'a> {
                     match name {
                         "index" => return Ok(Value::Small(position as i64)),
                         "remove" => {
-                            if let Value::Mutable(storage, _) = receiver {
+                            if let Some(storage) = Self::native_cell(receiver) {
                                 if let Value::Vector(values) = &mut *storage.borrow_mut() {
                                     if values.len() > position { Rc::make_mut(values).remove(position); }
                                 }
@@ -25112,13 +25112,21 @@ impl Machine<'_> {
 
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
-    fn qualified_import(&self, name: &str) -> Result<String, String> {
+    fn qualified_import(&mut self, name: &str) -> Result<String, String> {
         let levels = name.bytes().take_while(|&b| b == b'.').count();
         if levels == 0 { return Ok(name.to_owned()); }
-        let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_owned())?;
-        let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
-        let parent = if package { caller.as_str() } else { caller.rsplit_once('.').map_or("", |pair| pair.0) };
-        let mut prefix = parent.to_owned();
+        let namespace = self.standing_world();
+        let supplied = looked_up(&namespace, "__package__").map(|value| value.settled());
+        let mut prefix = match supplied {
+            Some(Value::Text(package)) if !package.is_empty() => package.to_string(),
+            Some(Value::Text(_)) => return Err("ImportError: attempted relative import with no known parent package".into()),
+            None | Some(Value::Nil) | Some(Value::Unset) => {
+                let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| self.table.strings("ext.stmt.import.relative.unready").first().map(String::as_str).unwrap_or_default().to_owned())?;
+                let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
+                if package { caller.to_owned() } else { caller.rsplit_once('.').map_or("", |pair| pair.0).to_owned() }
+            },
+            _ => return Err("TypeError: package must be a string".into()),
+        };
         for _ in 1..levels {
             prefix = prefix.rsplit_once('.').map(|(above, _)| above.to_owned()).ok_or_else(|| String::from("ImportError: attempted relative import beyond top-level package"))?;
         }
@@ -25158,10 +25166,12 @@ impl Machine<'_> {
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let split = path.rsplit_once('.');
+        let mut parent_namespace = None;
         let mut initializing_alias = false;
         if let Some(attribute) = self.table.strings("ext.system.module.path").first().map(String::as_str).map(str::to_owned) {
             if let Some((parent_name, _)) = split {
                 let parent_value = self.load_namespace(parent_name)?;
+                parent_namespace = Some(parent_value.clone());
                 match self.cached_import(path) {
                     Some(Value::Nil) => return Err(format!("ModuleNotFoundError: import of {} halted; None in sys.modules", path)),
                     Some(namespace) => return Ok(namespace),
@@ -25182,6 +25192,34 @@ impl Machine<'_> {
                         return Err(format!("{head}{path}{tail}{before}{parent_name}{after}"));
                     }
                 }
+            }
+        }
+        let search_attribute = if split.is_some() { "__path__" } else { "path" };
+        let file_entry = parent_namespace.as_ref().or_else(|| self.imported.get("sys"))
+            .is_some_and(|owner| self.search_list_contains_file(owner, search_attribute));
+        let bootstrap_complete = self.imported.contains_key("_zipimport_path") && !self.importing.contains("_zipimport_path");
+        let initializing_library = self.library_origins.iter().any(|module| self.importing.contains(module));
+        // Give Python finders their turn, without reentering during bootstrap.
+        let python_paths = self.table.single("ext.system.module.path").is_some() && (file_entry || !self.library_sources.contains_key(path));
+        if python_paths && self.imported.contains_key("sys") && !self.importing.contains("sys") && (bootstrap_complete || !initializing_library)
+            && self.importing.insert(String::from("\0finder-search")) {
+            let found: Result<(Value, Value), String> = (|| {
+                let support = self.load_namespace("_zipimport_path")?;
+                let callable = self.member_text(support.clone(), "find")?;
+                let places = if split.is_some() {
+                    self.member_text(parent_namespace.clone().unwrap(), "__path__")?
+                } else { Value::Nil };
+                let specification = self.apply_within(callable, vec![Value::text(path), places])?;
+                Ok((support, specification))
+            })();
+            self.importing.remove("\0finder-search");
+            let (support, specification) = found?;
+            if !matches!(specification, Value::Nil) {
+                let initialize = self.member_text(support, "load")?;
+                let namespace = self.apply_within(initialize, vec![specification])?;
+                self.imported.insert(path.into(), namespace.clone());
+                self.namespace_places.borrow_mut().take();
+                return Ok(namespace);
             }
         }
         let from_disk = self.sys_path_source(path);
@@ -25413,6 +25451,24 @@ impl Machine<'_> {
         Ok(value)
     }
 
+    /// Check each search directory for an enclosing regular file.
+    fn search_list_contains_file(&self, namespace: &Value, key: &str) -> bool {
+        let Value::Thing(owner) = namespace else { return false };
+        let held = owner.holds.borrow().iter().find(|entry| entry.0 == key).map(|entry| entry.1.clone());
+        let Some(mut directories) = held else { return false };
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = directories { directories = cell.borrow().clone(); }
+        let items = match directories {
+            Value::Vector(items) | Value::Tuple(items) => items,
+            _ => return false,
+        };
+        for item in items.iter() {
+            if let Value::Text(directory) = item {
+                if std::path::Path::new(directory.as_ref()).ancestors().any(std::path::Path::is_file) { return true; }
+            }
+        }
+        false
+    }
+
     /// A dotted name uses its owner's current search directories. Ordinary
     /// names use sys.path; regular packages precede files in each directory.
     fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
@@ -25492,11 +25548,12 @@ impl Machine<'_> {
     /// Whether a value standing on the stack is the kernel's own
     /// namespace read in under this path, and not a value the program's
     /// own __import__ answered with.
-    fn is_our_namespace(&self, value: &Value, _path: &str) -> bool {
-        if let Value::Thing(space) = value {
-            return self.imported.values().any(|known| matches!(known, Value::Thing(other) if Rc::ptr_eq(space, other)));
+    fn is_our_namespace(&self, value: &Value, path: &str) -> bool {
+        let Value::Thing(space) = value else { return false };
+        if let Some(Value::Thing(cached)) = self.cached_import(path) {
+            if Rc::ptr_eq(space, &cached) { return true; }
         }
-        false
+        self.imported.values().any(|known| matches!(known, Value::Thing(other) if Rc::ptr_eq(space, other)))
     }
 
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
@@ -25524,6 +25581,21 @@ impl Machine<'_> {
         }
         let full = format!("{path}.{wanted}");
         if (self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }
+        let path_name = self.table.single("ext.system.module.path");
+        let package = match (path_name, value) {
+            (Some(attribute), Value::Thing(namespace)) => namespace.holds.borrow().iter().any(|entry| entry.0 == attribute),
+            _ => false,
+        };
+        if package {
+            match self.load_namespace(&full) {
+                Ok(child) => return Ok(child),
+                Err(text) => {
+                    let missing = self.table.strings("ext.stmt.import.missing").first().is_some_and(|head| text.starts_with(head));
+                    if !missing || self.import_source_not_there(&text).as_deref() != Some(full.as_str()) { return Err(text); }
+                    self.got_away = None;
+                },
+            }
+        }
         Err(self.import_member_fault(path, wanted))
     }
 

@@ -1,14 +1,11 @@
-# Bringing a module in is the reader's own work. This module names the
-# parts of that machinery a program is allowed to ask after, and the
-# one call that settles any finder state. The reader reads directories
-# as it goes and keeps nothing of their listing between imports, so
-# there is never a stale cache to clear and the ask is answered with
-# nothing to do. The naming of a bytecode cache stands in
-# importlib.util, beside this module.
+# Imports use the native reader; cache invalidation reaches registered finders.
 
 
 def invalidate_caches():
-    return None
+    import sys
+    for finder in list(sys.meta_path):
+        if hasattr(finder, "invalidate_caches"):
+            finder.invalidate_caches()
 
 # The utility part lives in importlib.util; the name below stands ready
 # for the embedded alias that brings that module in beside this one.
