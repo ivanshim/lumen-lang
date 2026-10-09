@@ -3999,9 +3999,13 @@ def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=Non
         raise ValueError('compile(): invalid optimize value')
     if mode not in ('exec', 'eval', 'single', 'func_type'):
         raise ValueError('compile(): invalid mode')
-    if isinstance(source, AST):
-        return source
     folded = bool(flags & 32768)
+    if isinstance(source, AST):
+        # The plain AST-only reading hands the tree straight back; the
+        # optimised one reads the tree's own text again and settles it.
+        if not folded:
+            return source
+        source = unparse(source)
     if folded and optimize < 0:
         optimize = 0
     return parse(source, filename, mode, type_comments=bool(flags & PyCF_TYPE_COMMENTS),
