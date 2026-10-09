@@ -723,7 +723,9 @@ impl<'a> Engine<'a> {
         // values, or by slots of its own; a class of no extra storage
         // takes the shape of what it stands on, however it is spelled.
         let shaped = Self::own_kind(class).is_some_and(|word| self.lang.builtins.get(&word).is_some());
-        if shaped || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
+        let adds_slots = Self::stored_slot_names(class).map_or(class.declares_slots, |names|
+            names.iter().any(|name| name != "__dict__" && name != "__weakref__"));
+        if shaped || self.is_metaclass_root(class) || adds_slots { return class.clone(); }
         class.base.as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -1071,10 +1073,17 @@ impl<'a> Engine<'a> {
         let (mut size, mut dictionary, mut weak) = c.base.as_ref()
             .map(|base| Self::class_layout(base, self.exception_class(base)))
             .unwrap_or((16, 0, 0));
+        let variable = matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes"));
+        // Secondary bases can supply storage, but cannot enlarge a variable-sized layout.
+        for base in &c.direct {
+            let (_, base_dict, base_weak) = Self::class_layout(base, self.exception_class(base));
+            if dictionary == 0 && base_dict != 0 { dictionary = -1; }
+            if weak == 0 && base_weak != 0 && !variable { weak = -32; }
+        }
         match names {
             None => {
-                if dictionary <= 0 { dictionary = -1; }
-                if weak == 0 { weak = -32; }
+                if dictionary == 0 { dictionary = -1; }
+                if weak == 0 && !variable { weak = -32; }
             }
             Some(names) => {
                 for name in names {
@@ -1099,7 +1108,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if exceptional { (72, 16, 0) } else { (16, 0, 0) }
+        if exceptional { return (72, 16, 0); }
+        match Self::own_kind(class).as_deref() {
+            Some("int") => (24, 0, 0),
+            Some("tuple") => (32, 0, 0),
+            Some("bytes") => (33, 0, 0),
+            Some("set" | "frozenset") => (200, 0, 192),
+            _ => (16, 0, 0),
+        }
     }
     /// The slot names a class kept when its declaration was read: a walk
     /// that handed them out one at a time is spent once it has.

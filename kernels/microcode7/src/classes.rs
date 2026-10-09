@@ -807,9 +807,11 @@ impl<'a> Machine<'a> {
         // shape it stands on, however its name is spelled.
         let shaped = Self::native_word(blueprint).is_some_and(|word| self.table.prims.contains_key(&word));
         if shaped||self.builds_classes(blueprint){return blueprint.clone();}
-        if blueprint.has_slot_storage {
-            return blueprint.clone();
-        }
+        let own_storage = match Self::kept_slot_names(blueprint) {
+            Some(words) => words.iter().any(|word| !matches!(word.as_str(), "__weakref__" | "__dict__")),
+            None => blueprint.has_slot_storage,
+        };
+        if own_storage { return blueprint.clone(); }
         match &blueprint.under {Some(parent)=>self.storage_ancestor(parent),None=>blueprint.clone()}
     }
     fn primary_parent(&self,parents:&[Rc<Blueprint>])->Result<Option<Rc<Blueprint>>,Escape> {
@@ -1146,10 +1148,17 @@ impl<'a> Machine<'a> {
         let (mut size, mut dictionary, mut weak) = class.under.as_ref()
             .map(|parent| Self::kept_layout(parent, self.is_fault_kind(parent)))
             .unwrap_or((16, 0, 0));
+        let can_add_weak = !matches!(Self::native_beneath(class).as_deref(), Some("bytes" | "tuple" | "int"));
+        // A parent's storage is available even when another parent provides the shape.
+        for parent in class.parents.iter() {
+            let inherited = Self::kept_layout(parent, self.is_fault_kind(parent));
+            dictionary = if dictionary == 0 && inherited.1 != 0 { -1 } else { dictionary };
+            if can_add_weak && weak == 0 && inherited.2 != 0 { weak = -32; }
+        }
         match names {
             None => {
-                if dictionary <= 0 { dictionary = -1; }
-                if weak == 0 { weak = -32; }
+                if dictionary == 0 { dictionary = -1; }
+                if can_add_weak && weak == 0 { weak = -32; }
             }
             Some(names) => {
                 for name in names {
@@ -1172,7 +1181,15 @@ impl<'a> Machine<'a> {
                 return (*size, *dictionary, *weak);
             }
         }
-        if fault { (72, 16, 0) } else { (16, 0, 0) }
+        if fault { return (72, 16, 0); }
+        let native = Self::native_word(class);
+        match native.as_deref() {
+            Some("frozenset") | Some("set") => (200, 0, 192),
+            Some("bytes") => (33, 0, 0),
+            Some("tuple") => (32, 0, 0),
+            Some("int") => (24, 0, 0),
+            _ => (16, 0, 0),
+        }
     }
     /// The slot names a blueprint kept when its declaration was read: a
     /// walk that handed them out one at a time is spent once it has.
