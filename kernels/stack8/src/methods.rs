@@ -1,3 +1,27 @@
+/// Where a run of code units first or last stands inside a longer run.
+fn codes_search(hay: &[u32], needle: &[u32], from: usize, backwards: bool) -> Option<usize> {
+    if needle.is_empty() { return Some(if backwards { hay.len() } else { from.min(hay.len()) }); }
+    if needle.len() > hay.len() { return None; }
+    let places = 0..=hay.len() - needle.len();
+    if backwards {
+        places.rev().find(|&i| hay[i..i + needle.len()] == *needle)
+    } else {
+        places.filter(|&i| i >= from).find(|&i| hay[i..i + needle.len()] == *needle)
+    }
+}
+
+/// How many runs of the sought code units stand in the longer run.
+fn codes_tally(hay: &[u32], needle: &[u32]) -> usize {
+    if needle.is_empty() { return hay.len() + 1; }
+    let mut tally = 0;
+    let mut at = 0;
+    while let Some(found) = codes_search(hay, needle, at, false) {
+        tally += 1;
+        at = found + needle.len();
+    }
+    tally
+}
+
 // Methods belonging to the values themselves. The spelling is supplied
 // by the definition; the receiver keeps its own mutable holding place.
 
@@ -275,6 +299,23 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         // so a sigma at the end of a word and every scalar around a
         // unit no `char` holds are cased exactly as `str.lower` and
         // `str.upper` case them.
+        Value::Codepoints(row) if op == "count" => {
+            arity(1, 3)?;
+            let span = row.len();
+            let raw = a.get(1).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(0);
+            let low = bound(raw, span);
+            let high = a.get(2).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.map_or(span, |n| bound(n, span));
+            let ordered = raw <= span as i64 && low <= high;
+            let part = &row[low..high.max(low)];
+            let needle = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if op == "count" {
+                let total = if !ordered { 0 } else { codes_tally(part, &needle) };
+                return Ok(Value::Small(total as i64));
+            }
+            let at = if !ordered { None } else { codes_search(part, &needle, 0, matches!(op, "rfind" | "rindex")) };
+            if matches!(op, "index" | "rindex") && at.is_none() { return Err(fault("substring")); }
+            return Ok(Value::Small(at.map_or(-1, |i| (low + i) as i64)));
+        }
         Value::Codepoints(row) if op == "upper" || op == "lower" => {
             arity(0, 0)?;
             let work = if op == "upper" { crate::strings::TextOp::Upper } else { crate::strings::TextOp::Lower };
