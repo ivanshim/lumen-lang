@@ -9650,3 +9650,24 @@
 {"t":"2026-10-09T04:57:24Z","event":"review-queued","job":"kimi-generator-stop","review":"review-auto-kimi-generator-stop-0457"}
 {"t":"2026-10-09T04:57:28Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-09T04:58:29Z","event":"exited","job":"dsflash-colorize","code":0}
+{"t":"2026-10-09T05:01:34Z","event":"resumed","job":"stdlib-mailbox","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T05:02:32Z","event":"finished","job":"dsflash-colorize","exit_time":"2026-10-09T04:58:29Z"}
+{"t":"2026-10-09T05:02:32Z","event":"review-queued","job":"dsflash-colorize","review":"review-auto-dsflash-colorize-0502"}
+{"t":"2026-10-09T05:02:39Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T05:03:58Z","event":"exited","job":"stdlib-zipimport","code":0}
+{"t":"2026-10-09T05:06:36Z","event":"resumed","job":"stdlib-compile","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T05:07:47Z","event":"finished","job":"stdlib-zipimport","exit_time":"2026-10-09T05:03:58Z"}
+{"t":"2026-10-09T05:07:47Z","event":"review-queued","job":"stdlib-zipimport","review":"review-auto-stdlib-zipimport-0507"}
+{"t":"2026-10-09T05:07:48Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T05:08:14Z","event":"note","text":"prune-archive: removed 0 files (0 MB); 0 finished jobs"}
+{"t":"2026-10-09T05:08:25Z","event":"note","text":"archive-sync: archived to lumenlang2:coord-archive; pruned 61 old local items (active kept: _int21g dsflash-bigmem dsflash-contextlib-async dsflash-contextlib-async-sol dsflash-dictviews dsflash-ensurepip dsflash-frame dsflash-genericalias dsflash-genericalias-sol dsflash-longexp dsflash-marshal dsflash-pkgutil dsflash-py-compile dsflash-pyclbr dsflash-pyclbr-sol dsflash-reprlib dspro-unicode-file-functions integrate-21g kimi-type-comments stdlib-code stdlib-compile stdlib-doctest stdlib-doctest-astra stdlib-inspect stdlib-mailbox stdlib-runpy stdlib-type-params )"}
+{"t":"2026-10-09T05:08:28Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-09T05:11:36Z","event":"review-started","job":"dsflash-unpack-baseexc","review":"review-auto-dsflash-unpack-baseexc-0411"}
+{"t":"2026-10-09T05:13:12Z","event":"returned","job":"dsflash-mathprop-bigaddr","review":"review-auto-dsflash-mathprop-bigaddr-0406","commit":"0c71efcea","round":1,"note":"(1st; integrity ok; clean check 1195/0 gates ok; new tests all upstream skips, no measured gain; introduced: nextafter steps via _as_index accepts non-int __index__ result) -> returns + or-resume queued with dsh session"}
+{"t":"2026-10-09T05:13:12Z","event":"queued","job":"dsflash-mathprop-bigaddr","model":"deepseek-flash","line":"or-resume dsflash-mathprop-bigaddr deepseek-flash session-0a6281d5-95fb-4126-8c35-ff2b64301c01","note":"1st return resume"}
+{"t":"2026-10-09T05:15:32Z","event":"queued","job":"dsflash-file","model":"deepseek-flash","line":"ds-new dsflash-file deepseek-flash","note":"DS Flash slot fed: test_file (absent, profile 1.0 library not-yet, small), worktree at 94f805110; DS Flash 10 running + 2 queued = 12"}
+{"t":"2026-10-09T05:15:55Z","event":"quota","codex_week_used":10,"codex_credits":0,"claude_week_used":17,"claude_5h_used":7,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":267.21}
+{"t":"2026-10-09T05:15:59Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":10,"expected":10.6,"gap":-0.6,"status":"ok"}
+{"t":"2026-10-09T05:16:11Z","event":"checkin","status":"done","actions":"RETURN dsflash-mathprop-bigaddr (1st; nextafter steps via _as_index accepts non-int __index__ result; new tests all upstream skips) -> returns + or-resume queued with dsh session; DS Flash fed: dsflash-file (test_file, absent, small) brief + worktree at 94f805110, ds-new queued; prune-merged 0MB; no idle accepted target/ to delete; luna FINDINGS appended","notes":"Sol 11/12 running + Astra 1 (stdlib-doctest-astra), 10 Sol lines queued (box load 6.4); DS Flash 10 running + 2 queued = 12; DS Pro 1/1 (dspro-type-annotations held); Sonnet 1/1 (claude-types); Codex week 10%; Claude 5h 7%/week 17%; box 5.7 GB avail, disk 83%; Mac disk 87%; no open PR (integrate-21g running); luna gap -0.6 ok, no new alerts"}
+{"t":"2026-10-09T05:16:38Z","event":"resumed","job":"dsflash-mathprop-bigaddr","model":"deepseek-flash","session":"session-0a6281d5-95fb-4126-8c35-ff2b64301c01"}
+{"t":"2026-10-09T05:17:38Z","event":"exited","job":"review-auto-dsflash-unpack-baseexc-0411","code":0}
