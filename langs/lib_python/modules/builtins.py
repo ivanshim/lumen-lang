@@ -139,6 +139,7 @@ zip = zip
 
 __import__ = __import__
 abs = abs
+ascii = ascii
 all = all
 any = any
 bin = bin
@@ -942,7 +943,7 @@ class memoryview:
 
 # What CPython's builtins holds and this one does not, so that a reader
 # looking for a missing name learns it is missing rather than broken.
-# There is no object behind any of these here: aiter, anext, ascii,
+# There is no object behind any of these here: aiter, anext,
 # copyright, credits, exit, help, license,
 # quit, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,

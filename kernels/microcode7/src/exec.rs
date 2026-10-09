@@ -4648,10 +4648,9 @@ impl<'a> Machine<'a> {
                 };
             }
         }
-        let type_name = match &exception {
-            Value::Blueprint(_) => String::from("type"),
-            Value::Intrinsic(op, _) if op.names_a_kind() => "type".to_owned(),
-            _ => exception.kind_word(),
+        let type_name = match exception.settled() {
+            value if self.stands_for_a_kind(&value) => "type".to_owned(),
+            value => value.kind_word(),
         };
         Err(Escape::Error(complaint(0) + &type_name))
     }
