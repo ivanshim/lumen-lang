@@ -24,6 +24,8 @@ use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance,
 #[derive(Debug, Clone)]
 pub enum Hold {
     Native(crate::code::Builtin, Rc<str>),
+    /// A bytes kind: a value of its own, never collected.
+    Octets(bool, Rc<str>),
     Object(Weak<Instance>),
     Container(Weak<RefCell<Value>>),
     Class(Weak<Class>),
@@ -39,6 +41,7 @@ impl Hold {
     pub fn revive(&self) -> Option<Value> {
         Some(match self {
             Hold::Native(operation, spelling) => Value::Native(*operation, spelling.clone()),
+            Hold::Octets(changeable, word) => Value::ByteKind(*changeable, word.clone()),
             Hold::Object(w) => Value::Object(w.upgrade()?),
             Hold::Container(w) => Value::Bond(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
@@ -52,7 +55,7 @@ impl Hold {
 
     pub fn gone(&self) -> bool {
         match self {
-            Hold::Native(..) => false,
+            Hold::Native(..) | Hold::Octets(..) => false,
             Hold::Object(w) => w.strong_count() == 0,
             Hold::Container(w) => w.strong_count() == 0,
             Hold::Class(w) => w.strong_count() == 0,
@@ -124,7 +127,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
     let places: HashSet<usize> = group.iter().filter_map(place_of).collect();
     let lost = |hold: &Hold| match hold {
         Hold::Container(target) => places.contains(&(target.as_ptr() as usize)),
-        Hold::Native(..) => false,
+        Hold::Native(..) | Hold::Octets(..) => false,
         Hold::Object(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Class(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),
@@ -355,6 +358,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
         Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => hold_of(&cell.borrow()),
         Value::Object(o) => Some(Hold::Object(Rc::downgrade(o))),
         Value::Native(op, word) if op.names_kind() => Some(Hold::Native(*op, word.clone())),
+        Value::ByteKind(changeable, word) => Some(Hold::Octets(*changeable, word.clone())),
         Value::Class(c) => Some(Hold::Class(Rc::downgrade(c))),
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),
