@@ -9812,3 +9812,24 @@
 {"t":"2026-10-09T07:41:11Z","event":"review-queued","job":"dsflash-ensurepip","review":"review-auto-dsflash-ensurepip-0741"}
 {"t":"2026-10-09T07:41:17Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
 {"t":"2026-10-09T07:41:52Z","event":"review-started","job":"stdlib-runpy","review":"review-auto-stdlib-runpy-0736"}
+{"t":"2026-10-09T07:42:42Z","event":"exited","job":"dsflash-py-compile","code":0}
+{"t":"2026-10-09T07:46:21Z","event":"finished","job":"dsflash-py-compile","exit_time":"2026-10-09T07:42:42Z"}
+{"t":"2026-10-09T07:46:21Z","event":"review-queued","job":"dsflash-py-compile","review":"review-auto-dsflash-py-compile-0746"}
+{"t":"2026-10-09T07:46:25Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T07:49:17Z","event":"exited","job":"review-auto-stdlib-runpy-0736","code":0}
+{"t":"2026-10-09T07:50:55Z","event":"review-started","job":"dsflash-ensurepip","review":"review-auto-dsflash-ensurepip-0741"}
+{"t":"2026-10-09T07:53:31Z","event":"accepted","job":"dspro-unicode-file-functions","review":"review-auto-dspro-unicode-file-functions-0735","batch":"21h","commit":344629781,"branch":"fix/dspro-unicode-file-functions","model":"deepseek-v4-pro","note":"(DS Pro, 1st round) test_unicode_file_functions absent->30/30 both kernels; general NFC/NFD/NFKC/NFKD native normalization replaces Latin-1 path; clean check 1196/0 gates ok, no regression/disagree, independence 0; integrity ok sha256 faithful; base 94f805110; integration: overlaps 21g stdlib-unicodedata (all 4 kernel files, unicodedata.py, tests/README.md) - keep 21g full UCD module, reconcile native ops once; follow-up: coverage re-certify (test_io mc7 timeout, pre-fix checker)"}
+{"t":"2026-10-09T07:53:31Z","event":"returned","job":"stdlib-runpy","review":"review-auto-stdlib-runpy-0736","commit":"60d0258cb","round":1,"model":"gpt-6.1-sol","note":"(1st technical return; earlier stop was usage limit; integrity ok; clean check 1195/0 gates ok; runpy 0->27/40 both kernels; blockers: compiled paths unmarshallable code, no zipfile, -E startup option read as file, stdin child bytes args) -> returns/stdlib-runpy.md + queue"}
+{"t":"2026-10-09T07:55:12Z","event":"exited","job":"review-auto-dsflash-ensurepip-0741","code":0}
+{"t":"2026-10-09T07:55:57Z","event":"review-started","job":"dsflash-py-compile","review":"review-auto-dsflash-py-compile-0746"}
+{"t":"2026-10-09T07:56:41Z","event":"queued","job":"dsflash-calendar","model":"deepseek-flash","line":"ds-new dsflash-calendar deepseek-flash","note":"DS Flash slot fed: test_calendar (library, below 76/79, small; _locale raises a str instead of locale.Error so locale tests error instead of skipping; check raise of non-exceptions), worktree at 94f805110"}
+{"t":"2026-10-09T07:57:04Z","event":"quota","codex_week_used":22,"codex_credits":0,"claude_week_used":19,"claude_5h_used":17,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":257.97}
+{"t":"2026-10-09T07:57:08Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":22,"expected":23.1,"gap":-1.1,"status":"ok"}
+{"t":"2026-10-09T07:57:26Z","event":"checkin","status":"done","actions":"accepted dspro-unicode-file-functions (344629781, 21h; unicode_file_functions absent->30/30 both kernels); returned stdlib-runpy (1st technical, Sol; runpy 0->27/40, 4 blocker groups) -> returns/stdlib-runpy.md + sol-resume queued; DS Flash fed: dsflash-calendar (test_calendar 76/79, small; _locale raises a str) brief + worktree at 94f805110, ds-new queued; prune 0MB + removed target/ of idle accepted dspro-unicode-file-functions (box 81->80%)","notes":"DS Flash small/medium profile-1.0 pool exhausted: 1 Flash slot idle, asked Ivan (widen scope / follow-ups / move slot); DS Pro slot free (cascade rung only); box 80% disk, load 5.7/8, 12.4G mem avail; Mac 88%; Codex week 22%; Claude 5h 17%/week 19%; luna ok gap -1.1; no open PR; integrate-21g running; dspro-unicode overlaps 21g stdlib-unicodedata (reconcile at integration)"}
+{"t":"2026-10-09T07:57:47Z","event":"exited","job":"dsflash-frame","code":0}
+{"t":"2026-10-09T07:58:54Z","event":"exited","job":"integrate-21g","code":0}
+{"t":"2026-10-09T08:00:39Z","event":"exited","job":"review-auto-dsflash-py-compile-0746","code":0}
+{"t":"2026-10-09T08:00:58Z","event":"resumed","job":"stdlib-bytes","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T08:01:41Z","event":"finished","job":"dsflash-frame","exit_time":"2026-10-09T07:57:47Z"}
+{"t":"2026-10-09T08:01:41Z","event":"review-queued","job":"dsflash-frame","review":"review-auto-dsflash-frame-0801"}
+{"t":"2026-10-09T08:01:46Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
