@@ -6288,7 +6288,7 @@ impl<'a> Machine<'a> {
             return if op == 24 { Ok(function) } else { self.apply_class_member(function, vec![Value::Small(1)]) };
         }
         // Ask subclass hooks from the calling ABC frame, matching the C helper.
-        if op == 28 {
+        if op == 30 {
             let (arguments, keywords) = self.open_arguments(values)?;
             if !keywords.is_empty() || arguments.len() != 2 {
                 return Err(String::from("TypeError: _abc_instancecheck() takes two positional arguments").into());

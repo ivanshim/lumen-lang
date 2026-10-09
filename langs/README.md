@@ -6152,6 +6152,11 @@ setup as well as normal teardown, and records cleanup exceptions as errors.
 and ABI identity. Cache payloads preserve stack8 instructions or microcode7
 forms and their binding metadata, with distinct format tags for each kernel.
 They are native Lumen caches and do not claim CPython bytecode compatibility.
+Marshal records retain compiled module and function bodies, nested code constants,
+source positions and bindings. Loading restores instructions without recompiling
+source; code inside value containers participates in the ordinary reference memo.
+The native ABI rejects records written by another kernel or an incompatible build.
+The `_imp.source_hash` helper uses SipHash-1-3 for PEP 552 cache validation.
 `ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.

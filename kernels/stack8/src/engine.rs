@@ -9996,20 +9996,7 @@ impl<'a> Engine<'a> {
                 } else {
                     match &args[0] {
                         Value::Object(object) if Self::own_kind(&object.class_now()).as_deref() == Some("code") => {
-                            // A code value hashes the way it compares:
-                            // by the text, manner and flags it keeps;
-                            // the file it names is no part of it.
-                            let mut folded = 2870177450012600261u64;
-                            for (_, value) in object.fields.borrow().iter().filter(|(key, _)| Value::code_content_field(key)) {
-                                match Value::code_field_hash(&value.contents()) {
-                                    Some(one) => {
-                                        folded = folded.wrapping_add((one as u64).wrapping_mul(14029467366897019727));
-                                        folded = folded.rotate_left(31).wrapping_mul(11400714785074694791);
-                                    }
-                                    None => return Err(self.special_fault()),
-                                }
-                            }
-                            Value::Small(if folded == u64::MAX { 1546275796 } else { folded as i64 })
+                            Value::Small(Value::code_field_hash(&Value::Object(object.clone())).ok_or_else(|| self.special_fault())?)
                         }
                         Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
                         Value::Class(_) => Value::Small(args[0].core_hash().ok_or_else(|| self.special_fault())?),
@@ -25716,10 +25703,10 @@ impl Engine<'_> {
     /// in one: a slot text was given, or any the program may name once
     /// the outermost dictionary has been handed out.
     fn book_of(&self, far: usize) -> Option<Kept> {
-        if self.annotation_scope().is_some() && self.outer_book.is_some() {
-            if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
-                return Some(Kept::Outer);
-            }
+        if self.outer_book.is_some() && self.running_routine.as_ref().is_some_and(|routine|
+            routine.globe.is_some() && (self.annotation_scope().is_some() || routine.code_flags & 1 != 0
+                && routine.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))))) {
+            return Some(Kept::Outer);
         }
         let ident = self.registry.idents.get(far)?;
         if let Some(rest) = ident.strip_prefix("\0module:") {
@@ -28251,22 +28238,32 @@ impl Engine<'_> {
         }
         if task == 2 {
             if !given.is_empty() { return Err("TypeError: _code_abi() takes no arguments".into()); }
-            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v4"), Value::Small(u32::from_le_bytes(*b"L8C\x04") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v5"), Value::Small(u32::from_le_bytes(*b"L8C\x05") as i64)]));
         }
         if given.len() != 1 { return Err("TypeError: compiled cache primitive expects one argument".into()); }
         if task == 0 {
+            if let Value::Adapter(parts) = given[0].contents() {
+                if parts.0 != 7 { return Err("TypeError: expected a code object".into()); }
+                let Some(Value::Routine(body)) = parts.1.first() else { return Err("TypeError: expected a code object".into()); };
+                let (graph, origins, routines) = crate::cache::encoded(body)?;
+                let packet = serde_json::json!({"abi": "lumen-stack8-v5", "file": body.written_in.as_deref().unwrap_or("<string>"),
+                    "mode": 0, "function": true, "program": graph, "bindings": self.registry, "origins": origins, "routines": routines});
+                let bytes = serde_json::to_vec(&packet).map_err(|e| format!("ValueError: {e}"))?;
+                return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
+            }
             let Value::Object(code) = given[0].contents() else { return Err("TypeError: expected a code object".into()); };
             if self.lang.compile_kind.as_deref() != Some(code.class_now().name.as_str()) { return Err("TypeError: expected a code object".into()); }
             let fields = code.fields.borrow();
-            if let Some((_, Value::Text(saved))) = fields.iter().find(|(key, _)| key == "\0code_archive") {
-                return Ok(Value::Bytes(Rc::new(RefCell::new(saved.as_bytes().to_vec())), false, Rc::from("b")));
-            }
             let Some((_, Value::Routine(program))) = fields.iter().find(|(key, _)| key == "\0compiled_program") else { return Err("ValueError: no compiled instruction graph".into()); };
             let Some((_, Value::Text(bindings))) = fields.iter().find(|(key, _)| key == "\0compiled_bindings") else { return Err("ValueError: no compiled bindings".into()); };
             let bindings: serde_json::Value = serde_json::from_str(bindings).map_err(|e| format!("ValueError: {e}"))?;
-            let (graph, origins, routines) = crate::cache::encoded(program)?;
+            let program = if fields.iter().any(|(key, _)| key == "\0replace_constants") {
+                let values = fields.iter().find_map(|(key, value)| match (key.as_str(), value) { ("co_consts", Value::Tuple(values)) => Some(values), _ => None }).ok_or("ValueError: missing code constants")?;
+                Rc::new(program.replacing_constants(values)?)
+            } else { program.clone() };
+            let (graph, origins, routines) = crate::cache::encoded(&program)?;
             let mode = match fields[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid code mode".into()) };
-            let packet = serde_json::json!({"abi": "lumen-stack8-v4", "file": fields[1].1.plain(),
+            let packet = serde_json::json!({"abi": "lumen-stack8-v5", "file": fields[1].1.plain(),
                 "mode": mode, "program": graph, "bindings": bindings, "origins": origins, "routines": routines});
             let bytes = serde_json::to_vec(&packet).map_err(|e| format!("ValueError: {e}"))?;
             return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
@@ -28277,6 +28274,8 @@ impl Engine<'_> {
         let mode = packet["mode"].as_u64().filter(|n| *n < 3).ok_or("ValueError: invalid cache mode")?;
         let mut registry = crate::compile::Registry::default();
         let program = crate::cache::program(packet.clone(), &mut registry)?;
+        if packet["function"] == true { return Ok(self.routine_code(&program)); }
+        let bindings = serde_json::to_string(&registry).map_err(|e| format!("ValueError: {e}"))?;
         let constants = Value::tuple(program.code_constants.iter().map(|value| match value {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
@@ -28285,6 +28284,8 @@ impl Engine<'_> {
             (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
             ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
             ("co_filename".into(), Value::text(file)),
+            ("\0compiled_program".into(), Value::Routine(program)),
+            ("\0compiled_bindings".into(), Value::text(&bindings)),
             ("\0code_archive".into(), Value::text(&String::from_utf8(bytes.borrow().clone()).map_err(|e| format!("ValueError: {e}"))?))];
         self.made += 1;
         let class = self.code_class();

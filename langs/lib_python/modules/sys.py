@@ -577,8 +577,8 @@ def _zip_path_hook(path):
 
 # Build the source finder only when an ordinary directory is first searched.
 def _file_path_hook(path):
-    from importlib._bootstrap_external import FileFinder, SourceFileLoader, SOURCE_SUFFIXES
-    return FileFinder.path_hook((SourceFileLoader, SOURCE_SUFFIXES))(path)
+    from importlib._bootstrap_external import FileFinder, _get_supported_file_loaders
+    return FileFinder.path_hook(*_get_supported_file_loaders())(path)
 
 # Delegate path searching to the upstream finder and its importer cache.
 class _PathFinder:

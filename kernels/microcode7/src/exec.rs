@@ -17329,16 +17329,9 @@ impl<'a> Machine<'a> {
                 },
                 None => match one {
                     Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("code") => {
-                        // A code value hashes the way it weighs: by the
-                        // text, manner and flags it keeps; the file it
-                        // names is no part of it.
-                        let mut accum: u64 = 2_870_177_450_012_600_261;
-                        for (_, worth) in t.holds.borrow().iter().filter(|(name, _)| Value::source_code_attribute(name)) {
-                            let lane = match Value::code_worth_hash(&worth.settled()) { Some(number) => number as u64, None => return Err(self.bad_answer()) };
-                            accum = accum.wrapping_add(lane.wrapping_mul(14_029_467_366_897_019_727)).rotate_left(31);
-                            accum = accum.wrapping_mul(11_400_714_785_074_694_791);
-                        }
-                        Value::Small(if accum == u64::MAX { 1_546_275_796 } else { accum as i64 })
+                        let compiled = Value::Thing(t.clone());
+                        let hash = Value::code_worth_hash(&compiled).ok_or_else(|| self.bad_answer())?;
+                        Value::Small(hash)
                     }
                     Value::Thing(t) if self.appointed(one, 2).is_none() => Value::Small(t.turn as i64),
                     Value::Small(_) | Value::Huge(_) => one.clone(),
@@ -26241,7 +26234,9 @@ impl<'a> Machine<'a> {
         let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
             self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
         });
-        if scoped && self.world_book.is_some() { return Some(Held::World); }
+        let explicit_function = self.frames_named.last().is_some_and(|body| body.flags & 1 == 1
+            && body.globe.as_ref().is_some_and(|namespace| matches!(namespace.settled(), Value::Dict(_))));
+        if (scoped || explicit_function) && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {
@@ -30737,22 +30732,33 @@ impl Machine<'_> {
             return Err("TypeError: cache ABI inquiry accepts no arguments".into());
         }
         if action == 2 && input.is_empty() {
-            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v4"), Value::Small(u32::from_le_bytes(*b"L7C\x04") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v5"), Value::Small(u32::from_le_bytes(*b"L7C\x05") as i64)]));
         }
         if input.len() != 1 { return Err("TypeError: code cache operation needs one argument".to_owned()); }
         if action == 0 {
+            if let Value::Wrapped(7, parts) = input[0].settled() {
+                let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err("TypeError: expected compiled code".into()); };
+                let (forms, spellings, bodies) = crate::cache::serialize_forms(body.clone())?;
+                let metadata = serde_json::json!({"globals": self.idents, "future_bits": body.future_bits,
+                    "outer_aliases": [], "seen": {}, "shared_args": {}, "arg_names": {}, "gives_back": [], "bound_globally": [], "native_exports": []});
+                let record = serde_json::json!({"format": "lumen-microcode7-v5", "filename": body.written_in.as_deref().unwrap_or("<string>"),
+                    "manner": 0, "function": true, "forms": forms, "metadata": metadata, "spellings": spellings, "bodies": bodies});
+                let bytes = serde_json::to_vec(&record).map_err(|error| format!("ValueError: {error}"))?;
+                return Ok(self.octets(bytes, false));
+            }
             let Value::Thing(object) = input[0].settled() else { return Err("TypeError: expected compiled code".into()); };
             if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) != Some(object.blueprint().name.as_str()) { return Err("TypeError: expected compiled code".into()); }
             let attributes = object.holds.borrow();
-            if let Some((_, Value::Text(encoded))) = attributes.iter().find(|(name, _)| name == "\0form_archive") {
-                return Ok(Value::Octets { cell: Rc::new(RefCell::new(encoded.as_bytes().to_vec())), changeable: false, lead: Rc::from("b") });
-            }
             let routine = attributes.iter().find(|(name, _)| name == "\0native_forms").and_then(|(_, value)| match value { Value::Routine(body) => Some(body.clone()), _ => None }).ok_or("ValueError: code has no compiled forms")?;
             let names = attributes.iter().find(|(name, _)| name == "\0form_names").and_then(|(_, value)| match value { Value::Text(text) => Some(text), _ => None }).ok_or("ValueError: code bindings are unavailable")?;
             let metadata: serde_json::Value = serde_json::from_str(names).map_err(|e| format!("ValueError: {e}"))?;
+            let routine = if attributes.iter().any(|(name, _)| name == "\0literal_overrides") {
+                let replacement = attributes.iter().find_map(|(name, value)| if name == "co_consts" { if let Value::Tuple(row) = value { Some(row) } else { None } } else { None }).ok_or("ValueError: unavailable code literals")?;
+                Rc::new(routine.with_literals(replacement)?)
+            } else { routine };
             let (body, spellings, bodies) = crate::cache::serialize_forms(routine)?;
             let manner = match attributes[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid compiled mode".into()) };
-            let envelope = serde_json::json!({ "format": "lumen-microcode7-v4", "filename": attributes[1].1.bare(),
+            let envelope = serde_json::json!({ "format": "lumen-microcode7-v5", "filename": attributes[1].1.bare(),
                 "manner": manner, "forms": body, "metadata": metadata, "spellings": spellings, "bodies": bodies });
             let encoded = serde_json::to_vec(&envelope).map_err(|e| format!("ValueError: {e}"))?;
             return Ok(Value::Octets { cell: Rc::new(RefCell::new(encoded)), changeable: false, lead: Rc::from("b") });
@@ -30762,6 +30768,8 @@ impl Machine<'_> {
         let filename = envelope["filename"].as_str().ok_or("ValueError: compiled filename is absent")?;
         let manner = envelope["manner"].as_u64().filter(|value| *value <= 2).ok_or("ValueError: unknown compiled mode")?;
         let recovered = crate::cache::forms(envelope.clone(), &[], None, None, None)?;
+        if envelope["function"] == true { return Ok(self.code_handle(&recovered.program)); }
+        let metadata = crate::build::cache_metadata(&recovered).to_string();
         let literals = Value::tuple(recovered.program.literals.iter().map(|item| match item {
             Value::Routine(body) => self.code_handle(body), value => value.clone(),
         }).collect());
@@ -30771,6 +30779,8 @@ impl Machine<'_> {
             ("co_firstlineno".to_owned(), Value::Small(recovered.program.declared_on as i64)), ("co_consts".to_owned(), literals),
             ("co_filename".into(), Value::text(filename))];
         let encoded = String::from_utf8(cell.borrow().clone()).map_err(|e| format!("ValueError: {e}"))?;
+        slots.push(("\0native_forms".into(), Value::Routine(recovered.program)));
+        slots.push(("\0form_names".into(), Value::text(&metadata)));
         slots.push(("\0form_archive".into(), Value::text(&encoded)));
         let of = self.code_blueprint();
         self.made += 1;
