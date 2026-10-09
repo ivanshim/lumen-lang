@@ -69,6 +69,7 @@ _TRACEBACK_HEADERS = ['Traceback (most recent call last):',
 
 
 _unittest_reportflags = 0
+master = None
 
 
 def register_optionflag(name):
@@ -108,9 +109,10 @@ class TestResults:
     """What testmod and testfile report: how many examples were run and
     how many of them failed."""
 
-    def __init__(self, failed, attempted):
+    def __init__(self, failed, attempted, *, skipped=0):
         self.failed = failed
         self.attempted = attempted
+        self.skipped = skipped
 
     def __len__(self):
         return 2
@@ -124,7 +126,8 @@ class TestResults:
 
     def __repr__(self):
         return ('TestResults(failed=' + str(self.failed) +
-                ', attempted=' + str(self.attempted) + ')')
+                ', attempted=' + str(self.attempted) +
+                (', skipped=' + str(self.skipped) if self.skipped else '') + ')')
 
 
 class Example:
@@ -642,11 +645,14 @@ class DocTestRunner:
         self.failures = 0
         self.skips = 0
         self.reports = []
+        self._stats = {}
+        self._raise_on_error = False
 
     def run(self, test, compileflags=None, out=None, clear_globs=True):
         globs = _copy_dict(test.globs)
         failures = 0
         tries = 0
+        skipped = 0
         # One stream stands in for sys.stdout through a whole run, the way
         # the reference runner keeps a single stand-in and drains it after
         # each example: an object an early example binds out of sys.stdout
@@ -663,12 +669,19 @@ class DocTestRunner:
                         flags = flags | flag
                     else:
                         flags = flags & ~flag
+                tries += 1
                 if flags & SKIP:
                     self.skips += 1
+                    skipped += 1
                     continue
-                tries += 1
                 report = self._check(test, example, globs, flags, buffer)
                 if report is not None:
+                    if self._raise_on_error:
+                        got, error = self._last_outcome
+                        if error is not None and not _wants_exception(example.want):
+                            raise UnexpectedException(test, example,
+                                (type(error), error, error.__traceback__))
+                        raise DocTestFailure(test, example, got)
                     failures += 1
                     self.reports.append(report)
                     if flags & FAIL_FAST:
@@ -677,10 +690,14 @@ class DocTestRunner:
             sys.stdout = saved
         self.tries += tries
         self.failures += failures
-        return TestResults(failures, tries)
+        previous = self._stats.get(test.name, (0, 0, 0))
+        self._stats[test.name] = (previous[0] + failures, previous[1] + tries,
+                                 previous[2] + skipped)
+        return TestResults(failures, tries, skipped=skipped)
 
     def _check(self, test, example, globs, flags, buffer):
         got, error, message = _run_example(example.source, globs, buffer)
+        self._last_outcome = (got, error)
         where = 'File "' + str(test.filename) + '", line ' + \
                 str(example.lineno) + ', in ' + test.name + '\n'
         if _wants_exception(example.want):
@@ -712,7 +729,21 @@ class DocTestRunner:
         for report in self.reports:
             print(self.DIVIDER)
             print(report, end='')
-        return TestResults(self.failures, self.tries)
+        failures = sum(item[0] for item in self._stats.values())
+        tries = sum(item[1] for item in self._stats.values())
+        skipped = sum(item[2] for item in self._stats.values())
+        return TestResults(failures, tries, skipped=skipped)
+
+    def merge(self, other):
+        for name, counts in other._stats.items():
+            previous = self._stats.get(name, (0, 0, 0))
+            self._stats[name] = tuple(a + b for a, b in zip(previous, counts))
+
+
+class DebugRunner(DocTestRunner):
+    def __init__(self, checker=None, verbose=None, optionflags=0):
+        super().__init__(checker, verbose, optionflags)
+        self._raise_on_error = True
 
 
 # ---------------------------------------------------------------- unittest
@@ -810,10 +841,48 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
+    if options.get('module_relative', True) and options.get('package') is None:
+        options['package'] = sys.modules[sys._getframe(1).f_globals['__name__']]
     suite = unittest.TestSuite()
     for path in paths:
         suite.addTest(DocFileTest(path, **options))
     return suite
+
+
+def _load_testfile(filename, package, module_relative, encoding):
+    import os
+    if module_relative:
+        if isinstance(package, str):
+            package = __load_module(package)
+        elif package is None:
+            package = sys.modules[sys._getframe(2).f_globals['__name__']]
+        elif not isinstance(package, types.ModuleType):
+            raise TypeError('Expected a module, string, or None')
+        if filename.startswith('/'):
+            raise ValueError('Module-relative files may not have absolute paths')
+        filename = os.path.join(*filename.split('/'))
+        if hasattr(package, '__file__'):
+            basedir = os.path.dirname(package.__file__)
+        elif package.__name__ == '__main__':
+            basedir = os.path.dirname(sys.argv[0]) if sys.argv and sys.argv[0] else os.curdir
+        else:
+            for directory in getattr(package, '__path__', ()):
+                candidate = os.path.join(directory, filename)
+                if os.path.exists(candidate):
+                    filename = candidate
+                    break
+            else:
+                raise ValueError("Can't resolve paths relative to the module %r (it has no __file__)" % package.__name__)
+            basedir = ''
+        filename = os.path.join(basedir, filename)
+        loader = getattr(package, '__loader__', None)
+        if loader is None:
+            loader = getattr(getattr(package, '__spec__', None), 'loader', None)
+        if hasattr(loader, 'get_data'):
+            text = loader.get_data(filename).decode(encoding)
+            return text.replace('\r\n', '\n').replace('\r', '\n'), filename
+    with open(filename, encoding=encoding) as source:
+        return source.read(), filename
 
 
 def DocFileTest(path, **options):
@@ -822,13 +891,8 @@ def DocFileTest(path, **options):
     relative = options.get('module_relative', True)
     if package is not None and not relative:
         raise ValueError('Package may only be specified for module-relative paths.')
-    if relative:
-        if path.startswith('/'):
-            raise ValueError('Module-relative files may not have absolute paths')
-        namespace = _namespace_of(package)
-        path = os.path.join(os.path.dirname(namespace.get('__file__', '')), path)
-    with open(path, encoding=options.get('encoding', 'utf-8')) as source:
-        text = source.read()
+    text, path = _load_testfile(path, package, relative,
+                                options.get('encoding') or 'utf-8')
     globs = _copy_dict(options.get('globs') or {})
     globs.update(options.get('extraglobs') or {})
     globs.setdefault('__name__', '__main__')
@@ -842,22 +906,47 @@ def testfile(filename, module_relative=True, name=None, package=None,
              globs=None, verbose=None, report=True, optionflags=0,
              extraglobs=None, raise_on_error=False, parser=None,
              encoding=None):
-    raise NotImplementedError(
-        'doctest.testfile needs to read ' + str(filename) +
-        ' from disk, which this library cannot do')
+    import os
+    global master
+    if package is not None and not module_relative:
+        raise ValueError('Package may only be specified for module-relative paths.')
+    text, filename = _load_testfile(filename, package, module_relative,
+                                    encoding or 'utf-8')
+    if name is None:
+        name = os.path.basename(filename)
+    namespace = _copy_dict(globs or {})
+    namespace.update(extraglobs or {})
+    namespace.setdefault('__name__', '__main__')
+    runner_class = DebugRunner if raise_on_error else DocTestRunner
+    runner = runner_class(verbose=verbose, optionflags=optionflags)
+    parser = parser or DocTestParser()
+    runner.run(parser.get_doctest(text, namespace, name, filename, 0))
+    if report:
+        runner.summarize()
+    if master is None:
+        master = runner
+    else:
+        master.merge(runner)
+    return TestResults(runner.failures, runner.tries, skipped=runner.skips)
 
 
 def testmod(m=None, name=None, globs=None, verbose=None, report=True,
             optionflags=0, extraglobs=None, raise_on_error=False,
             exclude_empty=False):
     """Run every example in a module and report how many failed."""
+    global master
     finder = DocTestFinder(verbose, None, True, exclude_empty)
-    runner = DocTestRunner(None, verbose, optionflags)
+    runner_class = DebugRunner if raise_on_error else DocTestRunner
+    runner = runner_class(None, verbose, optionflags)
     for test in finder.find(m, name, None, globs, extraglobs):
         runner.run(test)
     if report:
         runner.summarize()
-    return TestResults(runner.failures, runner.tries)
+    if master is None:
+        master = runner
+    else:
+        master.merge(runner)
+    return TestResults(runner.failures, runner.tries, skipped=runner.skips)
 
 
 def run_docstring_examples(f, globs, verbose=False, name='NoName',
