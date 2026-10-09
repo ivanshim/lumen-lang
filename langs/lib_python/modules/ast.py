@@ -1166,6 +1166,35 @@ _COMPOUND = (FunctionDef, AsyncFunctionDef, For, AsyncFor, With,
 _CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
 _UNARY = {'+': UAdd, '-': USub, '~': Invert}
 
+# The names CPython's parser uses for the targets it refuses in
+# 'target += value' (Parser/action_helpers.c, _PyPegen_get_expr_name); only
+# the node kinds this reader can build are listed, and Constant is read
+# apart because its name depends on the value.
+_AUG_NAMES = {Tuple: 'tuple', List: 'list', Dict: 'dict literal',
+              Set: 'set display', Call: 'function call',
+              BinOp: 'expression', UnaryOp: 'expression',
+              BoolOp: 'expression', Compare: 'comparison',
+              ListComp: 'list comprehension', Await: 'await expression',
+              JoinedStr: 'f-string expression',
+              FormattedValue: 'f-string expression'}
+
+def _aug_target_name(node):
+    name = _AUG_NAMES.get(type(node))
+    if name is not None:
+        return name
+    if type(node) == Constant:
+        value = node.value
+        if value is None:
+            return 'None'
+        if value is True:
+            return 'True'
+        if value is False:
+            return 'False'
+        if type(value).__name__ == 'ellipsis':
+            return 'ellipsis'
+        return 'literal'
+    return 'expression'
+
 class _Parser:
     def __init__(self, source, toks, comments=None, fv=None, optimize=-1,
                  fold_debug=False):
@@ -1441,6 +1470,10 @@ class _Parser:
         if tok.kind == 'op' and len(tok.text) > 1 and tok.text[-1] == '=' and \
                 tok.text[:-1] in _BINOPS:
             self.pop()
+            kind = type(node)
+            if kind != Name and kind != Attribute and kind != Subscript:
+                _syntax("'" + _aug_target_name(node) +
+                        "' is an illegal expression for augmented assignment")
             self.set_store(node)
             value, vs, ve = self.parse_expr(True)
             return AugAssign(target=node, op=_BINOPS[tok.text[:-1]](),
